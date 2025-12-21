@@ -1,0 +1,328 @@
+{% extends "base.html" %}
+
+{% block title %}Portal Administration{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+
+    <h2>Customer Portal Administration</h2>
+
+    <!-- Stats Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Active Users</h5>
+                    <h2>{{ users_count }}</h2>
+                    <a href="{{ url_for('portal_admin.portal_users') }}" class="btn btn-sm btn-primary">Manage Users</a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Pending Requests</h5>
+                    <h2>{{ recent_requests | selectattr('status', 'equalto', 'pending') | list | length }}</h2>
+                    <a href="{{ url_for('portal_admin.portal_requests', status='pending') }}" class="btn btn-sm btn-warning">View Pending</a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Processing</h5>
+                    <h2>{{ recent_requests | selectattr('status', 'equalto', 'processing') | list | length }}</h2>
+                    <a href="{{ url_for('portal_admin.portal_requests', status='processing') }}" class="btn btn-sm btn-info">View Processing</a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Total Requests</h5>
+                    <h2>{{ recent_requests | length }}</h2>
+                    <a href="{{ url_for('portal_admin.portal_requests') }}" class="btn btn-sm btn-secondary">View All</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Section -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4>Portal Settings</h4>
+        </div>
+        <div class="card-body">
+            <form id="settingsForm">
+                <div class="row">
+                    <!-- Pricing Settings -->
+                    <div class="col-md-6">
+                        <h5>Pricing Configuration</h5>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Stock Margin %</label>
+                            <input type="number" class="form-control" name="stock_margin_percentage" 
+                                   value="{{ settings.stock_margin_percentage.setting_value }}" step="0.1">
+                            <small class="form-text text-muted">{{ settings.stock_margin_percentage.description }}</small>
+                        </div>
+
+                        <div class="mb-3">
+    <label class="form-label">VQ Margin %</label>
+    <input type="number" class="form-control" name="vq_margin_percentage"
+           value="{{ settings.vq_margin_percentage.setting_value if settings.vq_margin_percentage else '15' }}" step="0.1">
+    <small class="form-text text-muted">Markup on vendor quote prices shown to customers</small>
+</div>
+
+<div class="mb-3">
+    <label class="form-label">PO Margin %</label>
+    <input type="number" class="form-control" name="po_margin_percentage"
+           value="{{ settings.po_margin_percentage.setting_value if settings.po_margin_percentage else '15' }}" step="0.1">
+    <small class="form-text text-muted">Markup on purchase order prices shown to customers</small>
+</div>
+
+<div class="mb-3">
+    <label class="form-label">Show Estimated Prices</label>
+    <select class="form-control" name="show_estimated_prices">
+        <option value="1" {% if settings.show_estimated_prices and settings.show_estimated_prices.setting_value == '1' %}selected{% endif %}>Yes - Show estimates based on VQ/PO/Sales</option>
+        <option value="0" {% if settings.show_estimated_prices and settings.show_estimated_prices.setting_value == '0' %}selected{% endif %}>No - Only show stock prices</option>
+    </select>
+    <small class="form-text text-muted">Whether to show estimated prices when parts aren't in stock</small>
+</div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Minimum Stock Threshold</label>
+                            <input type="number" class="form-control" name="min_stock_threshold" 
+                                   value="{{ settings.min_stock_threshold.setting_value }}">
+                            <small class="form-text text-muted">{{ settings.min_stock_threshold.description }}</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Show Exact Stock Quantities</label>
+                            <select class="form-control" name="show_stock_quantities">
+                                <option value="1" {% if settings.show_stock_quantities.setting_value == '1' %}selected{% endif %}>Yes - Show exact quantities</option>
+                                <option value="0" {% if settings.show_stock_quantities.setting_value == '0' %}selected{% endif %}>No - Just show availability</option>
+                            </select>
+                            <small class="form-text text-muted">{{ settings.show_stock_quantities.description }}</small>
+                        </div>
+                    </div>
+
+                    <!-- Data Recency Settings -->
+                    <div class="col-md-6">
+                        <h5>Data Recency (Months)</h5>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Sales Orders</label>
+                            <input type="number" class="form-control" name="sales_order_recency_months" 
+                                   value="{{ settings.sales_order_recency_months.setting_value }}">
+                            <small class="form-text text-muted">{{ settings.sales_order_recency_months.description }}</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Customer Quotes</label>
+                            <input type="number" class="form-control" name="cq_recency_months" 
+                                   value="{{ settings.cq_recency_months.setting_value }}">
+                            <small class="form-text text-muted">{{ settings.cq_recency_months.description }}</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Vendor Quotes</label>
+                            <input type="number" class="form-control" name="vq_recency_months" 
+                                   value="{{ settings.vq_recency_months.setting_value }}">
+                            <small class="form-text text-muted">{{ settings.vq_recency_months.description }}</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Purchase Orders</label>
+                            <input type="number" class="form-control" name="po_recency_months" 
+                                   value="{{ settings.po_recency_months.setting_value }}">
+                            <small class="form-text text-muted">{{ settings.po_recency_months.description }}</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>Lead Time Configuration</h5>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Lead Time Buffer (Days)</label>
+                            <input type="number" class="form-control" name="lead_time_buffer_days" 
+                                   value="{{ settings.lead_time_buffer_days.setting_value }}">
+                            <small class="form-text text-muted">{{ settings.lead_time_buffer_days.description }}</small>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <h5>Quote Workflow</h5>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Require Approval</label>
+                            <select class="form-control" name="require_quote_approval">
+                                <option value="1" {% if settings.require_quote_approval.setting_value == '1' %}selected{% endif %}>Yes - Manual approval required</option>
+                                <option value="0" {% if settings.require_quote_approval.setting_value == '0' %}selected{% endif %}>No - Auto-show estimates</option>
+                            </select>
+                            <small class="form-text text-muted">{{ settings.require_quote_approval.description }}</small>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Save Settings</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- API Key Section -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4>API Configuration</h4>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-8">
+                    <label class="form-label">API Key</label>
+                    <div class="input-group">
+                        <input type="password" class="form-control" id="apiKeyDisplay" 
+                               value="{{ settings.api_key.setting_value or 'Not generated' }}" readonly>
+                        <button class="btn btn-outline-secondary" type="button" id="toggleApiKey">
+                            <i class="fas fa-eye"></i> Show
+                        </button>
+                        <button class="btn btn-outline-primary" type="button" id="copyApiKey">
+                            <i class="fas fa-copy"></i> Copy
+                        </button>
+                    </div>
+                    <small class="form-text text-muted">Use this key in the customer portal app configuration</small>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">&nbsp;</label>
+                    <button class="btn btn-warning d-block" id="generateApiKey">
+                        <i class="fas fa-sync"></i> Generate New Key
+                    </button>
+                    <small class="form-text text-muted">Warning: This will invalidate the old key</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Requests -->
+    <div class="card">
+        <div class="card-header">
+            <h4>Recent Quote Requests</h4>
+        </div>
+        <div class="card-body">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Reference</th>
+                        <th>Customer</th>
+                        <th>Customer Ref</th>
+                        <th>User</th>
+                        <th>Lines</th>
+                        <th>Date</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for req in recent_requests %}
+                    <tr>
+                        <td><strong>{{ req.reference_number }}</strong></td>
+                        <td>{{ req.customer_name }}</td>
+                        <td>{{ req.customer_reference or '-' }}</td>
+                        <td>{{ req.user_email }}</td>
+                        <td>{{ req.line_count }}</td>
+                        <td>{{ req.date_submitted }}</td>
+                        <td>
+                            <span class="badge 
+                                {% if req.status == 'pending' %}bg-warning
+                                {% elif req.status == 'processing' %}bg-info
+                                {% elif req.status == 'quoted' %}bg-success
+                                {% else %}bg-secondary{% endif %}">
+                                {{ req.status | title }}
+                            </span>
+                        </td>
+                        <td>
+                            <a href="{{ url_for('portal_admin.view_portal_request', request_id=req.id) }}" 
+                               class="btn btn-sm btn-primary">View</a>
+                            {% if req.parts_list_id %}
+                            <a href="{{ url_for('parts_list.view_parts_list', list_id=req.parts_list_id) }}" 
+                               class="btn btn-sm btn-secondary">Parts List</a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('settingsForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const formData = new FormData(e.target);
+    const data = Object.fromEntries(formData.entries());
+    
+    try {
+        const response = await fetch('{{ url_for("portal_admin.update_settings") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            alert('Settings saved successfully');
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error saving settings: ' + error);
+    }
+});
+
+document.getElementById('toggleApiKey').addEventListener('click', () => {
+    const input = document.getElementById('apiKeyDisplay');
+    const btn = document.getElementById('toggleApiKey');
+    if (input.type === 'password') {
+        input.type = 'text';
+        btn.innerHTML = '<i class="fas fa-eye-slash"></i> Hide';
+    } else {
+        input.type = 'password';
+        btn.innerHTML = '<i class="fas fa-eye"></i> Show';
+    }
+});
+
+document.getElementById('copyApiKey').addEventListener('click', () => {
+    const input = document.getElementById('apiKeyDisplay');
+    input.type = 'text';
+    input.select();
+    document.execCommand('copy');
+    input.type = 'password';
+    alert('API key copied to clipboard');
+});
+
+document.getElementById('generateApiKey').addEventListener('click', async () => {
+    if (!confirm('Generate new API key? This will invalidate the current key and break existing portal connections.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('{{ url_for("portal_admin.generate_api_key") }}', {
+            method: 'POST'
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            document.getElementById('apiKeyDisplay').value = result.api_key;
+            alert('New API key generated. Update your customer portal configuration.');
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error generating API key: ' + error);
+    }
+});
+</script>
+{% endblock %}

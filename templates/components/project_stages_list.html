@@ -1,0 +1,1016 @@
+{% if project %}
+    <!-- Using stages passed from route, not calling function -->
+    {% if stages %}
+        <!-- Active/Pending Stages -->
+        {% for stage in stages %}
+            {% if stage.status_id != 2 %} <!-- Not completed -->
+                <li class="stage-item-wrapper">
+                    <div class="stage-item" data-stage-id="{{ stage.id }}">
+                        <div class="stage-header">
+                            <input class="form-check-input stage-checkbox"
+                                   type="checkbox"
+                                   id="stage-{{ stage.id }}"
+                                   {% if stage.status_id == 2 %}checked{% endif %}
+                                   onchange="updateStageStatus({{ stage.id }}, this.checked)">
+                            <label class="stage-text" for="stage-{{ stage.id }}">
+                                {{ stage.name }}
+                            </label>
+                            <div class="stage-controls">
+                                <span class="stage-status-indicator
+                                    {% if stage.status_id == 1 %}pending
+                                    {% elif stage.status_id == 2 %}completed
+                                    {% else %}in-progress{% endif %}"></span>
+
+                                <!-- Substages toggle button -->
+                                {% if stage.substages and stage.substages | length > 0 %}
+                                    <button class="substage-toggle-btn"
+                                            onclick="toggleSubstages({{ stage.id }})"
+                                            title="Show/hide substages">
+                                        <i class="bi bi-chevron-right"></i>
+                                    </button>
+                                {% endif %}
+
+                                <!-- Details toggle button -->
+                                {% if stage.description %}
+                                    <button class="stage-expand-btn"
+                                            onclick="toggleStageDetails({{ stage.id }})"
+                                            title="Show/hide details">
+                                        <i class="bi bi-info-circle"></i>
+                                    </button>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Substages Section -->
+                        {% if stage.substages and stage.substages | length > 0 %}
+                            <div class="substages-container collapsed" id="substages-{{ stage.id }}">
+                                {% for substage in stage.substages %}
+                                    {% if substage.status_id != 2 %}
+                                        <div class="substage-item" data-stage-id="{{ substage.id }}">
+                                            <div class="substage-header">
+                                                <input class="form-check-input stage-checkbox"
+                                                       type="checkbox"
+                                                       id="substage-{{ substage.id }}"
+                                                       {% if substage.status_id == 2 %}checked{% endif %}
+                                                       onchange="updateStageStatus({{ substage.id }}, this.checked)">
+                                                <label class="stage-text" for="substage-{{ substage.id }}">
+                                                    {{ substage.name }}
+                                                </label>
+                                                <div class="stage-controls">
+                                                    <span class="stage-status-indicator
+                                                        {% if substage.status_id == 1 %}pending
+                                                        {% elif substage.status_id == 2 %}completed
+                                                        {% else %}in-progress{% endif %}"></span>
+                                                    {% if substage.description %}
+                                                        <button class="stage-expand-btn"
+                                                                onclick="toggleStageDetails({{ substage.id }})"
+                                                                title="Show/hide details">
+                                                            <i class="bi bi-info-circle"></i>
+                                                        </button>
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+
+                                            <!-- Substage Details -->
+                                            {% if substage.description %}
+                                                <div class="stage-details collapsed" id="stage-details-{{ substage.id }}">
+                                                    <div class="stage-description-content">
+                                                        {{ substage.description|safe }}
+                                                    </div>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+
+                        <!-- Parent Stage Details -->
+                        {% if stage.description %}
+                            <div class="stage-details collapsed" id="stage-details-{{ stage.id }}">
+                                <div class="stage-description-content">
+                                    {{ stage.description|safe }}
+                                </div>
+                            </div>
+                        {% endif %}
+                    </div>
+                </li>
+            {% endif %}
+        {% endfor %}
+
+        <!-- Completed Stages Group -->
+        {% set completed_stages = stages|selectattr("status_id", "equalto", 2)|list %}
+        {% set completed_substages = [] %}
+        {% for stage in stages %}
+            {% if stage.substages %}
+                {% for substage in stage.substages %}
+                    {% if substage.status_id == 2 %}
+                        {% set _ = completed_substages.append(substage) %}
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+        {% endfor %}
+
+        {% if completed_stages or completed_substages %}
+            <li class="completed-stages-group">
+                <div class="completed-stages-header collapsed">
+                    <span>Completed ({{ (completed_stages|length) + (completed_substages|length) }})</span>
+                    <i class="bi bi-chevron-down toggle-icon"></i>
+                </div>
+                <div class="completed-stages-list collapsed">
+                    <!-- Completed Parent Stages -->
+                    {% for stage in completed_stages %}
+                        <div class="stage-item completed" data-stage-id="{{ stage.id }}">
+                            <div class="stage-header">
+                                <input class="form-check-input stage-checkbox"
+                                       type="checkbox"
+                                       id="stage-completed-{{ stage.id }}"
+                                       checked
+                                       onchange="updateStageStatus({{ stage.id }}, this.checked)">
+                                <label class="stage-text" for="stage-completed-{{ stage.id }}">
+                                    {{ stage.name }}
+                                </label>
+                                <div class="stage-controls">
+                                    <span class="stage-status-indicator completed"></span>
+                                    {% if stage.description %}
+                                        <button class="stage-expand-btn"
+                                                onclick="toggleStageDetails({{ stage.id }})"
+                                                title="Show/hide details">
+                                            <i class="bi bi-info-circle"></i>
+                                        </button>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            {% if stage.description %}
+                                <div class="stage-details collapsed" id="stage-details-{{ stage.id }}">
+                                    <div class="stage-description-content">
+                                        {{ stage.description|safe }}
+                                    </div>
+                                </div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+
+                    <!-- Completed Substages -->
+                    {% for substage in completed_substages %}
+                        <div class="substage-item completed" data-stage-id="{{ substage.id }}">
+                            <div class="substage-header">
+                                <input class="form-check-input stage-checkbox"
+                                       type="checkbox"
+                                       id="substage-completed-{{ substage.id }}"
+                                       checked
+                                       onchange="updateStageStatus({{ substage.id }}, this.checked)">
+                                <label class="stage-text" for="substage-completed-{{ substage.id }}">
+                                    {{ substage.name }}
+                                </label>
+                                <div class="stage-controls">
+                                    <span class="stage-status-indicator completed"></span>
+                                    {% if substage.description %}
+                                        <button class="stage-expand-btn"
+                                                onclick="toggleStageDetails({{ substage.id }})"
+                                                title="Show/hide details">
+                                            <i class="bi bi-info-circle"></i>
+                                        </button>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            {% if substage.description %}
+                                <div class="stage-details collapsed" id="stage-details-{{ substage.id }}">
+                                    <div class="stage-description-content">
+                                        {{ substage.description|safe }}
+                                    </div>
+                                </div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            </li>
+        {% endif %}
+
+    {% else %}
+        <li class="ps-3 py-2 text-muted">
+            <div class="text-center">
+                <i class="bi bi-list-task mb-2" style="font-size: 1.2rem; display: block;"></i>
+                No stages available for this project
+            </div>
+        </li>
+    {% endif %}
+
+    <!-- Add New Stage Button - Now always visible when project exists -->
+    <li class="mt-3 text-center">
+        <button class="add-stage-btn" onclick="addNewJob(); return false;" type="button">
+            <i class="bi bi-plus-circle me-2"></i>
+            Add Stage
+        </button>
+    </li>
+
+    <!-- Add New Project Button -->
+    <li class="mt-2 text-center">
+        <button class="add-project-btn" onclick="openAddProjectModal(); return false;" type="button">
+            <i class="bi bi-folder-plus me-2"></i>
+            Add Project
+        </button>
+    </li>
+
+{% else %}
+    <li class="ps-3 py-2 text-muted">
+        <div class="text-center">
+            <i class="bi bi-folder-x mb-2" style="font-size: 1.2rem; display: block;"></i>
+            No active project selected
+        </div>
+    </li>
+{% endif %}
+
+<style>
+/* Enhanced project stages styling that preserves your structure */
+.stage-item-wrapper {
+    margin: 4px 0;
+}
+
+.stage-item {
+    margin: 2px 0;
+    border-radius: 8px;
+    background: white;
+    border: 1px solid #e9ecef;
+    transition: all 0.2s ease;
+    font-size: 0.9rem;
+    overflow: hidden;
+}
+
+.stage-item:hover {
+    background: #f8f9fa;
+    border-color: #dee2e6;
+    transform: translateX(2px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.stage-item.completed {
+    background: #d4edda;
+    border-color: #c3e6cb;
+    opacity: 0.9;
+}
+
+.stage-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    min-height: 42px;
+}
+
+.stage-checkbox {
+    margin-right: 12px !important;
+    transform: scale(1.2);
+    flex-shrink: 0;
+}
+
+.stage-text {
+    flex: 1;
+    font-weight: 500;
+    line-height: 1.3;
+    margin-bottom: 0 !important;
+    cursor: pointer;
+    word-wrap: break-word;
+}
+
+.stage-item.completed .stage-text {
+    text-decoration: line-through;
+    color: #6c757d;
+}
+
+.stage-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* Substage toggle button */
+.substage-toggle-btn {
+    background: #e3f2fd;
+    border: 1px solid #bbdefb;
+    padding: 4px;
+    border-radius: 4px;
+    color: #1976d2;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+}
+
+.substage-toggle-btn:hover {
+    background: #bbdefb;
+    color: #1565c0;
+}
+
+.substage-toggle-btn i {
+    transition: transform 0.2s ease;
+    font-size: 0.7rem;
+}
+
+.substage-toggle-btn.expanded i {
+    transform: rotate(90deg);
+}
+
+.stage-expand-btn {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    padding: 4px;
+    border-radius: 4px;
+    color: #495057;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+}
+
+.stage-expand-btn:hover {
+    background: #e9ecef;
+    color: #495057;
+}
+
+.stage-expand-btn i {
+    transition: transform 0.2s ease;
+    font-size: 0.7rem;
+}
+
+/* Substages container */
+.substages-container {
+    border-top: 1px solid #e9ecef;
+    background: #f8f9fa;
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+
+.substages-container.collapsed {
+    max-height: 0;
+    opacity: 0;
+    border-top: none;
+}
+
+.substages-container:not(.collapsed) {
+    max-height: 500px;
+    opacity: 1;
+}
+
+/* Substage styling */
+.substage-item {
+    margin: 1px 0;
+    background: white;
+    border: 1px solid #e3f2fd;
+    border-radius: 6px;
+    margin-left: 16px;
+    margin-right: 8px;
+    transition: all 0.2s ease;
+}
+
+.substage-item:hover {
+    background: #f3f9ff;
+    border-color: #bbdefb;
+    transform: translateX(2px);
+}
+
+.substage-item.completed {
+    background: #e8f5e8;
+    border-color: #c8e6c9;
+}
+
+.substage-header {
+    display: flex;
+    align-items: center;
+    padding: 8px 10px;
+    min-height: 36px;
+}
+
+.substage-item .stage-text {
+    font-size: 0.85rem;
+    font-weight: 400;
+}
+
+.substage-item .stage-controls {
+    gap: 4px;
+}
+
+.substage-item .stage-expand-btn {
+    width: 20px;
+    height: 20px;
+}
+
+/* Stage details section */
+.stage-details {
+    border-top: 1px solid #e9ecef;
+    background: #f8f9fa;
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+
+.stage-details.collapsed {
+    max-height: 0;
+    opacity: 0;
+}
+
+.stage-details:not(.collapsed) {
+    max-height: 500px;
+    opacity: 1;
+}
+
+.stage-description-content {
+    padding: 12px;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    color: #495057;
+}
+
+/* Substage details */
+.substage-item .stage-details {
+    background: #f3f9ff;
+    border-top: 1px solid #e3f2fd;
+}
+
+.substage-item .stage-description-content {
+    font-size: 0.8rem;
+    padding: 10px;
+}
+
+/* Rich text content styling */
+.stage-description-content p {
+    margin-bottom: 0.5rem;
+}
+
+.stage-description-content p:last-child {
+    margin-bottom: 0;
+}
+
+.stage-description-content ul,
+.stage-description-content ol {
+    margin-bottom: 0.5rem;
+    padding-left: 1.5rem;
+}
+
+.stage-description-content strong {
+    font-weight: 600;
+}
+
+.stage-description-content em {
+    font-style: italic;
+}
+
+.stage-description-content h1,
+.stage-description-content h2,
+.stage-description-content h3,
+.stage-description-content h4,
+.stage-description-content h5,
+.stage-description-content h6 {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: #343a40;
+}
+
+.stage-description-content h1 { font-size: 1rem; }
+.stage-description-content h2 { font-size: 0.95rem; }
+.stage-description-content h3 { font-size: 0.9rem; }
+.stage-description-content h4 { font-size: 0.85rem; }
+
+.stage-description-content blockquote {
+    border-left: 3px solid #dee2e6;
+    padding-left: 1rem;
+    margin: 0.5rem 0;
+    font-style: italic;
+    color: #6c757d;
+}
+
+/* Stage status indicators */
+.stage-status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.stage-status-indicator.pending {
+    background-color: #ffc107;
+}
+
+.stage-status-indicator.in-progress {
+    background-color: #0d6efd;
+}
+
+.stage-status-indicator.completed {
+    background-color: #198754;
+}
+
+/* Completed stages group */
+.completed-stages-group {
+    margin-top: 20px;
+    padding-top: 12px;
+    border-top: 2px solid #dee2e6;
+}
+
+.completed-stages-header {
+    font-size: 0.8rem;
+    color: #6c757d;
+    font-weight: 600;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    transition: all 0.2s ease;
+}
+
+.completed-stages-header:hover {
+    background: #e9ecef;
+    color: #495057;
+}
+
+.completed-stages-header .toggle-icon {
+    transition: transform 0.2s ease;
+}
+
+.completed-stages-header.collapsed .toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.completed-stages-list {
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+
+.completed-stages-list.collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin: 0;
+    padding: 0;
+}
+
+.completed-stages-list:not(.collapsed) {
+    max-height: 800px;
+    opacity: 1;
+}
+
+/* Add stage button */
+.add-stage-btn {
+    width: 100%;
+    padding: 12px;
+    border: 2px dashed #dee2e6;
+    background: transparent;
+    color: #6c757d;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.add-stage-btn:hover {
+    border-color: #0d6efd;
+    color: #0d6efd;
+    background: rgba(13, 110, 253, 0.05);
+    transform: translateY(-1px);
+}
+
+/* Add project button */
+.add-project-btn {
+    width: 100%;
+    padding: 12px;
+    border: 2px dashed #28a745;
+    background: transparent;
+    color: #28a745;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.add-project-btn:hover {
+    border-color: #218838;
+    color: #218838;
+    background: rgba(40, 167, 69, 0.05);
+    transform: translateY(-1px);
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+    .stage-header {
+        font-size: 0.85rem;
+        padding: 8px 10px;
+        min-height: 38px;
+    }
+
+    .substage-header {
+        padding: 6px 8px;
+        min-height: 32px;
+    }
+
+    .stage-description-content {
+        font-size: 0.8rem;
+        padding: 10px;
+    }
+
+    .substage-item .stage-description-content {
+        font-size: 0.75rem;
+        padding: 8px;
+    }
+}
+
+/* Better text wrapping for long names */
+.stage-text {
+    word-break: break-word;
+    overflow-wrap: break-word;
+    hyphens: auto;
+}
+</style>
+
+<script>
+// SINGLE DOMContentLoaded event listener - REMOVE THE DUPLICATE
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('🎯 DOMContentLoaded: Setting up event listeners...');
+
+    // Initialize completed stages toggle
+    initializeCompletedStagesToggle();
+
+    // Restore stage states
+    restoreStageStates();
+
+    // Render markdown descriptions
+    document.querySelectorAll('script[type="text/plain"][id^="desc-md-"]').forEach(script => {
+        const stageId = script.id.replace('desc-md-', '');
+        const container = document.getElementById(`desc-${stageId}`);
+        if (container) {
+            const markdown = script.textContent.trim();
+            console.log(`Rendering for stage ${stageId}:`, markdown);
+            container.innerHTML = marked.parse(markdown);
+        }
+    });
+
+    // Set up modal event listeners - ONLY ONCE
+    const newJobModal = document.getElementById('newJobModal');
+    if (newJobModal && !newJobModal.hasAttribute('data-listeners-attached')) {
+        console.log('🎯 Setting up newJobModal event listeners');
+
+        // Mark as having listeners attached
+        newJobModal.setAttribute('data-listeners-attached', 'true');
+
+        // Populate options when modal is fully shown
+        newJobModal.addEventListener('shown.bs.modal', function() {
+            console.log('Modal fully shown, populating parent options...');
+            populateParentStageOptions();
+        });
+
+        // Clear the form when modal is closed
+        newJobModal.addEventListener('hidden.bs.modal', function() {
+            document.getElementById('stageName').value = '';
+            const parentSelect = document.getElementById('parentStageSelect');
+            if (parentSelect) {
+                parentSelect.value = '';
+            }
+        });
+    }
+});
+
+// Enhanced toggle functions for substages
+function toggleSubstages(stageId) {
+    console.log('Toggling substages for stage:', stageId);
+
+    const substagesContainer = document.getElementById(`substages-${stageId}`);
+    const toggleBtn = document.querySelector(`[onclick="toggleSubstages(${stageId})"]`);
+
+    console.log('Substages container:', substagesContainer);
+    console.log('Toggle button:', toggleBtn);
+
+    if (substagesContainer) {
+        substagesContainer.classList.toggle('collapsed');
+
+        if (toggleBtn) {
+            toggleBtn.classList.toggle('expanded');
+        }
+
+        // Save state to localStorage
+        const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+        if (projectId) {
+            const isExpanded = !substagesContainer.classList.contains('collapsed');
+            localStorage.setItem(`substages-expanded-${projectId}-${stageId}`, isExpanded);
+        }
+    } else {
+        console.error('Substages container not found for stage:', stageId);
+    }
+}
+
+// Toggle stage details function
+function toggleStageDetails(stageId) {
+    const detailsElement = document.getElementById(`stage-details-${stageId}`);
+    const expandBtn = document.querySelector(`[onclick="toggleStageDetails(${stageId})"]`);
+
+    if (detailsElement && expandBtn) {
+        detailsElement.classList.toggle('collapsed');
+        expandBtn.classList.toggle('expanded');
+
+        // Save state to localStorage
+        const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+        if (projectId) {
+            const isExpanded = !detailsElement.classList.contains('collapsed');
+            localStorage.setItem(`stage-expanded-${projectId}-${stageId}`, isExpanded);
+        }
+    }
+}
+
+function restoreStageStates() {
+    // Restore expanded states for individual stages and substages
+    const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+    if (projectId) {
+        // Restore substage expansion states
+        document.querySelectorAll('[id^="substages-"]').forEach(substagesContainer => {
+            const stageId = substagesContainer.id.replace('substages-', '');
+            const isExpanded = localStorage.getItem(`substages-expanded-${projectId}-${stageId}`) === 'true';
+
+            if (isExpanded) {
+                substagesContainer.classList.remove('collapsed');
+                const toggleBtn = document.querySelector(`[onclick="toggleSubstages(${stageId})"]`);
+                if (toggleBtn) {
+                    toggleBtn.classList.add('expanded');
+                }
+            }
+        });
+
+        // Restore stage details expansion states
+        document.querySelectorAll('[id^="stage-details-"]').forEach(detailsElement => {
+            const stageId = detailsElement.id.replace('stage-details-', '');
+            const isExpanded = localStorage.getItem(`stage-expanded-${projectId}-${stageId}`) === 'true';
+
+            if (isExpanded) {
+                detailsElement.classList.remove('collapsed');
+                const expandBtn = document.querySelector(`[onclick="toggleStageDetails(${stageId})"]`);
+                if (expandBtn) {
+                    expandBtn.classList.add('expanded');
+                }
+            }
+        });
+    }
+}
+
+function initializeCompletedStagesToggle() {
+    const toggleHeaders = document.querySelectorAll('.completed-stages-header');
+    toggleHeaders.forEach(header => {
+        if (!header.hasAttribute('data-initialized')) {
+            header.setAttribute('data-initialized', 'true');
+            header.addEventListener('click', function() {
+                const list = this.nextElementSibling;
+                this.classList.toggle('collapsed');
+                list.classList.toggle('collapsed');
+
+                // Save state to localStorage
+                const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+                if (projectId) {
+                    const isCollapsed = this.classList.contains('collapsed');
+                    localStorage.setItem(`completed-stages-${projectId}`, isCollapsed);
+                }
+            });
+
+            // Restore state from localStorage
+            const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+            if (projectId) {
+                const savedState = localStorage.getItem(`completed-stages-${projectId}`);
+                if (savedState === 'false') {
+                    header.classList.remove('collapsed');
+                    header.nextElementSibling.classList.remove('collapsed');
+                }
+            }
+        }
+    });
+}
+
+// Add Project Modal Functions
+function openAddProjectModal() {
+    const modal = new bootstrap.Modal(document.getElementById('addProjectModal'));
+    modal.show();
+}
+
+function saveNewProject() {
+    const projectName = document.getElementById('newProjectName').value;
+    const projectDescription = document.getElementById('newProjectDescription').value;
+
+    if (!projectName || !projectName.trim()) {
+        alert('Please enter a project name');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('customer_id', '270');
+    formData.append('salesperson_id', '{{ current_user.get_salesperson_id() if current_user.is_authenticated else "1" }}');
+    formData.append('name', projectName.trim());
+    formData.append('description', projectDescription.trim());
+    formData.append('status_id', '1'); // Default to active
+
+    fetch('/projects/new', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const modal = bootstrap.Modal.getInstance(document.getElementById('addProjectModal'));
+            modal.hide();
+
+            // Clear the form
+            document.getElementById('newProjectName').value = '';
+            document.getElementById('newProjectDescription').value = '';
+
+            // Redirect to the new project
+            window.location.href = `/projects/${data.project_id}/edit`;
+        } else {
+            alert('Failed to create project: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error creating project');
+    });
+}
+
+// IMPROVED populateParentStageOptions function with debouncing
+let populateTimeout = null;
+async function populateParentStageOptions() {
+    // Clear any existing timeout to prevent multiple rapid calls
+    if (populateTimeout) {
+        clearTimeout(populateTimeout);
+    }
+
+    populateTimeout = setTimeout(async () => {
+        const select = document.getElementById('parentStageSelect');
+        console.log('populateParentStageOptions called, select element:', select);
+
+        if (!select) {
+            console.error('Parent stage select element not found');
+            return;
+        }
+
+        // Clear existing options except the first one
+        select.innerHTML = '<option value="">None (Top-level stage)</option>';
+
+        const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+        console.log('Active project ID:', projectId);
+
+        if (!projectId) {
+            console.error('No active project ID found');
+            return;
+        }
+
+        try {
+            // Try to fetch from backend first
+            console.log('Fetching stages from backend...');
+            const response = await fetch(`/projects/sidebar-stages/${projectId}`);
+            console.log('Backend response status:', response.status);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const html = await response.text();
+            console.log('Backend HTML length:', html.length);
+
+            // Parse the HTML to extract stage data
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            // Find all top-level stages (not substages)
+            const stageItems = doc.querySelectorAll('.stage-item[data-stage-id]');
+            console.log('Found stage items from backend:', stageItems.length);
+
+            let addedCount = 0;
+            stageItems.forEach(item => {
+                // Check if this is not a substage
+                const isSubstage = item.closest('.substages-container');
+                const stageId = item.getAttribute('data-stage-id');
+                const stageTextElement = item.querySelector('.stage-text');
+
+                console.log(`Stage ${stageId}: isSubstage=${!!isSubstage}, hasText=${!!stageTextElement}`);
+
+                if (!isSubstage && stageTextElement) {
+                    const stageName = stageTextElement.textContent.trim();
+                    console.log(`Adding parent option: "${stageName}" (ID: ${stageId})`);
+
+                    const option = document.createElement('option');
+                    option.value = stageId;
+                    option.textContent = stageName;
+                    select.appendChild(option);
+                    addedCount++;
+                }
+            });
+
+            console.log(`Populated ${addedCount} parent stage options from backend`);
+
+            // If no stages found from backend, try DOM fallback
+            if (addedCount === 0) {
+                console.log('No stages from backend, trying DOM fallback...');
+                populateFromCurrentDOM(select);
+            }
+
+        } catch (error) {
+            console.error('Error fetching stages, using DOM fallback:', error);
+            populateFromCurrentDOM(select);
+        }
+    }, 100); // 100ms debounce
+}
+
+// Separate function for DOM fallback
+function populateFromCurrentDOM(select) {
+    const stageItems = document.querySelectorAll('.stage-item[data-stage-id]');
+    console.log('DOM fallback: Found stage items:', stageItems.length);
+
+    let addedCount = 0;
+    stageItems.forEach(item => {
+        const stageId = item.getAttribute('data-stage-id');
+        const stageTextElement = item.querySelector('.stage-text');
+
+        if (!stageTextElement) {
+            console.log(`Stage ${stageId}: No .stage-text element found`);
+            return;
+        }
+
+        const stageName = stageTextElement.textContent.trim();
+        const isSubstage = item.closest('.substages-container');
+
+        console.log(`DOM Stage ${stageId}: "${stageName}", isSubstage=${!!isSubstage}`);
+
+        if (!isSubstage) {
+            const option = document.createElement('option');
+            option.value = stageId;
+            option.textContent = stageName;
+            select.appendChild(option);
+            addedCount++;
+            console.log(`DOM: Added parent option: "${stageName}" (ID: ${stageId})`);
+        }
+    });
+
+    console.log(`DOM fallback: Populated ${addedCount} parent stage options`);
+}
+
+function saveNewStageWithParent() {
+    const stageName = document.getElementById('stageName').value.trim();
+    const parentStageSelect = document.getElementById('parentStageSelect');
+    const parentStageId = parentStageSelect ? parentStageSelect.value : '';
+    const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+
+    if (!stageName) {
+        alert('Please enter a stage name');
+        return;
+    }
+    if (!projectId) {
+        alert('Please select a project first');
+        return;
+    }
+
+    // Prepare the data object
+    const data = {
+        name: stageName,
+        status_id: 1
+    };
+
+    // Add parent_stage_id if a parent is selected
+    if (parentStageId && parentStageId.trim() !== '') {
+        data.parent_stage_id = parseInt(parentStageId);
+    }
+
+    fetch(`/projects/${projectId}/add_stage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const modal = bootstrap.Modal.getInstance(document.getElementById('newJobModal'));
+            modal.hide();
+            document.getElementById('stageName').value = '';
+            if (parentStageSelect) parentStageSelect.value = '';
+            window.location.reload();
+        } else {
+            alert('Failed to add stage: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error adding stage');
+    });
+}
+
+function addNewJob() {
+    // Show the modal first
+    const modal = new bootstrap.Modal(document.getElementById('newJobModal'));
+    modal.show();
+    // The populateParentStageOptions will be called by the modal's 'shown.bs.modal' event
+}
+</script>

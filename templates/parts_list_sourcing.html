@@ -1,0 +1,935 @@
+{% extends "base.html" %}
+
+{% block title %}Parts List Sourcing{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ────────────────────── Core Layout ────────────────────── */
+.sourcing-table {
+    font-size: .9rem;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+.sourcing-table th,
+.sourcing-table td {
+    vertical-align: middle;
+    padding: .75rem .6rem !important;
+    position: relative;
+    border-bottom: 1px solid #e0e0e0 !important;
+}
+
+/* Remove striped background */
+.sourcing-table tbody tr {
+    background: transparent !important;
+}
+
+/* Light green background for populated cells */
+.sourcing-table td.populated {
+    background-color: #f0fdf4 !important; /* very light green */
+    border-left: 3px solid #86efac !important;
+}
+
+/* Stronger row separation */
+.sourcing-table tbody tr.main-row {
+    border-bottom: 2px solid #e9ecef !important;
+}
+.sourcing-table tbody tr.main-row:hover {
+    background-color: #f8fff9 !important;
+}
+
+/* ────────────────────── Column Grouping ────────────────────── */
+.sourcing-table thead th:nth-child(3),
+.sourcing-table tbody td:nth-child(3) {
+    border-right: 3px double #ced4da !important;
+}
+
+/* Purchasing Section */
+.sourcing-table thead th:nth-child(4), .sourcing-table thead th:nth-child(5), .sourcing-table thead th:nth-child(6),
+.sourcing-table tbody td:nth-child(4), .sourcing-table tbody td:nth-child(5), .sourcing-table tbody td:nth-child(6) {
+    background-color: #f8fbff !important;
+    border-left: 1px solid #bcd8ff !important;
+    border-right: 1px solid #bcd8ff !important;
+}
+.sourcing-table thead th:nth-child(4) { border-left: 2px solid #0d6efd !important; }
+.sourcing-table thead th:nth-child(6) { border-right: 2px solid #0d6efd !important; }
+
+/* ILS Section */
+.sourcing-table thead th:nth-child(7),
+.sourcing-table tbody td:nth-child(7) {
+    background-color: #fff9f0 !important;
+    border-left: 2px solid #fd7e14 !important;
+    border-right: 2px solid #fd7e14 !important;
+    text-align: center;
+}
+
+/* Suggested Section */
+.sourcing-table thead th:nth-child(8),
+.sourcing-table tbody td:nth-child(8) {
+    background-color: #f0f8f4 !important;
+    border-left: 2px solid #198754 !important;
+    border-right: 2px solid #198754 !important;
+}
+
+/* Contact Section */
+.sourcing-table thead th:nth-child(9),
+.sourcing-table tbody td:nth-child(9) {
+    background-color: #faf5ff !important;
+    border-left: 2px solid #6f42c1 !important;
+    border-right: 2px solid #6f42c1 !important;
+}
+
+/* ────────────────────── Icon Buttons (No Text) ────────────────────── */
+.btn-icon {
+    padding: .25rem .35rem;
+    font-size: .75rem;
+    border-radius: .4rem;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.btn-icon i { margin: 0 !important; }
+.no-bid-supplier {
+    text-decoration: line-through;
+    color: #6c757d; /* muted */
+}
+
+/* Specific colors */
+.btn-use { background: #e3f2fd; border: 1px solid #90caf9; color: #1976d2; }
+.btn-add { background: #e8f5e9; border: 1px solid #a5d6a7; color: #2e7d32; }
+.btn-remove { background: #ffebee; border: 1px solid #ef9a9a; color: #c62828; }
+.btn-search { background: #fff3e0; border: 1px solid #ffcc80; color: #ef6c00; }
+
+/* ────────────────────── Expand Button ────────────────────── */
+.expand-btn {
+    font-size: .7rem;
+    color: #495057;
+    cursor: pointer;
+    transition: transform .2s;
+}
+.expand-btn.expanded { transform: rotate(90deg); }
+.expand-suggested-btn[aria-expanded="true"] .expand-btn {
+    transform: rotate(90deg);
+}
+.expand-contacted-btn[aria-expanded="true"] .expand-btn {
+    transform: rotate(90deg);
+}
+
+/* ────────────────────── Details Row ────────────────────── */
+.details-row { display: none; background: #f8f9fa !important; }
+.details-row.show { display: table-row; }
+.details-content { padding: 1rem; background: white; border: 1px solid #dee2e6; border-radius: .5rem; margin: .5rem; }
+
+/* ────────────────────── Badges & Text ────────────────────── */
+.badge-sm { font-size: .65rem; padding: .25em .4em; }
+.text-muted-sm { font-size: .75rem; color: #6c757d; }
+.text-date { font-size: .7rem; color: #6c757d; font-style: italic; }
+
+/* ────────────────────── Section Headers ────────────────────── */
+.section-header-col {
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: .75rem;
+    letter-spacing: .5px;
+    color: #495057;
+}
+.section-header-purchasing { background: #e7f1ff !important; color: #0d6efd !important; }
+.section-header-ils        { background: #fff3e6 !important; color: #fd7e14 !important; }
+.section-header-suggested { background: #d1f4e0 !important; color: #198754 !important; }
+.section-header-contact   { background: #f3e8ff !important; color: #6f42c1 !important; }
+
+/* ────────────────────── Responsive ────────────────────── */
+@media (max-width: 1200px) {
+    .sourcing-table { font-size: .8rem; }
+    .btn-icon { width: 24px; height: 24px; font-size: .65rem; }
+}
+
+/* Suggested ticker row */
+.suggested-details-row .suggested-ticker {
+    display: inline-flex;
+    flex-wrap: nowrap;
+    gap: .5rem;
+    overflow-x: auto;
+    white-space: nowrap;
+    padding: .25rem .5rem;
+}
+
+.suggested-details-row .suggested-ticker .badge {
+    font-size: .75rem;
+    padding: .35em .6em;
+}
+.parts-table tbody tr {
+    border-bottom: 1px solid #dee2e6;
+}
+.parts-table tbody td {
+    vertical-align: middle;
+    padding: 0.5rem;
+}
+
+/* ALTERNATIVE ROWS - Sky blue background */
+.parts-table tbody tr:has(.badge.bg-primary) {
+    background: #e0f2fe !important;
+    border-left: 4px solid #0ea5e9 !important;
+    height: 38px !important;
+}
+
+.parts-table tbody tr:has(.badge.bg-primary) td {
+    font-size: 0.82rem !important;
+    background: transparent !important; /* Override column colors for alt rows */
+}
+
+.parts-table tbody tr:has(.badge.bg-primary):hover {
+    background: #bae6fd !important;
+}
+
+.parts-table tbody tr:has(.badge.bg-primary):hover td {
+    background: transparent !important; /* Override column colors on hover for alt rows */
+}
+
+/* REGULAR ROWS - Purchasing columns background */
+.parts-table tbody tr:not(:has(.badge.bg-primary)) td.purchasing-col {
+    background: #f8fbff;
+}
+.parts-table tbody tr:not(:has(.badge.bg-primary)):hover td.purchasing-col {
+    background: #e7f1ff;
+}
+
+/* REGULAR ROWS - Sales columns background */
+.parts-table tbody tr:not(:has(.badge.bg-primary)) td.sales-col {
+    background: #f6fdf9;
+}
+.parts-table tbody tr:not(:has(.badge.bg-primary)):hover td.sales-col {
+    background: #d1f4e0;
+}
+
+/* "Not found" rows */
+.parts-table tbody tr:has(.text-danger) {
+    background: #fff3cd !important;
+}
+
+.parts-table tbody tr:has(.text-danger):hover {
+    background: #ffe69c !important;
+}
+.clickable-cell {
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.clickable-cell:hover {
+    opacity: 0.8;
+}
+
+.cost-badge small {
+    font-size: 0.7em;
+    opacity: 0.9;
+}
+
+.quick-no-bid-x {
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.quick-no-bid-x:hover {
+    opacity: 1;
+}
+
+.contacted-supplier-item {
+    position: relative;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+    <!-- Parts Workflow Navigation -->
+    <div class="card mb-4" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
+        <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
+                    <i class="bi bi-truck me-2" style="color:#0d6efd;"></i>
+                    Parts List: {{ list_name }}
+                    {% if customer_name %}
+                        <span class="text-muted" style="font-size:.9rem;">| {{ customer_name }}</span>
+                    {% endif %}
+                </h5>
+                <div class="btn-group" role="group">
+                    <a href="{{ url_for('parts_list.parts_list', list_id=list_id) }}"
+                       class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-house-door me-1"></i>Overview
+                    </a>
+                    <a href="{{ url_for('parts_list.parts_list_sourcing', list_id=list_id) }}"
+                       class="btn btn-sm btn-primary">
+                        <i class="bi bi-truck me-1"></i>Sourcing
+                    </a>
+                    <a href="{{ url_for('parts_list.parts_list_costing', list_id=list_id) }}"
+                       class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-calculator me-1"></i>Costing
+                    </a>
+
+                    <a href="/customer-quoting/parts-lists/{{ list_id }}/customer-quote-simple"
+                       class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-cash-stack me-1"></i>Quoting
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Filters -->
+    <div class="card mb-4 filter-section" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
+        <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
+            <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
+                <i class="bi bi-funnel me-2" style="color:#0d6efd;"></i>Filters
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="row align-items-center g-3">
+                <div class="col-md-3">
+                    <label class="form-label small mb-1 fw-semibold">Show Only:</label>
+                    <select id="filter-type" class="form-select form-select-sm">
+                        <option value="all">All Parts</option>
+                        <option value="no-source">No Source Data</option>
+                        <option value="has-vq">Has VQ Data</option>
+                        <option value="has-po">Has PO Data</option>
+                        <option value="has-stock">Has Stock</option>
+                        <option value="has-suggested">Has Suggested Suppliers</option>
+                        <option value="contacted">Already Contacted</option>
+                        <option value="not-contacted">Not Yet Contacted</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small mb-1 fw-semibold">Search Part Number:</label>
+                    <input type="text"
+                           id="search-part"
+                           class="form-control form-control-sm"
+                           placeholder="Type to search...">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Sourcing Table -->
+<div class="card" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
+    <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
+        <div class="d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
+                <i class="bi bi-table me-2" style="color:#0d6efd;"></i>Sourcing Details
+            </h5>
+
+           <div class="d-flex gap-2">
+    <!-- ILS Upload Button -->
+    <button type="button" class="btn btn-sm btn-info" id="ils-upload-btn-compact">
+        <i class="bi bi-cloud-upload me-1"></i>Upload ILS
+    </button>
+    <input type="file" id="ils-file-input-compact" accept=".csv" style="display: none;">
+
+    <button class="btn btn-sm btn-outline-danger" id="quick-no-bid-btn">
+        <i class="bi bi-slash-circle me-1"></i> Quick No Bid
+    </button>
+
+<!-- Email ILS Suppliers - shows if ILS data exists -->
+<button id="email-suppliers-btn" class="btn btn-sm btn-primary" style="display: none;">
+    <i class="bi bi-envelope-at me-1"></i>Email ILS Suppliers
+</button>
+
+<!-- Email Suggested Suppliers - shows if suggested suppliers exist -->
+<button id="email-suggested-suppliers-btn" class="btn btn-sm btn-success" style="display: none;">
+    <i class="bi bi-star me-1"></i>Email Suggested Suppliers
+</button>
+</div>
+        </div>
+    </div>
+    <div class="card-body" style="padding: 0;">
+
+            <div class="table-responsive">
+                <!-- ONE TABLE ONLY -->
+                <table class="table table-striped sourcing-table mb-0">
+                    <thead>
+    <tr>
+        <th style="width:40px;">#</th>
+        <th style="width:150px;">Part Number</th>
+        <th style="width:60px;">Qty</th>
+        <th style="width:180px;" class="section-header-col section-header-purchasing">Stock</th>
+        <th style="width:200px;" class="section-header-col section-header-purchasing">Recent PO</th>
+        <th style="width:200px;" class="section-header-col section-header-purchasing">Recent VQ</th>
+        <th style="width:100px;" class="section-header-col section-header-ils">ILS</th>
+        <th style="width:180px;" class="section-header-col section-header-suggested">Suggested</th>
+        <th style="width:180px;" class="section-header-col section-header-contact">Contacted</th>
+    </tr>
+</thead>
+                    <tbody>
+                        {% for line in lines %}
+                        <tr class="main-row {% if line.chosen_cost %}has-chosen-cost{% endif %}"
+                            data-line-id="{{ line.id }}"
+                            data-has-vq="{{ '1' if line.vq_data else '0' }}"
+                            data-has-po="{{ '1' if line.po_data else '0' }}"
+                            data-has-stock="{{ '1' if line.stock_data else '0' }}"
+                            data-has-suggested="{{ '1' if line.suggested_suppliers else '0' }}"
+                            data-contacted="{{ '1' if line.email_history else '0' }}"
+                            data-part-number="{{ line.customer_part_number }}">
+
+                            <td class="text-center"><strong>{{ line.line_number }}</strong></td>
+<td>
+    <strong class="text-primary">{{ line.customer_part_number }}</strong>
+    {% if line.chosen_cost %}
+        <br>
+        <span class="badge bg-success mt-1 cost-badge"
+              title="Chosen cost{% if line.chosen_supplier_name %} from {{ line.chosen_supplier_name }}{% endif %}">
+            {{ line.chosen_currency_code or 'GBP' }} {{ "%.2f"|format(line.chosen_cost) }}
+        </span>
+        {% if line.chosen_supplier_name %}
+            <br><small class="text-muted">{{ line.chosen_supplier_name }}</small>
+        {% endif %}
+    {% endif %}
+</td>
+                            <td class="text-center"><span class="badge bg-secondary">{{ line.quantity }}</span></td>
+
+                            <!-- STOCK -->
+                            <td class="{% if line.stock_data %}populated{% endif %}">
+    {% if line.stock_data %}
+        {% set s = line.stock_data[0] %}
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <strong>Qty: {{ s.available_quantity }}</strong><br>
+                <span style="color:#2e7d32;font-weight:600;">£{{ "%.2f"|format(s.cost_per_unit) }}</span><br>
+                <span class="text-date">{{ s.movement_date }}</span>
+            </div>
+            <button class="btn-icon btn-use use-stock-cost-btn"
+                    data-line-id="{{ line.id }}" data-cost="{{ s.cost_per_unit }}"
+                    title="Use Cost">
+                <i class="bi bi-check2"></i>
+            </button>
+        </div>
+        {% if line.stock_data|length > 1 %}
+        <button class="btn btn-link p-0 mt-1 expand-stock-btn" data-line-id="{{ line.id }}">
+            <i class="bi bi-chevron-right expand-btn"></i> +{{ line.stock_data|length - 1 }} more
+        </button>
+        {% endif %}
+    {% else %}
+        <em class="text-muted">No stock</em>
+    {% endif %}
+</td>
+
+                         <!-- PO -->
+<td class="populated">
+    {% if line.po_data %}
+        {% set p = line.po_data[0] %}
+        <div class="d-flex justify-content-between align-items-start">
+            <div style="flex:1;">
+                <strong>{{ p.supplier_name or 'Unknown' }}</strong><br>
+                {% if p.quantity %}
+                    <span class="text-muted-sm">Qty: {{ p.quantity }}</span><br>
+                {% endif %}
+                <span style="color:#1976d2;font-weight:600;">{{ p.currency_code }} {{ "%.2f"|format(p.price) }}</span><br>
+                <span class="text-date">{{ p.date_issued }}</span>
+            </div>
+            <div class="d-flex flex-column gap-1">
+
+<button class="btn-icon btn-use use-po-cost-btn"
+        data-line-id="{{ line.id }}"
+        data-cost="{{ p.price }}"
+        data-qty="{{ p.quantity }}"
+        data-supplier-id="{{ p.supplier_id }}"
+        data-supplier-name="{{ p.supplier_name }}"
+        data-currency-id="{{ p.currency_id }}"
+        data-currency-code="{{ p.currency_code }}"
+        data-source-type="po"
+        title="Use Cost">
+    <i class="bi bi-check2"></i>
+</button>
+
+                <button class="btn-icon btn-add add-supplier-btn"
+                        data-line-id="{{ line.id }}" data-supplier-id="{{ p.supplier_id }}" data-source="po"
+                        title="Add to Suggested">
+                    <i class="bi bi-plus"></i>
+                </button>
+            </div>
+        </div>
+        {% if line.po_data|length > 1 %}
+        <button class="btn btn-link p-0 mt-1 text-decoration-none expand-po-btn"
+                data-line-id="{{ line.id }}">
+            <i class="bi bi-chevron-right expand-btn"></i> +{{ line.po_data|length - 1 }} more
+        </button>
+        {% endif %}
+    {% else %}
+        <em class="text-muted">No POs</em>
+    {% endif %}
+</td>
+                            <!-- VQ -->
+                            <td class="{% if line.vq_data %}populated{% endif %}">
+    {% if line.vq_data %}
+        {% set v = line.vq_data[0] %}   {# the "most recent" quote #}
+
+        <div class="d-flex justify-content-between align-items-start">
+            <!-- ---------- LEFT: All quote details ---------- -->
+            <div style="flex:1;">
+                <!-- Supplier -->
+                <strong>{{ v.supplier_name or 'Unknown Supplier' }}</strong>
+
+                <!-- Contact name (if known) -->
+                <!-- Contact name (if known) -->
+{% if v.contact_name and v.contact_name != 'None' and v.contact_name|lower != 'none' %}
+    <br><span class="text-muted-sm">{{ v.contact_name }}</span>
+{% endif %}
+                <!-- Price -->
+                <br><span style="color:#1976d2;font-weight:600;">
+                    {{ v.currency_code|default('GBP') }}
+                    {{ "%.2f"|format(v.vendor_price) if v.vendor_price else '-' }}
+                </span>
+
+                <!-- Quantity quoted -->
+                {% if v.quantity_quoted %}
+                    <br><span class="text-muted-sm">Qty: {{ v.quantity_quoted }}</span>
+                {% endif %}
+
+                <!-- Lead days -->
+                {% if v.lead_days is not none %}
+                    <br><span class="text-muted-sm">Lead: {{ v.lead_days }} days</span>
+                {% endif %}
+
+                <!-- Entry date -->
+                <br><span class="text-date">{{ v.entry_date }}</span>
+
+                <!-- VQ reference (if any) -->
+                {% if v.vq_number %}
+                    <br><small class="text-muted-sm">VQ #{{ v.vq_number }}</small>
+                {% endif %}
+            </div>
+
+            <!-- ---------- RIGHT: Icon buttons (padded) ---------- -->
+            <div class="d-flex flex-column gap-2 align-self-start">
+
+                <!-- Main VQ cell button -->
+<button class="btn-icon btn-use use-vq-cost-btn"
+        data-line-id="{{ line.id }}"
+        data-cost="{{ v.vendor_price|default(0) }}"
+        data-qty="{{ v.quantity_quoted }}"
+        data-supplier-id="{{ v.supplier_id }}"
+        data-supplier-name="{{ v.supplier_name }}"
+        data-currency-id="{{ v.currency_id }}"
+        data-currency-code="{{ v.currency_code }}"
+        data-lead-days="{{ v.lead_days }}"
+        data-source-type="vq"
+        title="Use this cost">
+    <i class="bi bi-check2"></i>
+</button>
+
+                <!-- Add to Suggested (only when supplier is mapped) -->
+                {% if v.supplier_id %}
+                <button class="btn-icon btn-add add-supplier-btn"
+                        data-line-id="{{ line.id }}"
+                        data-supplier-id="{{ v.supplier_id }}"
+                        data-source="vq"
+                        title="Add to Suggested">
+                    <i class="bi bi-plus"></i>
+                </button>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- ---------- "+X more" expander ---------- -->
+        {% if line.vq_data|length > 1 %}
+        <button class="btn btn-link p-0 mt-2 text-decoration-none expand-vq-btn"
+                data-line-id="{{ line.id }}">
+            <i class="bi bi-chevron-right expand-btn"></i>
+            +{{ line.vq_data|length - 1 }} more
+        </button>
+        {% endif %}
+
+    {% else %}
+        <em class="text-muted">No VQs</em>
+    {% endif %}
+</td>
+
+                           <!-- ILS -->
+<!-- ILS -->
+<td class="text-center {% if line.ils_data|selectattr('supplier_id')|list %}populated{% endif %}">
+    <div class="d-flex flex-column align-items-center gap-1">
+
+        <!-- Search button – always visible -->
+        <button class="btn-icon btn-search search-ils-btn"
+                data-part="{{ line.customer_part_number }}"
+                data-line-id="{{ line.id }}"
+                title="Search ILS Marketplace">
+            <i class="bi bi-search"></i>
+        </button>
+
+        <!-- ONLY show the count of *mapped* suppliers -->
+        {% set mapped = line.ils_data|selectattr('supplier_id')|list|length %}
+        {% if mapped > 0 %}
+            <span class="badge bg-success text-white"
+                  style="font-size:.65rem;padding:.25em .5em;">
+                {{ mapped }}
+            </span>
+        {% endif %}
+    </div>
+</td>
+
+                            <!-- Suggested Column -->
+<td class="{% if line.suggested_suppliers %}populated{% endif %}">
+    {% if line.suggested_suppliers %}
+        <div class="suggested-wrapper">
+
+            {# --- Always-visible summary (first 2) --- #}
+            {% for sup in line.suggested_suppliers[:2] %}
+            <div class="d-flex justify-content-between align-items-center py-1 border-bottom">
+                <div>
+                    <strong>{{ sup.supplier_name }}</strong>
+                    {% if sup.contact_name %}
+                        <br><small class="text-muted-sm">{{ sup.contact_name }}</small>
+                    {% endif %}
+                </div>
+                <button class="btn-icon btn-remove remove-supplier-btn"
+                        data-suggested-id="{{ sup.id }}"
+                        data-line-id="{{ line.id }}"
+                        title="Remove">
+                    <i class="bi bi-x"></i>
+                </button>
+            </div>
+            {% endfor %}
+
+            {# --- Collapsible full list INSIDE THE CELL --- #}
+            {% if line.suggested_suppliers|length > 2 %}
+            <div class="collapse mt-2" id="suggested-full-{{ line.id }}">
+                {% for sup in line.suggested_suppliers[2:] %}
+                <div class="d-flex justify-content-between align-items-center py-1 border-bottom">
+                    <div>
+                        <strong>{{ sup.supplier_name }}</strong>
+                        {% if sup.contact_name %}
+                            <br><small class="text-muted-sm">{{ sup.contact_name }}</small>
+                        {% endif %}
+                    </div>
+                    <button class="btn-icon btn-remove remove-supplier-btn"
+                            data-suggested-id="{{ sup.id }}"
+                            data-line-id="{{ line.id }}"
+                            title="Remove">
+                        <i class="bi bi-x"></i>
+                    </button>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {# --- Bottom row: expander + add button --- #}
+            <div class="d-flex justify-content-between align-items-center mt-1">
+                <button class="btn btn-link p-0 text-decoration-none expand-suggested-btn"
+                        type="button"
+                        data-bs-toggle="collapse"
+                        data-bs-target="#suggested-full-{{ line.id }}"
+                        aria-expanded="false"
+                        aria-controls="suggested-full-{{ line.id }}">
+                    <i class="bi bi-chevron-right expand-btn"></i>
+                    {% if line.suggested_suppliers|length > 2 %}
+                        +{{ line.suggested_suppliers|length - 2 }} more
+                    {% else %}
+                        Show all
+                    {% endif %}
+                </button>
+
+                <button class="btn-icon btn-add add-manual-supplier-btn"
+                        data-line-id="{{ line.id }}"
+                        title="Add supplier manually">
+                    <i class="bi bi-plus-circle"></i>
+                </button>
+            </div>
+        </div>
+    {% else %}
+        <div class="d-flex justify-content-between align-items-center">
+            <em class="text-muted">No suggestions</em>
+            <button class="btn-icon btn-add add-manual-supplier-btn"
+                    data-line-id="{{ line.id }}"
+                    title="Add supplier manually">
+                <i class="bi bi-plus-circle"></i>
+            </button>
+        </div>
+    {% endif %}
+</td>
+
+
+                <!-- CORRECTED CONTACTED COLUMN - Replace the entire <td> for contacted column -->
+
+<td class="{% if line.email_history %}populated{% endif %}">
+    {% if line.email_history %}
+        <div class="contacted-wrapper">
+
+            {# --- Always-visible first 2 emails --- #}
+            {% for e in line.email_history[:2] %}
+            <div class="py-1 border-bottom contacted-supplier-item">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div style="flex: 1;">
+                        <strong class="{% if e.has_no_bid %}no-bid-supplier{% endif %}">
+                            {{ e.supplier_name }}
+                        </strong>
+
+                        {# Show quoted price if available #}
+                        {% if e.quoted_price and not e.has_no_bid %}
+                            <span class="badge bg-success ms-1" style="font-size: 0.7rem;">
+                                {{ e.currency_code or 'GBP' }} {{ "%.2f"|format(e.quoted_price) }}
+                            </span>
+                        {% endif %}
+
+                        {# Show NO BID badge #}
+                        {% if e.has_no_bid %}
+                            <span class="badge bg-danger ms-1" style="font-size: 0.7rem;">NO BID</span>
+                        {% endif %}
+
+                        <br><small class="text-muted-sm">{{ e.date_sent }}</small>
+                        {% if e.recipient_name %}
+                            <br><small class="text-muted-sm">{{ e.recipient_name }}</small>
+                        {% endif %}
+                    </div>
+
+                    {# Quick no-bid X button (only if not already no-bid) #}
+                    {% if not e.has_no_bid %}
+<button class="btn-icon btn-remove quick-no-bid-x"
+        data-supplier-id="{{ e.supplier_id }}"
+        data-line-id="{{ line.id }}"
+        data-supplier-name="{{ e.supplier_name }}"
+        title="Mark as No Bid">
+    <i class="bi bi-x"></i>
+</button>
+{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+
+            {# --- Collapsible extra emails INSIDE THE CELL --- #}
+            {% if line.email_history|length > 2 %}
+            <div class="collapse mt-1" id="contacted-full-{{ line.id }}">
+                {% for e in line.email_history[2:] %}
+                <div class="py-1 border-bottom contacted-supplier-item">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div style="flex: 1;">
+                            <strong class="{% if e.has_no_bid %}no-bid-supplier{% endif %}">
+                                {{ e.supplier_name }}
+                            </strong>
+
+                            {# Show quoted price if available #}
+                            {% if e.quoted_price and not e.has_no_bid %}
+                                <span class="badge bg-success ms-1" style="font-size: 0.7rem;">
+                                    {{ e.currency_code or 'GBP' }} {{ "%.2f"|format(e.quoted_price) }}
+                                </span>
+                            {% endif %}
+
+                            {# Show NO BID badge #}
+                            {% if e.has_no_bid %}
+                                <span class="badge bg-danger ms-1" style="font-size: 0.7rem;">NO BID</span>
+                            {% endif %}
+
+                            <br><small class="text-muted-sm">{{ e.date_sent }}</small>
+                            {% if e.recipient_name %}
+                                <br><small class="text-muted-sm">{{ e.recipient_name }}</small>
+                            {% endif %}
+                        </div>
+
+                        {# Quick no-bid X button (only if not already no-bid) #}
+                        {% if not e.has_no_bid %}
+<button class="btn-icon btn-remove quick-no-bid-x"
+        data-supplier-id="{{ e.supplier_id }}"
+        data-line-id="{{ line.id }}"
+        data-supplier-name="{{ e.supplier_name }}"
+        title="Mark as No Bid">
+    <i class="bi bi-x"></i>
+</button>
+{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <button class="btn btn-link p-0 mt-1 text-decoration-none expand-contacted-btn"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#contacted-full-{{ line.id }}"
+                    aria-expanded="false"
+                    aria-controls="contacted-full-{{ line.id }}">
+                <i class="bi bi-chevron-right expand-btn"></i>
+                +{{ line.email_history|length - 2 }} more
+            </button>
+            {% endif %}
+        </div>
+
+    {% else %}
+        <em class="text-muted">Not contacted</em>
+    {% endif %}
+</td>
+
+
+
+                        <!-- ==== DETAILS ROWS ==== -->
+                       {% if line.po_data|length > 1 %}
+<tr class="details-row po-details-{{ line.id }}">
+    <td colspan="10">
+        <div class="details-content">
+            <h6 class="mb-3">All Purchase Orders</h6>
+            <table class="table table-sm details-table">
+                <thead><tr><th>Supplier</th><th>Qty</th><th>Price</th><th>Date</th><th>PO Ref</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody>
+                    {% for p in line.po_data %}
+                    <tr>
+                        <td>{{ p.supplier_name or 'Unknown' }}</td>
+                        <td>{{ p.quantity or '-' }}</td>
+                        <td>{{ p.currency_code }} {{ "%.2f"|format(p.price) if p.price else '-' }}</td>
+                        <td>{{ p.date_issued }}</td>
+                        <td>{{ p.purchase_order_ref }}</td>
+                        <td>{{ p.status_name }}</td>
+                        <td>
+                            <button class="btn btn-xs btn-outline-success add-supplier-btn"
+                                    data-line-id="{{ line.id }}" data-supplier-id="{{ p.supplier_id }}" data-source="po">+</button>
+                            <button class="btn btn-xs btn-outline-primary use-po-cost-btn"
+        data-line-id="{{ line.id }}"
+        data-cost="{{ p.price }}"
+        data-qty="{{ p.quantity }}"
+        data-supplier-id="{{ p.supplier_id }}"
+        data-supplier-name="{{ p.supplier_name }}"
+        data-currency-id="{{ p.currency_id }}"
+        data-currency-code="{{ p.currency_code }}"
+        data-source-type="po">Use</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </td>
+</tr>
+{% endif %}
+
+                        {% if line.vq_data|length > 1 %}
+                        <tr class="details-row vq-details-{{ line.id }}">
+                            <td colspan="10">
+                                <div class="details-content">
+                                    <h6 class="mb-3">All Vendor Quotes</h6>
+                                    <table class="table table-sm details-table">
+                                        <thead><tr><th>Supplier</th><th>Price</th><th>Qty</th><th>Date</th><th>VQ Ref</th><th>Lead Days</th><th>Actions</th></tr></thead>
+                                        <tbody>
+                                            {% for v in line.vq_data %}
+                                            <tr>
+                                                <td>{{ v.supplier_name or 'Unknown' }}</td>
+                                                <td>{{ v.currency_code }} {{ "%.2f"|format(v.vendor_price) if v.vendor_price else '-' }}</td>
+                                                <td>{{ v.quantity_quoted }}</td>
+                                                <td>{{ v.entry_date }}</td>
+                                                <td>{{ v.vq_number }}</td>
+                                                <td>{{ v.lead_days or '-' }}</td>
+                                                <td>
+                                                    {% if v.supplier_id %}
+                                                    <button class="btn btn-xs btn-outline-success add-supplier-btn"
+                                                            data-line-id="{{ line.id }}" data-supplier-id="{{ v.supplier_id }}" data-source="vq">+</button>
+                                                    {% endif %}
+                                                    <button class="btn btn-xs btn-outline-primary use-vq-cost-btn"
+    data-line-id="{{ line.id }}"
+    data-cost="{{ v.vendor_price }}"
+    data-qty="{{ v.quantity_quoted }}"
+    data-supplier-id="{{ v.supplier_id }}"
+    data-supplier-name="{{ v.supplier_name }}"
+    data-currency-id="{{ v.currency_id }}"
+    data-currency-code="{{ v.currency_code }}"
+    data-lead-days="{{ v.lead_days }}"
+    data-source-type="vq">Use</button>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endif %}
+
+                        {% if line.stock_data|length > 1 %}
+                        <tr class="details-row stock-details-{{ line.id }}">
+                            <td colspan="10">
+                                <div class="details-content">
+                                    <h6 class="mb-3">All Stock</h6>
+                                    <table class="table table-sm details-table">
+                                        <thead><tr><th>Available Qty</th><th>Cost</th><th>Date</th><th>Datecode</th><th>Reference</th><th>Actions</th></tr></thead>
+                                        <tbody>
+                                            {% for s in line.stock_data %}
+                                            <tr>
+                                                <td>{{ s.available_quantity }}</td>
+                                                <td>£{{ "%.2f"|format(s.cost_per_unit) if s.cost_per_unit else '-' }}</td>
+                                                <td>{{ s.movement_date }}</td>
+                                                <td>{{ s.datecode or '-' }}</td>
+                                                <td>{{ s.reference or '-' }}</td>
+                                                <td>
+                                                    <button class="btn btn-xs btn-outline-primary use-stock-cost-btn"
+                                                            data-line-id="{{ line.id }}" data-cost="{{ s.cost_per_unit }}">Use</button>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endif %}
+
+
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ILS Modal -->
+<div class="modal fade ils-modal" id="ilsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl">   <!-- ← add modal-xl here -->
+    <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">ILS Marketplace Results</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="ils-results-container"><!-- JS fills this --></div>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="quickNoBidModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Quick No Bid</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="quick-no-bid-content">
+                    <div class="text-center py-3 text-muted">
+                        Loading…
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    window.PARTS_LIST_ID = {{ list_id }};
+    window.LINE_DATA     = {{ lines|tojson }};
+</script>
+<script src="{{ url_for('static', filename='js/ils_upload.js') }}"></script>
+<script src="{{ url_for('static', filename='js/parts_list_sourcing.js') }}"></script>
+<!-- Initialize ILS Upload -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Only initialize if ILSUpload module exists
+    if (window.ILSUpload) {
+        window.ILSUpload.init({
+            buttonId: 'ils-upload-btn-compact',
+            inputId: 'ils-file-input-compact',
+            showStats: false,
+            onSuccess: function(data) {
+                showToast('ILS data uploaded - ' + data.stats.total_records + ' records loaded', 'success');
+                setTimeout(() => window.location.reload(), 1500);
+            },
+            onError: function(error) {
+                showToast('Error uploading ILS file', 'error');
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

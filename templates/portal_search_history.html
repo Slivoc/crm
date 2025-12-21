@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Customer Portal Search History</h2>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="row mb-4">
+        {% for stat in stats %}
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h6 class="card-subtitle mb-2 text-muted">{{ stat.search_type.replace('_', ' ').title() }}</h6>
+                    <h3 class="card-title">{{ stat.search_count }}</h3>
+                    <p class="mb-0">
+                        <small>{{ stat.unique_customers }} customers</small><br>
+                        <small>{{ stat.total_parts }} parts total</small>
+                    </p>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Customer</label>
+                    <select name="customer_id" class="form-select">
+                        <option value="">All Customers</option>
+                        {% for customer in customers %}
+                        <option value="{{ customer.id }}" {% if filters.customer_id == customer.id %}selected{% endif %}>
+                            {{ customer.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-3">
+                    <label class="form-label">Search Type</label>
+                    <select name="search_type" class="form-select">
+                        <option value="">All Types</option>
+                        <option value="quote_analysis" {% if filters.search_type == 'quote_analysis' %}selected{% endif %}>Quote Analysis</option>
+                        <option value="common_parts" {% if filters.search_type == 'common_parts' %}selected{% endif %}>Common Parts</option>
+                        <option value="pricing_agreements" {% if filters.search_type == 'pricing_agreements' %}selected{% endif %}>Pricing Agreements</option>
+                        <option value="suggested_parts" {% if filters.search_type == 'suggested_parts' %}selected{% endif %}>Suggested Parts</option>
+                    </select>
+                </div>
+
+                <div class="col-md-2">
+                    <label class="form-label">Last N Days</label>
+                    <select name="days" class="form-select">
+                        <option value="7" {% if filters.days == 7 %}selected{% endif %}>7 days</option>
+                        <option value="30" {% if filters.days == 30 %}selected{% endif %}>30 days</option>
+                        <option value="90" {% if filters.days == 90 %}selected{% endif %}>90 days</option>
+                        <option value="365" {% if filters.days == 365 %}selected{% endif %}>1 year</option>
+                    </select>
+                </div>
+
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">Filter</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Most Searched Parts -->
+    {% if most_searched_parts %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">Most Searched Parts (Last {{ filters.days }} Days)</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                {% for part, count in most_searched_parts[:10] %}
+                <div class="col-md-6">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span><strong>{{ part }}</strong></span>
+                        <span class="badge bg-primary">{{ count }} searches</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Search History Table -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Recent Searches ({{ searches|length }} results)</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Date/Time</th>
+                            <th>Customer</th>
+                            <th>User</th>
+                            <th>Type</th>
+                            <th>Parts</th>
+                            <th>IP Address</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for search in searches %}
+                        <tr>
+                            <td>
+                                {{ search.date_searched[:16] }}
+                            </td>
+                            <td>
+                                <a href="{{ url_for('portal_admin.view_customer_portal_settings', customer_id=search.customer_id) }}">
+                                    {{ search.customer_name }}
+                                </a>
+                            </td>
+                            <td>
+                                {{ search.first_name }} {{ search.last_name }}<br>
+                                <small class="text-muted">{{ search.user_email }}</small>
+                            </td>
+                            <td>
+                                <span class="badge bg-info">
+                                    {{ search.search_type.replace('_', ' ').title() }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if search.parts_count %}
+                                <span class="badge bg-secondary">{{ search.parts_count }} parts</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <small class="text-muted">{{ search.ip_address or '-' }}</small>
+                            </td>
+                            <td>
+                                {% if search.parts_searched %}
+                                <a href="{{ url_for('portal_admin.view_search_details', search_id=search.id) }}" 
+                                   class="btn btn-sm btn-outline-primary">
+                                    View Details
+                                </a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Create Sales Order</h1>
+
+<form action="{{ url_for('sales_orders.create_sales_order') }}" method="POST">
+    <label for="customer_id">Customer:</label>
+    <select name="customer_id" id="customer_id">
+        {% for customer in customers %}
+        <option value="{{ customer.id }}">{{ customer.name }}</option>
+        {% endfor %}
+    </select>
+
+    <label for="customer_po_ref">Customer PO Reference:</label>
+    <input type="text" name="customer_po_ref" id="customer_po_ref">
+
+    <label for="salesperson_id">Salesperson:</label>
+    <input type="text" name="salesperson_id" id="salesperson_id">
+
+    <label for="contact_name">Contact Name:</label>
+    <input type="text" name="contact_name" id="contact_name">
+
+    <label for="incoterms">Incoterms:</label>
+    <input type="text" name="incoterms" id="incoterms">
+
+    <label for="payment_terms">Payment Terms:</label>
+    <input type="text" name="payment_terms" id="payment_terms">
+
+    <button type="submit" class="button">Create Order</button>
+</form>
+{% endblock %}

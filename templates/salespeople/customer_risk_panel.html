@@ -1,0 +1,388 @@
+<!--
+&lt;!&ndash; Customer Risk Analysis Panel - Replace the four monthly customer columns &ndash;&gt;
+<div class="row mb-4" id="customerRiskAnalysisSection">
+    &lt;!&ndash; Immediate Risk &ndash;&gt;
+    <div class="col-md-3 mb-4">
+        <div class="card border-0 shadow-sm h-100 border-start border-warning border-3">
+            <div class="card-header bg-white border-bottom-0">
+                <h6 class="card-title mb-0 text-dark fw-semibold">
+                    <i class="bi bi-exclamation-triangle text-warning me-2"></i>
+                    <span>Immediate Risk</span>
+                    <span class="badge bg-warning text-dark ms-2" id="immediateRiskCount">0</span>
+                </h6>
+                <small class="text-muted">Recently active but showing warning signs</small>
+            </div>
+            <div class="card-body p-0">
+                <div id="riskAnalysisImmediate">
+                    <div class="text-center py-4 text-muted">
+                        <div class="spinner-border spinner-border-sm me-2" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        Analyzing...
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer bg-light border-top-0 py-2">
+                <small class="text-muted">Past due on typical cycles</small>
+            </div>
+        </div>
+    </div>
+
+    &lt;!&ndash; Medium Risk &ndash;&gt;
+    <div class="col-md-3 mb-4">
+        <div class="card border-0 shadow-sm h-100 border-start border-info border-3">
+            <div class="card-header bg-white border-bottom-0">
+                <h6 class="card-title mb-0 text-dark fw-semibold">
+                    <i class="bi bi-graph-down text-info me-2"></i>
+                    <span>Medium Risk</span>
+                    <span class="badge bg-info text-white ms-2" id="mediumRiskCount">0</span>
+                </h6>
+                <small class="text-muted">Declining patterns over recent months</small>
+            </div>
+            <div class="card-body p-0">
+                <div id="riskAnalysisMedium">
+                    <div class="text-center py-4 text-muted">
+                        <div class="spinner-border spinner-border-sm me-2" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        Analyzing...
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer bg-light border-top-0 py-2">
+                <small class="text-muted">45-90 days of concern</small>
+            </div>
+        </div>
+    </div>
+
+    &lt;!&ndash; High Risk &ndash;&gt;
+    <div class="col-md-3 mb-4">
+        <div class="card border-0 shadow-sm h-100 border-start border-danger border-3">
+            <div class="card-header bg-white border-bottom-0">
+                <h6 class="card-title mb-0 text-dark fw-semibold">
+                    <i class="bi bi-person-x text-danger me-2"></i>
+                    <span>High Risk</span>
+                    <span class="badge bg-danger text-white ms-2" id="highRiskCount">0</span>
+                </h6>
+                <small class="text-muted">Valuable customers gone silent</small>
+            </div>
+            <div class="card-body p-0">
+                <div id="riskAnalysisHigh">
+                    <div class="text-center py-4 text-muted">
+                        <div class="spinner-border spinner-border-sm me-2" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        Analyzing...
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer bg-light border-top-0 py-2">
+                <small class="text-muted">90+ days inactive</small>
+            </div>
+        </div>
+    </div>
+
+    &lt;!&ndash; Recovering &ndash;&gt;
+    <div class="col-md-3 mb-4">
+        <div class="card border-0 shadow-sm h-100 border-start border-success border-3">
+            <div class="card-header bg-white border-bottom-0">
+                <h6 class="card-title mb-0 text-dark fw-semibold">
+                    <i class="bi bi-graph-up text-success me-2"></i>
+                    <span>Recovering</span>
+                    <span class="badge bg-success text-white ms-2" id="recoveringCount">0</span>
+                </h6>
+                <small class="text-muted">Showing positive trends</small>
+            </div>
+            <div class="card-body p-0">
+                <div id="riskAnalysisRecovering">
+                    <div class="text-center py-4 text-muted">
+                        <div class="spinner-border spinner-border-sm me-2" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        Analyzing...
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer bg-light border-top-0 py-2">
+                <small class="text-muted">Increasing activity</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+&lt;!&ndash; Customer Risk Details Modal &ndash;&gt;
+<div class="modal fade" id="riskCustomerDetailsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="riskCustomerDetailsModalLabel">Customer Risk Analysis</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="riskCustomerDetailsContent">
+                <div class="text-center">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Risk Analysis Specific Styles */
+.risk-customer-item {
+    padding: 10px 16px;
+    border-bottom: 1px solid #f8f9fa;
+    transition: background-color 0.15s ease;
+    cursor: pointer;
+}
+
+.risk-customer-item:last-child {
+    border-bottom: none;
+}
+
+.risk-customer-item:hover {
+    background-color: #f8f9fa;
+}
+
+.risk-customer-name {
+    font-weight: 500;
+    color: #212529;
+    text-decoration: none;
+    margin-bottom: 2px;
+}
+
+.risk-customer-name:hover {
+    color: #0d6efd;
+    text-decoration: none;
+}
+
+.risk-customer-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #495057;
+}
+
+.risk-score-badge {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 10px;
+}
+
+.risk-factor-tag {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    margin: 1px;
+    border-radius: 8px;
+    display: inline-block;
+    background-color: #f8f9fa;
+    color: #6c757d;
+    border: 1px solid #e9ecef;
+}
+
+.risk-days-overdue {
+    font-size: 0.8rem;
+    color: #dc3545;
+    font-weight: 500;
+}
+
+.risk-last-order {
+    font-size: 0.75rem;
+    color: #6c757d;
+}
+
+.risk-empty-state {
+    padding: 2rem 1rem;
+    text-align: center;
+    color: #6c757d;
+}
+
+.risk-empty-state i {
+    font-size: 2rem;
+    color: #dee2e6;
+    margin-bottom: 0.5rem;
+}
+
+/* Risk level specific styling */
+.risk-immediate .risk-score-badge {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+.risk-medium .risk-score-badge {
+    background-color: #d1ecf1;
+    color: #0c5460;
+    border: 1px solid #b8daff;
+}
+
+.risk-high .risk-score-badge {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.risk-recovering .risk-score-badge {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.view-all-risk-btn {
+    font-size: 0.8rem;
+    padding: 0.25rem 0.5rem;
+}
+</style>
+
+<script>
+// Customer Risk Analysis JavaScript Functions
+function initializeCustomerRiskAnalysis() {
+    console.log('Initializing customer risk analysis...');
+    fetchCustomerRiskData();
+}
+
+function fetchCustomerRiskData() {
+    // Get the salesperson ID from the URL
+    const urlParts = window.location.pathname.split('/');
+    const salespersonId = urlParts[urlParts.indexOf('salespeople') + 1];
+
+    console.log(`Fetching risk data for salesperson ${salespersonId}`);
+
+    fetch(`/salespeople/${salespersonId}/customer_risk_analysis`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('Received risk analysis data:', data);
+            displayRiskAnalysis(data);
+        })
+        .catch(error => {
+            console.error('Error fetching risk analysis:', error);
+            showRiskAnalysisError();
+        });
+}
+
+function displayRiskAnalysis(data) {
+    // Update counts in badges
+    document.getElementById('immediateRiskCount').textContent = data.immediate_risk.length;
+    document.getElementById('mediumRiskCount').textContent = data.medium_risk.length;
+    document.getElementById('highRiskCount').textContent = data.high_risk.length;
+    document.getElementById('recoveringCount').textContent = data.recovering.length;
+
+    // Display each risk category
+    displayRiskCategory('riskAnalysisImmediate', data.immediate_risk, 'immediate', 'No customers need immediate attention');
+    displayRiskCategory('riskAnalysisMedium', data.medium_risk, 'medium', 'No customers at medium risk');
+    displayRiskCategory('riskAnalysisHigh', data.high_risk, 'high', 'No high-risk customers');
+    displayRiskCategory('riskAnalysisRecovering', data.recovering, 'recovering', 'No recovering customers');
+}
+
+function displayRiskCategory(containerId, customers, riskLevel, emptyMessage) {
+    const container = document.getElementById(containerId);
+
+    if (!customers || customers.length === 0) {
+        container.innerHTML = `
+            <div class="risk-empty-state">
+                <i class="bi bi-check-circle"></i>
+                <p class="mb-0">${emptyMessage}</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Show top 4 customers for each category
+    const displayCustomers = customers.slice(0, 4);
+    let html = '';
+
+    displayCustomers.forEach(customer => {
+        const formattedValue = `£${customer.total_lifetime_value.toLocaleString('en-US', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0
+        })}`;
+
+        // Format last order date
+        const lastOrderDate = customer.last_order_date ?
+            new Date(customer.last_order_date).toLocaleDateString('en-GB', {
+                day: 'numeric',
+                month: 'short'
+            }) : 'Unknown';
+
+        // Create risk factors display (show first 2 factors)
+        const riskFactorsHtml = customer.risk_factors.slice(0, 2).map(factor =>
+            `<span class="risk-factor-tag">${factor}</span>`
+        ).join('');
+
+        // Days overdue indicator
+        const daysOverdueHtml = customer.days_since_last_order > 0 ?
+            `<div class="risk-days-overdue">${customer.days_since_last_order} days since last order</div>` : '';
+
+        html += `
+            <div class="risk-customer-item risk-${riskLevel}" onclick="showRiskCustomerDetails('${customer.customer_id}', '${riskLevel}')">
+                <div class="d-flex justify-content-between align-items-start mb-1">
+                    <span class="risk-customer-name">${customer.customer_name}</span>
+                    <span class="risk-score-badge">${Math.round(customer.risk_score)}</span>
+                </div>
+                <div class="risk-customer-value mb-1">${formattedValue}</div>
+                ${daysOverdueHtml}
+                <div class="risk-last-order mb-2">Last order: ${lastOrderDate}</div>
+                <div class="risk-factors">
+                    ${riskFactorsHtml}
+                </div>
+            </div>
+        `;
+    });
+
+    // Add "View All" button if there are more customers
+    if (customers.length > 4) {
+        html += `
+            <div class="text-center p-2 border-top">
+                <button class="btn btn-sm btn-outline-primary view-all-risk-btn" onclick="showAllRiskCustomers('${riskLevel}')">
+                    View All ${customers.length} Customers
+                </button>
+            </div>
+        `;
+    }
+
+    container.innerHTML = html;
+}
+
+function showRiskAnalysisError() {
+    const containers = ['riskAnalysisImmediate', 'riskAnalysisMedium', 'riskAnalysisHigh', 'riskAnalysisRecovering'];
+
+    containers.forEach(containerId => {
+        document.getElementById(containerId).innerHTML = `
+            <div class="risk-empty-state text-danger">
+                <i class="bi bi-exclamation-triangle"></i>
+                <p class="mb-0">Error loading risk data</p>
+            </div>
+        `;
+    });
+}
+
+function showRiskCustomerDetails(customerId, riskLevel) {
+    // This will reuse your existing customer details modal functionality
+    // but could be enhanced to show risk-specific information
+    if (typeof showCustomerDetails === 'function') {
+        showCustomerDetails(customerId);
+    } else {
+        console.log(`Show details for customer ${customerId} (${riskLevel} risk)`);
+    }
+}
+
+function showAllRiskCustomers(riskLevel) {
+    // Future enhancement: could open a dedicated modal showing all customers in this risk category
+    console.log(`Show all customers in ${riskLevel} risk category`);
+    // For now, could just alert or scroll to a detailed section
+    alert(`Feature coming soon: View all ${riskLevel} risk customers`);
+}
+
+// Auto-initialize when this script loads
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeCustomerRiskAnalysis);
+} else {
+    initializeCustomerRiskAnalysis();
+}
+</script>-->

@@ -1,0 +1,436 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Part Details</h5>
+                </div>
+                <div class="card-body">
+                    <dl class="row">
+                        <dt class="col-sm-4">Base Part Number:</dt>
+                        <dd class="col-sm-8">{{ part.base_part_number }}</dd>
+                        
+                        <dt class="col-sm-4">Readable Part Number:</dt>
+                        <dd class="col-sm-8">{{ part.part_number }}</dd>
+                        
+                        <dt class="col-sm-4">System Part Number:</dt>
+                        <dd class="col-sm-8">{{ part.system_part_number or 'N/A' }}</dd>
+                        
+                        <dt class="col-sm-4">Current Stock:</dt>
+                        <dd class="col-sm-8" id="current-stock">{{ chart_data.current_stock }}</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Timeline Settings</h5>
+                </div>
+                <div class="card-body">
+                    <form method="GET" action="{{ url_for('parts.part_timeline', base_part_number=part.base_part_number) }}" class="row g-3">
+                        <div class="col-md-5">
+                            <label for="start_date" class="form-label">Start Date:</label>
+                            <input type="date" class="form-control" id="start_date" name="start_date" value="{{ start_date }}">
+                        </div>
+                        <div class="col-md-5">
+                            <label for="end_date" class="form-label">End Date:</label>
+                            <input type="date" class="form-control" id="end_date" name="end_date" value="{{ end_date }}">
+                        </div>
+                        <div class="col-md-2 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary w-100">Update</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stock Level Chart -->
+    <div class="card mb-4">
+        <div class="card-header bg-light">
+            <h5 class="mb-0">Projected Stock Levels</h5>
+        </div>
+<div class="card-body">
+    <div class="p-3" style="height: 300px; width: 100%;">
+        <canvas id="stockChart"></canvas>
+    </div>
+</div>
+<div class="chart-legend">
+    <div class="legend-item">
+        <div class="legend-color incoming"></div>
+        <span>Purchase Order</span>
+    </div>
+    <div class="legend-item">
+        <div class="legend-color outgoing"></div>
+        <span>Sales Order</span>
+    </div>
+
+</div>
+<!-- Replace the current timeline events table with this updated version -->
+<div class="card">
+    <div class="card-header bg-light">
+        <h5 class="mb-0">Timeline Events</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-bordered table-hover timeline-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Event Type</th>
+                        <th>Order Number</th>
+                        <th>Line</th>
+                        <th>Customer/Supplier</th>
+                        <th>Quantity</th>
+                        <th>Projected Stock</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set stock_level = chart_data.current_stock %}
+                    {% for event in chart_data.events %}
+                        {% if event.event_type == 'incoming' %}
+                            {% set stock_level = stock_level + event.incoming_quantity %}
+                            <tr class="timeline-event-incoming">
+                                <td>{{ event.event_date }}</td>
+                                <td><span class="badge badge-incoming">Incoming (PO)</span></td>
+                                <td>
+                                    <a href="{{ url_for('purchase_orders.edit_purchase_order', purchase_order_id=event.purchase_order_id) }}" class="text-success">
+                                        {{ event.purchase_order_ref }}
+                                    </a>
+                                </td>
+                                <td>{{ event.line_number }}</td>
+                                <td>{{ event.supplier_name }}</td>
+                                <td class="text-success">+{{ event.quantity }}</td>
+                                <td>{{ stock_level }}</td>
+                            </tr>
+                        {% else %}
+                            {% set stock_level = stock_level - event.outgoing_quantity %}
+                            <tr class="timeline-event-outgoing">
+                                <td>{{ event.event_date }}</td>
+                                <td><span class="badge badge-outgoing">Outgoing (SO)</span></td>
+                                <td>
+                                    <a href="{{ url_for('sales_orders.edit_sales_order', sales_order_id=event.sales_order_id) }}" class="text-success">
+                                        {{ event.sales_order_ref }}
+                                    </a>
+                                </td>
+                                <td>{{ event.line_number }}</td>
+                                <td>{{ event.customer_name }}</td>
+                                <td class="text-success">-{{ event.quantity }}</td>
+                                <td>{{ stock_level }}</td>
+                            </tr>
+                        {% endif %}
+                    {% else %}
+                        <tr>
+                            <td colspan="7" class="text-center">No events found in the selected date range.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.1.0/dist/chartjs-plugin-annotation.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Chart.js setup for stock projection
+    const ctx = document.getElementById('stockChart').getContext('2d');
+
+    // Chart data
+    const labels = {{ chart_data.labels|tojson }};
+    const stockLevels = {{ chart_data.projected_stock|tojson }};
+    const currentStock = {{ chart_data.current_stock }};
+
+    // Extract order events from the chart_data
+    const salesOrders = {{ chart_data.events|selectattr('event_type', 'equalto', 'outgoing')|list|tojson }};
+    const purchaseOrders = {{ chart_data.events|selectattr('event_type', 'equalto', 'incoming')|list|tojson }};
+
+    // Create arrays for sales order and purchase order annotations
+    const annotations = [];
+
+    // Function to find date index in labels array
+    function findDateIndex(dateStr) {
+        return labels.indexOf(dateStr);
+    }
+
+    // Add sales order annotations (outgoing) - using red for outgoing
+    salesOrders.forEach(so => {
+        const index = findDateIndex(so.event_date);
+        if (index !== -1) {
+            annotations.push({
+                type: 'point',
+                xValue: index,
+                yValue: stockLevels[index],
+                backgroundColor: 'rgba(220, 53, 69, 1)',  // Bootstrap danger color
+                borderColor: 'white',
+                borderWidth: 2,
+                radius: 6,
+                hoverRadius: 8,
+            });
+
+            // Add vertical line to mark the event
+            annotations.push({
+                type: 'line',
+                mode: 'vertical',
+                scaleID: 'x',
+                value: index,
+                borderColor: 'rgba(220, 53, 69, 0.7)',
+                borderWidth: 2,
+                borderDash: [5, 5],
+                label: {
+                    content: `SO: ${so.sales_order_ref} (-${so.quantity})`,
+                    enabled: true,
+                    position: 'bottom',
+                    backgroundColor: 'rgba(220, 53, 69, 0.9)',
+                    color: '#fff',
+                    font: {
+                        size: 10
+                    },
+                    yAdjust: 10
+                }
+            });
+        }
+    });
+
+    // Add purchase order annotations (incoming) - using green for incoming
+    purchaseOrders.forEach(po => {
+        const index = findDateIndex(po.event_date);
+        if (index !== -1) {
+            annotations.push({
+                type: 'point',
+                xValue: index,
+                yValue: stockLevels[index],
+                backgroundColor: 'rgba(40, 167, 69, 1)',  // Bootstrap success color
+                borderColor: 'white',
+                borderWidth: 2,
+                radius: 6,
+                hoverRadius: 8,
+            });
+
+            // Add vertical line to mark the event
+            annotations.push({
+                type: 'line',
+                mode: 'vertical',
+                scaleID: 'x',
+                value: index,
+                borderColor: 'rgba(40, 167, 69, 0.7)',
+                borderWidth: 2,
+                borderDash: [5, 5],
+                label: {
+                    content: `PO: ${po.purchase_order_ref} (+${po.quantity})`,
+                    enabled: true,
+                    position: 'top',
+                    backgroundColor: 'rgba(40, 167, 69, 0.9)',
+                    color: '#fff',
+                    font: {
+                        size: 10
+                    },
+                    yAdjust: -10
+                }
+            });
+        }
+    });
+
+    // Create gradient for the chart
+    const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+    gradient.addColorStop(0, 'rgba(23, 162, 184, 0.6)');  // Bootstrap info color
+    gradient.addColorStop(1, 'rgba(23, 162, 184, 0.1)');
+
+    // Create the chart
+    const stockChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Projected Stock',
+                    data: stockLevels,
+                    borderColor: 'rgba(23, 162, 184, 1)',
+                    backgroundColor: gradient,
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0,  // Hide regular points
+                    pointHoverRadius: 6,
+                    stepped: false   // Use smooth transitions instead of steps
+                },
+                {
+                    label: 'Current Stock',
+                    data: Array(labels.length).fill(currentStock),
+                    borderColor: 'rgba(153, 153, 153, 0.7)',
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    fill: false,
+                    pointRadius: 0
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        afterTitle: function(tooltipItems) {
+                            // Check if any orders exist on this date
+                            const date = labels[tooltipItems[0].dataIndex];
+                            const soOnDate = salesOrders.filter(so => so.event_date === date);
+                            const poOnDate = purchaseOrders.filter(po => po.event_date === date);
+
+                            let result = '';
+                            if (soOnDate.length > 0 || poOnDate.length > 0) {
+                                result += '\nOrders on this date:';
+                            }
+                            return result;
+                        },
+                        afterBody: function(tooltipItems) {
+                            const date = labels[tooltipItems[0].dataIndex];
+                            const soOnDate = salesOrders.filter(so => so.event_date === date);
+                            const poOnDate = purchaseOrders.filter(po => po.event_date === date);
+
+                            let result = [];
+
+                            soOnDate.forEach(so => {
+                                result.push(`SO: ${so.sales_order_ref} (${so.customer_name}): -${so.quantity}`);
+                            });
+
+                            poOnDate.forEach(po => {
+                                result.push(`PO: ${po.purchase_order_ref} (${po.supplier_name}): +${po.quantity}`);
+                            });
+
+                            return result;
+                        }
+                    }
+                },
+                legend: {
+                    position: 'top',
+                },
+                title: {
+                    display: true,
+                    text: 'Projected Stock Levels with Purchase & Sales Orders'
+                },
+                annotation: {
+                    annotations: annotations
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Quantity'
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Date'
+                    }
+                }
+            }
+        }
+    });
+});
+</script>
+    <style>/* Add this CSS to your stylesheet or include it in a <style> tag in your template */
+
+/* Table header styling */
+.timeline-table thead {
+    background-color: #28a745;  /* Bootstrap success color */
+    color: white;
+}
+
+/* Incoming (PO) event styling */
+.timeline-event-incoming {
+    background-color: rgba(40, 167, 69, 0.2);  /* Light green background */
+}
+
+.timeline-event-incoming td:first-child {
+    border-left: 4px solid #28a745;
+}
+
+/* Outgoing (SO) event styling */
+.timeline-event-outgoing {
+    background-color: rgba(40, 167, 69, 0.1);  /* Very light green background */
+}
+
+.timeline-event-outgoing td:first-child {
+    border-left: 2px solid #28a745;
+}
+
+/* Badge styling for event types */
+.badge-incoming {
+    background-color: #28a745;
+}
+
+.badge-outgoing {
+    background-color: #28a745;
+    opacity: 0.8;
+}
+
+/* Hover effect for rows */
+.timeline-table tbody tr:hover {
+    background-color: rgba(40, 167, 69, 0.3);
+}
+/* Add this to your existing CSS to enhance the chart visualization */
+.chart-container {
+    position: relative;
+    height: 400px;
+    width: 100%;
+    padding: 20px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+}
+
+.chart-legend {
+    display: flex;
+    justify-content: center;
+    margin-top: 10px;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    margin: 0 10px;
+}
+
+.legend-color {
+    width: 12px;
+    height: 12px;
+    margin-right: 5px;
+    border-radius: 50%;
+}
+
+.legend-color.incoming {
+    background-color: rgba(40, 167, 69, 1);
+}
+
+.legend-color.outgoing {
+    background-color: rgba(220, 53, 69, 1);
+}
+
+.legend-color.current {
+    background-color: rgba(153, 153, 153, 1);
+    height: 2px;
+    width: 20px;
+    border-radius: 0;
+}
+
+/* Add animation for the chart points */
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(1); }
+}
+
+.highlight-point {
+    animation: pulse 1.5s infinite;
+}
+    </style>
+{% endblock %}

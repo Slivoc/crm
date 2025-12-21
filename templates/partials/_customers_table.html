@@ -1,0 +1,68 @@
+<table class="table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Estimated Revenue</th>
+            <th>Latest Activity</th>
+            <th>Latest Comment</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for customer in customers %}
+        <tr>
+            <td><a href="{{ url_for('customers.edit_customer', customer_id=customer['id']) }}" target="_blank" class="fw-bold text-dark text-decoration-none">{{ customer['name'] }}</a></td>
+            <td>
+                <span class="badge rounded-pill cursor-pointer
+                    {% if customer['status_id'] == 1 %}bg-danger{% endif %}
+                    {% if customer['status_id'] == 2 %}bg-warning{% endif %}
+                    {% if customer['status_id'] == 3 %}bg-info{% endif %}
+                    {% if customer['status_id'] == 4 %}bg-success{% endif %}"
+                    onclick="bumpCustomerStatus({{ customer['id'] }}, this)"
+                    style="cursor: pointer;"
+                    data-status-id="{{ customer['status_id'] }}">
+                    {{ get_status_name(customer['status_id']) }}
+                </span>
+            </td>
+            <td>${{ "{:,}".format(customer['estimated_revenue']|default(0)|int) }}</td>
+            <td>
+                {% if customer['latest_activity'] %}
+                    <div class="d-flex align-items-center">
+                        <i class="bi {% if customer['activity_type'] == 'email' %}bi-envelope
+                                  {% elif customer['activity_type'] == 'rfq' %}bi-file-text
+                                  {% elif customer['activity_type'] == 'order' %}bi-bag
+                                  {% else %}bi-clock{% endif %} me-2"></i>
+                        <small class="text-muted">{{ customer['latest_activity'].split('T')[0] }}</small>
+                    </div>
+                {% else %}
+                    <span class="text-muted">No activity</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if customer['update_text'] %}
+                    <div class="d-flex align-items-center">
+                        <div class="text-muted small">
+                            <div>{{ customer['update_text']|truncate(100) }}</div>
+                            <div class="mt-1">
+                                <small>
+                                    <i class="bi bi-person"></i> {{ customer['update_salesperson_name'] }} -
+                                    {{ customer['update_date'].split('T')[0] }}
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                {% else %}
+                    <span class="text-muted">No comments</span>
+                {% endif %}
+            </td>
+            <td>
+                <button type="button" class="btn btn-info btn-sm"
+                        onclick="customerPreview.show({{ customer['id'] }})">
+                    <i class="bi bi-info-circle"></i> Info
+                </button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>

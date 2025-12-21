@@ -1,0 +1,1071 @@
+{% extends 'base.html' %}
+
+{% block title %}Purchase Order Mapping{% endblock %}
+
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+<style>
+    .hot-container {
+        height: 400px;
+        overflow: hidden;
+        margin-bottom: 20px;
+    }
+    .field-mapping {
+        margin-bottom: 15px;
+    }
+    .mapping-label {
+        font-weight: bold;
+    }
+    .required-field::after {
+        content: " *";
+        color: red;
+    }
+    .results-panel {
+        display: none;
+        margin-top: 20px;
+    }
+    .nav-tabs {
+        margin-bottom: 15px;
+    }
+    .skipped-details {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12 mb-3">
+            <h2>Purchase Order Import Mapping</h2>
+            <p class="text-muted">Map your spreadsheet columns to purchase order fields</p>
+        </div>
+    </div>
+
+    <!-- Top section with data preview and mapping -->
+    <div class="row mb-4">
+        <!-- File preview -->
+        <div class="col-md-7">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">File Preview</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div id="hot-container" class="hot-container"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mapping controls -->
+        <div class="col-md-5">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Column Mapping</h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-group mb-3">
+                        <label for="saved-mappings">Load Saved Mapping</label>
+                        <select class="form-select" id="saved-mappings">
+                            <option value="">-- Select a mapping --</option>
+                            {% for mapping in saved_mappings %}
+                            <option value="{{ mapping.id }}">{{ mapping.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <hr>
+
+                    <ul class="nav nav-tabs" id="mapping-tabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="po-tab" data-bs-toggle="tab" data-bs-target="#po-fields" type="button" role="tab">PO Header</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="lines-tab" data-bs-toggle="tab" data-bs-target="#line-fields" type="button" role="tab">PO Lines</button>
+                        </li>
+                    </ul>
+
+                    <div class="tab-content" id="mapping-content">
+                        <div class="tab-pane fade show active" id="po-fields" role="tabpanel">
+                            <div class="field-mapping">
+                                <label for="field-po-number" class="mapping-label required-field">PO Reference</label>
+                                <select class="form-select field-select" id="field-po-number" data-field="purchase_orders.purchase_order_ref">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-supplier-code" class="mapping-label required-field">Supplier Code (Fornitore)</label>
+                                <select class="form-select field-select" id="field-supplier-code" data-field="suppliers.fornitore">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <!-- NEW: Supplier Name field -->
+                            <div class="field-mapping">
+                                <label for="field-supplier-name" class="mapping-label">Supplier Name</label>
+                                <select class="form-select field-select" id="field-supplier-name" data-field="suppliers.name">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-date-issued" class="mapping-label required-field">Date Issued</label>
+                                <select class="form-select field-select" id="field-date-issued" data-field="purchase_orders.date_issued">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-purchase-status" class="mapping-label">Purchase Status</label>
+                                <select class="form-select field-select" id="field-purchase-status" data-field="purchase_orders.purchase_status_id">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-currency" class="mapping-label required-field">Currency</label>
+                                <select class="form-select field-select" id="field-currency" data-field="purchase_orders.currency_id">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-incoterms" class="mapping-label">Incoterms</label>
+                                <select class="form-select field-select" id="field-incoterms" data-field="purchase_orders.incoterms">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-payment-terms" class="mapping-label">Payment Terms</label>
+                                <select class="form-select field-select" id="field-payment-terms" data-field="purchase_orders.payment_terms">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-delivery-address" class="mapping-label">Delivery Address ID</label>
+                                <select class="form-select field-select" id="field-delivery-address" data-field="purchase_orders.delivery_address_id">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-billing-address" class="mapping-label">Billing Address ID</label>
+                                <select class="form-select field-select" id="field-billing-address" data-field="purchase_orders.billing_address_id">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-total-value" class="mapping-label">Total Value</label>
+                                <select class="form-select field-select" id="field-total-value" data-field="purchase_orders.total_value">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="tab-pane fade" id="line-fields" role="tabpanel">
+                            <div class="field-mapping">
+                                <label for="field-line-number" class="mapping-label required-field">Line Number</label>
+                                <select class="form-select field-select" id="field-line-number" data-field="purchase_order_lines.line_number">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-system-part-number" class="mapping-label required-field">System Part Number</label>
+                                <select class="form-select field-select" id="field-system-part-number" data-field="part_numbers.system_part_number">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-quantity" class="mapping-label required-field">Quantity</label>
+                                <select class="form-select field-select" id="field-quantity" data-field="purchase_order_lines.quantity">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <!-- Add this field to the line fields section in purchase_order_mapping.html -->
+
+<div class="field-mapping">
+    <label for="field-received-quantity" class="mapping-label">Received Quantity</label>
+    <select class="form-select field-select" id="field-received-quantity" data-field="purchase_order_lines.received_quantity">
+        <option value="">-- Select Column --</option>
+        {% for col in columns %}
+        <option value="{{ loop.index0 }}">{{ col }}</option>
+        {% endfor %}
+    </select>
+</div>
+
+                            <div class="field-mapping">
+                                <label for="field-price" class="mapping-label required-field">Price</label>
+                                <select class="form-select field-select" id="field-price" data-field="purchase_order_lines.price">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-status" class="mapping-label">Status ID</label>
+                                <select class="form-select field-select" id="field-status" data-field="purchase_order_lines.status_id">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-ship-date" class="mapping-label">Ship Date</label>
+                                <select class="form-select field-select" id="field-ship-date" data-field="purchase_order_lines.ship_date">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-promised-date" class="mapping-label">Promised Date</label>
+                                <select class="form-select field-select" id="field-promised-date" data-field="purchase_order_lines.promised_date">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-sales-order-line" class="mapping-label">Sales Order Line ID</label>
+                                <select class="form-select field-select" id="field-sales-order-line" data-field="purchase_order_lines.sales_order_line_id">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group mt-4">
+                        <label for="mapping-name">Save Mapping As</label>
+                        <input type="text" class="form-control" id="mapping-name" placeholder="Enter a name for this mapping">
+                    </div>
+
+                    <div class="d-grid gap-2 mt-3">
+                        <button class="btn btn-secondary" id="save-mapping-btn">Save Mapping</button>
+                        <button class="btn btn-primary" id="process-btn">Process Import</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results panel - now full width below -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card results-panel" id="results-panel">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Import Results</h5>
+                </div>
+                <div class="card-body">
+                    <div class="progress mb-3">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <p id="status-message">Processing...</p>
+
+                    <div class="row">
+                        <!-- PO results in left column -->
+                        <div class="col-md-6">
+                            <div id="po-results" style="display: none;">
+                                <h5 class="card-title">Purchase Order Headers</h5>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <table class="table table-sm">
+                                            <tbody>
+                                                <tr>
+                                                    <th>Processed:</th>
+                                                    <td id="po-processed">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Created:</th>
+                                                    <td id="po-created">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Updated:</th>
+                                                    <td id="po-updated">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Skipped:</th>
+                                                    <td id="po-skipped">0</td>
+                                                </tr>
+                                                <tr id="po-suppliers-created-row">
+                                                    <th>Suppliers Created:</th>
+                                                    <td id="po-suppliers-created">0</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div id="po-errors-container" class="mt-3" style="display: none;">
+                                    <h6 class="text-danger">Errors:</h6>
+                                    <ul id="po-error-list" class="text-danger"></ul>
+                                </div>
+
+                                <!-- Detailed skipped items for PO headers -->
+                                <div id="po-skipped-details-container" class="mt-3" style="display: none;">
+                                    <h6>Skipped Items Details:</h6>
+                                    <div class="skipped-details border rounded p-2">
+                                        <table class="table table-sm table-hover">
+                                            <thead>
+                                                <tr>
+                                                    <th>Row</th>
+                                                    <th>PO Ref</th>
+                                                    <th>Supplier</th>
+                                                    <th>Reason</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="po-skipped-details-list">
+                                                <!-- This will be populated dynamically -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+
+<div id="po-updated-details-container" class="mt-3" style="display: none;">
+    <h6>Updated Items Details:</h6>
+    <div class="updated-details border rounded p-2">
+        <table class="table table-sm table-hover">
+            <thead>
+                <tr>
+                    <th>Row</th>
+                    <th>PO Ref</th>
+                    <th>Supplier</th>
+                    <th>Fields Updated</th>
+                </tr>
+            </thead>
+            <tbody id="po-updated-details-list">
+                <!-- This will be populated dynamically -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+                        <!-- PO Lines results in right column -->
+                        <div class="col-md-6">
+                            <div id="line-results" style="display: none;">
+                                <h5 class="card-title">Purchase Order Lines</h5>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <table class="table table-sm">
+                                            <tbody>
+                                                <tr>
+                                                    <th>Processed:</th>
+                                                    <td id="line-processed">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Created:</th>
+                                                    <td id="line-created">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Updated:</th>
+                                                    <td id="line-updated">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Skipped:</th>
+                                                    <td id="line-skipped">0</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div id="line-errors-container" class="mt-3" style="display: none;">
+                                    <h6 class="text-danger">Errors:</h6>
+                                    <ul id="line-error-list" class="text-danger"></ul>
+                                </div>
+
+                                <!-- Detailed skipped items for PO lines -->
+                                <div id="line-skipped-details-container" class="mt-3" style="display: none;">
+                                    <h6>Skipped Items Details:</h6>
+                                    <div class="skipped-details border rounded p-2">
+                                        <table class="table table-sm table-hover">
+                                            <thead>
+                                                <tr>
+                                                    <th>Row</th>
+                                                    <th>PO Ref</th>
+                                                    <th>Line</th>
+                                                    <th>Part</th>
+                                                    <th>Reason</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="line-skipped-details-list">
+                                                <!-- This will be populated dynamically -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div id="line-updated-details-container" class="mt-3" style="display: none;">
+    <h6>Updated Items Details:</h6>
+    <div class="updated-details border rounded p-2">
+        <table class="table table-sm table-hover">
+            <thead>
+                <tr>
+                    <th>Row</th>
+                    <th>PO Ref</th>
+                    <th>Line</th>
+                    <th>Part</th>
+                    <th>Fields Updated</th>
+                </tr>
+            </thead>
+            <tbody id="line-updated-details-list">
+                <!-- This will be populated dynamically -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 text-center">
+                        <a href="{{ url_for('imports.list_files') }}" class="btn btn-primary">Back to Import List</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize data from the server
+    const rawFileData = {{ file_data|tojson }};
+    const fileId = {{ file_id }};
+    const columns = {{ columns|tojson }};
+
+    // Transform the data for Handsontable (from array of objects to array of arrays)
+    const fileData = rawFileData.map(row => {
+        return columns.map(column => row[column] || '');
+    });
+
+    // Debug: Log transformed data
+    console.log('Transformed data first row:', fileData.length > 0 ? fileData[0] : 'No data');
+    console.log('Columns from file:', columns);
+
+    // Initialize Handsontable for file preview
+    const container = document.getElementById('hot-container');
+    const hot = new Handsontable(container, {
+        data: fileData,
+        rowHeaders: true,
+        colHeaders: columns,
+        stretchH: 'all',
+        readOnly: true,
+        licenseKey: 'non-commercial-and-evaluation'
+    });
+
+    // Attempt auto-mapping by column name
+    function attemptAutoMapping() {
+        const commonMappings = {
+            // PO Header fields
+            'po number': 'purchase_orders.purchase_order_ref',
+            'po #': 'purchase_orders.purchase_order_ref',
+            'po ref': 'purchase_orders.purchase_order_ref',
+            'po reference': 'purchase_orders.purchase_order_ref',
+            'purchase order': 'purchase_orders.purchase_order_ref',
+            'order id': 'purchase_orders.purchase_order_ref',
+            'supplier': 'suppliers.fornitore',
+            'supplier code': 'suppliers.fornitore',
+            'fornitore': 'suppliers.fornitore',
+            'vendor': 'suppliers.fornitore',
+            'vendor code': 'suppliers.fornitore',
+            'supplier name': 'suppliers.name',  // Added mapping for supplier name
+            'vendor name': 'suppliers.name',    // Added mapping for vendor name
+            'date': 'purchase_orders.date_issued',
+            'date issued': 'purchase_orders.date_issued',
+            'issue date': 'purchase_orders.date_issued',
+            'order date': 'purchase_orders.date_issued',
+            'created date': 'purchase_orders.date_issued',
+            'status': 'purchase_orders.purchase_status_id',
+            'purchase status': 'purchase_orders.purchase_status_id',
+            'po status': 'purchase_orders.purchase_status_id',
+            'currency': 'purchase_orders.currency_id',
+            'currency code': 'purchase_orders.currency_id',
+            'incoterms': 'purchase_orders.incoterms',
+            'incoterm': 'purchase_orders.incoterms',
+            'payment terms': 'purchase_orders.payment_terms',
+            'payment': 'purchase_orders.payment_terms',
+            'delivery address': 'purchase_orders.delivery_address_id',
+            'ship to': 'purchase_orders.delivery_address_id',
+            'billing address': 'purchase_orders.billing_address_id',
+            'bill to': 'purchase_orders.billing_address_id',
+            'total': 'purchase_orders.total_value',
+            'total value': 'purchase_orders.total_value',
+            'amount': 'purchase_orders.total_value',
+
+            // PO Line fields
+            'line': 'purchase_order_lines.line_number',
+            'line number': 'purchase_order_lines.line_number',
+            'line #': 'purchase_order_lines.line_number',
+            'item': 'purchase_order_lines.line_number',
+            'item number': 'purchase_order_lines.line_number',
+            'part': 'part_numbers.system_part_number',
+            'part number': 'part_numbers.system_part_number',
+            'part #': 'part_numbers.system_part_number',
+            'part no': 'part_numbers.system_part_number',
+            'item code': 'part_numbers.system_part_number',
+            'quantity': 'purchase_order_lines.quantity',
+            'qty': 'purchase_order_lines.quantity',
+            'price': 'purchase_order_lines.price',
+            'unit price': 'purchase_order_lines.price',
+            'cost': 'purchase_order_lines.price',
+            'ship date': 'purchase_order_lines.ship_date',
+            'shipping date': 'purchase_order_lines.ship_date',
+            'promised date': 'purchase_order_lines.promised_date',
+            'promise date': 'purchase_order_lines.promised_date',
+            'commitment date': 'purchase_order_lines.promised_date',
+            'status': 'purchase_order_lines.status_id',
+            'line status': 'purchase_order_lines.status_id',
+            'so line': 'purchase_order_lines.sales_order_line_id',
+            'sales order line': 'purchase_order_lines.sales_order_line_id',
+            'received quantity': 'purchase_order_lines.received_quantity',
+            'received qty': 'purchase_order_lines.received_quantity',
+            'received': 'purchase_order_lines.received_quantity',
+            'qty received': 'purchase_order_lines.received_quantity'
+        };
+
+        // Check each column and try to auto-map
+        columns.forEach((col, idx) => {
+            const lowerCol = col.toLowerCase().trim();
+            if (commonMappings[lowerCol]) {
+                const field = commonMappings[lowerCol];
+                const select = document.querySelector(`.field-select[data-field="${field}"]`);
+                if (select) {
+                    select.value = idx;
+                }
+            }
+        });
+    }
+
+    // Try auto-mapping on page load
+    attemptAutoMapping();
+
+    // Load saved mapping
+    document.getElementById('saved-mappings').addEventListener('change', function() {
+        const mappingId = this.value;
+        if (!mappingId) return;
+
+        fetch(`/handson/load_import_mapping/${mappingId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Clear all current selections
+                    document.querySelectorAll('.field-select').forEach(select => {
+                        select.value = '';
+                    });
+
+                    // Apply the loaded mapping
+                    const mapping = data.mapping.mapping;
+                    for (const col in mapping) {
+                        const field = mapping[col];
+                        const select = document.querySelector(`.field-select[data-field="${field}"]`);
+                        if (select) {
+                            select.value = col;
+                        }
+                    }
+                } else {
+                    alert('Error loading mapping: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while loading the mapping.');
+            });
+    });
+
+    // Save mapping
+    document.getElementById('save-mapping-btn').addEventListener('click', function() {
+        const mappingName = document.getElementById('mapping-name').value.trim();
+        if (!mappingName) {
+            alert('Please enter a name for this mapping.');
+            return;
+        }
+
+        const mapping = getMapping();
+        if (Object.keys(mapping).length === 0) {
+            alert('Please map at least one column before saving.');
+            return;
+        }
+
+        fetch('/handson/save_import_mapping', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: mappingName,
+                import_type: 'purchase_orders',
+                mapping: mapping
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Mapping saved successfully!');
+                // Reload page to show the new mapping in the dropdown
+                window.location.reload();
+            } else {
+                alert('Error saving mapping: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while saving the mapping.');
+        });
+    });
+
+    // Process import button click handler - add clearing of existing results
+document.getElementById('process-btn').addEventListener('click', function() {
+    const mapping = getMapping();
+    if (!validateMapping(mapping)) {
+        return;
+    }
+
+    // Show results panel and progress indicators
+    document.getElementById('results-panel').style.display = 'block';
+    document.getElementById('po-results').style.display = 'none';
+    document.getElementById('line-results').style.display = 'none';
+    document.querySelector('.progress-bar').style.width = '0%';
+    document.getElementById('status-message').textContent = 'Starting import...';
+
+    // Clear all previous results
+    document.getElementById('po-error-list').innerHTML = '';
+    document.getElementById('po-skipped-details-list').innerHTML = '';
+    document.getElementById('line-error-list').innerHTML = '';
+    document.getElementById('line-skipped-details-list').innerHTML = '';
+
+        // Clear updated details
+    document.getElementById('po-updated-details-list').innerHTML = '';
+    document.getElementById('line-updated-details-list').innerHTML = '';
+    document.getElementById('po-updated-details-container').style.display = 'none';
+    document.getElementById('line-updated-details-container').style.display = 'none';
+
+    // Hide all detail containers
+    document.getElementById('po-errors-container').style.display = 'none';
+    document.getElementById('po-skipped-details-container').style.display = 'none';
+    document.getElementById('line-errors-container').style.display = 'none';
+    document.getElementById('line-skipped-details-container').style.display = 'none';
+
+    // Disable the process button
+    this.disabled = true;
+
+    // Start the import process for PO headers
+    processPurchaseOrders(mapping);
+
+    // Scroll to the results panel
+    document.getElementById('results-panel').scrollIntoView({ behavior: 'smooth' });
+});
+
+    // Get current mapping
+    function getMapping() {
+        const mapping = {};
+        document.querySelectorAll('.field-select').forEach(select => {
+            const field = select.getAttribute('data-field');
+            const value = select.value;
+            if (value) {
+                mapping[value] = field;
+            }
+        });
+        return mapping;
+    }
+
+    // Validate mapping (continued)
+    function validateMapping(mapping) {
+        // Check required fields for PO headers
+        const requiredHeaderFields = [
+            'purchase_orders.purchase_order_ref',
+            'suppliers.fornitore',
+            'purchase_orders.date_issued',
+            'purchase_orders.currency_id'
+        ];
+
+        // Check required fields for PO lines
+        const requiredLineFields = [
+            'purchase_order_lines.line_number',
+            'part_numbers.system_part_number',
+            'purchase_order_lines.quantity',
+            'purchase_order_lines.price'
+        ];
+
+        const mappedFields = Object.values(mapping);
+
+        // Check header fields
+        let headerMissing = [];
+        for (const field of requiredHeaderFields) {
+            if (!mappedFields.includes(field)) {
+                headerMissing.push(field.split('.')[1]);
+            }
+        }
+
+        if (headerMissing.length > 0) {
+            alert('Required PO header fields missing: ' + headerMissing.join(', '));
+            // Switch to the header tab
+            document.getElementById('po-tab').click();
+            return false;
+        }
+
+        // Check line fields
+        let linesMissing = [];
+        for (const field of requiredLineFields) {
+            if (!mappedFields.includes(field)) {
+                linesMissing.push(field.split('.')[1]);
+            }
+        }
+
+        if (linesMissing.length > 0) {
+            alert('Required PO line fields missing: ' + linesMissing.join(', '));
+            // Switch to the lines tab
+            document.getElementById('lines-tab').click();
+            return false;
+        }
+
+        return true;
+    }
+
+// Process purchase orders (first step)
+function processPurchaseOrders(mapping) {
+    updateProgress(25, 'Processing purchase orders...');
+
+    // Clear any existing results before starting
+    document.getElementById('po-skipped-details-list').innerHTML = '';
+    document.getElementById('po-error-list').innerHTML = '';
+
+    fetch('/handson/import/purchase_orders', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            mapping: mapping,
+            file_id: fileId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Show PO results
+            document.getElementById('po-results').style.display = 'block';
+            document.getElementById('po-processed').textContent = data.results.processed;
+            document.getElementById('po-created').textContent = data.results.created;
+            document.getElementById('po-updated').textContent = data.results.updated;
+            document.getElementById('po-skipped').textContent = data.results.skipped;
+
+            // Show suppliers created if any
+            if (data.results.suppliers_created !== undefined) {
+                document.getElementById('po-suppliers-created').textContent = data.results.suppliers_created;
+                document.getElementById('po-suppliers-created-row').style.display = 'table-row';
+            } else {
+                document.getElementById('po-suppliers-created-row').style.display = 'none';
+            }
+
+            // Show errors if any
+            if (data.results.errors && data.results.errors.length > 0) {
+                const errorList = document.getElementById('po-error-list');
+                errorList.innerHTML = ''; // Clear any existing errors
+
+                data.results.errors.forEach(error => {
+                    const li = document.createElement('li');
+                    li.textContent = error;
+                    errorList.appendChild(li);
+                });
+
+                document.getElementById('po-errors-container').style.display = 'block';
+            } else {
+                document.getElementById('po-errors-container').style.display = 'none';
+            }
+
+            // Show detailed skipped items if any
+            if (data.results.skipped_details && data.results.skipped_details.length > 0) {
+                const detailsList = document.getElementById('po-skipped-details-list');
+                detailsList.innerHTML = ''; // Clear existing skipped details
+
+                data.results.skipped_details.forEach(item => {
+                    const tr = document.createElement('tr');
+
+                    const tdRow = document.createElement('td');
+                    tdRow.textContent = item.row;
+                    tr.appendChild(tdRow);
+
+                    const tdPoRef = document.createElement('td');
+                    tdPoRef.textContent = item.po_ref;
+                    tr.appendChild(tdPoRef);
+
+                    const tdSupplier = document.createElement('td');
+                    tdSupplier.textContent = item.supplier_code;
+                    tr.appendChild(tdSupplier);
+
+                    const tdReason = document.createElement('td');
+                    tdReason.textContent = item.reason;
+                    tr.appendChild(tdReason);
+
+                    detailsList.appendChild(tr);
+                });
+
+                document.getElementById('po-skipped-details-container').style.display = 'block';
+            } else {
+                document.getElementById('po-skipped-details-container').style.display = 'none';
+            }
+
+            if (data.results.updated_details && data.results.updated_details.length > 0) {
+    const updatesList = document.getElementById('po-updated-details-list');
+    updatesList.innerHTML = ''; // Clear existing updated details
+
+    data.results.updated_details.forEach(item => {
+        const tr = document.createElement('tr');
+
+        const tdRow = document.createElement('td');
+        tdRow.textContent = item.row;
+        tr.appendChild(tdRow);
+
+        const tdPoRef = document.createElement('td');
+        tdPoRef.textContent = item.po_ref;
+        tr.appendChild(tdPoRef);
+
+        const tdSupplier = document.createElement('td');
+        tdSupplier.textContent = item.supplier_code;
+        tr.appendChild(tdSupplier);
+
+        const tdFields = document.createElement('td');
+        tdFields.textContent = item.updated_fields.join(', ');
+        tr.appendChild(tdFields);
+
+        updatesList.appendChild(tr);
+    });
+
+    document.getElementById('po-updated-details-container').style.display = 'block';
+} else {
+    document.getElementById('po-updated-details-container').style.display = 'none';
+}
+
+            // Proceed to process PO lines
+            updateProgress(50, 'Processing purchase order lines...');
+            processPurchaseOrderLines(mapping);
+        } else {
+            updateProgress(100, 'Purchase order import failed: ' + data.message);
+            document.getElementById('process-btn').disabled = false;
+
+            // Scroll to the results panel
+            document.getElementById('results-panel').scrollIntoView({ behavior: 'smooth' });
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        updateProgress(100, 'An error occurred during purchase order import');
+        document.getElementById('process-btn').disabled = false;
+
+        // Scroll to the results panel
+        document.getElementById('results-panel').scrollIntoView({ behavior: 'smooth' });
+    });
+}
+
+// Process purchase order lines (second step)
+function processPurchaseOrderLines(mapping) {
+    // Clear any existing results before starting
+    document.getElementById('line-skipped-details-list').innerHTML = '';
+    document.getElementById('line-error-list').innerHTML = '';
+
+    fetch('/handson/import/purchase_order_lines', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            mapping: mapping,
+            file_id: fileId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            updateProgress(100, 'Import completed successfully');
+
+            // Show line results
+            document.getElementById('line-results').style.display = 'block';
+            document.getElementById('line-processed').textContent = data.results.processed;
+            document.getElementById('line-created').textContent = data.results.created;
+            document.getElementById('line-updated').textContent = data.results.updated;
+            document.getElementById('line-skipped').textContent = data.results.skipped;
+
+            // Show errors if any
+            if (data.results.errors && data.results.errors.length > 0) {
+                const errorList = document.getElementById('line-error-list');
+                errorList.innerHTML = ''; // Clear any existing errors
+
+                data.results.errors.forEach(error => {
+                    const li = document.createElement('li');
+                    li.textContent = error;
+                    errorList.appendChild(li);
+                });
+
+                document.getElementById('line-errors-container').style.display = 'block';
+            } else {
+                document.getElementById('line-errors-container').style.display = 'none';
+            }
+
+            // Show detailed skipped items if any
+            if (data.results.skipped_details && data.results.skipped_details.length > 0) {
+                const detailsList = document.getElementById('line-skipped-details-list');
+                detailsList.innerHTML = ''; // Clear existing skipped details
+
+                data.results.skipped_details.forEach(item => {
+                    const tr = document.createElement('tr');
+
+                    const tdRow = document.createElement('td');
+                    tdRow.textContent = item.row;
+                    tr.appendChild(tdRow);
+
+                    const tdPoRef = document.createElement('td');
+                    tdPoRef.textContent = item.po_ref;
+                    tr.appendChild(tdPoRef);
+
+                    const tdLine = document.createElement('td');
+                    tdLine.textContent = item.line_number;
+                    tr.appendChild(tdLine);
+
+                    const tdPart = document.createElement('td');
+                    tdPart.textContent = item.part;
+                    tr.appendChild(tdPart);
+
+                    const tdReason = document.createElement('td');
+                    tdReason.textContent = item.reason;
+                    tr.appendChild(tdReason);
+
+                    detailsList.appendChild(tr);
+                });
+
+                document.getElementById('line-skipped-details-container').style.display = 'block';
+            } else {
+                document.getElementById('line-skipped-details-container').style.display = 'none';
+            }
+
+            if (data.results.updated_details && data.results.updated_details.length > 0) {
+    const updatesList = document.getElementById('line-updated-details-list');
+    updatesList.innerHTML = ''; // Clear existing updated details
+
+    data.results.updated_details.forEach(item => {
+        const tr = document.createElement('tr');
+
+        const tdRow = document.createElement('td');
+        tdRow.textContent = item.row;
+        tr.appendChild(tdRow);
+
+        const tdPoRef = document.createElement('td');
+        tdPoRef.textContent = item.po_ref;
+        tr.appendChild(tdPoRef);
+
+        const tdLine = document.createElement('td');
+        tdLine.textContent = item.line_number;
+        tr.appendChild(tdLine);
+
+        const tdPart = document.createElement('td');
+        tdPart.textContent = item.part;
+        tr.appendChild(tdPart);
+
+        const tdFields = document.createElement('td');
+        tdFields.textContent = item.updated_fields.join(', ');
+        tr.appendChild(tdFields);
+
+        updatesList.appendChild(tr);
+    });
+
+    document.getElementById('line-updated-details-container').style.display = 'block';
+} else {
+    document.getElementById('line-updated-details-container').style.display = 'none';
+}
+        } else {
+            updateProgress(100, 'Purchase order line import failed: ' + data.message);
+        }
+
+        document.getElementById('process-btn').disabled = false;
+
+        // Scroll to the results panel
+        document.getElementById('results-panel').scrollIntoView({ behavior: 'smooth' });
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        updateProgress(100, 'An error occurred during purchase order line import');
+        document.getElementById('process-btn').disabled = false;
+
+        // Scroll to the results panel
+        document.getElementById('results-panel').scrollIntoView({ behavior: 'smooth' });
+    });
+}
+
+    // Update progress bar
+    function updateProgress(percent, status) {
+        document.querySelector('.progress-bar').style.width = percent + '%';
+        document.querySelector('.progress-bar').setAttribute('aria-valuenow', percent);
+        document.getElementById('status-message').textContent = status;
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row mb-3">
+        <div class="col">
+            <h1>Edit Price List</h1>
+            <a href="{{ url_for('price_lists.get_all_price_lists') }}" class="btn btn-secondary">Back to Price Lists</a>
+        </div>
+    </div>
+
+    <!-- Price List Details Card -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">Price List Details</h5>
+        </div>
+        <div class="card-body">
+            <form id="editForm" action="{{ url_for('price_lists.update_price_list', price_list_id=price_list.id) }}" method="POST">
+                <input type="hidden" name="_method" value="PUT">
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label for="name_reference" class="form-label">Price List Name</label>
+                        <input type="text" class="form-control" id="name_reference" name="name_reference" value="{{ price_list.name_reference }}" required>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label for="supplier_id" class="form-label">Supplier</label>
+                        <select class="form-select" id="supplier_id" name="supplier_id" required>
+                            {% for supplier in suppliers %}
+                            <option value="{{ supplier.id }}" {% if supplier.id == price_list.supplier_id %}selected{% endif %}>{{ supplier.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label for="currency_id" class="form-label">Currency</label>
+                        <select class="form-select" id="currency_id" name="currency_id" required>
+                            {% for currency in currencies %}
+                            <option value="{{ currency.id }}" {% if currency.id == price_list.currency_id %}selected{% endif %}>{{ currency.code }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="valid_from" class="form-label">Valid From</label>
+                        <input type="date" class="form-control" id="valid_from" name="valid_from" value="{{ price_list.valid_from }}">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="valid_to" class="form-label">Valid To</label>
+                        <input type="date" class="form-control" id="valid_to" name="valid_to" value="{{ price_list.valid_to }}">
+                    </div>
+                </div>
+                <div class="d-flex justify-content-end">
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+    <!-- Price List Items Card -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">Items</h5>
+        <div>
+            <a href="{{ url_for('price_lists.handsontable_editor', price_list_id=price_list.id) }}" class="btn btn-sm btn-info me-2">Excel style edit</a>
+            <a href="{{ url_for('price_lists.add_price_list_item', price_list_id=price_list.id) }}" class="btn btn-sm btn-primary">Add Item</a>
+        </div>
+    </div>
+</div>
+        <div class="card-body">
+            {% if price_list.price_list_items and price_list.price_list_items|count > 0 %}
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Part Number</th>
+                            <th>Base Part Number</th>
+                            <th>Lead Time</th>
+                            <th>Price Breaks</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in price_list.price_list_items %}
+                        <tr>
+                            <td>{{ item.part_number }}</td>
+                            <td>{{ item.base_part_number }}</td>
+                            <td>{{ item.lead_time }}</td>
+                            <td>
+                                {% if item.price_breaks and item.price_breaks|count > 0 %}
+                                    <table class="table table-sm table-borderless mb-0">
+                                        <tbody>
+                                            {% for pb in item.price_breaks %}
+                                            <tr>
+                                                <td>{{ pb.quantity }}+</td>
+                                                <td>{{ pb.price }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                {% else %}
+                                    No price breaks
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <a href="{{ url_for('price_lists.update_price_list_item', price_list_id=price_list.id, item_id=item.id) }}" class="btn btn-outline-secondary">Edit</a>
+                                    <button type="button" class="btn btn-outline-danger" onclick="confirmDeleteItem({{ item.id }})">Delete</button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-center">No items in this price list</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Delete Item Confirmation Modal -->
+<div class="modal fade" id="deleteItemModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Delete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                Are you sure you want to delete this item? This action cannot be undone.
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteItemForm" method="POST">
+                    <input type="hidden" name="_method" value="DELETE">
+                    <button type="submit" class="btn btn-danger">Delete</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function confirmDeleteItem(itemId) {
+        const deleteForm = document.getElementById('deleteItemForm');
+        deleteForm.action = `/price_lists/{{ price_list.id }}/items/${itemId}`;
+        
+        const deleteModal = new bootstrap.Modal(document.getElementById('deleteItemModal'));
+        deleteModal.show();
+    }
+    
+    // Handle form submission for PUT request
+    document.getElementById('editForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const form = this;
+        const formData = new FormData(form);
+        const jsonData = {};
+        
+        formData.forEach((value, key) => {
+            if (key !== '_method') {
+                jsonData[key] = value;
+            }
+        });
+        
+        fetch(form.action, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(jsonData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                window.location.reload();
+            } else {
+                alert('Error updating price list: ' + data.message);
+            }
+        })
+        .catch(error => {
+            alert('Error updating price list: ' + error);
+        });
+    });
+</script>
+{% endblock %}

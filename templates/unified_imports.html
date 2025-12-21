@@ -1,0 +1,372 @@
+{% extends "base.html" %}
+
+{% block title %}Import Data{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2><i class="bi bi-file-earmark-arrow-up"></i> Import Data</h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Sales Orders Import -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-cart-check"></i> Sales Orders</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Import sales orders from your ERP system.</p>
+                    <form id="soForm" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <input type="file" class="form-control" name="file" accept=".csv" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-upload"></i> Import Sales Orders
+                        </button>
+                    </form>
+                    <div class="progress mt-2" id="soProgress" style="display: none;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
+                    </div>
+                </div>
+                <div class="card-footer text-muted">
+                    <small>Expected: Sales Order No, Customer Code, Part Number, Qty, etc.</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Purchase Orders Import -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-box-seam"></i> Purchase Orders</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Import purchase orders from your ERP system.</p>
+                    <form id="poForm" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <input type="file" class="form-control" name="file" accept=".csv" required>
+                        </div>
+                        <button type="submit" class="btn btn-success">
+                            <i class="bi bi-upload"></i> Import Purchase Orders
+                        </button>
+                    </form>
+                    <div class="progress mt-2" id="poProgress" style="display: none;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
+                    </div>
+                </div>
+                <div class="card-footer text-muted">
+                    <small>Expected: PO Number, Supplier Code, Part Number, Quantity, etc.</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vendor Quotes Import -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-file-text"></i> Vendor Quotes</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Import vendor quotes from your ERP system.</p>
+                    <form id="vqForm" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <input type="file" class="form-control" name="file" accept=".csv" required>
+                        </div>
+                        <button type="submit" class="btn btn-info">
+                            <i class="bi bi-upload"></i> Import Vendor Quotes
+                        </button>
+                    </form>
+                    <div class="progress mt-2" id="vqProgress" style="display: none;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
+                    </div>
+                </div>
+                <div class="card-footer text-muted">
+                    <small>Expected: vendorResponseId, companyName, pnQuoted, etc.</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Customer Quotes Import -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-file-earmark-text"></i> Customer Quotes</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Import customer quotes from your ERP system.</p>
+                    <form id="cqForm" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <input type="file" class="form-control" name="file" accept=".csv" required>
+                        </div>
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="skipAutoQuoted" name="skip_auto_quoted">
+                            <label class="form-check-label" for="skipAutoQuoted">
+                                Skip Auto-Quoted items
+                            </label>
+                        </div>
+                        <button type="submit" class="btn btn-warning">
+                            <i class="bi bi-upload"></i> Import Customer Quotes
+                        </button>
+                    </form>
+                    <div class="progress mt-2" id="cqProgress" style="display: none;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
+                    </div>
+                </div>
+                <div class="card-footer text-muted">
+                    <small>Expected: Quote Number, Customer Code, Part Number, etc.</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Inventory/Stock Levels Import -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0"><i class="bi bi-boxes"></i> Inventory/Stock Levels</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text text-danger"><strong>Warning:</strong> This will REPLACE all existing stock levels!</p>
+                    <p class="card-text small">Required columns: <code>partNumber</code>, <code>remainingQty</code>, <code>unitCost</code> (optional)</p>
+                    <form id="stockForm" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <input type="file" class="form-control" name="file" accept=".csv" required>
+                        </div>
+                        <button type="submit" class="btn btn-secondary">
+                            <i class="bi bi-upload"></i> Import Stock Levels
+                        </button>
+                    </form>
+                    <div class="progress mt-2" id="stockProgress" style="display: none;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
+                    </div>
+                </div>
+                <div class="card-footer text-muted">
+                    <small>CSV format with partNumber, remainingQty, unitCost columns</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Results Modal -->
+<div class="modal fade" id="resultsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Import Results</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="resultsContent">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Generic form handler for all imports
+async function handleImport(formId, progressId, uploadUrl, includeCheckbox = false) {
+    const form = document.getElementById(formId);
+    const progress = document.getElementById(progressId);
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const fileInput = form.querySelector('input[type="file"]');
+        const file = fileInput.files[0];
+
+        if (!file) {
+            alert('Please select a file');
+            return;
+        }
+
+        // Show progress
+        progress.style.display = 'block';
+        form.querySelector('button[type="submit"]').disabled = true;
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        // Add checkbox value if applicable (for CQ skip_auto_quoted)
+        if (includeCheckbox) {
+            const checkbox = form.querySelector('input[type="checkbox"]');
+            if (checkbox && checkbox.checked) {
+                formData.append(checkbox.name, 'on');
+            }
+        }
+
+        try {
+            const response = await fetch(uploadUrl, {
+                method: 'POST',
+                body: formData,
+                redirect: 'manual' // Prevent auto-redirect
+            });
+
+            // Hide progress
+            progress.style.display = 'none';
+            form.querySelector('button[type="submit"]').disabled = false;
+
+            // Check if successful (2xx status)
+            if (response.ok || response.type === 'opaqueredirect') {
+                showSuccessMessage({
+                    success: true,
+                    message: 'Import completed successfully!'
+                });
+                form.reset();
+            } else {
+                // Try to get error message
+                try {
+                    const data = await response.json();
+                    showErrorMessage(data.message || 'Import failed');
+                } catch {
+                    showErrorMessage('Import failed');
+                }
+            }
+
+        } catch (error) {
+            console.error('Error:', error);
+            showErrorMessage('Error uploading file: ' + error.message);
+            progress.style.display = 'none';
+            form.querySelector('button[type="submit"]').disabled = false;
+        }
+    });
+}
+
+// Special handler for stock import (upload + process)
+async function handleStockImport(formId, progressId) {
+    const form = document.getElementById(formId);
+    const progress = document.getElementById(progressId);
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const fileInput = form.querySelector('input[type="file"]');
+        const file = fileInput.files[0];
+
+        if (!file) {
+            alert('Please select a file');
+            return;
+        }
+
+        // Validate CSV file
+        if (!file.name.toLowerCase().endsWith('.csv')) {
+            alert('Please select a CSV file');
+            return;
+        }
+
+        // Show progress
+        progress.style.display = 'block';
+        form.querySelector('button[type="submit"]').disabled = true;
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            // Step 1: Upload the file
+            const uploadResponse = await fetch('/stock/import/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            const uploadResult = await uploadResponse.json();
+
+            if (!uploadResult.success) {
+                throw new Error(uploadResult.message);
+            }
+
+            // Step 2: Process the file immediately
+            const processResponse = await fetch('/stock/upload-stock-levels/process', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    file_id: uploadResult.file_id
+                })
+            });
+
+            const processResult = await processResponse.json();
+
+            // Hide progress
+            progress.style.display = 'none';
+            form.querySelector('button[type="submit"]').disabled = false;
+
+            if (processResult.success) {
+                showSuccessMessage(processResult);
+                form.reset();
+            } else {
+                showErrorMessage(processResult.message);
+            }
+
+        } catch (error) {
+            console.error('Error:', error);
+            showErrorMessage('Error: ' + error.message);
+            progress.style.display = 'none';
+            form.querySelector('button[type="submit"]').disabled = false;
+        }
+    });
+}
+
+function showSuccessMessage(data) {
+    const modal = new bootstrap.Modal(document.getElementById('resultsModal'));
+    const content = document.getElementById('resultsContent');
+
+    let html = '<div class="alert alert-success"><i class="bi bi-check-circle"></i> Import completed successfully!</div>';
+
+    // Show results for stock import
+    if (data.results) {
+        const results = data.results;
+        html += '<div class="mt-3">';
+        html += '<table class="table table-sm">';
+        if (results.processed) html += `<tr><td>Records Processed:</td><td class="fw-bold">${results.processed}</td></tr>`;
+        if (results.created) html += `<tr><td>Stock Movements Created:</td><td class="fw-bold text-success">${results.created}</td></tr>`;
+        if (results.deleted) html += `<tr><td>Old Movements Deleted:</td><td class="fw-bold text-warning">${results.deleted}</td></tr>`;
+        if (results.not_found) html += `<tr><td>Parts Not Found:</td><td class="fw-bold text-danger">${results.not_found}</td></tr>`;
+        html += '</table>';
+
+        // Show errors if any
+        if (results.errors && results.errors.length > 0) {
+            html += '<div class="alert alert-warning mt-3">';
+            html += '<h6>Errors encountered:</h6>';
+            html += '<ul class="mb-0 small">';
+            results.errors.slice(0, 10).forEach(error => {
+                html += `<li>${error}</li>`;
+            });
+            if (results.errors.length > 10) {
+                html += `<li class="fw-bold">... and ${results.errors.length - 10} more errors</li>`;
+            }
+            html += '</ul>';
+            html += '</div>';
+        }
+
+        html += '</div>';
+    } else if (data.message) {
+        html += `<p>${data.message}</p>`;
+    }
+
+    content.innerHTML = html;
+    modal.show();
+}
+
+function showErrorMessage(message) {
+    const modal = new bootstrap.Modal(document.getElementById('resultsModal'));
+    const content = document.getElementById('resultsContent');
+
+    content.innerHTML = `<div class="alert alert-danger"><i class="bi bi-x-circle"></i> ${message}</div>`;
+    modal.show();
+}
+
+// Initialize all form handlers
+handleImport('soForm', 'soProgress', '/so-import/upload');
+handleImport('poForm', 'poProgress', '/purchase_orders/import_erp');
+handleImport('vqForm', 'vqProgress', '/vqs/import');
+handleImport('cqForm', 'cqProgress', '/cqs/import', true); // true = include checkbox
+handleStockImport('stockForm', 'stockProgress'); // Custom handler for stock
+</script>
+{% endblock %}

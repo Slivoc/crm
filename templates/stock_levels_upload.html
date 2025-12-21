@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Stock Levels{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Page Header -->
+    <div class="page-header mb-4">
+        <h1><i class="fas fa-upload me-2"></i>Upload Stock Levels</h1>
+        <p class="text-muted">Upload a CSV file to set stock levels for your parts.</p>
+    </div>
+
+    <!-- Warning Alert -->
+    <div class="alert alert-warning" role="alert">
+        <i class="fas fa-exclamation-triangle me-2"></i>
+        <strong>Warning:</strong> This will <strong>REPLACE</strong> existing stock levels. Use with caution!
+    </div>
+
+    <!-- Info Alert -->
+    <div class="alert alert-info" role="alert">
+        <i class="fas fa-info-circle me-2"></i>
+        <strong>CSV Format:</strong> Your file must contain columns named <code>partNumber</code>, <code>remainingQty</code>, and optionally <code>unitCost</code>.
+    </div>
+
+    <!-- Upload Card -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body p-4">
+            <h4 class="card-title mb-4">Upload File</h4>
+
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label for="fileInput" class="form-label">Select CSV File (.csv)</label>
+                    <input type="file" class="form-control" id="fileInput" name="file" accept=".csv" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-lg">
+                    <i class="fas fa-upload me-2"></i>Upload and Process
+                </button>
+            </form>
+
+            <!-- Progress -->
+            <div id="uploadProgress" class="mt-3" style="display: none;">
+                <div class="progress">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated"
+                         role="progressbar" style="width: 100%">
+                        Processing...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Results -->
+            <div id="results" class="mt-4" style="display: none;">
+                <div class="alert alert-success" id="successAlert" style="display: none;">
+                    <h5><i class="fas fa-check-circle me-2"></i>Upload Successful!</h5>
+                    <div id="successDetails"></div>
+                </div>
+                <div class="alert alert-danger" id="errorAlert" style="display: none;">
+                    <h5><i class="fas fa-exclamation-circle me-2"></i>Upload Failed</h5>
+                    <div id="errorDetails"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Previously Uploaded Files -->
+    {% if files %}
+    <div class="card shadow-sm">
+        <div class="card-body p-4">
+            <h4 class="card-title mb-4">Previously Uploaded Files</h4>
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Filename</th>
+                            <th>Upload Date</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for file in files %}
+                        <tr>
+                            <td>{{ file.filename }}</td>
+                            <td>{{ file.upload_date }}</td>
+                            <td>
+                                {% if file.import_status %}
+                                <span class="badge bg-success">Imported</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Not Imported</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{{ url_for('stock_movements.stock_levels_mapping', file_id=file.id) }}"
+                                   class="btn btn-sm btn-primary">
+                                    <i class="fas fa-eye me-1"></i>Preview
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const fileInput = document.getElementById('fileInput');
+        const file = fileInput.files[0];
+
+        if (!file) {
+            alert('Please select a file');
+            return;
+        }
+
+        // Validate file extension
+        if (!file.name.toLowerCase().endsWith('.csv')) {
+            alert('Please select a CSV file');
+            return;
+        }
+
+        // Show progress, hide results
+        document.getElementById('uploadProgress').style.display = 'block';
+        document.getElementById('results').style.display = 'none';
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            // Step 1: Upload the file
+            const uploadResponse = await fetch('{{ url_for("stock_movements.upload_stock_movement_file") }}', {
+                method: 'POST',
+                body: formData
+            });
+
+            const uploadResult = await uploadResponse.json();
+
+            if (!uploadResult.success) {
+                throw new Error(uploadResult.message);
+            }
+
+            // Step 2: Process the file immediately
+            const processResponse = await fetch('{{ url_for("stock_movements.process_stock_levels_upload") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    file_id: uploadResult.file_id
+                })
+            });
+
+            const processResult = await processResponse.json();
+
+            // Hide progress
+            document.getElementById('uploadProgress').style.display = 'none';
+
+            // Show results
+            document.getElementById('results').style.display = 'block';
+
+            if (processResult.success) {
+                // Show success
+                document.getElementById('successAlert').style.display = 'block';
+                document.getElementById('errorAlert').style.display = 'none';
+
+                const results = processResult.results;
+                let detailsHtml = `
+                    <ul class="mb-0">
+                        <li><strong>Processed:</strong> ${results.processed} rows</li>
+                        <li><strong>Created:</strong> ${results.created} stock movements</li>
+                        <li><strong>Deleted:</strong> ${results.deleted} old stock movements</li>
+                        <li><strong>Not Found:</strong> ${results.not_found} parts</li>
+                `;
+
+                if (results.errors && results.errors.length > 0) {
+                    detailsHtml += `<li><strong>Errors:</strong> ${results.errors.length} (see below)</li>`;
+                }
+
+                detailsHtml += '</ul>';
+
+                if (results.errors && results.errors.length > 0) {
+                    detailsHtml += '<div class="mt-3"><strong>Errors:</strong><ul class="small">';
+                    results.errors.slice(0, 10).forEach(error => {
+                        detailsHtml += `<li>${error}</li>`;
+                    });
+                    if (results.errors.length > 10) {
+                        detailsHtml += `<li><em>... and ${results.errors.length - 10} more</em></li>`;
+                    }
+                    detailsHtml += '</ul></div>';
+                }
+
+                document.getElementById('successDetails').innerHTML = detailsHtml;
+
+                // Reset form and reload after 3 seconds
+                setTimeout(() => {
+                    window.location.reload();
+                }, 3000);
+            } else {
+                // Show error
+                document.getElementById('successAlert').style.display = 'none';
+                document.getElementById('errorAlert').style.display = 'block';
+                document.getElementById('errorDetails').textContent = processResult.message;
+            }
+
+        } catch (error) {
+            console.error('Upload error:', error);
+            document.getElementById('uploadProgress').style.display = 'none';
+            document.getElementById('results').style.display = 'block';
+            document.getElementById('successAlert').style.display = 'none';
+            document.getElementById('errorAlert').style.display = 'block';
+            document.getElementById('errorDetails').textContent = error.message;
+        }
+    });
+</script>
+{% endblock %}

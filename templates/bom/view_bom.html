@@ -1,0 +1,494 @@
+{% extends "base.html" %}
+
+{% block head %}
+{{ super() }}
+<link href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" rel="stylesheet">
+<style>
+    /* Add loading spinner */
+    .spinner-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+    }
+    .spinner-overlay.show {
+        display: flex;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Loading Spinner -->
+    <div class="spinner-overlay" id="loadingSpinner">
+        <div class="spinner-border text-light" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <!-- BOM Header Section -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="mb-0">{{ bom.name }}</h5>
+                        {% if bom.description %}
+                        <small class="text-white-50">{{ bom.description }}</small>
+                        {% endif %}
+                    </div>
+<div class="btn-group">
+    <button type="button" class="btn btn-light btn-sm" id="saveBomBtn">
+        <i class="fas fa-save"></i> Save Changes
+    </button>
+    <button type="button" class="btn btn-primary btn-sm" id="createRfqBtn">
+        <i class="fas fa-file-alt"></i> Create RFQ
+    </button>
+                        <button type="button" class="btn btn-light btn-sm dropdown-toggle" data-bs-toggle="dropdown">
+                            <i class="fas fa-ellipsis-v"></i>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="#" id="exportBomBtn">
+                                <i class="fas fa-file-export"></i> Export to Excel
+                            </a></li>
+                            <li><a class="dropdown-item" href="#" id="cloneBomBtn">
+                                <i class="fas fa-copy"></i> Clone BOM
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item text-danger" href="#" id="deleteBomBtn">
+                                <i class="fas fa-trash"></i> Delete BOM
+                            </a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Components Section -->
+        <div class="col-md-8">
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                    <strong>Components ({{ components|length }} items)</strong>
+                    <div class="btn-group">
+                        <button type="button" class="btn btn-primary btn-sm" id="addComponentBtn">
+                            <i class="fas fa-plus"></i> Add Row
+                        </button>
+                        <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal"
+                                data-bs-target="#importModal">
+                            <i class="fas fa-file-import"></i> Import
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div id="componentsGrid" class="handsontable"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Customers Section -->
+        <div class="col-md-4">
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                    <strong>Assigned Customers</strong>
+                    <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal"
+                            data-bs-target="#addCustomerModal">
+                        <i class="fas fa-plus"></i> Add Customer
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="list-group list-group-flush" id="customersList">
+                        {% for customer in customers %}
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-0">{{ customer.name }}</h6>
+                                <small class="text-muted">Ref: {{ customer.reference or 'No reference' }}</small>
+                            </div>
+                            <div class="btn-group">
+                                <button type="button" class="btn btn-outline-secondary btn-sm"
+                                        onclick="editCustomerRef('{{ customer.id }}')">
+                                    <i class="fas fa-pencil"></i>
+                                </button>
+                                <button type="button" class="btn btn-outline-danger btn-sm"
+                                        onclick="removeCustomer('{{ customer.id }}')">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Import Modal -->
+<div class="modal fade" id="importModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Import Components</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="importForm">
+                    <div class="mb-3">
+                        <label for="importFile" class="form-label">Select File:</label>
+                        <input type="file" class="form-control" id="importFile"
+                               accept=".csv,.xlsx,.xls" required>
+                        <small class="text-muted">Supported formats: CSV, Excel</small>
+                    </div>
+                    <div class="alert alert-info">
+                        <strong>Expected columns:</strong>
+                        <ul class="mb-0">
+                            <li>part_number (required)</li>
+                            <li>quantity (required)</li>
+                            <li>position (optional)</li>
+                            <li>guide_price (optional)</li>
+                            <li>reference_designator (optional)</li>
+                            <li>notes (optional)</li>
+                        </ul>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="importSubmitBtn">Import</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Customer Modal -->
+<div class="modal fade" id="addCustomerModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Customer to BOM</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addCustomerForm">
+                    <div class="mb-3">
+                        <label for="customer_id" class="form-label">Customer:</label>
+                        <select id="customer_id" class="form-select" style="width: 100%"></select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="customer_reference" class="form-label">Reference (Optional):</label>
+                        <input type="text" class="form-control" id="customer_reference">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="addCustomerSubmitBtn">Add</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<script>
+let hot;
+
+// Utility Functions
+function showSpinner() {
+    document.getElementById('loadingSpinner').classList.add('show');
+}
+
+function hideSpinner() {
+    document.getElementById('loadingSpinner').classList.remove('show');
+}
+
+function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+
+    const container = document.querySelector('.container-fluid');
+    container.insertBefore(alertDiv, container.firstChild);
+    setTimeout(() => alertDiv.remove(), 5000);
+}
+
+function getSelectedComponents() {
+    const data = hot.getData();
+    return data.filter(row => row[0]).map(row => ({
+        base_part_number: row[1],
+        quantity: row[2]
+    }));
+}
+
+function initializeSelect2() {
+    $('#customer_id, #rfq_customer').select2({
+        theme: 'bootstrap-5',
+        ajax: {
+            url: '{{ url_for("bom.search_customers") }}',
+            dataType: 'json',
+            delay: 250,
+            data: function(params) {
+                return { q: params.term };
+            },
+            processResults: function(data) {
+                return { results: data.results };
+            },
+            cache: true
+        },
+        minimumInputLength: 0,
+        placeholder: 'Search for a customer...'
+    });
+}
+
+// Main Initialization
+document.addEventListener('DOMContentLoaded', function() {
+    // Show loading spinner during initialization
+    showSpinner();
+
+    // Initialize Handsontable with performance optimizations
+    const container = document.getElementById('componentsGrid');
+    const componentsData = {{ components|tojson|safe }};
+
+    hot = new Handsontable(container, {
+        data: componentsData,
+        columns: [
+            { data: 'selected', title: '<input type="checkbox" id="selectAll">', type: 'checkbox', width: 30 },
+            { data: 'base_part_number', title: 'Part Number', width: 150 },
+            { data: 'quantity', title: 'Quantity', type: 'numeric', width: 100 },
+            { data: 'position', title: 'Position', type: 'numeric', width: 100 },
+            { data: 'guide_price', title: 'Guide Price', type: 'numeric', width: 100, numericFormat: { pattern: '0.00' } },
+            { data: 'current_price', title: 'Current Price', type: 'numeric', width: 110, numericFormat: { pattern: '0.00' } },
+            { data: 'currency_code', title: 'Currency', width: 80 },
+            { data: 'supplier_name', title: 'Supplier', width: 150 },
+            { data: 'lead_time', title: 'Lead Time', width: 100 }
+        ],
+        rowHeaders: true,
+        colHeaders: true,
+        // Performance optimizations for large datasets
+        height: 600,
+        licenseKey: 'non-commercial-and-evaluation',
+        // Enable virtualization for better performance with large datasets
+        renderAllRows: false,
+        viewportRowRenderingOffset: 100,
+        viewportColumnRenderingOffset: 10,
+        // Improve scrolling performance
+        preventOverflow: 'horizontal',
+        // Batch rendering
+        renderAllColumns: false
+    });
+
+    // Hide spinner after table is rendered
+    setTimeout(() => hideSpinner(), 500);
+
+    // Modal event listeners
+    $('#addCustomerModal').on('shown.bs.modal', function () {
+        initializeSelect2();
+    });
+
+    $('#createRfqModal').on('shown.bs.modal', function () {
+        initializeSelect2();
+    });
+
+    // Add Customer Handler
+    $('#addCustomerSubmitBtn').on('click', async function() {
+        const customerId = $('#customer_id').val();
+        const reference = $('#customer_reference').val();
+
+        if (!customerId) {
+            showAlert('Please select a customer', 'warning');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/bom/customers/add/{{ bom.id }}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ customer_id: customerId, reference })
+            });
+
+            if (!response.ok) throw new Error('Failed to add customer');
+            location.reload();
+        } catch (error) {
+            showAlert('Error adding customer: ' + error.message, 'danger');
+        }
+    });
+
+    // Save BOM Handler
+    $('#saveBomBtn').on('click', async function() {
+        showSpinner();
+        const components = hot.getSourceData();
+
+        try {
+            const response = await fetch('{{ url_for("bom.update_bom", bom_id=bom.id) }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ components })
+            });
+
+            if (!response.ok) throw new Error('Server error');
+            showAlert('Changes saved successfully', 'success');
+        } catch (error) {
+            showAlert('Error saving changes: ' + error.message, 'danger');
+        } finally {
+            hideSpinner();
+        }
+    });
+
+    // Import Components Handler with improved error handling
+    $('#importSubmitBtn').on('click', async function() {
+        const fileInput = document.getElementById('importFile');
+
+        if (!fileInput.files[0]) {
+            showAlert('Please select a file', 'warning');
+            return;
+        }
+
+        showSpinner();
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        try {
+            const response = await fetch('{{ url_for("bom.import_components", bom_id=bom.id) }}', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Import failed');
+            }
+
+            // Reload the page to show newly imported components
+            showAlert(data.message || 'Components imported successfully', 'success');
+            setTimeout(() => location.reload(), 1000);
+
+        } catch (error) {
+            showAlert('Error importing components: ' + error.message, 'danger');
+        } finally {
+            hideSpinner();
+        }
+    });
+
+    // Add Component Handler
+    $('#addComponentBtn').on('click', function() {
+        const currentRowCount = hot.countRows();
+        const newRow = {
+            selected: false,
+            base_part_number: '',
+            quantity: 1,
+            position: (currentRowCount + 1) * 10,
+            guide_price: 0,
+            current_price: 0,
+            currency_code: '',
+            supplier_name: '',
+            lead_time: ''
+        };
+
+        hot.alter('insert_row_below', currentRowCount);
+        hot.setDataAtRowProp(currentRowCount, 'base_part_number', '');
+        hot.setDataAtRowProp(currentRowCount, 'quantity', 1);
+        hot.setDataAtRowProp(currentRowCount, 'position', (currentRowCount + 1) * 10);
+        hot.setDataAtRowProp(currentRowCount, 'guide_price', 0);
+    });
+
+    // RFQ Creation Handler
+    $('#createRfqBtn').on('click', function() {
+        const selectedComponents = getSelectedComponents();
+        if (selectedComponents.length === 0) {
+            showAlert('Please select at least one component', 'warning');
+            return;
+        }
+        $('#createRfqModal').modal('show');
+    });
+
+    $('#createRfqSubmitBtn').on('click', function() {
+        const selectedComponents = getSelectedComponents();
+        const formData = {
+            customer_id: $('#rfq_customer').val(),
+            components: selectedComponents,
+            customer_ref: `RFQ for {{ bom.name }} BOM`,
+            entered_date: new Date().toISOString().split('T')[0]
+        };
+
+        showSpinner();
+        fetch('{{ url_for("rfqs.create_rfq_from_bom") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            $('#createRfqModal').modal('hide');
+            showAlert('RFQ created successfully', 'success');
+            window.location.href = `/rfqs/${data.rfq_id}/edit`;
+        })
+        .catch(error => {
+            showAlert('Error creating RFQ: ' + error.message, 'danger');
+        })
+        .finally(() => {
+            hideSpinner();
+        });
+    });
+
+    // Select All Handler
+    $('#selectAll').on('change', function(e) {
+        const checked = e.target.checked;
+        const data = hot.getData();
+        data.forEach((row, index) => {
+            hot.setDataAtCell(index, 0, checked);
+        });
+    });
+});
+
+</script>
+
+<!-- RFQ Creation Modal -->
+<div class="modal fade" id="createRfqModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create RFQ from Selected Components</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="createRfqForm">
+                    <div class="mb-3">
+    <label for="rfq_customer" class="form-label">Choose Customer:</label>
+    <select id="rfq_customer" class="form-select" required>
+        <option value="">Select a customer...</option>
+        {% for customer in customers %}
+            <option value="{{ customer.id }}">
+                {{ customer.name }}{% if customer.reference %} ({{ customer.reference }}){% endif %}
+            </option>
+        {% endfor %}
+    </select>
+</div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="createRfqSubmitBtn">Create RFQ</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

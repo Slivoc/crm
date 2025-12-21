@@ -1,0 +1,934 @@
+{% extends "base.html" %}
+
+{% block title %}Airbus Marketplace Export{% endblock %}
+
+{% block extra_css %}
+<style>
+    .filter-section {
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    .filter-section h5 {
+        margin-bottom: 15px;
+        color: #495057;
+    }
+    .parts-preview {
+        max-height: 400px;
+        overflow-y: auto;
+        margin-top: 20px;
+    }
+    .category-badge {
+        font-size: 0.75rem;
+        max-width: 300px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: inline-block;
+    }
+    .category-missing {
+        background-color: #fff3cd;
+        border: 1px dashed #ffc107;
+        padding: 2px 8px;
+        border-radius: 4px;
+    }
+    .price-indicator {
+        font-size: 0.85rem;
+        color: #6c757d;
+    }
+    .stats-card {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    .stats-card .stat-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #0d6efd;
+    }
+    .stats-card .stat-label {
+        font-size: 0.875rem;
+        color: #6c757d;
+    }
+
+#statsRow {
+    margin-bottom: 20px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col">
+            <h2>
+                <i class="bi bi-box-seam"></i> Airbus Marketplace Export
+            </h2>
+            <p class="text-muted">Select parts and configure export settings for Airbus Marketplace (Keycopter)</p>
+        </div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="row" id="statsRow" style="display: none;">
+        <div class="col-md-2">
+            <div class="stats-card">
+                <div class="stat-value" id="statTotalParts">0</div>
+                <div class="stat-label">Total Parts Matching Filters</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stats-card">
+                <div class="stat-value text-success" id="statCategorized">0</div>
+                <div class="stat-label">Categorized</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stats-card">
+                <div class="stat-value text-warning" id="statUncategorized">0</div>
+                <div class="stat-label">Need Categories</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stats-card">
+                <div class="stat-value" id="statInStock">0</div>
+                <div class="stat-label">Parts In Stock</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stats-card">
+                <div class="stat-value" id="statWithPrice">0</div>
+                <div class="stat-label">With Pricing Data</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stats-card">
+                <div class="stat-value text-primary" id="statTotalValue">£0</div>
+                <div class="stat-label">Est. Total Value</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Section -->
+    <div class="filter-section">
+        <h5><i class="bi bi-funnel"></i> Part Selection Filters</h5>
+
+        <div class="row">
+            <!-- Stock Filter -->
+            <div class="col-md-6 mb-3">
+                <label class="form-label fw-bold">Stock Availability</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="stockFilter" id="stockAll" value="all" checked>
+                    <label class="form-check-label" for="stockAll">
+                        All parts (with or without stock)
+                    </label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="stockFilter" id="stockOnly" value="stock_only">
+                    <label class="form-check-label" for="stockOnly">
+                        Only parts in stock
+                    </label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="stockFilter" id="stockExclude" value="no_stock">
+                    <label class="form-check-label" for="stockExclude">
+                        Only parts NOT in stock
+                    </label>
+                </div>
+            </div>
+
+            <!-- Activity Filter -->
+            <div class="col-md-6 mb-3">
+                <label class="form-label fw-bold">Sales/Quote Activity</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="includeSalesActivity">
+                    <label class="form-check-label" for="includeSalesActivity">
+                        Only parts with sales/quotes in period
+                    </label>
+                </div>
+                <div class="ms-4 mt-2" id="activityPeriodSection" style="display: none;">
+                    <label class="form-label">Time Period</label>
+                    <select class="form-select form-select-sm" id="activityPeriod">
+                        <option value="30">Last 30 days</option>
+                        <option value="90">Last 90 days</option>
+                        <option value="180">Last 6 months</option>
+                        <option value="365" selected>Last 12 months</option>
+                        <option value="730">Last 24 months</option>
+                        <option value="all">All time</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Category Filter -->
+            <div class="col-md-6 mb-3">
+                <label class="form-label fw-bold">Marketplace Category Status</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="categoryFilter" id="catAll" value="all" checked>
+                    <label class="form-check-label" for="catAll">
+                        All parts (with or without categories)
+                    </label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="categoryFilter" id="catOnly" value="categorized_only">
+                    <label class="form-check-label" for="catOnly">
+                        Only parts with categories assigned
+                    </label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="categoryFilter" id="catMissing" value="missing_only">
+                    <label class="form-check-label" for="catMissing">
+                        Only parts missing categories
+                    </label>
+                </div>
+            </div>
+
+            <!-- Part Number Category Filter -->
+            <div class="col-md-6 mb-3">
+                <label class="form-label fw-bold">Part Number Category</label>
+                <select class="form-select" id="partCategoryFilter">
+                    <option value="">All categories</option>
+                    <!-- Will be populated via JS -->
+                </select>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Part Number Search -->
+            <div class="col-md-6 mb-3">
+                <label class="form-label fw-bold">Part Number Search</label>
+                <input type="text" class="form-control" id="partNumberSearch" placeholder="Search part numbers...">
+            </div>
+        </div>
+
+        <div class="row mt-3">
+            <div class="col">
+                <button class="btn btn-primary" id="applyFiltersBtn">
+                    <i class="bi bi-search"></i> Apply Filters & Load Parts
+                </button>
+                <button class="btn btn-secondary ms-2" id="resetFiltersBtn">
+                    <i class="bi bi-x-circle"></i> Reset Filters
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pricing Configuration -->
+    <div class="filter-section">
+        <h5><i class="bi bi-currency-pound"></i> Pricing Configuration</h5>
+
+        <div class="alert alert-info mb-3">
+            <strong>Price Hierarchy:</strong> Prices are calculated using the first available source in this order:
+            <ol class="mb-0 mt-2">
+                <li>Stock Cost (if part is in stock) + margin</li>
+                <li>Recent Sales Price (average from selected period)</li>
+                <li>Recent CQ Price (average from selected period)</li>
+                <li>Recent PO Price (average from selected period)</li>
+                <li>Recent VQ Price (average from selected period)</li>
+            </ol>
+        </div>
+
+        <div class="row">
+            <div class="col-md-3 mb-3">
+                <label class="form-label fw-bold">Stock Cost Margin %</label>
+                <input type="number" class="form-control" id="stockMargin" value="35" min="0" max="200" step="1">
+                <small class="form-text text-muted">Added to stock cost</small>
+            </div>
+
+            <div class="col-md-3 mb-3">
+                <label class="form-label fw-bold">Pricing Lookback Period</label>
+                <select class="form-select" id="pricingPeriod">
+                    <option value="90">Last 90 days</option>
+                    <option value="180">Last 6 months</option>
+                    <option value="365" selected>Last 12 months</option>
+                    <option value="730">Last 24 months</option>
+                    <option value="all">All time</option>
+                </select>
+                <small class="form-text text-muted">For sales/CQ/PO/VQ prices</small>
+            </div>
+
+            <div class="col-md-3 mb-3">
+                <label class="form-label fw-bold">Use Alternative Sources</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="useCQPricing" checked>
+                    <label class="form-check-label" for="useCQPricing">
+                        Include CQ prices
+                    </label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="usePOPricing" checked>
+                    <label class="form-check-label" for="usePOPricing">
+                        Include PO prices
+                    </label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="useVQPricing" checked>
+                    <label class="form-check-label" for="useVQPricing">
+                        Include VQ prices
+                    </label>
+                </div>
+            </div>
+
+            <div class="col-md-3 mb-3">
+                <label class="form-label fw-bold">Export Defaults</label>
+                <div class="mb-2">
+                    <label class="form-label">Lead Time (days)</label>
+                    <input type="number" class="form-control form-control-sm" id="defaultLeadTime" value="14" min="0" step="1">
+                </div>
+                <div>
+                    <label class="form-label">Quantity</label>
+                    <input type="number" class="form-control form-control-sm" id="defaultQuantity" value="1" min="1" step="1">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Uncategorized Parts -->
+    <div id="loadingSpinner" style="display: none; text-align: center; padding: 60px;">
+        <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="mt-3">Loading parts...</p>
+    </div>
+
+    <div id="noPartsMessage" style="display: none; text-align: center; padding: 60px; color: #6c757d;">
+        <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+        <p class="mt-3">No parts found matching your filters. Try adjusting the filters above.</p>
+    </div>
+
+    <div class="card" id="uncategorizedCard" style="display: none;">
+        <div class="card-header d-flex justify-content-between align-items-center bg-warning">
+            <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Uncategorized Parts</h5>
+            <button class="btn btn-sm btn-dark" id="autoCategorizeMissingBtn">
+                <i class="bi bi-magic"></i> Auto-Categorize All
+            </button>
+        </div>
+        <div class="card-body">
+            <p class="text-muted">These parts need marketplace categories assigned before export:</p>
+            <div class="parts-preview">
+                <table class="table table-sm table-hover" id="uncategorizedTable">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Part Number</th>
+                            <th>Stock Qty</th>
+                            <th>Has Pricing</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="uncategorizedBody">
+                        <!-- Uncategorized parts will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Actions -->
+    <div class="card mt-3" id="exportCard" style="display: none;">
+        <div class="card-body">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <h5 class="mb-2">Ready to Export</h5>
+                    <p class="mb-0 text-muted">
+                        <span id="readyCount">0</span> parts with categories will be exported.
+                        <span id="uncatWarning" class="text-warning" style="display: none;">
+                            (<span id="uncatCount">0</span> parts missing categories will be skipped)
+                        </span>
+                    </p>
+                </div>
+                <div class="col-md-4 text-end">
+                    <button class="btn btn-lg btn-success" id="exportToExcelBtn">
+                        <i class="bi bi-download"></i> Export to Excel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Category Assignment Modal -->
+<div class="modal fade" id="categoryModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Assign Marketplace Category</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="categoryModalContent">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Part Number:</label>
+                        <div id="modalPartNumber" class="text-primary"></div>
+                    </div>
+
+                    <div class="mb-3">
+                        <button class="btn btn-sm btn-info" id="suggestCategoryBtn">
+                            <i class="bi bi-magic"></i> AI Suggest Category
+                        </button>
+                        <div id="suggestionSpinner" style="display: none;" class="d-inline-block ms-2">
+                            <span class="spinner-border spinner-border-sm" role="status"></span>
+                            <span class="ms-1">Getting suggestion...</span>
+                        </div>
+                    </div>
+
+                    <div id="aiSuggestion" style="display: none;" class="alert alert-info">
+                        <strong>AI Suggestion:</strong>
+                        <div id="suggestedCategory" class="mt-2"></div>
+                        <small class="d-block mt-2 text-muted" id="suggestionReasoning"></small>
+                        <button class="btn btn-sm btn-success mt-2" id="useSuggestionBtn">
+                            <i class="bi bi-check-circle"></i> Use This Category
+                        </button>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Select Category:</label>
+                        <select class="form-select" id="categorySelect" size="10">
+                            <!-- Categories populated via JS -->
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveCategoryBtn">
+                    <i class="bi bi-save"></i> Save Category
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Progress Modal -->
+<div class="modal fade" id="progressModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Auto-Categorizing Parts</h5>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Progress</span>
+                        <span><strong id="progressCount">0</strong> / <strong id="progressTotal">0</strong> parts</span>
+                    </div>
+                    <div class="progress" style="height: 25px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated"
+                             id="progressBar"
+                             role="progressbar"
+                             style="width: 0%"
+                             aria-valuenow="0"
+                             aria-valuemin="0"
+                             aria-valuemax="100">
+                            0%
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <strong>Status:</strong> <span id="progressStatus">Starting...</span>
+                </div>
+
+                <div class="mb-3">
+                    <strong>Categorized:</strong> <span id="progressCategorized" class="text-success">0</span> parts
+                </div>
+
+                <div id="progressError" class="alert alert-danger" style="display: none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-danger" id="cancelProgressBtn">
+                    <i class="bi bi-x-circle"></i> Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let allParts = [];
+let categories = [];
+let currentEditingPartNumber = null;
+
+$(document).ready(function() {
+    loadCategories();
+
+    // Show/hide activity period when checkbox changes
+    $('#includeSalesActivity').change(function() {
+        $('#activityPeriodSection').toggle(this.checked);
+    });
+
+    // Apply filters
+    $('#applyFiltersBtn').click(function() {
+        loadParts();
+    });
+
+    // Reset filters
+    $('#resetFiltersBtn').click(function() {
+        $('input[name="stockFilter"][value="all"]').prop('checked', true);
+        $('input[name="categoryFilter"][value="all"]').prop('checked', true);
+        $('#includeSalesActivity').prop('checked', false);
+        $('#activityPeriodSection').hide();
+        $('#partNumberSearch').val('');
+        $('#stockMargin').val(35);
+        $('#pricingPeriod').val('365');
+        $('#useCQPricing').prop('checked', true);
+        $('#usePOPricing').prop('checked', true);
+        $('#useVQPricing').prop('checked', true);
+        $('#defaultLeadTime').val(14);
+        $('#defaultQuantity').val(1);
+    });
+
+    // Export button
+    $('#exportToExcelBtn').click(function() {
+        exportToExcel();
+    });
+
+    // Auto-categorize missing
+    $('#autoCategorizeMissingBtn').click(function() {
+        autoCategorizeMissing();
+    });
+
+    // Category modal buttons
+    $('#suggestCategoryBtn').click(function() {
+        suggestCategoryForPart();
+    });
+
+    $('#useSuggestionBtn').click(function() {
+        const suggestedCat = $('#suggestedCategory').data('category');
+        $('#categorySelect').val(suggestedCat);
+    });
+
+    $('#saveCategoryBtn').click(function() {
+        saveCategoryAssignment();
+    });
+});
+
+function loadCategories() {
+    $.get('/marketplace/categories', function(response) {
+        categories = response.categories;
+
+        // Populate category select in modal
+        const $select = $('#categorySelect');
+        $select.empty();
+        categories.forEach(cat => {
+            const shortName = cat.replace('Marketplace Categories/Hardware and Electrical/', '');
+            $select.append($('<option>', {
+                value: cat,
+                text: shortName
+            }));
+        });
+    }).fail(function() {
+        alert('Error loading categories');
+    });
+}
+
+function loadParts() {
+    $('#loadingSpinner').show();
+    $('#statsRow').hide();
+    $('#uncategorizedCard').hide();
+    $('#exportCard').hide();
+
+    const filters = {
+        stock_filter: $('input[name="stockFilter"]:checked').val(),
+        category_filter: $('input[name="categoryFilter"]:checked').val(),
+        include_sales_activity: $('#includeSalesActivity').prop('checked'),
+        activity_period_days: $('#activityPeriod').val(),
+        pricing_period_days: $('#pricingPeriod').val(),  // NEW
+        part_number_search: $('#partNumberSearch').val().trim()
+    };
+
+    $.ajax({
+        url: '/marketplace/get-parts-for-export',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(filters),
+        success: function(response) {
+            $('#loadingSpinner').hide();
+
+            if (response.success && response.parts && response.parts.length > 0) {
+                allParts = response.parts;
+                updateSummaryStats();
+                renderUncategorizedParts();
+                $('#statsRow').show();
+                $('#exportCard').show();
+            } else {
+                $('#noPartsMessage').show();
+                allParts = [];
+            }
+        },
+        error: function(xhr, status, error) {
+            $('#loadingSpinner').hide();
+            console.error('Error loading parts:', error);
+            console.error('Response:', xhr.responseText);
+            alert('Error loading parts: ' + (xhr.responseJSON?.error || error));
+        }
+    });
+}
+
+function updateSummaryStats() {
+    const categorized = allParts.filter(p => p.mkp_category).length;
+    const uncategorized = allParts.length - categorized;
+    const inStock = allParts.filter(p => p.stock_qty > 0).length;
+
+    // Count parts with pricing data (using hierarchical fallback)
+    let withPrice = 0;
+    let totalValue = 0;
+
+    allParts.forEach(part => {
+        const price = calculateHierarchicalPrice(part);
+        if (price) {
+            withPrice++;
+            const qty = part.stock_qty > 0 ? part.stock_qty : parseInt($('#defaultQuantity').val());
+            totalValue += price * qty;
+        }
+    });
+
+    $('#statTotalParts').text(allParts.length);
+    $('#statCategorized').text(categorized);
+    $('#statUncategorized').text(uncategorized);
+    $('#statInStock').text(inStock);
+    $('#statWithPrice').text(withPrice);
+    $('#statTotalValue').text('£' + totalValue.toLocaleString('en-GB', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+
+    // Update export card
+    $('#readyCount').text(categorized);
+    $('#uncatCount').text(uncategorized);
+    $('#uncatWarning').toggle(uncategorized > 0);
+}
+
+function renderUncategorizedParts() {
+    const uncategorized = allParts.filter(p => !p.mkp_category);
+
+    if (uncategorized.length === 0) {
+        $('#uncategorizedCard').hide();
+        return;
+    }
+
+    $('#uncategorizedCard').show();
+    const $tbody = $('#uncategorizedBody');
+    $tbody.empty();
+
+    uncategorized.forEach(part => {
+        const price = calculateHierarchicalPrice(part);
+        const hasPricing = price ? 'Yes' : 'No';
+        const pricingClass = price ? 'text-success' : 'text-muted';
+
+        const row = `
+            <tr data-part-number="${part.base_part_number}">
+                <td><strong>${part.part_number}</strong></td>
+                <td class="text-center">${part.stock_qty || 0}</td>
+                <td class="text-center ${pricingClass}">${hasPricing}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-primary assign-category-btn" data-part-number="${part.base_part_number}">
+                        <i class="bi bi-tag"></i> Assign Category
+                    </button>
+                </td>
+            </tr>
+        `;
+        $tbody.append(row);
+    });
+
+    // Bind category assignment button
+    $('.assign-category-btn').click(function() {
+        const partNumber = $(this).data('part-number');
+        openCategoryModal(partNumber);
+    });
+}
+
+function calculateHierarchicalPrice(part) {
+    const margin = parseFloat($('#stockMargin').val()) / 100;
+    const useCQ = $('#useCQPricing').prop('checked');
+    const usePO = $('#usePOPricing').prop('checked');
+    const useVQ = $('#useVQPricing').prop('checked');
+
+    // 1. Stock cost + margin (if in stock)
+    if (part.stock_qty > 0 && part.stock_cost) {
+        return part.stock_cost * (1 + margin);
+    }
+
+    // 2. Recent sales price
+    if (part.avg_sale_price) {
+        return part.avg_sale_price;
+    }
+
+    // 3. Recent CQ price
+    if (useCQ && part.avg_cq_price) {
+        return part.avg_cq_price;
+    }
+
+    // 4. Recent PO price
+    if (usePO && part.avg_po_price) {
+        return part.avg_po_price;
+    }
+
+    // 5. Recent VQ price
+    if (useVQ && part.avg_vq_price) {
+        return part.avg_vq_price;
+    }
+
+    return null;
+}
+
+function openCategoryModal(basePartNumber) {
+    currentEditingPartNumber = basePartNumber;
+    const part = allParts.find(p => p.base_part_number === basePartNumber);
+
+    if (!part) return;
+
+    $('#modalPartNumber').text(part.part_number);
+    $('#aiSuggestion').hide();
+
+    // Pre-select current category if exists
+    if (part.mkp_category) {
+        $('#categorySelect').val(part.mkp_category);
+    } else {
+        $('#categorySelect').val('');
+    }
+
+    $('#categoryModal').modal('show');
+}
+
+function suggestCategoryForPart() {
+    const part = allParts.find(p => p.base_part_number === currentEditingPartNumber);
+    if (!part) return;
+
+    $('#suggestionSpinner').show();
+    $('#aiSuggestion').hide();
+
+    $.ajax({
+        url: '/marketplace/suggest-category',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            part_number: part.part_number,
+            description: '',
+            additional_info: ''
+        }),
+        success: function(response) {
+            $('#suggestionSpinner').hide();
+
+            if (response.category) {
+                const shortName = response.category.replace('Marketplace Categories/Hardware and Electrical/', '');
+                $('#suggestedCategory').text(shortName).data('category', response.category);
+                $('#suggestionReasoning').text(response.reasoning || '');
+                $('#aiSuggestion').show();
+            } else {
+                alert('Unable to suggest category');
+            }
+        },
+        error: function() {
+            $('#suggestionSpinner').hide();
+            alert('Error getting suggestion');
+        }
+    });
+}
+function saveCategoryAssignment() {
+    const selectedCategory = $('#categorySelect').val();
+
+    if (!selectedCategory) {
+        alert('Please select a category');
+        return;
+    }
+
+    $.ajax({
+        url: `/marketplace/update-category/${currentEditingPartNumber}`,
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            mkp_category: selectedCategory
+        }),
+        success: function(response) {
+            if (response.success) {
+                // Update local data
+                const part = allParts.find(p => p.base_part_number === currentEditingPartNumber);
+                if (part) {
+                    part.mkp_category = selectedCategory;
+                }
+
+                $('#categoryModal').modal('hide');
+                updateSummaryStats();
+                renderUncategorizedParts();
+            } else {
+                alert('Error updating category: ' + (response.error || 'Unknown error'));
+            }
+        },
+        error: function() {
+            alert('Error updating category');
+        }
+    });
+}
+
+
+let categorizationCancelled = false;
+let totalCategorized = 0;
+
+function autoCategorizeMissing() {
+    const uncategorizedNumbers = allParts
+        .filter(p => !p.mkp_category)
+        .map(p => p.base_part_number);
+
+    if (uncategorizedNumbers.length === 0) {
+        alert('No parts need categorization');
+        return;
+    }
+
+    if (!confirm(`Auto-categorize ${uncategorizedNumbers.length} parts using AI? This will process 10 parts at a time and may take several minutes.`)) {
+        return;
+    }
+
+    // Reset progress tracking
+    categorizationCancelled = false;
+    totalCategorized = 0;
+
+    // Show progress modal
+    $('#progressModal').modal('show');
+    $('#progressTotal').text(uncategorizedNumbers.length);
+    $('#progressCount').text(0);
+    $('#progressCategorized').text(0);
+    $('#progressBar').css('width', '0%').text('0%');
+    $('#progressStatus').text('Starting...');
+    $('#progressError').hide();
+    $('#cancelProgressBtn').prop('disabled', false);
+
+    // Disable the auto-categorize button
+    $('#autoCategorizeMissingBtn').prop('disabled', true);
+
+    // Start processing
+    processCategorizationBatch(uncategorizedNumbers, 0, uncategorizedNumbers.length);
+}
+
+function processCategorizationBatch(allPartNumbers, offset, total) {
+    // Check if cancelled
+    if (categorizationCancelled) {
+        $('#progressStatus').text('Cancelled by user');
+        $('#cancelProgressBtn').text('Close').removeClass('btn-danger').addClass('btn-secondary');
+        $('#autoCategorizeMissingBtn').prop('disabled', false);
+        return;
+    }
+
+    const batchSize = 10;
+    const currentBatch = Math.floor(offset / batchSize) + 1;
+    const totalBatches = Math.ceil(total / batchSize);
+
+    $('#progressStatus').text(`Processing batch ${currentBatch} of ${totalBatches}...`);
+
+    $.ajax({
+        url: '/marketplace/auto-categorize',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            base_part_numbers: allPartNumbers,
+            overwrite: false,
+            batch_size: batchSize,
+            offset: offset
+        }),
+        success: function(response) {
+            if (response.success) {
+                // Update progress
+                const processed = offset + response.total_in_batch;
+                const percentage = Math.round((processed / total) * 100);
+                totalCategorized += response.updated_count;
+
+                $('#progressCount').text(processed);
+                $('#progressCategorized').text(totalCategorized);
+                $('#progressBar')
+                    .css('width', percentage + '%')
+                    .attr('aria-valuenow', percentage)
+                    .text(percentage + '%');
+
+                // Continue if there are more parts
+                if (response.has_more && !categorizationCancelled) {
+                    processCategorizationBatch(allPartNumbers, response.next_offset, total);
+                } else {
+                    // Completed
+                    $('#progressStatus').text('Completed!');
+                    $('#progressBar').removeClass('progress-bar-animated');
+                    $('#cancelProgressBtn')
+                        .text('Close')
+                        .removeClass('btn-danger')
+                        .addClass('btn-success');
+                    $('#autoCategorizeMissingBtn').prop('disabled', false);
+
+                    // Reload parts after a short delay
+                    setTimeout(function() {
+                        $('#progressModal').modal('hide');
+                        loadParts();
+                    }, 2000);
+                }
+            } else {
+                // Error
+                $('#progressError').text('Error: ' + (response.error || 'Unknown error')).show();
+                $('#progressStatus').text('Error occurred');
+                $('#cancelProgressBtn').text('Close').removeClass('btn-danger').addClass('btn-secondary');
+                $('#autoCategorizeMissingBtn').prop('disabled', false);
+            }
+        },
+        error: function(xhr, status, error) {
+            $('#progressError').text('Network error: ' + error).show();
+            $('#progressStatus').text('Error occurred');
+            $('#cancelProgressBtn').text('Close').removeClass('btn-danger').addClass('btn-secondary');
+            $('#autoCategorizeMissingBtn').prop('disabled', false);
+        }
+    });
+}
+
+// Cancel button handler
+$('#cancelProgressBtn').click(function() {
+    if ($(this).text().includes('Cancel')) {
+        categorizationCancelled = true;
+        $(this).prop('disabled', true).text('Cancelling...');
+    } else {
+        $('#progressModal').modal('hide');
+    }
+});
+function exportToExcel() {
+    const categorizedParts = allParts.filter(p => p.mkp_category);
+
+    if (categorizedParts.length === 0) {
+        alert('No categorized parts to export. Please assign categories first.');
+        return;
+    }
+
+    $('#exportToExcelBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Generating...');
+
+    // Prepare export data with pricing
+    const exportData = {
+        base_part_numbers: categorizedParts.map(p => p.base_part_number),
+        pricing_config: {
+            stock_margin: parseFloat($('#stockMargin').val()),
+            pricing_period_days: $('#pricingPeriod').val(),
+            use_cq_pricing: $('#useCQPricing').prop('checked'),
+            use_po_pricing: $('#usePOPricing').prop('checked'),
+            use_vq_pricing: $('#useVQPricing').prop('checked'),
+            default_lead_time: parseInt($('#defaultLeadTime').val()),
+            default_quantity: parseInt($('#defaultQuantity').val())
+        }
+    };
+    
+    // Create a form and submit it to trigger download
+    const form = $('<form>', {
+        method: 'POST',
+        action: '/marketplace/export'
+    });
+    
+    $('<input>').attr({
+        type: 'hidden',
+        name: 'export_data',
+        value: JSON.stringify(exportData)
+    }).appendTo(form);
+    
+    $('body').append(form);
+    form.submit();
+    form.remove();
+    
+    setTimeout(function() {
+        $('#exportToExcelBtn').prop('disabled', false).html('<i class="bi bi-download"></i> Export to Excel');
+    }, 2000);
+}
+</script>
+{% endblock %}

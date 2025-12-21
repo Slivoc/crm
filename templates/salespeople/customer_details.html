@@ -1,0 +1,673 @@
+<!-- templates/salespeople/customer_details.html -->
+<div class="customer-details">
+  <input type="hidden" id="customerIdInput" value="{{ customer.id }}">
+
+  <div class="row">
+    <div class="col-md-6">
+      <h3>{{ customer.name }}</h3>
+      {% if customer.customer_status %}
+        <span class="badge bg-info">{{ customer.customer_status }}</span>
+      {% endif %}
+    </div>
+    <div class="col-md-6 text-md-end">
+      <a href="{{ url_for('customers.edit_customer', customer_id=customer.id) }}" class="btn btn-primary btn-sm">
+        <i class="bi bi-eye"></i> View Full Details
+      </a>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- Contacts Section -->
+  <div class="row mb-4">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h6 class="mb-0">
+            <i class="bi bi-people me-2"></i>Contacts
+          </h6>
+          <span class="badge bg-secondary">{{ contacts|length if contacts else 0 }}</span>
+        </div>
+        <div class="card-body">
+          {% if contacts %}
+            <div class="contact-list">
+              {% for contact in contacts %}
+                <div class="contact-item border-bottom py-3">
+                  <div class="row align-items-start">
+                    <div class="col-md-8">
+                      <!-- Contact Name and Basic Info -->
+                      <div class="d-flex align-items-center mb-2">
+                        <h6 class="mb-0 me-2">{{ contact.name }}</h6>
+                        {% if contact.status %}
+                          <span class="badge bg-info">{{ contact.status }}</span>
+                        {% endif %}
+                      </div>
+
+                      <!-- Contact Details -->
+                      <div class="contact-details mb-2">
+                        {% if contact.email %}
+                          <div class="mb-1">
+                            <i class="bi bi-envelope me-1 text-muted"></i>
+                            <a href="mailto:{{ contact.email }}" class="text-decoration-none">
+                              {{ contact.email }}
+                            </a>
+                          </div>
+                        {% endif %}
+
+                        {% if contact.phone %}
+                          <div class="mb-1">
+                            <i class="bi bi-telephone me-1 text-muted"></i>
+                            <a href="tel:{{ contact.phone }}" class="text-decoration-none">
+                              {{ contact.phone }}
+                            </a>
+                          </div>
+                        {% endif %}
+
+                        {% if contact.job_title %}
+                          <div class="mb-1">
+                            <i class="bi bi-briefcase me-1 text-muted"></i>
+                            <small class="text-muted">{{ contact.job_title }}</small>
+                          </div>
+                        {% endif %}
+                      </div>
+
+                      <!-- Contact Notes -->
+                      {% if contact.notes %}
+                        <div class="contact-notes">
+                          <small class="text-muted">
+                            <i class="bi bi-sticky me-1"></i>
+                            <strong>Notes:</strong> {{ contact.notes|truncate(100) }}
+                          </small>
+                        </div>
+                      {% endif %}
+                    </div>
+
+                    <div class="col-md-4 text-end">
+                      <!-- Most Recent Communication -->
+                      {% if contact.last_communication_date %}
+                        <div class="last-communication mb-2">
+                          <small class="text-muted d-block">Last Contact</small>
+                          <small class="fw-bold">{{ contact.last_communication_date }}</small>
+                          {% if contact.last_communication_type %}
+                            <small class="d-block text-primary">
+                              <i class="bi bi-{{ 'envelope' if contact.last_communication_type == 'Email'
+                                                else 'telephone' if contact.last_communication_type == 'Phone'
+                                                else 'camera-video' if contact.last_communication_type == 'Video Call'
+                                                else 'calendar-event' if contact.last_communication_type == 'Meeting'
+                                                else 'chat-dots' }} me-1"></i>
+                              {{ contact.last_communication_type }}
+                            </small>
+                          {% endif %}
+                        </div>
+                      {% else %}
+                        <small class="text-muted">No recent contact</small>
+                      {% endif %}
+
+                      <!-- Quick Actions -->
+                      <div class="contact-actions">
+                        {% if contact.email %}
+                          <a href="mailto:{{ contact.email }}"
+                             class="btn btn-sm btn-outline-primary me-1"
+                             title="Send Email">
+                            <i class="bi bi-envelope"></i>
+                          </a>
+                        {% endif %}
+                        {% if contact.phone %}
+                          <a href="tel:{{ contact.phone }}"
+                             class="btn btn-sm btn-outline-success"
+                             title="Call">
+                            <i class="bi bi-telephone"></i>
+                          </a>
+                        {% endif %}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-center py-3">
+              <i class="bi bi-people text-muted" style="font-size: 2rem;"></i>
+              <p class="text-muted mt-2">No contacts found for this customer</p>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-md-12">
+      <div class="card mb-3">
+        <div class="card-header">
+          <h5 class="card-title mb-0">Sales Performance</h5>
+        </div>
+        <div class="card-body">
+          <div class="row">
+            <div class="col-md-3">
+              <div class="form-group mb-3">
+                <label for="timePeriod">Time Period:</label>
+                <select class="form-select" id="timePeriod">
+                  <option value="last_30_days">Last 30 Days</option>
+                  <option value="last_12_months">Last 12 Months</option>
+                  <option value="yearly">All Years</option>
+                </select>
+              </div>
+              <div class="mb-3">
+                <strong>Active RFQs:</strong> <span id="activeRfqsCount">{{ customer.active_rfqs }}</span>
+              </div>
+              <div class="mb-3">
+                <strong>Active Orders:</strong> <span id="activeOrdersCount">{{ customer.active_orders }}</span>
+              </div>
+              <!-- Add this new section for total sales -->
+              <div class="mb-3">
+                <strong>Total Sales:</strong> <span id="totalSalesAmount">0</span>
+              </div>
+            </div>
+            <div class="col-md-9">
+              <div class="chart-container" style="position: relative; height:300px; width:100%;">
+                <canvas id="salesPerformanceChart" height="300"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Enhanced Customer Notes Section with Rich Text -->
+  <div class="row mt-3">
+    <div class="col-md-12">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h5 class="card-title mb-0">Customer Notes</h5>
+          <div class="btn-group">
+            <button type="button" class="btn btn-sm btn-secondary" id="toggleEditBtn">
+              <i class="bi bi-pencil"></i> Edit
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="saveNotesBtn" style="display: none;">
+              <i class="bi bi-save"></i> Save Notes
+            </button>
+          </div>
+        </div>
+        <div class="card-body">
+          <!-- Markdown Toolbar (hidden by default) -->
+  <!-- Replace the markdown toolbar section in your template with this: -->
+<div class="markdown-toolbar" id="markdownToolbar" style="display: none;">
+  <!-- Text formatting group -->
+  <button type="button" class="btn" data-action="bold" title="Bold">
+    <i class="bi bi-type-bold"></i>
+  </button>
+  <button type="button" class="btn" data-action="italic" title="Italic">
+    <i class="bi bi-type-italic"></i>
+  </button>
+  <button type="button" class="btn" data-action="underline" title="Strikethrough">
+    <i class="bi bi-type-strikethrough"></i>
+  </button>
+
+  <!-- Visual separator -->
+  <div class="toolbar-separator"></div>
+
+  <!-- Heading group -->
+  <button type="button" class="btn" data-action="h1" title="Heading 1">H1</button>
+  <button type="button" class="btn" data-action="h2" title="Heading 2">H2</button>
+  <button type="button" class="btn" data-action="h3" title="Heading 3">H3</button>
+
+  <!-- Visual separator -->
+  <div class="toolbar-separator"></div>
+
+  <!-- Content structure group -->
+  <button type="button" class="btn" data-action="list" title="Bullet List">
+    <i class="bi bi-list-ul"></i>
+  </button>
+  <button type="button" class="btn" data-action="quote" title="Quote">
+    <i class="bi bi-quote"></i>
+  </button>
+  <button type="button" class="btn" data-action="link" title="Insert Link">
+    <i class="bi bi-link-45deg"></i>
+  </button>
+</div>
+          <!-- Editor and Preview Container -->
+          <div class="notes-container">
+            <!-- Preview View (default) -->
+            <div id="previewView" class="notes-preview">
+              <div id="notesPreview" class="rendered-notes" style="min-height: 100px;">
+                <!-- Server-rendered HTML will be here, or client-side rendered from markdown -->
+                {{ customer.notes_html|safe if customer.notes_html else (customer.notes|markdown if customer.notes else '') }}
+              </div>
+            </div>
+
+            <!-- Editor View (hidden by default) -->
+            <div id="editorView" class="form-group" style="display: none;">
+              <textarea id="customerNotes" class="form-control" rows="6" placeholder="Enter your notes here. You can use markdown formatting:&#10;&#10;# Heading 1&#10;## Heading 2&#10;**Bold text**&#10;*Italic text*&#10;~~Strikethrough~~&#10;- Bullet point&#10;> Quote&#10;&#10;[Link text](URL)">{{ customer.notes or '' }}</textarea>
+              <small class="form-text text-muted mt-1">
+                <i class="bi bi-info-circle"></i>
+                Supports markdown formatting. Use the toolbar above for quick formatting.
+              </small>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Updates and Status Form -->
+  <div class="row mt-4">
+    <div class="col-md-7">
+      <h4>Recent Updates</h4>
+      <hr>
+      {% if updates %}
+        <div class="timeline">
+          {% for update in updates %}
+            <div class="timeline-item">
+              <div class="timeline-marker bg-info"></div>
+              <div class="timeline-content">
+                <p class="mb-1">{{ update.update_text }}</p>
+                <small class="text-muted">By {{ update.salesperson_name }} on {{ update.date }}</small>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="text-muted">No updates available</p>
+      {% endif %}
+    </div>
+
+    <div class="col-md-5">
+      <div class="card">
+        <div class="card-header"><h5 class="card-title mb-0">Add Status Update</h5></div>
+        <div class="card-body">
+          <form id="customerUpdateForm" action="{{ url_for('salespeople.add_customer_update', salesperson_id=customer.salesperson_id) }}" method="post">
+            <input type="hidden" name="customer_id" value="{{ customer.id }}">
+            <div class="mb-3">
+              <textarea name="update_text" class="form-control" rows="3" placeholder="Enter status update..." required></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Add Update</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent RFQs and Orders -->
+  <div class="row mt-4">
+    <div class="col-md-6">
+      <h4>Recent RFQs</h4>
+      <hr>
+      {% if rfqs %}
+        <div class="list-group">
+          {% for rfq in rfqs %}
+            <div class="list-group-item">
+              <div class="d-flex justify-content-between">
+                <h5>{{ rfq.customer_ref }}</h5>
+                <small class="text-muted">{{ rfq.entered_date }}</small>
+              </div>
+              <p>Status: <span class="badge bg-secondary">{{ rfq.status }}</span></p>
+              <small>By {{ rfq.salesperson_name }} | {{ rfq.line_count }} line(s)</small>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="text-muted">No RFQs available</p>
+      {% endif %}
+    </div>
+
+    <div class="col-md-6">
+      <h4>Recent Orders</h4>
+      <hr>
+      {% if orders %}
+        <div class="list-group">
+          {% for order in orders %}
+            <div class="list-group-item">
+              <div class="d-flex justify-content-between">
+                <h5>{{ order.sales_order_ref }}</h5>
+                <small class="text-muted">{{ order.date_entered }}</small>
+              </div>
+              <p>PO: {{ order.customer_po_ref or 'N/A' }}</p>
+              <p>Status: <span class="badge bg-secondary">{{ order.status_name }}</span></p>
+              <small>Value: {{ order.total_value }} {{ order.currency_code }}</small>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="text-muted">No orders available</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Enhanced styles for rich text notes -->
+<style>
+/* Existing styles for contact list */
+.contact-item:last-child {
+  border-bottom: none !important;
+}
+
+.contact-item .badge {
+  color: white !important;
+}
+
+.contact-item:hover {
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  transition: background-color 0.2s ease;
+}
+
+.contact-details a {
+  color: #0d6efd;
+  font-weight: 500;
+}
+
+.contact-details a:hover {
+  color: #0a58ca;
+  text-decoration: underline !important;
+}
+
+.contact-actions .btn {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+.last-communication {
+  min-height: 60px;
+  text-align: right;
+}
+
+.contact-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding-right: 10px;
+}
+
+/* Custom scrollbar for contact list */
+.contact-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.contact-list::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3px;
+}
+
+.contact-list::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+.contact-list::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+.contact-notes {
+  background-color: #f8f9fa;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid #dee2e6;
+  margin-top: 8px;
+}
+
+.badge {
+  font-size: 0.7rem;
+}
+
+/* Contact status colors */
+.badge.bg-info {
+  background-color: #17a2b8 !important;
+}
+
+/* Icon colors for communication types */
+.text-primary .bi-envelope { color: #0d6efd !important; }
+.text-primary .bi-telephone { color: #198754 !important; }
+.text-primary .bi-camera-video { color: #6f42c1 !important; }
+.text-primary .bi-calendar-event { color: #fd7e14 !important; }
+.text-primary .bi-chat-dots { color: #6c757d !important; }
+
+/* Empty state styling */
+.text-center i.bi {
+  opacity: 0.5;
+}
+
+
+.notes-preview {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.rendered-notes {
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 0.375rem;
+  min-height: 100px;
+}
+
+.rendered-notes:empty::before {
+  content: "No notes yet. Click Edit to add some.";
+  color: #6c757d;
+  font-style: italic;
+  display: block;
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.notes-preview h1,
+.notes-preview h2,
+.notes-preview h3,
+.notes-preview h4,
+.notes-preview h5,
+.notes-preview h6,
+.rendered-notes h1,
+.rendered-notes h2,
+.rendered-notes h3,
+.rendered-notes h4,
+.rendered-notes h5,
+.rendered-notes h6 {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  color: #212529;
+}
+
+.notes-preview h1,
+.rendered-notes h1 {
+  font-size: 1.5rem;
+  border-bottom: 1px solid #dee2e6;
+  padding-bottom: 0.5rem;
+}
+.notes-preview h2,
+.rendered-notes h2 { font-size: 1.3rem; }
+.notes-preview h3,
+.rendered-notes h3 { font-size: 1.1rem; }
+
+.notes-preview p,
+.rendered-notes p {
+  margin-bottom: 0.75rem;
+  line-height: 1.6;
+}
+
+.notes-preview ul,
+.notes-preview ol,
+.rendered-notes ul,
+.rendered-notes ol {
+  margin-bottom: 0.75rem;
+  padding-left: 1.5rem;
+}
+
+.notes-preview blockquote,
+.rendered-notes blockquote {
+  border-left: 3px solid #0d6efd;
+  padding-left: 1rem;
+  margin: 1rem 0;
+  color: #6c757d;
+  font-style: italic;
+  background-color: #ffffff;
+  padding: 0.75rem 1rem;
+  border-radius: 0 0.25rem 0.25rem 0;
+}
+
+.notes-preview strong,
+.rendered-notes strong {
+  font-weight: 600;
+}
+
+.notes-preview em,
+.rendered-notes em {
+  font-style: italic;
+}
+
+.notes-preview del,
+.rendered-notes del {
+  text-decoration: line-through;
+  color: #6c757d;
+}
+
+.notes-preview a,
+.rendered-notes a {
+  color: #0d6efd;
+  text-decoration: none;
+}
+
+.notes-preview a:hover,
+.rendered-notes a:hover {
+  text-decoration: underline;
+}
+
+.notes-preview code,
+.rendered-notes code {
+  background-color: #ffffff;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.875em;
+  border: 1px solid #dee2e6;
+}
+
+.notes-preview pre,
+.rendered-notes pre {
+  background-color: #ffffff;
+  padding: 0.75rem;
+  border-radius: 0.25rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+  border: 1px solid #dee2e6;
+}
+
+.notes-preview pre code,
+.rendered-notes pre code {
+  background-color: transparent;
+  padding: 0;
+  border: none;
+}
+
+/* Empty state for preview during editing */
+.notes-preview:empty::before {
+  content: "Nothing to preview yet. Start typing in the editor.";
+  color: #6c757d;
+  font-style: italic;
+  display: block;
+  padding: 2rem;
+  text-align: center;
+}
+/* Replace the markdown toolbar CSS in your <style> section with this: */
+
+.markdown-toolbar {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  flex-wrap: nowrap !important;
+  gap: 2px;
+  padding: 8px;
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 6px 6px 0 0;
+  border-bottom: none;
+  margin-bottom: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.markdown-toolbar .btn {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 !important;
+  border: 1px solid transparent;
+  background: none;
+  border-radius: 4px;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #495057;
+  transition: all 0.15s ease;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 !important;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+
+.markdown-toolbar .btn:hover {
+  background-color: #e9ecef !important;
+  border-color: #ced4da;
+  color: #212529;
+  box-shadow: none !important;
+}
+
+.markdown-toolbar .btn:active,
+.markdown-toolbar .btn.active {
+  background-color: #0d6efd !important;
+  border-color: #0d6efd;
+  color: white !important;
+  box-shadow: none !important;
+}
+
+.markdown-toolbar .btn:focus {
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25) !important;
+}
+
+/* Toolbar separators */
+.toolbar-separator {
+  width: 1px;
+  height: 20px;
+  background-color: #dee2e6;
+  margin: 0 6px;
+  flex-shrink: 0;
+  display: block;
+}
+
+
+
+/* Make sure Bootstrap's btn-group doesn't interfere */
+.markdown-toolbar .btn-group {
+  display: contents !important;
+}
+
+/* Ensure no conflicting Bootstrap styles */
+.markdown-toolbar .btn-group-sm > .btn,
+.markdown-toolbar .btn-sm {
+  width: 32px !important;
+  height: 32px !important;
+  padding: 0 !important;
+}
+
+/* Update textarea to connect with toolbar */
+.notes-container #customerNotes {
+  border-top: none !important;
+  border-radius: 0 0 6px 6px !important;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+}
+#customerNotes {
+  font-size: 20px !important;
+}
+
+.rendered-notes {
+  font-size: 20px !important;
+}
+</style>
+
+<!-- Include marked.js library -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+

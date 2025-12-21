@@ -1,0 +1,448 @@
+{% extends "base.html" %}
+
+{% block title %}Minimum Line Value Review - {{ list_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.line-card {
+    border: 1px solid #dee2e6;
+    margin-bottom: 1rem;
+    transition: all 0.2s;
+}
+
+.line-card:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,.1);
+}
+
+.line-card.below-minimum {
+    border-left: 4px solid #dc3545;
+}
+
+.suggestion-option {
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: #f8f9fa;
+}
+
+.suggestion-option:hover {
+    background: #e9ecef;
+    border-color: #0d6efd;
+}
+
+.suggestion-option.selected {
+    background: #cfe2ff;
+    border-color: #0d6efd;
+    border-width: 2px;
+}
+
+.suggestion-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.suggestion-badge.qty {
+    background: #d1e7dd;
+    color: #0f5132;
+}
+
+.suggestion-badge.margin {
+    background: #cfe2ff;
+    color: #084298;
+}
+
+.suggestion-badge.balanced {
+    background: #fff3cd;
+    color: #664d03;
+}
+
+.custom-option {
+    background: #fff;
+    border: 2px dashed #6c757d;
+}
+
+.custom-option.active {
+    border-color: #0d6efd;
+    background: #f8f9fa;
+}
+
+.stats-summary {
+    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+    color: white;
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin-bottom: 2rem;
+}
+
+.input-group-compact {
+    max-width: 150px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+    <!-- Header -->
+    <div class="card mb-4" style="border:1px solid #dee2e6;">
+        <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h5 class="card-title mb-0" style="font-weight:600;">
+                    <i class="bi bi-exclamation-triangle-fill me-2 text-danger"></i>
+                    Minimum Line Value Review
+                </h5>
+                <div>
+                    <a href="{{ url_for('customer_quoting.customer_quote', list_id=list_id) }}"
+                       class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-arrow-left me-1"></i>Back to Quote
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="stats-summary">
+        <div class="row">
+            <div class="col-md-3">
+                <div class="mb-2">
+                    <small style="opacity: 0.9;">Parts List</small>
+                    <h4 class="mb-0">{{ list_name }}</h4>
+                    {% if customer_name %}
+                        <small>{{ customer_name }}</small>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-md-3">
+                <small style="opacity: 0.9;">Minimum Line Value</small>
+                <h3 class="mb-0">£{{ "%.2f"|format(min_line_value) }}</h3>
+            </div>
+            <div class="col-md-3">
+                <small style="opacity: 0.9;">Lines Below Minimum</small>
+                <h3 class="mb-0">{{ lines|length }}</h3>
+            </div>
+            <div class="col-md-3">
+                <small style="opacity: 0.9;">Total Shortfall</small>
+                <h3 class="mb-0" id="total-shortfall">£{{ "%.2f"|format(lines|sum(attribute='shortfall')) }}</h3>
+            </div>
+        </div>
+    </div>
+
+    {% if lines|length == 0 %}
+    <!-- No Issues -->
+    <div class="alert alert-success" role="alert">
+        <i class="bi bi-check-circle-fill me-2"></i>
+        <strong>Great!</strong> All quote lines meet the minimum line value of £{{ "%.2f"|format(min_line_value) }}.
+        <a href="{{ url_for('customer_quoting.customer_quote', list_id=list_id) }}" class="alert-link">Return to quote</a>
+    </div>
+    {% else %}
+
+    <!-- Instructions -->
+    <div class="alert alert-info mb-4">
+        <i class="bi bi-info-circle me-2"></i>
+        The following lines are below the minimum line value of <strong>£{{ "%.2f"|format(min_line_value) }}</strong>.
+        Select a suggestion for each line or enter custom values, then apply all changes.
+    </div>
+
+    <!-- Bulk Actions -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="badge bg-secondary" id="changes-count">0 changes pending</span>
+                </div>
+                <div>
+                    <button type="button" class="btn btn-success" id="apply-all-btn" disabled>
+                        <i class="bi bi-check-circle me-1"></i>Apply All Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lines -->
+    {% for line in lines %}
+    <div class="card line-card below-minimum" data-line-id="{{ line.id }}">
+        <div class="card-header bg-light">
+            <div class="row align-items-center">
+                <div class="col-md-6">
+                    <h6 class="mb-0">
+                        <span class="badge bg-secondary">Line {{ line.line_number }}</span>
+                        {{ line.customer_part_number }}
+                    </h6>
+                    {% if line.chosen_supplier_name %}
+                        <small class="text-muted">Supplier: {{ line.chosen_supplier_name }}</small>
+                    {% endif %}
+                </div>
+                <div class="col-md-6 text-end">
+                    <div class="row">
+                        <div class="col">
+                            <small class="text-muted d-block">Current Qty</small>
+                            <strong>{{ line.effective_quantity }}</strong>
+                        </div>
+                        <div class="col">
+                            <small class="text-muted d-block">Current Margin</small>
+                            <strong>{{ "%.1f"|format(line.margin_percent or 0) }}%</strong>
+                        </div>
+                        <div class="col">
+                            <small class="text-muted d-block">Current Price</small>
+                            <strong>£{{ "%.2f"|format(line.quote_price_gbp or 0) }}</strong>
+                        </div>
+                        <div class="col">
+                            <small class="text-muted d-block">Line Total</small>
+                            <strong class="text-danger">£{{ "%.2f"|format(line.current_line_total) }}</strong>
+                        </div>
+                        <div class="col">
+                            <small class="text-muted d-block">Shortfall</small>
+                            <strong class="text-danger">-£{{ "%.2f"|format(line.shortfall) }}</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="card-body">
+            <h6 class="mb-3">Select an option:</h6>
+            
+            <div class="row">
+                <!-- Suggestions -->
+                <div class="col-md-8">
+                    {% for suggestion in line.suggestions %}
+                    <div class="suggestion-option" 
+                         data-type="{{ suggestion.type }}"
+                         data-qty="{{ suggestion.qty }}"
+                         data-margin="{{ "%.2f"|format(suggestion.margin) }}"
+                         data-price="{{ "%.2f"|format(suggestion.price) }}"
+                         data-line-total="{{ "%.2f"|format(suggestion.line_total) }}">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <span class="suggestion-badge {{ suggestion.type }}">
+                                    {% if suggestion.type == 'quantity' %}
+                                        <i class="bi bi-arrow-up"></i> Increase Quantity
+                                    {% elif suggestion.type == 'margin' %}
+                                        <i class="bi bi-percent"></i> Increase Margin
+                                    {% else %}
+                                        <i class="bi bi-arrows-angle-expand"></i> Balanced
+                                    {% endif %}
+                                </span>
+                                <div class="mt-2">
+                                    <small class="text-muted">
+                                        Qty: <strong>{{ suggestion.qty }}</strong> | 
+                                        Margin: <strong>{{ "%.1f"|format(suggestion.margin) }}%</strong> | 
+                                        Price: <strong>£{{ "%.2f"|format(suggestion.price) }}</strong>
+                                    </small>
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                <div class="text-success fw-bold">£{{ "%.2f"|format(suggestion.line_total) }}</div>
+                                <small class="text-muted">
+                                    +£{{ "%.2f"|format(suggestion.line_total - line.current_line_total) }}
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- Custom Input -->
+                <div class="col-md-4">
+                    <div class="suggestion-option custom-option">
+                        <h6 class="mb-3">
+                            <i class="bi bi-pencil me-2"></i>Custom Values
+                        </h6>
+                        <div class="mb-3">
+                            <label class="form-label">Quantity</label>
+                            <input type="number" class="form-control form-control-sm custom-qty" 
+                                   value="{{ line.effective_quantity }}" min="1" step="1">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Margin %</label>
+                            <input type="number" class="form-control form-control-sm custom-margin" 
+                                   value="{{ "%.1f"|format(line.margin_percent or 0) }}" min="0" max="90" step="0.1">
+                        </div>
+                        <div class="mt-3 p-2 bg-light rounded">
+                            <small class="text-muted d-block">Estimated Line Total</small>
+                            <div class="custom-preview fw-bold">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hidden data for this line -->
+            <input type="hidden" class="base-cost" value="{{ line.base_cost_gbp or 0 }}">
+            <input type="hidden" class="delivery" value="{{ line.delivery_per_unit or 0 }}">
+        </div>
+    </div>
+    {% endfor %}
+
+    {% endif %}
+
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const LIST_ID = {{ list_id }};
+    const MIN_LINE_VALUE = {{ min_line_value }};
+    const pendingChanges = new Map();
+
+    // Update changes counter
+    function updateChangesCounter() {
+        const count = pendingChanges.size;
+        const badge = document.getElementById('changes-count');
+        const applyBtn = document.getElementById('apply-all-btn');
+        
+        badge.textContent = count === 0 ? '0 changes pending' : `${count} change${count > 1 ? 's' : ''} pending`;
+        applyBtn.disabled = count === 0;
+        
+        if (count > 0) {
+            badge.classList.remove('bg-secondary');
+            badge.classList.add('bg-warning');
+        } else {
+            badge.classList.remove('bg-warning');
+            badge.classList.add('bg-secondary');
+        }
+    }
+
+    // Calculate custom preview
+    function calculateCustomPreview(card) {
+        const baseCost = parseFloat(card.querySelector('.base-cost').value) || 0;
+        const delivery = parseFloat(card.querySelector('.delivery').value) || 0;
+        const qty = parseFloat(card.querySelector('.custom-qty').value) || 0;
+        const margin = parseFloat(card.querySelector('.custom-margin').value) || 0;
+
+        if (qty > 0 && baseCost > 0) {
+            const priceBeforeDelivery = baseCost / (1 - margin / 100);
+            const price = priceBeforeDelivery + delivery;
+            const lineTotal = price * qty;
+
+            const preview = card.querySelector('.custom-preview');
+            preview.textContent = `£${lineTotal.toFixed(2)}`;
+            
+            if (lineTotal >= MIN_LINE_VALUE) {
+                preview.classList.remove('text-danger');
+                preview.classList.add('text-success');
+            } else {
+                preview.classList.remove('text-success');
+                preview.classList.add('text-danger');
+            }
+
+            return { qty, margin, lineTotal };
+        }
+
+        return null;
+    }
+
+    // Handle suggestion option clicks
+    document.querySelectorAll('.suggestion-option:not(.custom-option)').forEach(option => {
+        option.addEventListener('click', function() {
+            const card = this.closest('.line-card');
+            const lineId = card.dataset.lineId;
+
+            // Deselect all in this card
+            card.querySelectorAll('.suggestion-option').forEach(opt => 
+                opt.classList.remove('selected'));
+
+            // Select this one
+            this.classList.add('selected');
+
+            // Store change
+            pendingChanges.set(lineId, {
+                parts_list_line_id: parseInt(lineId),
+                chosen_qty: parseInt(this.dataset.qty),
+                margin_percent: parseFloat(this.dataset.margin)
+            });
+
+            updateChangesCounter();
+        });
+    });
+
+    // Handle custom input changes
+    document.querySelectorAll('.custom-qty, .custom-margin').forEach(input => {
+        input.addEventListener('input', function() {
+            const card = this.closest('.line-card');
+            const lineId = card.dataset.lineId;
+            const customOption = card.querySelector('.custom-option');
+
+            // Activate custom option
+            card.querySelectorAll('.suggestion-option').forEach(opt => 
+                opt.classList.remove('selected'));
+            customOption.classList.add('active');
+
+            // Calculate preview
+            const result = calculateCustomPreview(card);
+
+            if (result && result.lineTotal >= MIN_LINE_VALUE) {
+                // Store change
+                pendingChanges.set(lineId, {
+                    parts_list_line_id: parseInt(lineId),
+                    chosen_qty: result.qty,
+                    margin_percent: result.margin
+                });
+                updateChangesCounter();
+            }
+        });
+    });
+
+    // Initialize custom previews
+    document.querySelectorAll('.line-card').forEach(card => {
+        calculateCustomPreview(card);
+    });
+
+    // Apply all changes
+    document.getElementById('apply-all-btn').addEventListener('click', async function() {
+        if (pendingChanges.size === 0) return;
+
+        const btn = this;
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Applying...';
+
+        try {
+            const changes = Array.from(pendingChanges.values());
+            let successCount = 0;
+
+            // Apply each change
+            for (const change of changes) {
+                const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/apply-line-adjustment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(change)
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    successCount++;
+                }
+            }
+
+            if (successCount === changes.length) {
+                // Show success and redirect
+                btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Success!';
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-success');
+
+                setTimeout(() => {
+                    window.location.href = `{{ url_for('customer_quoting.customer_quote', list_id=list_id) }}?t=${Date.now()}`;
+                }, 1000);
+            } else {
+                alert(`Applied ${successCount} of ${changes.length} changes`);
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+
+        } catch (error) {
+            console.error('Error applying changes:', error);
+            alert('Failed to apply changes');
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    });
+});
+</script>
+
+{% endblock %}

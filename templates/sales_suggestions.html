@@ -1,0 +1,1104 @@
+{% extends "base.html" %}
+
+{% block title %}Sales Suggestions{% endblock %}
+
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+<!-- DataTables CSS -->
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
+<link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.bootstrap5.min.css">
+<style>
+    .hot-container {
+        height: 300px;
+        overflow: hidden;
+        margin: 15px 0;
+    }
+    .active-stock-banner {
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+        padding: 12px 20px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+    }
+    .dataTables_wrapper .dataTables_length,
+    .dataTables_wrapper .dataTables_filter {
+        margin-bottom: 1rem;
+    }
+
+    /* Wider modals */
+    .modal-xl-custom {
+        max-width: 90%;
+        width: 90%;
+    }
+
+    .modal-xxl {
+        max-width: 95%;
+        width: 95%;
+    }
+/* Make DataTables buttons compact */
+.dt-buttons {
+    display: inline-flex !important;
+    gap: 0.5rem;
+}
+
+.dt-button {
+    width: auto !important;
+    white-space: nowrap !important;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Page Header -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                <i class="bi bi-lightbulb me-2"></i>
+                Sales Suggestions
+            </h5>
+        </div>
+        <div class="card-body">
+            <p class="mb-0 text-muted">Find sales opportunities based on current stock and customer history</p>
+        </div>
+    </div>
+
+    <!-- Upload Stock Section -->
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-upload"></i> Upload Stock Data (Optional)</h5>
+        </div>
+        <div class="card-body">
+            {% if use_uploaded_stock %}
+<div class="active-stock-banner d-flex justify-content-between align-items-center">
+    <div>
+        <strong><i class="bi bi-check-circle"></i> Using Uploaded Stock Data</strong>
+        <span class="ms-3">{{ parts_in_upload }} parts loaded</span>
+    </div>
+    <button id="clear-stock-btn" class="btn btn-sm btn-outline-danger">
+        <i class="bi bi-x-circle"></i> Clear & Use System Stock
+    </button>
+</div>
+{% else %}
+<p class="mb-3">Upload a CSV file with your current stock levels to get personalized suggestions. Otherwise, system stock will be used.</p>
+            <div class="mb-3">
+                <label for="stock-file-input" class="form-label">Choose CSV File:</label>
+                <input type="file" class="form-control" id="stock-file-input" accept=".csv">
+            </div>
+
+            <div id="hot-container" class="hot-container" style="display: none;"></div>
+
+            <div id="mapping-section" style="display: none;">
+                <h6 class="mt-3">Map Columns:</h6>
+                <div class="row">
+                    <div class="col-md-4">
+                        <label class="form-label">Part Number Column:</label>
+                        <select id="part-number-col" class="form-select"></select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Quantity Column:</label>
+                        <select id="quantity-col" class="form-select"></select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Unit Price Column (Optional):</label>
+                        <select id="unit-price-col" class="form-select">
+                            <option value="">-- Not Provided --</option>
+                        </select>
+                    </div>
+                </div>
+                <button id="apply-stock-btn" class="btn btn-success mt-3" disabled>
+                    <i class="bi bi-check-lg"></i> Apply Stock Data
+                </button>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- View Selector -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                <i class="bi bi-funnel me-2"></i>
+                View By
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="btn-group w-100" role="group">
+                        <a href="?view_by=part" class="btn btn-outline-primary {% if view_by == 'part' %}active{% endif %}">
+                            <i class="bi bi-box-seam"></i> Parts
+                        </a>
+                        <a href="?view_by=customer" class="btn btn-outline-primary {% if view_by == 'customer' %}active{% endif %}">
+                            <i class="bi bi-people"></i> Customers
+                        </a>
+                        <a href="?view_by=bom" class="btn btn-outline-primary {% if view_by == 'bom' %}active{% endif %}">
+                            <i class="bi bi-diagram-3"></i> BOMs
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Table -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                {% if view_by == 'part' %}
+                <i class="bi bi-box-seam me-2"></i>
+                Parts in Stock with Sales History
+                {% elif view_by == 'customer' %}
+                <i class="bi bi-people me-2"></i>
+                Customers with Parts in Stock
+                {% elif view_by == 'bom' %}
+                <i class="bi bi-diagram-3 me-2"></i>
+                BOMs with Parts in Stock
+                {% endif %}
+            </h5>
+        </div>
+        <div class="card-body">
+            {% if view_by == 'part' %}
+            <div class="table-responsive">
+                <table class="table table-hover table-striped" id="parts-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Part Number</th>
+                            <th>Stock Qty</th>
+                            <th>Stock Cost</th>
+                            <th>Customers</th>
+                            <th>Total Sold</th>
+                            <th>Avg Sale Price</th>
+                            <th>Guide Price</th>
+                            <th>Last Sale</th>
+                            <th>BOMs</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for part in data %}
+                        <tr>
+                            <td><strong>{{ part.part_number }}</strong></td>
+                            <td><span class="badge bg-success">{{ part.stock_quantity }}</span></td>
+                            <td>
+                                {% if part.stock_unit_price is not none %}
+                                £{{ "%.2f"|format(part.stock_unit_price) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>{{ part.customer_count }}</td>
+                            <td>{{ part.total_quantity_sold }}</td>
+                            <td>£{{ "%.2f"|format(part.avg_price) }}</td>
+                            <td>
+                                {% if part.avg_guide_price > 0 %}
+                                £{{ "%.2f"|format(part.avg_guide_price) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>{{ part.last_sale_date[:10] if part.last_sale_date else '-' }}</td>
+                            <td><small>{{ part.bom_names or '-' }}</small></td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary"
+                                        onclick="viewPartDetails('{{ part.part_number|replace("'", "\\'") }}')">
+                                    <i class="bi bi-eye"></i> View Details
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% elif view_by == 'customer' %}
+            <div class="table-responsive">
+                <table class="table table-hover table-striped" id="customer-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Customer Name</th>
+                            <th>Unique Parts</th>
+                            <th>Parts in Stock</th>
+                            <th>Stock Value</th>
+                            <th>Total Orders</th>
+                            <th>Total Qty Bought</th>
+                            <th>Avg Price</th>
+                            <th>Last Purchase</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for customer in data %}
+                        <tr>
+                            <td><strong>{{ customer.customer_name }}</strong></td>
+                            <td>{{ customer.unique_parts }}</td>
+                            <td><span class="badge bg-success">{{ customer.parts_in_stock }}</span></td>
+                            <td>
+                                {% if customer.stock_value is not none %}
+                                £{{ "%.2f"|format(customer.stock_value) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>{{ customer.order_count }}</td>
+                            <td>{{ customer.total_quantity }}</td>
+                            <td>£{{ "%.2f"|format(customer.avg_price) }}</td>
+                            <td>{{ customer.last_purchase_date[:10] if customer.last_purchase_date else '-' }}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary"
+                                        onclick="viewCustomerDetails({{ customer.customer_id }}, '{{ customer.customer_name|replace("'", "\\'") }}')">
+                                    <i class="bi bi-eye"></i> View Parts
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% elif view_by == 'bom' %}
+            <div class="table-responsive">
+                <table class="table table-hover table-striped" id="bom-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>BOM Name</th>
+                            <th>Description</th>
+                            <th>Total Parts</th>
+                            <th>Parts in Stock</th>
+                            <th>Stock Value</th>
+                            <th>Avg Guide Price</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for bom in data %}
+                        <tr>
+                            <td><strong>{{ bom.bom_name }}</strong></td>
+                            <td><small>{{ bom.description or '-' }}</small></td>
+                            <td>{{ bom.total_parts }}</td>
+                            <td><span class="badge bg-success">{{ bom.parts_in_stock }}</span></td>
+                            <td>
+                                {% if bom.stock_value is not none %}
+                                £{{ "%.2f"|format(bom.stock_value) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>£{{ "%.2f"|format(bom.avg_guide_price) }}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary"
+                                        onclick="viewBomDetails({{ bom.bom_id }}, '{{ bom.bom_name|replace("'", "\\'") }}')">
+                                    <i class="bi bi-eye"></i> View Parts
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            <!-- Pagination -->
+            {% if total_pages > 1 %}
+            <nav aria-label="Page navigation" class="mt-4">
+                <ul class="pagination justify-content-center">
+                    {% if page > 1 %}
+                    <li class="page-item">
+                        <a class="page-link" href="?view_by={{ view_by }}&page={{ page - 1 }}&search={{ search_query }}&bom_filter={{ bom_filter }}">Previous</a>
+                    </li>
+                    {% endif %}
+
+                    {% for p in range(1, total_pages + 1) %}
+                    {% if p == page %}
+                    <li class="page-item active"><a class="page-link" href="#">{{ p }}</a></li>
+                    {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+                    <li class="page-item"><a class="page-link" href="?view_by={{ view_by }}&page={{ p }}&search={{ search_query }}&bom_filter={{ bom_filter }}">{{ p }}</a></li>
+                    {% elif p == page - 3 or p == page + 3 %}
+                    <li class="page-item disabled"><a class="page-link" href="#">...</a></li>
+                    {% endif %}
+                    {% endfor %}
+
+                    {% if page < total_pages %}
+                    <li class="page-item">
+                        <a class="page-link" href="?view_by={{ view_by }}&page={{ page + 1 }}&search={{ search_query }}&bom_filter={{ bom_filter }}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Part Details Modal -->
+<div class="modal fade" id="partModal" tabindex="-1">
+    <div class="modal-dialog modal-xl-custom">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="partModalLabel">Part Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="partLoadingSpinner" class="text-center p-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+
+                <div id="partDetailsContent" style="display: none;">
+                    <!-- Part Summary -->
+                    <div class="alert alert-info mb-4">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <strong>Part Number:</strong><br>
+                                <span id="partNumber"></span>
+                            </div>
+                            <div class="col-md-2">
+                                <strong>Stock Qty:</strong><br>
+                                <span id="partStockQty" class="badge bg-success"></span>
+                            </div>
+                            <div class="col-md-2">
+                                <strong>Stock Cost:</strong><br>
+                                <span id="partStockCost"></span>
+                            </div>
+                            <div class="col-md-2">
+                                <strong>Avg Sale Price:</strong><br>
+                                <span id="partAvgPrice"></span>
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Total Customers:</strong><br>
+                                <span id="partCustomerCount"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Customer Breakdown Table -->
+                    <h6>Customer Purchase History</h6>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped table-sm" id="partCustomersTable">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Customer Name</th>
+                                    <th>Times Purchased</th>
+                                    <th>Total Qty Bought</th>
+                                    <th>Avg Purchase Price</th>
+                                    <th>Last Purchase</th>
+                                    <th>Guide Price</th>
+                                </tr>
+                            </thead>
+                            <tbody id="partCustomersTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="partErrorMessage" class="alert alert-danger" style="display: none;">
+                    <i class="bi bi-exclamation-triangle"></i> <span id="partErrorText"></span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Customer Modal -->
+<div class="modal fade" id="customerModal" tabindex="-1">
+    <div class="modal-dialog modal-xl-custom">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="customerModalLabel">Customer Parts</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="customerLoadingSpinner" class="text-center p-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+
+                <div id="customerPartsContent" style="display: none;">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped" id="customerPartsTable">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Part Number</th>
+                                    <th>Stock Qty</th>
+                                    <th>Stock Cost</th>
+                                    <th>Times Purchased</th>
+                                    <th>Total Qty Purchased</th>
+                                    <th>Avg Purchase Price</th>
+                                    <th>Guide Price</th>
+                                    <th>Last Purchase</th>
+                                </tr>
+                            </thead>
+                            <tbody id="customerPartsTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="customerErrorMessage" class="alert alert-danger" style="display: none;">
+                    <i class="bi bi-exclamation-triangle"></i> <span id="customerErrorText"></span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- BOM Modal -->
+<div class="modal fade" id="bomModal" tabindex="-1">
+    <div class="modal-dialog modal-xxl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">BOM Parts in Stock</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Loading Spinner -->
+                <div id="bomLoadingSpinner" class="text-center p-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-3 text-muted">Loading BOM parts...</p>
+                </div>
+
+                <!-- BOM Info and Parts Table -->
+                <div id="bomInfo" style="display: none;">
+                    <div class="alert alert-info">
+                        <h6 id="bomName" class="mb-1"></h6>
+                        <p id="bomDescription" class="mb-1 text-muted"></p>
+                        <small>Total parts in stock: <strong id="totalPartsCount"></strong></small>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped table-sm" id="bomPartsTable">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Part Number</th>
+                                    <th>BOM Qty</th>
+                                    <th>Stock Qty</th>
+                                    <th>Stock Cost</th>
+                                    <th>Guide Price</th>
+                                    <th>Delta %</th>
+                                    <th>Avg Sale Price</th>
+                                    <th>Times Sold</th>
+                                    <th>Last Sale</th>
+                                    <th>Customers</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bomPartsTableBody">
+                                <!-- Parts will be inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Error Message -->
+                <div id="bomErrorMessage" class="alert alert-danger" style="display: none;">
+                    <i class="bi bi-exclamation-triangle"></i> <span id="bomErrorText"></span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-success" onclick="exportBomParts()">
+                    <i class="bi bi-file-earmark-excel"></i> Export to CSV
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<!-- DataTables JS -->
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.bootstrap5.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.html5.min.js"></script>
+
+<script>
+console.log('=== SCRIPT BLOCK LOADED ===');
+
+// Helper function for escaping HTML
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Global variables
+let currentBomData = null;
+let detailsTable = null;
+
+// Part Details Function
+function viewPartDetails(partNumber) {
+    const modal = new bootstrap.Modal(document.getElementById('partModal'));
+    $('#partModalLabel').text(`${partNumber} - Details`);
+    $('#partLoadingSpinner').show();
+    $('#partDetailsContent').hide();
+    $('#partErrorMessage').hide();
+    modal.show();
+
+    fetch(`/sales-suggestions/api/part-details/${encodeURIComponent(partNumber)}`)
+        .then(response => {
+            if (!response.ok) throw new Error('Failed to load part details');
+            return response.json();
+        })
+        .then(data => {
+            $('#partLoadingSpinner').hide();
+            $('#partDetailsContent').show();
+            displayPartDetails(data);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            $('#partLoadingSpinner').hide();
+            $('#partErrorMessage').show();
+            $('#partErrorText').text(error.message);
+        });
+}
+
+function displayPartDetails(data) {
+    $('#partNumber').text(data.part.part_number);
+    $('#partStockQty').text(data.part.stock_quantity);
+    $('#partStockCost').text(data.part.stock_unit_price !== null && data.part.stock_unit_price !== undefined
+        ? '£' + data.part.stock_unit_price.toFixed(2)
+        : '-');
+    $('#partAvgPrice').text('£' + (data.part.avg_sale_price || 0).toFixed(2));
+    $('#partCustomerCount').text(data.customers.length);
+
+    if ($.fn.DataTable.isDataTable('#partCustomersTable')) {
+        $('#partCustomersTable').DataTable().destroy();
+    }
+
+    const tbody = $('#partCustomersTableBody');
+    tbody.empty();
+
+    if (data.customers.length === 0) {
+        tbody.append('<tr><td colspan="6" class="text-center text-muted">No customer purchase history</td></tr>');
+    } else {
+        data.customers.forEach(customer => {
+            tbody.append(`
+                <tr>
+                    <td><strong>${escapeHtml(customer.customer_name)}</strong></td>
+                    <td data-order="${customer.times_purchased}">${customer.times_purchased}</td>
+                    <td data-order="${customer.total_quantity_purchased}">${customer.total_quantity_purchased}</td>
+                    <td data-order="${customer.avg_purchase_price}">£${customer.avg_purchase_price.toFixed(2)}</td>
+                    <td data-order="${customer.last_purchase_date || ''}">${customer.last_purchase_date ? customer.last_purchase_date.substring(0, 10) : '-'}</td>
+                    <td data-order="${customer.avg_guide_price || 0}">${customer.avg_guide_price > 0 ? '£' + customer.avg_guide_price.toFixed(2) : '-'}</td>
+                </tr>
+            `);
+        });
+
+        $('#partCustomersTable').DataTable({
+            paging: false,
+            searching: true,
+            info: false,
+            order: [[1, 'desc']],
+            language: { search: "Search customers:" }
+        });
+    }
+}
+
+function viewBomDetails(bomId, bomName) {
+    $('#bomLoadingSpinner').show();
+    $('#bomInfo').hide();
+    $('#bomErrorMessage').hide();
+
+    const modal = new bootstrap.Modal(document.getElementById('bomModal'));
+    modal.show();
+
+    fetch(`/sales-suggestions/api/bom-parts/${bomId}`)
+        .then(response => {
+            if (!response.ok) throw new Error('Failed to load BOM parts');
+            return response.json();
+        })
+        .then(data => {
+            currentBomData = data;
+            displayBomDetails(data);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            $('#bomLoadingSpinner').hide();
+            $('#bomErrorMessage').show();
+            $('#bomErrorText').text(error.message);
+        });
+}
+
+function displayBomDetails(data) {
+    $('#bomLoadingSpinner').hide();
+    $('#bomInfo').show();
+
+    $('#bomName').text(data.bom.name);
+    $('#bomDescription').text(data.bom.description || 'No description');
+    $('#totalPartsCount').text(data.total_parts);
+
+    if ($.fn.DataTable.isDataTable('#bomPartsTable')) {
+        $('#bomPartsTable').DataTable().destroy();
+    }
+
+    const tbody = $('#bomPartsTableBody');
+    tbody.empty();
+
+    if (data.parts.length === 0) {
+        tbody.append('<tr><td colspan="10" class="text-center text-muted">No parts in stock for this BOM</td></tr>');
+    } else {
+        data.parts.forEach(part => {
+            const customers = part.customers ?
+                part.customers.split(',').slice(0, 3).join(', ') +
+                (part.customers.split(',').length > 3 ? '...' : '') : '-';
+
+            const guidePrice = part.guide_price || 0;
+            const avgSalePrice = part.avg_sale_price || 0;
+            const deltaPercent = part.delta_percent;
+            let deltaDisplay = '-';
+            let deltaClass = 'text-muted';
+            let deltaSortValue = 999999;
+
+            if (deltaPercent !== null && deltaPercent !== undefined) {
+                deltaClass = deltaPercent < 0 ? 'text-success fw-bold' : deltaPercent > 0 ? 'text-danger' : 'text-muted';
+                const deltaPrefix = deltaPercent > 0 ? '+' : '';
+                deltaDisplay = `${deltaPrefix}${deltaPercent.toFixed(1)}%`;
+                deltaSortValue = deltaPercent;
+            }
+
+            const stockCostDisplay = part.stock_unit_price !== null && part.stock_unit_price !== undefined
+                ? '£' + part.stock_unit_price.toFixed(2) : '-';
+            const stockCostOrder = part.stock_unit_price || 0;
+            const guidePriceDisplay = guidePrice > 0 ? `£${guidePrice.toFixed(2)}` : '-';
+
+            tbody.append(`
+                <tr>
+                    <td><strong>${escapeHtml(part.part_number)}</strong></td>
+                    <td data-order="${part.bom_quantity}">${part.bom_quantity}</td>
+                    <td data-order="${part.stock_quantity}"><span class="badge bg-success">${part.stock_quantity}</span></td>
+                    <td data-order="${stockCostOrder}">${stockCostDisplay}</td>
+                    <td data-order="${guidePrice}">${guidePriceDisplay}</td>
+                    <td data-order="${deltaSortValue}" class="${deltaClass}">${deltaDisplay}</td>
+                    <td data-order="${avgSalePrice}">${avgSalePrice > 0 ? '£' + avgSalePrice.toFixed(2) : '-'}</td>
+                    <td data-order="${part.times_sold || 0}">${part.times_sold || 0}</td>
+                    <td data-order="${part.last_sale_date || ''}">${part.last_sale_date ? part.last_sale_date.substring(0, 10) : '-'}</td>
+                    <td><small>${escapeHtml(customers)}</small></td>
+                </tr>
+            `);
+        });
+
+        $('#bomPartsTable').DataTable({
+            paging: false,
+            searching: true,
+            info: false,
+            order: [[5, 'asc']],
+            language: { search: "Search parts:" }
+        });
+    }
+}
+
+function exportBomParts() {
+    if (!currentBomData) {
+        alert('No data to export');
+        return;
+    }
+
+    let csv = 'Part Number,BOM Qty,Stock Qty,Stock Cost,Guide Price,Delta %,Avg Sale Price,Times Sold,Last Sale,Customers\n';
+    currentBomData.parts.forEach(part => {
+        const guidePrice = part.guide_price || 0;
+        const avgSalePrice = part.avg_sale_price || 0;
+        const deltaPercent = part.delta_percent !== null && part.delta_percent !== undefined
+            ? part.delta_percent.toFixed(1) : '';
+        const stockCostValue = part.stock_unit_price !== null && part.stock_unit_price !== undefined
+            ? part.stock_unit_price.toFixed(2) : '';
+
+        csv += `"${part.part_number}",${part.bom_quantity},${part.stock_quantity},${stockCostValue},${guidePrice.toFixed(2)},${deltaPercent},${avgSalePrice.toFixed(2)},${part.times_sold},"${part.last_sale_date || ''}","${part.customers || ''}"\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${currentBomData.bom.name}_parts_in_stock.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+function viewCustomerDetails(customerId, customerName) {
+    const modal = new bootstrap.Modal(document.getElementById('customerModal'));
+    $('#customerModalLabel').text(`${customerName} - Parts in Stock`);
+    $('#customerLoadingSpinner').show();
+    $('#customerPartsContent').hide();
+    $('#customerErrorMessage').hide();
+    modal.show();
+
+    fetch(`/sales-suggestions/api/customer-parts/${customerId}`)
+        .then(response => {
+            if (!response.ok) throw new Error('Failed to load customer parts');
+            return response.json();
+        })
+        .then(data => {
+            $('#customerLoadingSpinner').hide();
+            $('#customerPartsContent').show();
+            displayCustomerParts(data);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            $('#customerLoadingSpinner').hide();
+            $('#customerErrorMessage').show();
+            $('#customerErrorText').text(error.message);
+        });
+}
+
+function displayCustomerParts(data) {
+    if ($.fn.DataTable.isDataTable('#customerPartsTable')) {
+        $('#customerPartsTable').DataTable().destroy();
+    }
+
+    const tbody = $('#customerPartsTableBody');
+    tbody.empty();
+
+    if (data.parts.length === 0) {
+        tbody.append('<tr><td colspan="8" class="text-center text-muted">No parts in stock for this customer</td></tr>');
+    } else {
+        data.parts.forEach(part => {
+            const stockCost = part.stock_unit_price !== null && part.stock_unit_price !== undefined
+                ? '£' + part.stock_unit_price.toFixed(2) : '-';
+            const stockCostOrder = part.stock_unit_price || 0;
+
+            tbody.append(`
+                <tr>
+                    <td><strong>${escapeHtml(part.part_number)}</strong></td>
+                    <td data-order="${part.stock_quantity}"><span class="badge bg-success">${part.stock_quantity}</span></td>
+                    <td data-order="${stockCostOrder}">${stockCost}</td>
+                    <td data-order="${part.times_purchased}">${part.times_purchased}</td>
+                    <td data-order="${part.total_quantity_purchased}">${part.total_quantity_purchased}</td>
+                    <td data-order="${part.avg_purchase_price}">£${part.avg_purchase_price.toFixed(2)}</td>
+                    <td data-order="${part.avg_guide_price}">${part.avg_guide_price > 0 ? '£' + part.avg_guide_price.toFixed(2) : '-'}</td>
+                    <td data-order="${part.last_purchase_date}">${part.last_purchase_date ? part.last_purchase_date.substring(0, 10) : '-'}</td>
+                </tr>
+            `);
+        });
+
+        $('#customerPartsTable').DataTable({
+            paging: false,
+            searching: true,
+            info: false,
+            order: [[1, 'desc']],
+            language: { search: "Search parts:" }
+        });
+    }
+}
+
+// DOCUMENT READY
+$(document).ready(function() {
+    console.log('=== DOCUMENT READY FIRED ===');
+    console.log('Parts table exists?', $('#parts-table').length);
+
+    // PARTS TABLE - Manual sorting
+    if ($('#parts-table').length) {
+        console.log('Setting up parts table...');
+
+        // Don't use DataTables for parts table - just add manual click handlers
+        const sortColumns = ['part_number', 'stock_quantity', null, 'customer_count',
+                            'total_quantity_sold', 'avg_price', 'avg_guide_price', 'last_sale_date', 'bom_names', null];
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentSort = urlParams.get('sort');
+        const currentOrder = urlParams.get('order') || 'desc';
+
+        $('#parts-table thead th').each(function(index) {
+            const sortCol = sortColumns[index];
+            console.log(`Processing header ${index}: ${$(this).text().trim()}, sortCol: ${sortCol}`);
+
+            if (sortCol) {
+                const $th = $(this);
+                $th.css('cursor', 'pointer');
+                $th.css('user-select', 'none');
+
+                // Add visual indicator for current sort
+                if (currentSort === sortCol) {
+                    $th.append(` <i class="bi bi-arrow-${currentOrder === 'asc' ? 'up' : 'down'}"></i>`);
+                    $th.css('font-weight', 'bold');
+                    $th.css('color', '#0d6efd');
+                }
+
+                // Add click handler
+                $th.off('click').on('click', function(e) {
+                    console.log('CLICKED HEADER:', sortCol);
+
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const currentSort = urlParams.get('sort');
+                    const currentOrder = urlParams.get('order') || 'desc';
+
+                    const newOrder = (currentSort === sortCol && currentOrder === 'desc') ? 'asc' : 'desc';
+
+                    urlParams.set('sort', sortCol);
+                    urlParams.set('order', newOrder);
+                    urlParams.set('page', '1');
+
+                    const newUrl = '?' + urlParams.toString();
+                    console.log('Navigating to:', newUrl);
+                    window.location.search = urlParams.toString();
+                });
+            }
+        });
+
+        console.log('Parts table setup complete');
+    }
+
+    // Customer table
+    if ($('#customer-table').length) {
+        $('#customer-table').DataTable({
+            pageLength: 25,
+            order: [[7, 'desc']],
+            dom: '<"row mb-3"<"col-sm-12 col-md-6"B><"col-sm-12 col-md-6"f>>rtip',
+            buttons: [
+                {
+                    extend: 'excel',
+                    text: '<i class="bi bi-file-earmark-excel"></i> Excel',
+                    className: 'btn btn-success btn-sm me-2',
+                    exportOptions: { columns: ':visible:not(:last-child)' }
+                },
+                {
+                    extend: 'csv',
+                    text: '<i class="bi bi-filetype-csv"></i> CSV',
+                    className: 'btn btn-outline-success btn-sm',
+                    exportOptions: { columns: ':visible:not(:last-child)' }
+                }
+            ],
+            language: { search: "Search customers:" }
+        });
+    }
+
+    // BOM table
+    if ($('#bom-table').length) {
+        $('#bom-table').DataTable({
+            pageLength: 25,
+            order: [[3, 'desc']],
+            dom: '<"row mb-3"<"col-sm-12 col-md-6"B><"col-sm-12 col-md-6"f>>rtip',
+            buttons: [
+                {
+                    extend: 'excel',
+                    text: '<i class="bi bi-file-earmark-excel"></i> Excel',
+                    className: 'btn btn-success btn-sm me-2',
+                    exportOptions: { columns: ':visible:not(:last-child)' }
+                },
+                {
+                    extend: 'csv',
+                    text: '<i class="bi bi-filetype-csv"></i> CSV',
+                    className: 'btn btn-outline-success btn-sm',
+                    exportOptions: { columns: ':visible:not(:last-child)' }
+                }
+            ],
+            language: { search: "Search BOMs:" }
+        });
+    }
+
+    // Stock upload functionality
+    let hot = null;
+    let csvData = null;
+    let csvColumns = [];
+
+    const fileInput = document.getElementById('stock-file-input');
+    if (fileInput) {
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                parseCSV(text);
+            };
+            reader.readAsText(file);
+        });
+    }
+
+    function parseCSV(text) {
+        const rows = text.split('\n').map(row => {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+
+            for (let i = 0; i < row.length; i++) {
+                const char = row[i];
+
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    result.push(current.trim());
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current.trim());
+            return result;
+        }).filter(row => row.some(cell => cell));
+
+        if (rows.length === 0) {
+            alert('No data found in CSV file');
+            return;
+        }
+
+        csvColumns = rows[0];
+        csvData = rows;
+
+        displayCSVInHandsontable(rows);
+        setupColumnMapping(csvColumns);
+    }
+
+    function displayCSVInHandsontable(data) {
+        const container = document.getElementById('hot-container');
+        container.style.display = 'block';
+
+        if (hot) hot.destroy();
+
+        hot = new Handsontable(container, {
+            data: data,
+            rowHeaders: true,
+            colHeaders: true,
+            height: 300,
+            licenseKey: 'non-commercial-and-evaluation'
+        });
+    }
+
+    function setupColumnMapping(columns) {
+        document.getElementById('mapping-section').style.display = 'block';
+
+        const partSelect = document.getElementById('part-number-col');
+        const qtySelect = document.getElementById('quantity-col');
+        const priceSelect = document.getElementById('unit-price-col');
+
+        partSelect.innerHTML = '<option value="">-- Select Column --</option>';
+        qtySelect.innerHTML = '<option value="">-- Select Column --</option>';
+        priceSelect.innerHTML = '<option value="">-- Not Provided --</option>';
+
+        columns.forEach((col, idx) => {
+            partSelect.innerHTML += `<option value="${idx}">${col}</option>`;
+            qtySelect.innerHTML += `<option value="${idx}">${col}</option>`;
+            priceSelect.innerHTML += `<option value="${idx}">${col}</option>`;
+        });
+
+        autoMapColumns(columns);
+    }
+
+    function autoMapColumns(columns) {
+        const partPatterns = ['part', 'partno', 'partnumber', 'part_number', 'item'];
+        const qtyPatterns = ['qty', 'quantity', 'current', 'remaining', 'stock', 'onhand', 'available'];
+        const pricePatterns = ['price', 'cost', 'unit', 'unitprice', 'unitcost', 'value'];
+
+        columns.forEach((col, idx) => {
+            const lowerCol = col.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+            if (partPatterns.some(pattern => lowerCol.includes(pattern))) {
+                document.getElementById('part-number-col').value = idx;
+            }
+
+            if (qtyPatterns.some(pattern => lowerCol.includes(pattern))) {
+                document.getElementById('quantity-col').value = idx;
+            }
+
+            if (pricePatterns.some(pattern => lowerCol.includes(pattern))) {
+                document.getElementById('unit-price-col').value = idx;
+            }
+        });
+
+        validateMapping();
+    }
+
+    function validateMapping() {
+        const partCol = document.getElementById('part-number-col').value;
+        const qtyCol = document.getElementById('quantity-col').value;
+        const applyBtn = document.getElementById('apply-stock-btn');
+        if (applyBtn) {
+            applyBtn.disabled = !(partCol && qtyCol);
+        }
+    }
+
+    const partColSelect = document.getElementById('part-number-col');
+    const qtyColSelect = document.getElementById('quantity-col');
+    if (partColSelect) partColSelect.addEventListener('change', validateMapping);
+    if (qtyColSelect) qtyColSelect.addEventListener('change', validateMapping);
+
+    const applyBtn = document.getElementById('apply-stock-btn');
+    if (applyBtn) {
+        applyBtn.addEventListener('click', function() {
+            const partCol = document.getElementById('part-number-col').value;
+            const qtyCol = document.getElementById('quantity-col').value;
+            const priceCol = document.getElementById('unit-price-col').value;
+
+            if (!partCol || !qtyCol) {
+                alert('Please map both Part Number and Quantity columns');
+                return;
+            }
+
+            const dataToSend = hot ? hot.getData() : csvData;
+
+            this.disabled = true;
+            this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Applying...';
+
+            const mapping = {
+                part_number: partCol,
+                quantity: qtyCol
+            };
+
+            if (priceCol) {
+                mapping.unit_price = priceCol;
+            }
+
+            fetch('/sales-suggestions/upload-stock', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    stock_data: dataToSend,
+                    mapping: mapping
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`Stock data applied successfully! ${data.parts_loaded} parts loaded.`);
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                    this.disabled = false;
+                    this.innerHTML = '<i class="bi bi-check-lg"></i> Apply Stock Data';
+                }
+            })
+            .catch(error => {
+                alert('An error occurred while uploading stock data');
+                console.error(error);
+                this.disabled = false;
+                this.innerHTML = '<i class="bi bi-check-lg"></i> Apply Stock Data';
+            });
+        });
+    }
+
+    const clearStockBtn = document.getElementById('clear-stock-btn');
+    if (clearStockBtn) {
+        clearStockBtn.addEventListener('click', function() {
+            if (!confirm('Clear uploaded stock and revert to system stock?')) return;
+
+            fetch('/sales-suggestions/clear-stock', {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) window.location.reload();
+                    else alert('Error clearing stock data');
+                })
+                .catch(error => alert('An error occurred'));
+        });
+    }
+});
+</script>
+
+{% endblock %}

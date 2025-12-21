@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Low Conversion Parts Analysis{% endblock %}
+
+{% block content %}
+<div class="container my-5">
+    <h1 class="mb-4">Low Conversion Parts Analysis</h1>
+    <p class="lead">Identify parts quoted frequently in CQs but rarely converted to sales orders.</p>
+
+    <form method="GET" action="{{ url_for('cqs.low_conversion_page') }}" class="row g-3 mb-4">
+        <div class="col-md-4">
+            <label for="min_cq" class="form-label">Minimum CQ Count</label>
+            <input type="number" class="form-control" name="min_cq" id="min_cq" value="{{ min_cq }}" min="1">
+        </div>
+        <div class="col-md-4">
+            <label for="max_so" class="form-label">Maximum SO Count</label>
+            <input type="number" class="form-control" name="max_so" id="max_so" value="{{ max_so }}" min="0">
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+            <button type="submit" class="btn btn-primary">Analyze</button>
+        </div>
+    </form>
+
+    <div id="results">
+        {% if parts %}
+            <table class="table table-hover">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Part Number</th>
+                        <th>CQ Count</th>
+                        <th>Avg CQ Price</th>
+                        <th>VQ Count</th>
+                        <th>Avg VQ Cost</th>
+                        <th>SO Count</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for part in parts %}
+                        <tr>
+                            <td>{{ part.part_number or part.base_part_number }}</td>
+                            <td>{{ part.cq_count }}</td>
+                            <td>${{ "%.2f"|format(part.avg_cq_price) }}</td>
+                            <td>{{ part.vq_count }}</td>
+                            <td>${{ "%.2f"|format(part.avg_vq_cost) }}</td>
+                            <td>{{ part.so_count }}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#details-{{ loop.index0 }}" aria-expanded="false" aria-controls="details-{{ loop.index0 }}">
+                                    <i class="fas fa-plus"></i> Details
+                                </button>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td colspan="7" class="p-0">
+                                <div id="details-{{ loop.index0 }}" class="collapse">
+                                    <div class="card card-body bg-light">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <h6 class="mb-3">CQ Details ({{ part.cqs|length }} quotes)</h6>
+                                                <div class="table-responsive">
+                                                    <table class="table table-sm table-striped">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>CQ Number</th>
+                                                                <th>Entry Date</th>
+                                                                <th>Customer</th>
+                                                                <th>Quote Price (Unit)</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {% for cq in part.cqs %}
+                                                                <tr>
+                                                                    <td>{{ cq.cq_number or 'N/A' }}</td>
+                                                                    <td>{{ cq.entry_date or 'N/A' }}</td>
+                                                                    <td>{{ cq.customer_name or 'N/A' }}</td>
+                                                                    <td>${{ "%.2f"|format(cq.quote_price or 0) }}</td>
+                                                                </tr>
+                                                            {% endfor %}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <h6 class="mb-3">VQ Details ({{ part.vqs|length }} quotes)</h6>
+                                                <div class="table-responsive">
+                                                    <table class="table table-sm table-striped">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>VQ Number</th>
+                                                                <th>Quoted Date</th>
+                                                                <th>Supplier</th>
+                                                                <th>Vendor Price (Unit)</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {% for vq in part.vqs %}
+                                                                <tr>
+                                                                    <td>{{ vq.vq_number or 'N/A' }}</td>
+                                                                    <td>{{ vq.quoted_date or 'N/A' }}</td>
+                                                                    <td>{{ vq.supplier_name or 'N/A' }}</td>
+                                                                    <td>${{ "%.2f"|format(vq.vq_cost or 0) }}</td>
+                                                                </tr>
+                                                            {% endfor %}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div class="alert alert-info">No parts found matching the criteria (Min CQ: {{ min_cq }}, Max SO: {{ max_so }}).</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

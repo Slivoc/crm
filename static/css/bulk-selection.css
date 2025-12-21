@@ -1,0 +1,348 @@
+/* FIXED: Bulk Selection Styles */
+
+/* CRITICAL FIX: Checkbox column width constraints */
+.table th:first-child,
+.table td:first-child {
+  width: 50px !important;
+  min-width: 50px !important;
+  max-width: 50px !important;
+  text-align: center !important;
+  padding: 8px 4px !important;
+  vertical-align: middle !important;
+  overflow: hidden;
+}
+
+/* Exception for select-all row - allow full width */
+.select-all-container td {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+}
+
+/* Checkbox styling improvements */
+.contact-checkbox,
+.select-all-checkbox {
+  cursor: pointer;
+  transform: scale(1.1);
+  margin: 0 !important;
+  position: relative;
+  z-index: 1;
+}
+
+.select-all-checkbox {
+  margin-right: 8px !important;
+}
+
+/* Bulk selection bar - Fixed positioning */
+.bulk-selection-bar {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-100px);
+  z-index: 1050;
+  background: linear-gradient(135deg, #007bff, #0056b3);
+  color: white;
+  padding: 12px 24px;
+  border-radius: 0 0 12px 12px;
+  box-shadow: 0 4px 20px rgba(0, 123, 255, 0.4);
+  min-width: 400px;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bulk-selection-bar.show {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+  visibility: visible;
+}
+
+.bulk-selection-bar .selected-count {
+  font-weight: 700;
+  font-size: 1.2rem;
+  color: #fff;
+}
+
+/* Selected row styling - Enhanced */
+.contact-row.selected {
+  background-color: #e3f2fd !important;
+  border-left: 4px solid #007bff;
+  position: relative;
+}
+
+.contact-row.selected::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 123, 255, 0.05);
+  pointer-events: none;
+}
+
+/* Select all container - Fixed */
+.select-all-container {
+  background-color: #f8f9fa;
+  border-bottom: 2px solid #dee2e6;
+}
+
+.select-all-container td {
+  padding: 12px;
+  font-weight: 500;
+}
+
+/* Prevent row hover when hovering over interactive elements */
+.contact-row:hover {
+  background-color: #f8f9fa;
+}
+
+.contact-row.selected:hover {
+  background-color: #e3f2fd !important;
+}
+
+.contact-row:has(.contact-checkbox:hover),
+.contact-row:has(.btn:hover),
+.contact-row:has(.dropdown:hover),
+.contact-row:has(.copy-btn:hover),
+.contact-row:has(.bump-status-btn:hover) {
+  background-color: inherit !important;
+}
+
+/* Bulk actions offcanvas styling */
+#bulkActionsCanvas {
+  --bs-offcanvas-width: 450px;
+}
+
+.bulk-actions-summary {
+  background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+  border: 1px solid #dee2e6;
+}
+
+.bulk-action-btn {
+  width: 100%;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  font-weight: 500;
+  padding: 12px 16px;
+  text-align: left;
+}
+
+.bulk-action-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.bulk-action-btn i {
+  width: 20px;
+}
+
+/* Selected contacts list */
+.selected-contacts-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  background: white;
+  padding: 8px;
+}
+
+.selected-contact-item {
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  background-color: #f8f9fa;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background-color 0.2s ease;
+}
+
+.selected-contact-item:last-child {
+  margin-bottom: 0;
+}
+
+.selected-contact-item:hover {
+  background-color: #e9ecef;
+}
+
+.remove-selected-btn {
+  color: #dc3545;
+  border: none;
+  background: none;
+  padding: 4px 8px;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.remove-selected-btn:hover {
+  background-color: #f5c6cb;
+  transform: scale(1.1);
+}
+
+/* Improved button styling in bulk selection bar */
+.bulk-selection-bar .btn {
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.bulk-selection-bar .btn:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+.bulk-selection-bar .btn-light:hover {
+  background-color: rgba(255, 255, 255, 0.9);
+  color: #007bff;
+}
+
+/* No selection message styling */
+#noSelectionMessage {
+  padding: 30px;
+  text-align: center;
+  color: #6c757d;
+}
+
+#noSelectionMessage i {
+  font-size: 2rem;
+  margin-bottom: 10px;
+  opacity: 0.5;
+}
+
+/* Fix for dropdown z-index in selected rows */
+.contact-row.selected .dropdown-menu {
+  z-index: 1070;
+}
+
+/* Table layout fixes */
+.table-responsive {
+  overflow-x: auto;
+}
+
+.table {
+  table-layout: auto;
+  width: 100%;
+}
+
+/* Ensure other columns maintain their proportions but allow flexibility */
+.table th:nth-child(2),
+.table td:nth-child(2) {
+  min-width: 200px;
+  width: auto;
+}
+
+.table th:nth-child(3),
+.table td:nth-child(3) {
+  min-width: 150px;
+  width: auto;
+}
+
+.table th:nth-child(4),
+.table td:nth-child(4) {
+  min-width: 100px;
+  width: auto;
+}
+
+.table th:nth-child(5),
+.table td:nth-child(5) {
+  min-width: 200px;
+  width: auto;
+}
+
+.table th:nth-child(6),
+.table td:nth-child(6) {
+  min-width: 120px;
+  width: auto;
+}
+
+.table th:nth-child(7),
+.table td:nth-child(7) {
+  min-width: 150px;
+  width: auto;
+}
+
+.table th:nth-child(8),
+.table td:nth-child(8) {
+  min-width: 60px;
+  width: auto;
+}
+
+.table th:nth-child(9),
+.table td:nth-child(9) {
+  min-width: 120px;
+  width: auto;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .bulk-selection-bar {
+    min-width: 320px;
+    left: 10px;
+    right: 10px;
+    transform: translateY(-100px);
+  }
+
+  .bulk-selection-bar.show {
+    transform: translateY(0);
+  }
+
+  #bulkActionsCanvas {
+    --bs-offcanvas-width: 100%;
+  }
+
+  .table th:first-child,
+  .table td:first-child {
+    width: 40px !important;
+    min-width: 40px !important;
+    max-width: 40px !important;
+  }
+}
+
+/* Form check fixes for proper alignment */
+.form-check-input {
+  margin-top: 0;
+  vertical-align: middle;
+}
+
+.form-check-label {
+  vertical-align: middle;
+}
+
+/* Prevent text overflow in narrow columns */
+.table td {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+
+/* Contact info adjustments for flexible layout */
+.contact-info {
+  font-size: 0.875rem;
+  line-height: 1.3;
+  max-width: 100%;
+}
+
+.contact-detail {
+  display: flex;
+  align-items: center;
+  margin-bottom: 2px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.contact-detail a {
+  min-width: 0;
+  word-break: break-all;
+}

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="section">
+    <h1 class="section-header">Purchase Suggestion Report</h1>
+
+    <form id="po-form" action="{{ url_for('purchase_orders.generate_po') }}" method="POST">
+        {% for supplier, lines in suggestions|groupby('supplier_name') %}
+        <section class="section">
+            <h2>{{ supplier }}</h2>
+
+            <!-- Select All Checkbox -->
+            <label>
+                <input type="checkbox" class="select-all" data-supplier="{{ supplier }}"> Select All for {{ supplier }}
+            </label>
+
+            <table class="table is-fullwidth">
+                <thead>
+                    <tr>
+                        <th>Select</th>
+                        <th>Sales Order #</th>
+                        <th>Customer</th>
+                        <th>Part Number</th>
+                        <th>Quantity</th>
+                        <th>Supplier Reference</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for line in lines %}
+                    <tr>
+                        <td>
+                            <input type="checkbox" name="line_ids" value="{{ line.sales_order_line_id }}" class="line-checkbox" data-supplier="{{ supplier }}">
+                        </td>
+                        <td>{{ line.sales_order_ref }}</td>
+                        <td>{{ line.customer_name }}</td>
+                        <td>{{ line.base_part_number }}</td>
+                        <td>{{ line.quantity }}</td>
+                        <td>{{ line.supplier_reference }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+        {% endfor %}
+
+        <!-- Button to Generate PO -->
+        <div class="button-container">
+            <button type="submit" class="button is-primary">Generate Purchase Orders</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Handle "Select All" for each supplier group
+document.querySelectorAll('.select-all').forEach(function(selectAllCheckbox) {
+    selectAllCheckbox.addEventListener('change', function() {
+        const supplier = this.getAttribute('data-supplier');
+        const checkboxes = document.querySelectorAll(`.line-checkbox[data-supplier="${supplier}"]`);
+        checkboxes.forEach(function(checkbox) {
+            checkbox.checked = selectAllCheckbox.checked;
+        });
+    });
+});
+</script>
+{% endblock %}

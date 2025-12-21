@@ -1,0 +1,30 @@
+<div id="requisitionPopup" class="modal">
+  <div class="modal-content">
+    <span class="close" onclick="closeRequisitionPopup()">&times;</span>
+    <h2>Requisition Email</h2>
+    <p>Dear [Supplier],</p>
+    <p>Please find below the part numbers and quantities we would like to order:</p>
+    <table class="styled-table">
+      <thead>
+        <tr>
+          <th>Part Number</th>
+          <th>Quantity</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in rfq_lines %}
+          {% for supplier in line.suggested_suppliers.split(',') %}
+            <tr>
+              <td>{{ line.part_number }}</td>
+              <td>{{ line.quantity }}</td>
+            </tr>
+          {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+    <p>Thank you.</p>
+    <p>Best regards,</p>
+    <p>[Your Name]</p>
+  </div>
+</div>
+

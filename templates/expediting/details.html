@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Breadcrumbs -->
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb bg-light p-2">
+            {% for crumb, path in breadcrumbs %}
+                {% if path %}
+                    <li class="breadcrumb-item"><a href="{{ path }}">{{ crumb }}</a></li>
+                {% else %}
+                    <li class="breadcrumb-item active" aria-current="page">{{ crumb }}</li>
+                {% endif %}
+            {% endfor %}
+        </ol>
+    </nav>
+
+    <!-- Header with Actions -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2>Expediting: {{ sales_order.sales_order_ref }}</h2>
+        <div class="btn-group">
+            <a href="{{ url_for('sales_orders.edit_sales_order', sales_order_id=sales_order.id) }}" class="btn btn-primary">
+                <i class="fas fa-edit"></i> Edit Sales Order
+            </a>
+            <a href="{{ url_for('expediting.expedite_dashboard') }}" class="btn btn-secondary">
+                <i class="fas fa-arrow-left"></i> Back to Dashboard
+            </a>
+        </div>
+    </div>
+
+    <!-- Sales Order Details Card -->
+    <div class="card mb-4">
+        <div class="card-header bg-light">
+            <h5 class="mb-0">Order Details</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3">
+                    <p><strong>Customer:</strong> {{ sales_order.customer_name }}</p>
+                </div>
+                <div class="col-md-3">
+                    <p><strong>Customer PO:</strong> {{ sales_order.customer_po_ref }}</p>
+                </div>
+                <div class="col-md-3">
+                    <p><strong>Date Entered:</strong> {{ sales_order.date_entered }}</p>
+                </div>
+                <div class="col-md-3">
+                    <p><strong>Salesperson:</strong> {{ sales_order.salesperson_name }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Order Lines Card -->
+    <div class="card">
+        <div class="card-header bg-light">
+            <h5 class="mb-0">Order Lines</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>Line</th>
+                            <th>Part Number</th>
+                            <th>Quantity</th>
+                            <th>Status</th>
+                            <th>Ship Date</th>
+                            <th>Current Stock</th>
+                            <th>Shortage</th>
+                            <th>PO Delivery</th>
+                            <th>Supplier</th>
+                            <th>Timeline (days)</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                 <tbody>
+    {% for line in lines %}
+        <tr class="{% if line.shortage > 0 %}table-danger{% elif line.timeline_days is not none and line.timeline_days > 0 %}table-warning{% elif line.timeline_days is not none and line.timeline_days <= 5 and line.timeline_days >= 0 %}table-info{% endif %}">
+            <td>{{ line.line_number }}</td>
+            <td>
+                <a href="{{ url_for('parts.view_part_number', base_part_number=line.base_part_number) }}">
+                    {{ line.part_number or line.base_part_number }}
+                </a>
+            </td>
+            <td>{{ line.quantity }}</td>
+            <td>
+                {% if line.shortage > 0 %}
+                    <span class="badge bg-danger">Stock Shortage</span>
+                {% elif line.timeline_days is not none and line.timeline_days > 0 %}
+                    <span class="badge bg-warning text-dark">PO After Ship</span>
+                {% elif line.timeline_days is not none and line.timeline_days <= 5 and line.timeline_days >= 0 %}
+                    <span class="badge bg-info">Tight Timeline</span>
+                {% else %}
+                    <span class="badge bg-success">OK</span>
+                {% endif %}
+            </td>
+            <td>{{ line.ship_date }}</td>
+            <td>{{ line.current_stock }}</td>
+            <td class="{% if line.shortage > 0 %}text-danger font-weight-bold{% endif %}">
+                {{ line.shortage }}
+            </td>
+            <td>{{ line.po_delivery_date or 'Not scheduled' }}</td>
+            <td>{{ line.supplier_name or 'No PO' }}</td>
+            <td>
+                {% if line.timeline_days is not none %}
+                    {% if line.timeline_days > 0 %}
+                        <span class="text-danger">{{ line.timeline_days }} days late</span>
+                    {% elif line.timeline_days == 0 %}
+                        <span class="text-warning">Same day</span>
+                    {% else %}
+                        <span class="text-success">{{ line.timeline_days|abs }} days buffer</span>
+                    {% endif %}
+                {% else %}
+                    <span class="text-muted">N/A</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if line.po_line_id %}
+                    <a href="{{ url_for('purchase_orders.edit_purchase_order', purchase_order_id=line.purchase_order_id) }}" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-truck"></i> View PO
+                    </a>
+                {% else %}
+                    <button class="btn btn-sm btn-outline-secondary" disabled>No PO</button>
+                {% endif %}
+            </td>
+        </tr>
+    {% endfor %}
+</tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recommended Actions Card -->
+    <div class="card mt-4">
+        <div class="card-header bg-light">
+            <h5 class="mb-0">Recommended Actions</h5>
+        </div>
+        <div class="card-body">
+            <ul class="list-group">
+                {% set stock_shortage_lines = lines|selectattr('current_stock', 'defined')|selectattr('quantity', 'defined')|rejectattr('current_stock', 'ge', 'quantity')|list %}
+                {% set late_po_lines = lines|selectattr('po_delivery_date', 'defined')|selectattr('ship_date', 'defined')|selectattr('po_delivery_date', 'gt', 'ship_date')|list %}
+                {% set tight_timeline_lines = lines|selectattr('po_delivery_date', 'defined')|selectattr('ship_date', 'defined')|rejectattr('po_delivery_date', 'gt', 'ship_date')|list %}
+                
+                {% if stock_shortage_lines %}
+                    <li class="list-group-item list-group-item-danger">
+                        <h6 class="mb-1"><i class="fas fa-exclamation-circle"></i> Stock Shortage</h6>
+                        <p class="mb-1">Order has {{ stock_shortage_lines|length }} line(s) with insufficient stock. Consider:</p>
+                        <ul>
+                            <li>Check if stock is allocated elsewhere that could be reassigned</li>
+                            <li>Look for similar parts that could be substituted</li>
+                            <li>Check if PO delivery dates can be expedited</li>
+                        </ul>
+                    </li>
+                {% endif %}
+                
+                {% if late_po_lines %}
+                    <li class="list-group-item list-group-item-warning">
+                        <h6 class="mb-1"><i class="fas fa-clock"></i> Late PO Delivery</h6>
+                        <p class="mb-1">Order has {{ late_po_lines|length }} line(s) where POs will arrive after ship date. Consider:</p>
+                        <ul>
+                            <li>Contact suppliers to request expedited delivery</li>
+                            <li>Update customer about potential delay</li>
+                            <li>Look for alternative suppliers with quicker delivery</li>
+                        </ul>
+                    </li>
+                {% endif %}
+                
+                {% if tight_timeline_lines %}
+                    <li class="list-group-item list-group-item-info">
+                        <h6 class="mb-1"><i class="fas fa-bolt"></i> Tight Timeline</h6>
+                        <p class="mb-1">Order has {{ tight_timeline_lines|length }} line(s) with tight delivery timeline. Consider:</p>
+                        <ul>
+                            <li>Monitor PO deliveries closely</li>
+                            <li>Set up inspection/processing priority once parts arrive</li>
+                            <li>Pre-print shipping labels/documentation</li>
+                        </ul>
+                    </li>
+                {% endif %}
+                
+                {% if not stock_shortage_lines and not late_po_lines and not tight_timeline_lines %}
+                    <li class="list-group-item list-group-item-success">
+                        <h6 class="mb-1"><i class="fas fa-check-circle"></i> No Action Required</h6>
+                        <p class="mb-0">This order appears to be on track with no issues identified.</p>
+                    </li>
+                {% endif %}
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}

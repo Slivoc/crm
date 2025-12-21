@@ -1,0 +1,726 @@
+<!-- templates/salespeople/dashboard.html -->
+{% extends "base.html" %}
+
+{% block title %}Sales Engagement Dashboard{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4">
+  <div class="row mb-4">
+    <div class="col-md-8">
+      <h2>Sales Engagement Dashboard</h2>
+      <p class="text-muted">Customer contact engagement metrics for the sales team</p>
+    </div>
+    <div class="col-md-4 text-md-end">
+      <button class="btn btn-outline-secondary me-2" data-bs-toggle="offcanvas" data-bs-target="#manageSaleseople">
+        <i class="bi bi-people"></i> Manage Salespeople
+      </button>
+      <a href="{{ url_for('salespeople.create_salesperson') }}" class="btn btn-primary">
+        <i class="bi bi-person-plus"></i> Add Salesperson
+      </a>
+    </div>
+  </div>
+
+  <!-- No Active Salespeople Alert -->
+  {% if not selected_salespeople %}
+  <div class="row mb-4">
+    <div class="col-12">
+      <div class="alert alert-info">
+        <i class="bi bi-info-circle"></i>
+        No active salespeople selected for engagement tracking.
+        <button class="btn btn-sm btn-outline-primary ms-2" data-bs-toggle="offcanvas" data-bs-target="#manageSaleseople">
+          Manage Salespeople
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Engagement Cards for Each Salesperson -->
+  {% if selected_salespeople %}
+  <div class="row g-4 mb-5">
+    {% for salesperson in selected_salespeople %}
+    <div class="col-xl-4 col-lg-6 col-md-12">
+      <div class="card h-100 border-0 shadow-sm">
+        <div class="card-header bg-primary text-white">
+          <div class="d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0">
+              <i class="bi bi-person-circle me-2"></i>{{ salesperson.name }}
+            </h5>
+            <div class="dropdown">
+              <button class="btn btn-sm btn-outline-light" type="button" data-bs-toggle="dropdown">
+                <i class="bi bi-three-dots"></i>
+              </button>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{{ url_for('salespeople.activity', salesperson_id=salesperson.id) }}">
+                  <i class="bi bi-speedometer2"></i> Full Dashboard
+                </a></li>
+                <li><a class="dropdown-item" href="{{ url_for('salespeople.customers', salesperson_id=salesperson.id) }}">
+                  <i class="bi bi-people"></i> Customers
+                </a></li>
+                <li><a class="dropdown-item" href="{{ url_for('salespeople.contacts', salesperson_id=salesperson.id) }}">
+                  <i class="bi bi-telephone"></i> Contacts
+                </a></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <!-- Loading State -->
+          <div class="engagement-loading text-center py-4" data-salesperson-id="{{ salesperson.id }}">
+            <div class="spinner-border text-primary" role="status">
+              <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="text-muted mt-2 mb-0">Loading engagement data...</p>
+          </div>
+
+          <!-- Engagement Metrics (loaded via AJAX) -->
+          <div class="engagement-metrics" data-salesperson-id="{{ salesperson.id }}" style="display: none;">
+
+            <!-- Key Metrics Row -->
+            <div class="row mb-3">
+              <div class="col-6">
+                <div class="text-center">
+                  <h4 class="text-primary mb-0 days-since-last">-</h4>
+                  <small class="text-muted">Days Since Last</small>
+                </div>
+              </div>
+              <div class="col-6">
+                <div class="text-center">
+                  <h4 class="text-success mb-0 avg-contact-frequency">-</h4>
+                  <small class="text-muted">Avg Frequency</small>
+                </div>
+              </div>
+            </div>
+
+            <!-- Additional Metrics -->
+            <div class="row mb-3">
+              <div class="col-4">
+                <div class="text-center">
+                  <div class="fw-bold text-info contacts-this-week">-</div>
+                  <small class="text-muted">This Week</small>
+                </div>
+              </div>
+              <div class="col-4">
+                <div class="text-center">
+                  <div class="fw-bold text-warning overdue-contacts">-</div>
+                  <small class="text-muted">Overdue</small>
+                </div>
+              </div>
+              <div class="col-4">
+                <div class="text-center">
+                  <div class="fw-bold text-secondary total-customers">-</div>
+                  <small class="text-muted">Customers</small>
+                </div>
+              </div>
+            </div>
+
+            <!-- Overdue Contacts List -->
+            <div class="mb-3">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="text-muted mb-0">Overdue Contacts</h6>
+                <button class="btn btn-sm btn-outline-secondary settings-btn" data-salesperson-id="{{ salesperson.id }}">
+                  <i class="bi bi-gear"></i>
+                </button>
+              </div>
+              <div class="overdue-contacts-list" style="max-height: 200px; overflow-y: auto;">
+                <small class="text-muted">Loading...</small>
+              </div>
+            </div>
+
+            <!-- Urgency Alerts -->
+            <div class="urgency-alerts">
+              <!-- Will be populated via AJAX -->
+            </div>
+
+          </div>
+        </div>
+
+        <div class="card-footer bg-light">
+          <div class="d-flex justify-content-between align-items-center">
+            <small class="text-muted">Updated: <span class="update-time">-</span></small>
+            <button class="btn btn-sm btn-outline-primary refresh-metrics" data-salesperson-id="{{ salesperson.id }}">
+              <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="row mb-5">
+    <div class="col-12">
+      <div class="text-center py-5">
+        <i class="bi bi-people text-muted" style="font-size: 3rem;"></i>
+        <h4 class="text-muted mt-3">No Active Salespeople</h4>
+        <p class="text-muted">Activate salespeople to track their engagement metrics on this dashboard.</p>
+        <button class="btn btn-primary" data-bs-toggle="offcanvas" data-bs-target="#manageSaleseople">
+          <i class="bi bi-people"></i> Manage Salespeople
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Salespeople Table -->
+  <div class="row">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header">
+          <h5 class="card-title mb-0">All Sales Team</h5>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table table-hover">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th>Customers</th>
+                  <th>RFQs</th>
+                  <th>Orders</th>
+                  <th>Last Activity</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for salesperson in all_salespeople %}
+                <tr>
+                  <td>{{ salesperson.name }}</td>
+                  <td>
+                    {% if salesperson.id in current_selected_salespeople %}
+                      <span class="badge bg-success">Active</span>
+                    {% else %}
+                      <span class="badge bg-secondary">Inactive</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ salesperson.customer_count or 0 }}</td>
+                  <td>{{ salesperson.rfq_count or 0 }}</td>
+                  <td>{{ salesperson.order_count or 0 }}</td>
+                  <td>
+                    {% if salesperson.last_activity %}
+                      {{ salesperson.last_activity }}
+                    {% else %}
+                      <span class="text-muted">No activity</span>
+                    {% endif %}
+                  </td>
+<td>
+  <div class="btn-group" role="group">
+    <a href="{{ url_for('salespeople.activity', salesperson_id=salesperson.id) }}" class="btn btn-sm btn-outline-primary">
+      <i class="bi bi-graph-up-arrow"></i> Dashboard
+    </a>
+    <a href="{{ url_for('salespeople.customers', salesperson_id=salesperson.id) }}" class="btn btn-sm btn-outline-primary">
+      <i class="bi bi-person-badge"></i> Customers
+    </a>
+    <a href="{{ url_for('salespeople.contacts', salesperson_id=salesperson.id) }}" class="btn btn-sm btn-outline-primary">
+      <i class="bi bi-person-lines-fill"></i> Contacts
+    </a>
+  </div>
+</td>
+                </tr>
+                {% else %}
+                <tr>
+                  <td colspan="7" class="text-center py-3">
+                    <span class="text-muted">No salespeople found</span>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Manage Salespeople Offcanvas -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="manageSaleseople">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title">Manage Salespeople</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body">
+    <p class="text-muted">Toggle which salespeople appear on the engagement dashboard.</p>
+    <div class="list-group">
+      {% for salesperson in all_salespeople_basic %}
+      <div class="list-group-item d-flex justify-content-between align-items-center">
+        <div>
+          <strong>{{ salesperson.name }}</strong>
+          {% if salesperson.id in current_selected_salespeople %}
+            <span class="badge bg-success ms-2">Active</span>
+          {% else %}
+            <span class="badge bg-secondary ms-2">Inactive</span>
+          {% endif %}
+        </div>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox"
+                 data-salesperson-id="{{ salesperson.id }}"
+                 {% if salesperson.id in current_selected_salespeople %}checked{% endif %}>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <hr>
+    <div class="text-center">
+      <a href="{{ url_for('salespeople.salespeople') }}" class="btn btn-outline-primary">
+        <i class="bi bi-person-gear"></i> Full Management
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- Replace the Settings Modal section in your dashboard template -->
+
+<!-- Settings Modal -->
+<div class="modal fade" id="settingsModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Engagement Settings</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="settingsForm">
+          <div class="row">
+            <div class="col-12 mb-3">
+              <label for="overdueThreshold" class="form-label">Overdue Threshold (days)</label>
+              <input type="number" class="form-control" id="overdueThreshold" min="1" max="365" value="14">
+              <div class="form-text">Contacts are considered overdue if not contacted within this many days</div>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="col-md-6 mb-3">
+              <label for="customerStatusFilter" class="form-label">Customer Status Filter</label>
+              <select class="form-select" id="customerStatusFilter" multiple size="4">
+                <option value="" disabled>Loading customer statuses...</option>
+              </select>
+              <div class="form-text">Leave empty to include all customer statuses. Hold Ctrl/Cmd to select multiple.</div>
+            </div>
+
+            <div class="col-md-6 mb-3">
+              <label for="contactStatusFilter" class="form-label">Contact Status Filter</label>
+              <select class="form-select" id="contactStatusFilter" multiple size="4">
+                <option value="" disabled>Loading contact statuses...</option>
+              </select>
+              <div class="form-text">Leave empty to include all contact statuses. Hold Ctrl/Cmd to select multiple.</div>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="col-12">
+              <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i>
+                <strong>Note:</strong> These settings are saved per salesperson and will be remembered for future dashboard loads.
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="saveSettings">Save Settings</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Global variables for status data
+let customerStatuses = [];
+let contactStatuses = [];
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Dashboard loading...');
+
+    // Load status data first
+    loadStatusData();
+
+    // Load metrics for each salesperson
+    const loaders = document.querySelectorAll('.engagement-loading');
+    loaders.forEach(function(loader) {
+        const salespersonId = loader.dataset.salespersonId;
+        if (salespersonId) {
+            loadEngagementMetrics(salespersonId);
+        }
+    });
+
+    // Event delegation for all button clicks
+    document.addEventListener('click', function(e) {
+        if (e.target.closest('.refresh-metrics')) {
+            const btn = e.target.closest('.refresh-metrics');
+            const salespersonId = btn.dataset.salespersonId;
+            if (salespersonId) {
+                loadEngagementMetrics(salespersonId);
+            }
+        }
+
+        if (e.target.closest('.settings-btn')) {
+            const btn = e.target.closest('.settings-btn');
+            const salespersonId = btn.dataset.salespersonId;
+            if (salespersonId) {
+                openSettingsModal(salespersonId);
+            }
+        }
+    });
+
+    // Checkbox handlers for salesperson toggle
+    document.addEventListener('change', function(e) {
+        if (e.target.matches('input[data-salesperson-id]')) {
+            const salespersonId = e.target.dataset.salespersonId;
+            const isActive = e.target.checked;
+            toggleSalespersonActive(salespersonId, isActive);
+        }
+    });
+
+    // Save settings button
+    const saveBtn = document.getElementById('saveSettings');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', saveSettings);
+    }
+});
+
+function populateStatusSelects() {
+    console.log('Populating status selects...');
+
+    // Populate customer status select
+    const customerSelect = document.getElementById('customerStatusFilter');
+    if (customerSelect) {
+        if (customerStatuses.length > 0) {
+            customerSelect.innerHTML = '';
+            customerStatuses.forEach(function(status) {
+                const option = document.createElement('option');
+                option.value = status.id;
+                option.textContent = status.name;
+                if (status.color) {
+                    option.style.color = status.color;
+                }
+                customerSelect.appendChild(option);
+            });
+        } else {
+            customerSelect.innerHTML = '<option disabled>No customer statuses available</option>';
+        }
+    }
+
+    // Populate contact status select
+    const contactSelect = document.getElementById('contactStatusFilter');
+    if (contactSelect) {
+        if (contactStatuses.length > 0) {
+            contactSelect.innerHTML = '';
+            contactStatuses.forEach(function(status) {
+                const option = document.createElement('option');
+                option.value = status.id;
+                option.textContent = status.name;
+                if (status.color) {
+                    option.style.color = status.color;
+                }
+                contactSelect.appendChild(option);
+            });
+        } else {
+            contactSelect.innerHTML = '<option disabled>No contact statuses available</option>';
+        }
+    }
+}
+
+function populateStatusSelects() {
+    console.log('Populating status selects...');
+
+    // Populate customer status select
+    const customerSelect = document.getElementById('customerStatusFilter');
+    if (customerSelect && customerStatuses.length > 0) {
+        customerSelect.innerHTML = '';
+        customerStatuses.forEach(function(status) {
+            const option = document.createElement('option');
+            option.value = status.id;
+            option.textContent = status.name;
+            option.style.color = status.color;
+            customerSelect.appendChild(option);
+        });
+    }
+
+    // Populate contact status select
+    const contactSelect = document.getElementById('contactStatusFilter');
+    if (contactSelect && contactStatuses.length > 0) {
+        contactSelect.innerHTML = '';
+        contactStatuses.forEach(function(status) {
+            const option = document.createElement('option');
+            option.value = status.id;
+            option.textContent = status.name;
+            option.style.color = status.color;
+            contactSelect.appendChild(option);
+        });
+    }
+}
+
+function loadEngagementMetrics(salespersonId) {
+    console.log('Loading metrics for:', salespersonId);
+
+    const loader = document.querySelector('.engagement-loading[data-salesperson-id="' + salespersonId + '"]');
+    const panel = document.querySelector('.engagement-metrics[data-salesperson-id="' + salespersonId + '"]');
+
+    if (!loader || !panel) {
+        console.error('Missing elements for salesperson:', salespersonId);
+        return;
+    }
+
+    loader.style.display = 'block';
+    panel.style.display = 'none';
+
+    fetch('/salespeople/' + salespersonId + '/engagement-metrics')
+        .then(function(response) {
+            if (!response.ok) {
+                throw new Error('HTTP ' + response.status);
+            }
+            return response.json();
+        })
+        .then(function(data) {
+            if (data.success) {
+                updateMetricsPanel(salespersonId, data);
+                loader.style.display = 'none';
+                panel.style.display = 'block';
+            } else {
+                showError(salespersonId, data.error || 'Failed to load metrics');
+            }
+        })
+        .catch(function(error) {
+            console.error('Error loading metrics:', error);
+            showError(salespersonId, 'Failed to load metrics');
+        });
+}
+
+function updateMetricsPanel(salespersonId, data) {
+    const panel = document.querySelector('.engagement-metrics[data-salesperson-id="' + salespersonId + '"]');
+    if (!panel) return;
+
+    const daysEl = panel.querySelector('.days-since-last');
+    const avgEl = panel.querySelector('.avg-contact-frequency');
+    const weekEl = panel.querySelector('.contacts-this-week');
+    const overdueEl = panel.querySelector('.overdue-contacts');
+    const customersEl = panel.querySelector('.total-customers');
+    const listEl = panel.querySelector('.overdue-contacts-list');
+    const alertsEl = panel.querySelector('.urgency-alerts');
+    const timeEl = panel.querySelector('.update-time');
+
+    if (daysEl) daysEl.textContent = data.days_since_last || '-';
+    if (avgEl) avgEl.textContent = data.avg_contact_frequency || '-';
+    if (weekEl) weekEl.textContent = data.contacts_this_week || '0';
+    if (overdueEl) overdueEl.textContent = data.overdue_contacts || '0';
+    if (customersEl) customersEl.textContent = data.total_customers || '0';
+    if (listEl) listEl.innerHTML = data.overdue_contacts_list || '<small class="text-muted">No overdue contacts</small>';
+    if (alertsEl) alertsEl.innerHTML = data.urgency_alerts || '';
+    if (timeEl) timeEl.textContent = new Date().toLocaleTimeString();
+}
+
+function showError(salespersonId, message) {
+    const loader = document.querySelector('.engagement-loading[data-salesperson-id="' + salespersonId + '"]');
+    if (loader) {
+        loader.innerHTML = '<div class="text-danger"><i class="bi bi-exclamation-triangle"></i><p class="mt-2 mb-0">' + message + '</p></div>';
+    }
+}
+
+function toggleSalespersonActive(salespersonId, isActive) {
+    fetch('/salespeople/toggle-active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            salesperson_id: parseInt(salespersonId),
+            is_active: isActive
+        })
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(data) {
+        if (data.success) {
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            alert('Failed to update: ' + data.error);
+        }
+    })
+    .catch(function(error) {
+        console.error('Toggle error:', error);
+        alert('Failed to update salesperson status');
+    });
+}
+
+let currentSalespersonId = null;
+
+function openSettingsModal(salespersonId) {
+    currentSalespersonId = salespersonId;
+    console.log('Opening settings modal for salesperson:', salespersonId);
+
+    // Show loading in the selects
+    const customerSelect = document.getElementById('customerStatusFilter');
+    const contactSelect = document.getElementById('contactStatusFilter');
+
+    if (customerSelect) {
+        customerSelect.innerHTML = '<option disabled>Loading customer statuses...</option>';
+    }
+    if (contactSelect) {
+        contactSelect.innerHTML = '<option disabled>Loading contact statuses...</option>';
+    }
+
+    // Load status data first, then populate selects and load settings
+    Promise.all([
+        loadCustomerStatuses(),
+        loadContactStatuses()
+    ]).then(() => {
+        // Now populate the selects with the loaded data
+        populateStatusSelects();
+
+        // Load current settings for this salesperson
+        return fetch('/salespeople/' + salespersonId + '/engagement-settings');
+    }).then(function(response) {
+        return response.json();
+    }).then(function(data) {
+        console.log('Settings data received:', data);
+        if (data.success) {
+            const settings = data.settings;
+
+            // Set threshold
+            const overdueInput = document.getElementById('overdueThreshold');
+            if (overdueInput) {
+                overdueInput.value = settings.overdue_threshold_days || 14;
+            }
+
+            // Set customer status filter
+            const customerSelect = document.getElementById('customerStatusFilter');
+            if (customerSelect && settings.customer_status_filter) {
+                Array.from(customerSelect.options).forEach(function(option) {
+                    option.selected = settings.customer_status_filter.includes(parseInt(option.value));
+                });
+            }
+
+            // Set contact status filter
+            const contactSelect = document.getElementById('contactStatusFilter');
+            if (contactSelect && settings.contact_status_filter) {
+                Array.from(contactSelect.options).forEach(function(option) {
+                    option.selected = settings.contact_status_filter.includes(parseInt(option.value));
+                });
+            }
+
+            // Show modal
+            const modalElement = document.getElementById('settingsModal');
+            if (modalElement) {
+                const modal = new bootstrap.Modal(modalElement);
+                modal.show();
+            } else {
+                console.error('Settings modal element not found');
+            }
+        } else {
+            alert('Failed to load settings: ' + data.error);
+        }
+    }).catch(function(error) {
+        console.error('Error loading settings:', error);
+        alert('Failed to load settings');
+    });
+}
+
+// Updated loadStatusData function - replaces the old one
+function loadStatusData() {
+    console.log('Loading status data...');
+
+    // Load both status types in parallel but don't wait for them
+    // This is for initial page load - the settings modal will load them again when needed
+    loadCustomerStatuses().catch(function(error) {
+        console.error('Error loading customer statuses on page load:', error);
+    });
+
+    loadContactStatuses().catch(function(error) {
+        console.error('Error loading contact statuses on page load:', error);
+    });
+}
+
+// Separate functions to load status data with promises
+function loadCustomerStatuses() {
+    return fetch('/salespeople/customer-statuses')
+        .then(function(response) {
+            return response.json();
+        })
+        .then(function(data) {
+            if (data.success) {
+                customerStatuses = data.statuses;
+                console.log('Loaded customer statuses:', customerStatuses);
+                return customerStatuses;
+            } else {
+                console.error('Failed to load customer statuses:', data.error);
+                throw new Error('Failed to load customer statuses');
+            }
+        });
+}
+
+function loadContactStatuses() {
+    return fetch('/salespeople/contact-statuses')
+        .then(function(response) {
+            return response.json();
+        })
+        .then(function(data) {
+            if (data.success) {
+                contactStatuses = data.statuses;
+                console.log('Loaded contact statuses:', contactStatuses);
+                return contactStatuses;
+            } else {
+                console.error('Failed to load contact statuses:', data.error);
+                throw new Error('Failed to load contact statuses');
+            }
+        });
+}
+
+function saveSettings() {
+    if (!currentSalespersonId) {
+        console.error('No current salesperson ID');
+        return;
+    }
+
+    const overdueInput = document.getElementById('overdueThreshold');
+    const customerSelect = document.getElementById('customerStatusFilter');
+    const contactSelect = document.getElementById('contactStatusFilter');
+
+    // Get selected values
+    const customerStatusFilter = customerSelect ?
+        Array.from(customerSelect.selectedOptions).map(function(option) {
+            return parseInt(option.value);
+        }) : [];
+
+    const contactStatusFilter = contactSelect ?
+        Array.from(contactSelect.selectedOptions).map(function(option) {
+            return parseInt(option.value);
+        }) : [];
+
+    const settings = {
+        overdue_threshold_days: overdueInput ? parseInt(overdueInput.value) : 14,
+        customer_status_filter: customerStatusFilter.length > 0 ? customerStatusFilter : null,
+        contact_status_filter: contactStatusFilter.length > 0 ? contactStatusFilter : null
+    };
+
+    console.log('Saving settings:', settings);
+
+    fetch('/salespeople/' + currentSalespersonId + '/engagement-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(data) {
+        console.log('Save settings response:', data);
+        if (data.success) {
+            // Close modal
+            const modalElement = document.getElementById('settingsModal');
+            if (modalElement) {
+                const modal = bootstrap.Modal.getInstance(modalElement);
+                if (modal) modal.hide();
+            }
+
+            // Refresh metrics to show updated data
+            loadEngagementMetrics(currentSalespersonId);
+        } else {
+            alert('Failed to save settings: ' + data.error);
+        }
+    })
+    .catch(function(error) {
+        console.error('Error saving settings:', error);
+        alert('Failed to save settings');
+    });
+}
+</script>
+{% endblock %}

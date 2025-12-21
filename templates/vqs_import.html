@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Import Vendor Quotes</h2>
+    
+    <div class="card mt-4">
+        <div class="card-body">
+            <form method="POST" enctype="multipart/form-data" action="{{ url_for('vqs.import_vqs') }}">
+                <div class="mb-3">
+                    <label for="file" class="form-label">Upload CSV File (tab-delimited)</label>
+                    <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
+                    <div class="form-text">Select the VQ export file from your ERP system</div>
+                </div>
+                <button type="submit" class="btn btn-primary">Import VQs</button>
+                <a href="{{ url_for('vqs.vqs_list') }}" class="btn btn-secondary">Cancel</a>
+            </form>
+        </div>
+    </div>
+
+<div class="alert alert-info mt-4">
+    <h5>Instructions:</h5>
+    <ul>
+        <li>Export VQs from ERP system as CSV (comma-delimited)</li>
+        <li>The system will automatically create suppliers if they don't exist</li>
+        <li>Part numbers will be normalized and added to the system</li>
+        <li>Expected columns: vendorResponseId, transactionId, transactionalNumber, companyName, pnQuoted, etc.</li>
+    </ul>
+</div>
+{% endblock %}

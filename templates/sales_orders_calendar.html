@@ -1,0 +1,751 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4>Sales Orders Calendar View</h4>
+    <div>
+        <button id="calculate-ship-dates" class="btn btn-primary me-2">
+            <i class="fas fa-calendar-check"></i> Calculate Ship Dates
+        </button>
+        <a href="{{ url_for('sales_orders.list_sales_orders') }}" class="btn btn-secondary me-2">
+            List View
+        </a>
+        <div class="btn-group">
+                <a href="{{ url_for('sales_orders.calendar_view', month=prev_month.month, year=prev_month.year, date_type=date_type, customer_id=customer_id, show_stock_alerts=show_stock_alerts) }}" class="btn btn-outline-primary">
+                    &laquo; Previous
+                </a>
+                <a href="{{ url_for('sales_orders.calendar_view', date_type=date_type, customer_id=customer_id, show_stock_alerts=show_stock_alerts) }}" class="btn btn-outline-primary">
+                    Today
+                </a>
+                <a href="{{ url_for('sales_orders.calendar_view', month=next_month.month, year=next_month.year, date_type=date_type, customer_id=customer_id, show_stock_alerts=show_stock_alerts) }}" class="btn btn-outline-primary">
+                    Next &raquo;
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <h5 class="text-center mb-4">{{ month_name }} {{ year }}</h5>
+
+    <div class="row mb-2">
+        <div class="col">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <strong>Filter Options</strong>
+                </div>
+                <div class="card-body">
+                    <form method="GET" action="{{ url_for('sales_orders.calendar_view') }}" class="row g-3">
+                        <input type="hidden" name="month" value="{{ month }}">
+                        <input type="hidden" name="year" value="{{ year }}">
+                        <div class="col-md-4">
+                            <label for="customer_id" class="form-label">Customer:</label>
+                            <select id="customer_id" name="customer_id" class="form-select">
+                                <option value="">All Customers</option>
+                                {% for customer in customers %}
+                                    <option value="{{ customer.id }}" {% if customer_id == customer.id|string %}selected{% endif %}>
+                                        {{ customer.name }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="date_type" class="form-label">Date Type:</label>
+                            <select id="date_type" name="date_type" class="form-select">
+                                <option value="ship_date" {% if date_type == 'ship_date' %}selected{% endif %}>Ship Date</option>
+                                <option value="delivery_date" {% if date_type == 'delivery_date' %}selected{% endif %}>Delivery Date</option>
+                                <option value="promise_date" {% if date_type == 'promise_date' %}selected{% endif %}>Promise Date</option>
+                                <option value="requested_date" {% if date_type == 'requested_date' %}selected{% endif %}>Requested Date</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+    <label for="show_stock_alerts" class="form-label">Display Options:</label>
+    <div class="form-check form-switch mt-2">
+        <input class="form-check-input" type="checkbox" name="show_stock_alerts" id="show_stock_alerts" value="true" {% if show_stock_alerts %}checked{% endif %}>
+        <label class="form-check-label" for="show_stock_alerts">Show stock availability alerts</label>
+    </div>
+    <div class="form-check form-switch mt-2">
+        <input class="form-check-input" type="checkbox" name="show_pending_only" id="show_pending_only" value="true" {% if show_pending_only %}checked{% endif %}>
+        <label class="form-check-label" for="show_pending_only">Show only orders with pending shipments</label>
+    </div>
+</div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-primary">Apply Filters</button>
+                            <a href="{{ url_for('sales_orders.calendar_view') }}" class="btn btn-secondary">Reset</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+   <div class="card mb-3">
+    <div class="card-body">
+        <div class="d-flex justify-content-start">
+            <div class="me-4">
+                <span class="badge bg-danger me-1">&nbsp;</span>
+                <small>Stock Shortage</small>
+            </div>
+            <div class="me-4">
+                <span class="badge bg-warning me-1">&nbsp;</span>
+                <small>Tight Timeline</small>
+            </div>
+            <div class="me-4">
+                <span class="badge bg-info me-1">&nbsp;</span>
+                <small>Low Stock</small>
+            </div>
+            <div class="me-4">
+                <span class="badge bg-success me-1">&nbsp;</span>
+                <small>Sufficient Stock</small>
+            </div>
+            <div class="me-4">
+                <span class="badge bg-primary me-1" style="position: relative;"><i class="fas fa-truck-loading text-white" style="font-size: 0.6em; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);"></i></span>
+                <small>Partially Shipped</small>
+            </div>
+            <div>
+                <span class="badge bg-primary me-1" style="position: relative;"><i class="fas fa-truck text-white" style="font-size: 0.6em; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);"></i></span>
+                <small>Fully Shipped</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+    <div class="row">
+        <div class="col">
+            <div class="table-responsive">
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th class="text-center" style="width: 14.28%">Sunday</th>
+                            <th class="text-center" style="width: 14.28%">Monday</th>
+                            <th class="text-center" style="width: 14.28%">Tuesday</th>
+                            <th class="text-center" style="width: 14.28%">Wednesday</th>
+                            <th class="text-center" style="width: 14.28%">Thursday</th>
+                            <th class="text-center" style="width: 14.28%">Friday</th>
+                            <th class="text-center" style="width: 14.28%">Saturday</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for week in calendar_data %}
+                            <tr style="height: 120px;">
+                                {% for day in week %}
+                                    <!-- Updated calendar cell template -->
+<!-- Calendar day cell template -->
+<td class="position-relative {% if day.date and day.date.month != month %}bg-light text-muted{% endif %}
+           {% if day.date and day.date == today %}bg-info bg-opacity-10{% endif %}
+           {% if day.orders and show_stock_alerts %}
+             {% set has_warnings = false %}
+             {% for order in day.orders %}
+               {% if order.stock_status and order.stock_status.at_risk %}
+                 {% if order.stock_status.status == 'no_po' or order.stock_status.status == 'insufficient_po' %}
+                   {% set has_warnings = true %}
+                 {% endif %}
+               {% endif %}
+             {% endfor %}
+             {% if has_warnings %}border border-danger{% endif %}
+           {% endif %}"
+    style="height: 150px; width: 14.28%; max-height: 150px; overflow: hidden;">
+    {% if day.date %}
+        <!-- Cell header with date and order count -->
+<div class="d-flex justify-content-between position-absolute top-0 start-0 end-0 p-1 border-bottom bg-light bg-opacity-75">
+    <strong>{{ day.date.day }}</strong>
+
+    {% if day.orders %}
+        <!-- Calculate status counts -->
+        {% set status_counts = {'danger': 0, 'warning': 0, 'info': 0, 'success': 0, 'partial': 0, 'full': 0} %}
+        {% for order in day.orders %}
+            <!-- Status counting logic remains the same -->
+            {% if show_stock_alerts and order.stock_status %}
+                {% if order.stock_status.status == 'no_po' or order.stock_status.status == 'insufficient_po' %}
+                    {% set _ = status_counts.update({'danger': status_counts['danger'] + 1}) %}
+                {% elif order.stock_status.status == 'tight_timeline' %}
+                    {% set _ = status_counts.update({'warning': status_counts['warning'] + 1}) %}
+                {% elif order.stock_status.status == 'low_stock' %}
+                    {% set _ = status_counts.update({'info': status_counts['info'] + 1}) %}
+                {% else %}
+                    {% set _ = status_counts.update({'success': status_counts['success'] + 1}) %}
+                {% endif %}
+            {% endif %}
+
+            {% if order.sales_status_id == 8 %}
+                {% set _ = status_counts.update({'partial': status_counts['partial'] + 1}) %}
+            {% elif order.sales_status_id == 3 %}
+                {% set _ = status_counts.update({'full': status_counts['full'] + 1}) %}
+            {% endif %}
+        {% endfor %}
+
+        <!-- Improved order count button with icon -->
+        <button class="btn btn-sm btn-primary rounded-pill px-2 py-0 summary-button"
+                style="font-size: 0.7em; transition: all 0.2s;"
+                data-day="{{ day.date.strftime('%Y-%m-%d') }}"
+                data-bs-toggle="modal"
+                data-bs-toggle="tooltip"
+                title="View all {{ day.orders|length }} orders for this day"
+                data-bs-target="#daySummaryModal">
+            <i class="fas fa-clipboard-list me-1"></i>{{ day.orders|length }}
+        </button>
+    {% endif %}
+</div>
+        <!-- Status indicators strip - prominent and always visible -->
+        {% if day.orders %}
+            <div class="position-absolute top-0 start-0 end-0 mt-4 px-1 d-flex justify-content-center">
+                {% if status_counts['danger'] > 0 %}
+                    <div class="me-1" data-bs-toggle="tooltip"
+                         title="{{ status_counts['danger'] }} order(s) with stock shortage">
+                        <i class="fas fa-exclamation-triangle text-danger"></i>
+                        {% if status_counts['danger'] > 1 %}
+                            <span class="badge rounded-pill bg-danger" style="font-size: 0.7em;">
+                                {{ status_counts['danger'] }}
+                            </span>
+                        {% endif %}
+                    </div>
+                {% endif %}
+
+                {% if status_counts['warning'] > 0 %}
+                    <div class="me-1" data-bs-toggle="tooltip"
+                         title="{{ status_counts['warning'] }} order(s) with tight timeline">
+                        <i class="fas fa-clock text-warning"></i>
+                        {% if status_counts['warning'] > 1 %}
+                            <span class="badge rounded-pill bg-warning text-dark" style="font-size: 0.7em;">
+                                {{ status_counts['warning'] }}
+                            </span>
+                        {% endif %}
+                    </div>
+                {% endif %}
+
+                {% if status_counts['info'] > 0 %}
+                    <div class="me-1" data-bs-toggle="tooltip"
+                         title="{{ status_counts['info'] }} order(s) with low stock">
+                        <i class="fas fa-battery-quarter text-info"></i>
+                        {% if status_counts['info'] > 1 %}
+                            <span class="badge rounded-pill bg-info" style="font-size: 0.7em;">
+                                {{ status_counts['info'] }}
+                            </span>
+                        {% endif %}
+                    </div>
+                {% endif %}
+
+                {% if status_counts['partial'] > 0 %}
+                    <div class="me-1" data-bs-toggle="tooltip"
+                         title="{{ status_counts['partial'] }} partially shipped order(s)">
+                        <i class="fas fa-truck-loading text-primary"></i>
+                        {% if status_counts['partial'] > 1 %}
+                            <span class="badge rounded-pill bg-primary" style="font-size: 0.7em;">
+                                {{ status_counts['partial'] }}
+                            </span>
+                        {% endif %}
+                    </div>
+                {% endif %}
+
+                {% if status_counts['full'] > 0 %}
+                    <div data-bs-toggle="tooltip"
+                         title="{{ status_counts['full'] }} fully shipped order(s)">
+                        <i class="fas fa-truck text-primary"></i>
+                        {% if status_counts['full'] > 1 %}
+                            <span class="badge rounded-pill bg-primary" style="font-size: 0.7em;">
+                                {{ status_counts['full'] }}
+                            </span>
+                        {% endif %}
+                    </div>
+                {% endif %}
+            </div>
+        {% endif %}
+
+        <!-- Limited preview of orders -->
+        <div class="pt-5 mt-3 px-1" style="max-height: 90px; overflow-y: auto;">
+            {% if day.orders %}
+                {% set grouped_orders = {} %}
+                {% for order in day.orders %}
+                    {% if order.sales_order_ref not in grouped_orders %}
+                        {% set _ = grouped_orders.update({
+                            order.sales_order_ref: {
+                                'order_items': [],
+                                'customer_name': order.customer_name,
+                                'sales_status_id': order.sales_status_id,
+                                'stock_status': order.stock_status if show_stock_alerts else None,
+                                'sales_order_id': order.sales_order_id
+                            }
+                        }) %}
+                    {% endif %}
+                    {% set _ = grouped_orders[order.sales_order_ref]['order_items'].append({
+                        'base_part_number': order.base_part_number,
+                        'quantity': order.quantity,
+                        'shipped_quantity': order.shipped_quantity
+                    }) %}
+                {% endfor %}
+
+                <!-- Show only the first 2 orders in cell to maintain uniform height -->
+                {% set displayed_orders = 0 %}
+                {% for order_ref, order_data in grouped_orders.items() %}
+                    {% if displayed_orders < 2 %}
+                        {% set displayed_orders = displayed_orders + 1 %}
+                        <div class="small mb-1">
+                            <a href="{{ url_for('sales_orders.edit_sales_order', sales_order_id=order_data.sales_order_id) }}"
+                               class="badge
+                               {% if show_stock_alerts and order_data.stock_status and order_data.stock_status.at_risk %}
+                                   {% if order_data.stock_status.status == 'no_po' or order_data.stock_status.status == 'insufficient_po' %}
+                                       bg-danger
+                                   {% elif order_data.stock_status.status == 'tight_timeline' %}
+                                       bg-warning
+                                   {% elif order_data.stock_status.status == 'low_stock' %}
+                                       bg-info
+                                   {% else %}
+                                       bg-success
+                                   {% endif %}
+                               {% else %}
+                                   bg-primary
+                               {% endif %}
+                               text-decoration-none text-white p-1 me-1">
+                                {{ order_ref }}
+                                {% if order_data.sales_status_id == 8 %}
+                                    <i class="fas fa-truck-loading"></i>
+                                {% elif order_data.sales_status_id == 3 %}
+                                    <i class="fas fa-truck"></i>
+                                {% endif %}
+                            </a>
+                            <span class="d-block text-truncate" style="max-width: 100%;">
+                                <small>{{ order_data.customer_name }}</small>
+                            </span>
+                        </div>
+                    {% endif %}
+                {% endfor %}
+
+                {% if grouped_orders|length > 2 %}
+                    <div class="small text-center mt-1">
+                        <span class="badge bg-secondary" style="cursor: pointer;"
+                              data-day="{{ day.date.strftime('%Y-%m-%d') }}"
+                              data-bs-toggle="modal"
+                              data-bs-target="#daySummaryModal">
+                            +{{ grouped_orders|length - 2 }} more
+                        </span>
+                    </div>
+                {% endif %}
+            {% endif %}
+        </div>
+    {% endif %}
+</td>
+                                {% endfor %}
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Day Summary Modal -->
+<!-- Day Summary Modal -->
+<div class="modal fade" id="daySummaryModal" tabindex="-1" aria-labelledby="daySummaryModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="daySummaryModalLabel">Orders for <span id="modalDayDate"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row mb-3">
+                    <div class="col">
+                        <div class="btn-group" role="group" aria-label="Filter buttons">
+                            <button type="button" class="btn btn-outline-secondary active" data-filter="all">All</button>
+                            <button type="button" class="btn btn-outline-danger" data-filter="stock-shortage">Stock Shortage</button>
+                            <button type="button" class="btn btn-outline-warning" data-filter="tight-timeline">Tight Timeline</button>
+                            <button type="button" class="btn btn-outline-primary" data-filter="shipping-status">Shipping Status</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover" id="daySummaryTable">
+                        <thead>
+                            <tr>
+                                <th>Order Ref</th>
+                                <th>Customer</th>
+                                <th>Items</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modalOrderList">
+                            <!-- Orders will be populated here dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize tooltips with HTML content enabled
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function(tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl, {
+            html: true
+        });
+    });
+
+    // Auto-submit form when stock alerts checkbox changes
+    document.getElementById('show_stock_alerts').addEventListener('change', function() {
+        this.form.submit();
+    });
+});
+
+// Add to your existing script section
+document.getElementById('calculate-ship-dates').addEventListener('click', function() {
+    if(confirm('This will calculate ship dates for all open sales orders based on available stock. Continue?')) {
+        // Show loading indicator
+        this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Calculating...';
+        this.disabled = true;
+
+        // Call the API endpoint
+        fetch('/sales_orders/calculate_ship_dates', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Reset button
+            this.innerHTML = '<i class="fas fa-calendar-check"></i> Calculate Ship Dates';
+            this.disabled = false;
+
+            // Show result
+            if(data.status === 'success') {
+                alert('Ship dates calculated successfully for ' + data.updated_count + ' orders.');
+                // Reload the page to show updated dates
+                window.location.reload();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            this.innerHTML = '<i class="fas fa-calendar-check"></i> Calculate Ship Dates';
+            this.disabled = false;
+            alert('Error: ' + error);
+        });
+    }
+});
+// Add this to your existing script section
+document.getElementById('show_pending_only').addEventListener('change', function() {
+    this.form.submit();
+});
+
+// Store all calendar data in a JavaScript object for modal use
+const calendarData = {};
+
+{% for week in calendar_data %}
+    {% for day in week %}
+        {% if day.date and day.orders %}
+            calendarData['{{ day.date.strftime("%Y-%m-%d") }}'] = [
+                {% for order in day.orders %}
+                    {
+                        salesOrderRef: '{{ order.sales_order_ref }}',
+                        salesOrderId: {{ order.sales_order_id }},
+                        customerName: '{{ order.customer_name }}',
+                        salesStatusId: {{ order.sales_status_id or 0 }},
+                        basePartNumber: '{{ order.base_part_number }}',
+                        quantity: {{ order.quantity or 0 }},
+                        shippedQuantity: {{ order.shipped_quantity or 0 }},
+                        {% if show_stock_alerts and order.stock_status %}
+                        stockStatus: {
+                            atRisk: {{ 'true' if order.stock_status.at_risk else 'false' }},
+                            status: '{{ order.stock_status.status }}',
+                            availableQuantity: {{ order.stock_status.available_quantity or 0 }},
+                            shortage: {{ order.stock_status.shortage or 0 }},
+                            nextDeliveryDate: '{{ order.stock_status.next_delivery_date or "" }}',
+                            nextDeliveryQuantity: {{ order.stock_status.next_delivery_quantity or 0 }}
+                        }
+                        {% else %}
+                        stockStatus: null
+                        {% endif %}
+                    },
+                {% endfor %}
+            ];
+        {% endif %}
+    {% endfor %}
+{% endfor %}
+
+// Function to get status badge HTML
+function getStatusBadge(order) {
+    let badgeClass = 'bg-primary';
+    let badgeIcon = '';
+    let badgeText = '';
+
+    // Check stock status
+    if (order.stockStatus && order.stockStatus.atRisk) {
+        if (order.stockStatus.status === 'no_po' || order.stockStatus.status === 'insufficient_po') {
+            badgeClass = 'bg-danger';
+            badgeIcon = '<i class="fas fa-exclamation-triangle"></i>';
+            badgeText = 'Stock Shortage';
+        } else if (order.stockStatus.status === 'tight_timeline') {
+            badgeClass = 'bg-warning';
+            badgeIcon = '<i class="fas fa-clock"></i>';
+            badgeText = 'Tight Timeline';
+        } else if (order.stockStatus.status === 'low_stock') {
+            badgeClass = 'bg-info';
+            badgeIcon = '<i class="fas fa-battery-quarter"></i>';
+            badgeText = 'Low Stock';
+        } else {
+            badgeClass = 'bg-success';
+            badgeText = 'Sufficient Stock';
+        }
+    }
+
+    // Check shipping status
+    if (order.salesStatusId === 8) {
+        badgeIcon += ' <i class="fas fa-truck-loading"></i>';
+        badgeText += badgeText ? ' | Partially Shipped' : 'Partially Shipped';
+    } else if (order.salesStatusId === 3) {
+        badgeIcon += ' <i class="fas fa-truck"></i>';
+        badgeText += badgeText ? ' | Fully Shipped' : 'Fully Shipped';
+    } else if (!badgeText) {
+        badgeText = 'Pending';
+    }
+
+    return `<span class="badge ${badgeClass}">${badgeIcon} ${badgeText}</span>`;
+}
+
+// Function to populate the modal with orders for a specific day
+function populateDaySummaryModal(date) {
+    // Validate the date parameter
+    if (!date) {
+        console.error("Invalid date provided to populateDaySummaryModal");
+        date = new Date().toISOString().split('T')[0]; // Use today as fallback
+    }
+
+    let dateObj;
+    try {
+        dateObj = new Date(date);
+        // Check if date is valid
+        if (isNaN(dateObj.getTime())) {
+            throw new Error("Invalid date format");
+        }
+    } catch (e) {
+        console.error("Error parsing date:", e);
+        dateObj = new Date(); // Use current date as fallback
+    }
+
+    const formattedDate = dateObj.toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+    });
+
+    document.getElementById('modalDayDate').textContent = formattedDate;
+
+    const orderList = document.getElementById('modalOrderList');
+    orderList.innerHTML = '';
+
+    if (calendarData[date]) {
+        // Group orders by sales order reference
+        const groupedOrders = {};
+
+        calendarData[date].forEach(order => {
+            if (!groupedOrders[order.salesOrderRef]) {
+                groupedOrders[order.salesOrderRef] = {
+                    salesOrderRef: order.salesOrderRef,
+                    salesOrderId: order.salesOrderId,
+                    customerName: order.customerName,
+                    salesStatusId: order.salesStatusId,
+                    stockStatus: order.stockStatus,
+                    items: []
+                };
+            }
+
+            groupedOrders[order.salesOrderRef].items.push({
+                basePartNumber: order.basePartNumber,
+                quantity: order.quantity,
+                shippedQuantity: order.shippedQuantity
+            });
+        });
+
+        // Add each grouped order to the table
+        Object.values(groupedOrders).forEach(order => {
+            const row = document.createElement('tr');
+
+            // Add data filter attributes for filtering
+            if (order.stockStatus && order.stockStatus.atRisk) {
+                if (order.stockStatus.status === 'no_po' || order.stockStatus.status === 'insufficient_po') {
+                    row.setAttribute('data-category', 'stock-shortage');
+                } else if (order.stockStatus.status === 'tight_timeline') {
+                    row.setAttribute('data-category', 'tight-timeline');
+                }
+            }
+
+            if (order.salesStatusId === 8 || order.salesStatusId === 3) {
+                row.setAttribute('data-shipping', 'shipping-status');
+            }
+
+            // Build the row content
+            row.innerHTML = `
+                <td>${order.salesOrderRef}</td>
+                <td>${order.customerName}</td>
+                <td>
+                    ${order.items.slice(0, 2).map(item =>
+                        `<div>${item.quantity}x ${item.basePartNumber}</div>`
+                    ).join('')}
+                    ${order.items.length > 2 ?
+                        `<div class="text-muted">+ ${order.items.length - 2} more items</div>` :
+                        ''}
+                </td>
+                <td>${getStatusBadge(order)}</td>
+                <td>
+                    <a href="/sales_orders/edit/${order.salesOrderId}" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-edit"></i> Edit
+                    </a>
+                </td>
+            `;
+
+            orderList.appendChild(row);
+        });
+    } else {
+        orderList.innerHTML = '<tr><td colspan="5" class="text-center">No orders for this day</td></tr>';
+    }
+}
+
+// When the modal is about to be shown, populate it with the day's orders
+document.addEventListener('DOMContentLoaded', function() {
+    const daySummaryModal = document.getElementById('daySummaryModal');
+    daySummaryModal.addEventListener('show.bs.modal', function(event) {
+        // Added safety checks for relatedTarget
+        const button = event.relatedTarget;
+        if (button && button.hasAttribute('data-day')) {
+            const date = button.getAttribute('data-day');
+            populateDaySummaryModal(date);
+        } else {
+            // If there's no valid relatedTarget, we might be using a programmatic trigger
+            // In this case, we can use a default or previously stored date
+            const lastSelectedDate = daySummaryModal.getAttribute('data-last-selected-date') ||
+                                     new Date().toISOString().split('T')[0]; // Today as fallback
+            populateDaySummaryModal(lastSelectedDate);
+        }
+    });
+
+    // Add click events to all day summary badges
+    document.querySelectorAll('.day-summary-badge, [data-day]').forEach(badge => {
+        badge.addEventListener('click', function() {
+            if (this.hasAttribute('data-day')) {
+                const date = this.getAttribute('data-day');
+                // Store the last selected date on the modal itself for reference
+                document.getElementById('daySummaryModal').setAttribute('data-last-selected-date', date);
+                populateDaySummaryModal(date);
+            }
+        });
+    });
+
+    // Filter buttons in the modal
+    document.querySelectorAll('[data-filter]').forEach(button => {
+        button.addEventListener('click', function() {
+            // Remove active class from all buttons
+            document.querySelectorAll('[data-filter]').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // Add active class to clicked button
+            this.classList.add('active');
+
+            const filterType = this.getAttribute('data-filter');
+            const rows = document.querySelectorAll('#daySummaryTable tbody tr');
+
+            if (filterType === 'all') {
+                rows.forEach(row => {
+                    row.style.display = '';
+                });
+            } else {
+                rows.forEach(row => {
+                    if (row.hasAttribute('data-category') && row.getAttribute('data-category') === filterType) {
+                        row.style.display = '';
+                    } else if (row.hasAttribute('data-shipping') && filterType === 'shipping-status') {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
+                });
+            }
+        });
+    });
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Apply special styling to summary buttons based on order status
+    document.querySelectorAll('.summary-button').forEach(button => {
+        const dayDate = button.getAttribute('data-day');
+        if (calendarData[dayDate]) {
+            // Check if day has any critical orders (stock shortage)
+            const hasAlerts = calendarData[dayDate].some(order =>
+                order.stockStatus &&
+                order.stockStatus.atRisk &&
+                (order.stockStatus.status === 'no_po' ||
+                 order.stockStatus.status === 'insufficient_po')
+            );
+
+            // Check if day has any warning orders (tight timeline)
+            const hasWarnings = calendarData[dayDate].some(order =>
+                order.stockStatus &&
+                order.stockStatus.atRisk &&
+                order.stockStatus.status === 'tight_timeline'
+            );
+
+            // Apply appropriate class
+            if (hasAlerts) {
+                button.classList.add('has-alerts');
+            } else if (hasWarnings) {
+                button.classList.add('has-warnings');
+            }
+        }
+    });
+
+    // Initialize tooltips for the summary buttons
+    var summaryButtonTooltips = [].slice.call(document.querySelectorAll('.summary-button'));
+    summaryButtonTooltips.map(function(tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl, {
+            placement: 'top'
+        });
+    });
+});
+</script>
+
+<style>.summary-button {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    border: none;
+}
+
+.summary-button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+}
+
+/* Add a gentle pulse animation for days with high-priority orders */
+@keyframes gentle-pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+.summary-button.has-alerts {
+    animation: gentle-pulse 2s infinite;
+    background-color: #dc3545; /* Bootstrap's danger color */
+    border-color: #dc3545;
+}
+
+.summary-button.has-warnings {
+    background-color: #ffc107; /* Bootstrap's warning color */
+    border-color: #ffc107;
+    color: #212529;
+}
+
+/* Make sure calendar cells have sufficient position context */
+.table td {
+    position: relative;
+}
+
+/* Ensure the date number doesn't compete visually with the button */
+.table td strong {
+    font-size: 0.9rem;
+    color: #555;
+}</style>
+{% endblock %}

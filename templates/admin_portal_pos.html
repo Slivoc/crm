@@ -1,0 +1,387 @@
+{% extends "base.html" %}
+
+{% block title %}Portal Purchase Orders{% endblock %}
+
+{% block content %}
+{# 1. WE DEFINE THE MACRO HERE AT THE TOP #}
+{% macro render_po_table(orders, tab_name) %}
+    {% if orders %}
+    <div class="card shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th>PO Reference</th>
+                            <th>Customer</th>
+                            <th>Submitted By</th>
+                            <th>Date Submitted</th>
+                            <th class="text-center">Items</th>
+                            <th class="text-end">Total Value</th>
+                            <th class="text-center">Status</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for po in orders %}
+                        <tr class="{% if po.status == 'submitted' %}table-warning{% endif %}">
+                            <td>
+                                <strong>{{ po.po_reference }}</strong>
+                                {% if po.date_acknowledged %}
+                                <br><small class="text-success"><i class="fas fa-check-circle"></i> Ack'd {{ po.date_acknowledged[:10] }}</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <strong>{{ po.customer_name }}</strong>
+                            </td>
+                            <td>
+                                {{ po.submitted_by_first_name }} {{ po.submitted_by_last_name }}
+                                <br><small class="text-muted">{{ po.submitted_by_email }}</small>
+                            </td>
+                            <td>
+                                {{ po.date_submitted[:10] if po.date_submitted else 'N/A' }}
+                                <br><small class="text-muted">{{ po.date_submitted[11:16] if po.date_submitted and po.date_submitted|length > 10 else '' }}</small>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge bg-secondary">{{ po.line_count }}</span>
+                            </td>
+                            <td class="text-end">
+                                <strong>{{ po.currency_code or 'GBP' }} {{ "%.2f"|format(po.total_value) }}</strong>
+                            </td>
+                            <td class="text-center">
+                                {% if po.status == 'submitted' %}
+                                <span class="badge bg-info">Submitted</span>
+                                {% elif po.status == 'acknowledged' %}
+                                <span class="badge bg-success">Acknowledged</span>
+                                {% elif po.status == 'processing' %}
+                                <span class="badge bg-primary">Processing</span>
+                                {% elif po.status == 'dispatched' %}
+                                <span class="badge bg-warning">Dispatched</span>
+                                {% elif po.status == 'completed' %}
+                                <span class="badge bg-dark">Completed</span>
+                                {% elif po.status == 'cancelled' %}
+                                <span class="badge bg-danger">Cancelled</span>
+                                {% else %}
+                                <span class="badge bg-secondary">{{ po.status }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-primary" onclick="viewPO({{ po.id }})" title="View Details">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                    <button class="btn btn-success" onclick="openStatusModal({{ po.id }}, '{{ po.status }}')" title="Update Status">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="card shadow-sm">
+        <div class="card-body text-center py-5">
+            <i class="fas fa-inbox text-muted mb-3" style="font-size: 3rem; opacity: 0.3;"></i>
+            <p class="text-muted mb-0">No purchase orders in this category</p>
+        </div>
+    </div>
+    {% endif %}
+{% endmacro %}
+
+{# 2. NOW WE RENDER THE PAGE CONTENT #}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2><i class="fas fa-inbox text-primary me-2"></i>Portal Purchase Orders</h2>
+                    <p class="text-muted mb-0">Customer orders submitted via the portal</p>
+                </div>
+                <div>
+                    <button class="btn btn-outline-secondary" onclick="location.reload()">
+                        <i class="fas fa-sync-alt me-2"></i>Refresh
+                    </button>
+                </div>
+            </div>
+
+            <ul class="nav nav-tabs mb-3" id="statusTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="submitted-tab" data-bs-toggle="tab" data-bs-target="#submitted" type="button">
+                        <i class="fas fa-inbox me-2"></i>Submitted <span class="badge bg-info ms-1">{{ status_counts.get('submitted', 0) }}</span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="acknowledged-tab" data-bs-toggle="tab" data-bs-target="#acknowledged" type="button">
+                        <i class="fas fa-check-circle me-2"></i>Acknowledged <span class="badge bg-success ms-1">{{ status_counts.get('acknowledged', 0) }}</span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="processing-tab" data-bs-toggle="tab" data-bs-target="#processing" type="button">
+                        <i class="fas fa-cog me-2"></i>Processing <span class="badge bg-primary ms-1">{{ status_counts.get('processing', 0) }}</span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="all-tab" data-bs-toggle="tab" data-bs-target="#all" type="button">
+                        <i class="fas fa-list me-2"></i>All Orders
+                    </button>
+                </li>
+            </ul>
+
+            <div class="tab-content" id="statusTabsContent">
+                <div class="tab-pane fade show active" id="submitted" role="tabpanel">
+                    {% set filtered = purchase_orders | selectattr('status', 'equalto', 'submitted') | list %}
+                    {{ render_po_table(filtered, 'submitted') }}
+                </div>
+
+                <div class="tab-pane fade" id="acknowledged" role="tabpanel">
+                    {% set filtered = purchase_orders | selectattr('status', 'equalto', 'acknowledged') | list %}
+                    {{ render_po_table(filtered, 'acknowledged') }}
+                </div>
+
+                <div class="tab-pane fade" id="processing" role="tabpanel">
+                    {% set filtered = purchase_orders | selectattr('status', 'equalto', 'processing') | list %}
+                    {{ render_po_table(filtered, 'processing') }}
+                </div>
+
+                <div class="tab-pane fade" id="all" role="tabpanel">
+                    {{ render_po_table(purchase_orders, 'all') }}
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="poDetailModal" tabindex="-1" style="display: none;">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-file-invoice me-2"></i>PO Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="poDetailContent">
+                <div class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="statusModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-edit me-2"></i>Update Status</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="status_po_id">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">New Status</label>
+                    <select class="form-select" id="new_status">
+                        <option value="submitted">Submitted</option>
+                        <option value="acknowledged">Acknowledged</option>
+                        <option value="processing">Processing</option>
+                        <option value="dispatched">Dispatched</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Internal Notes (Optional)</label>
+                    <textarea class="form-control" id="status_notes" rows="3" placeholder="Add notes about this status change..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitStatusUpdate()">
+                    <i class="fas fa-save me-2"></i>Update Status
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function viewPO(poId) {
+    const modal = new bootstrap.Modal(document.getElementById('poDetailModal'));
+    const content = document.getElementById('poDetailContent');
+    
+    // Show loading
+    content.innerHTML = `
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    `;
+    
+    modal.show();
+    
+    // Fetch details
+    fetch(`/portal-admin/purchase-orders/${poId}/details`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                content.innerHTML = renderPODetails(data.po, data.lines);
+            } else {
+                content.innerHTML = `<div class="alert alert-danger">Error loading PO details</div>`;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            content.innerHTML = `<div class="alert alert-danger">Failed to load details</div>`;
+        });
+}
+
+function renderPODetails(po, lines) {
+    return `
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <h6 class="text-primary">Order Information</h6>
+                <table class="table table-sm table-borderless">
+                    <tr><td class="text-muted">PO Reference:</td><td><strong>${po.po_reference}</strong></td></tr>
+                    <tr><td class="text-muted">Customer:</td><td>${po.customer_name}</td></tr>
+                    <tr><td class="text-muted">Submitted:</td><td>${po.date_submitted}</td></tr>
+                    <tr><td class="text-muted">Total:</td><td><strong>${po.currency_code} ${parseFloat(po.total_value).toFixed(2)}</strong></td></tr>
+                </table>
+            </div>
+            <div class="col-md-6">
+                <h6 class="text-primary">Authorization</h6>
+                <table class="table table-sm table-borderless">
+                    <tr><td class="text-muted">Name:</td><td>${po.authorizer_name || 'N/A'}</td></tr>
+                    <tr><td class="text-muted">Title:</td><td>${po.authorizer_title || 'N/A'}</td></tr>
+                    <tr><td class="text-muted">When:</td><td>${po.authorization_timestamp || 'N/A'}</td></tr>
+                </table>
+            </div>
+        </div>
+        
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <h6 class="text-primary">Delivery Address</h6>
+                <address>
+                    <strong>${po.delivery_company}</strong><br>
+                    ${po.delivery_street}<br>
+                    ${po.delivery_city}, ${po.delivery_zip}<br>
+                    ${po.delivery_country}
+                </address>
+            </div>
+            <div class="col-md-6">
+                <h6 class="text-primary">Invoice Address</h6>
+                ${po.same_as_delivery ? '<p class="text-muted">Same as delivery</p>' : `
+                <address>
+                    <strong>${po.invoice_company}</strong><br>
+                    ${po.invoice_street}<br>
+                    ${po.invoice_city}, ${po.invoice_zip}<br>
+                    ${po.invoice_country}
+                </address>
+                `}
+            </div>
+        </div>
+        
+        <h6 class="text-primary mb-2">Line Items</h6>
+        <table class="table table-sm table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>#</th>
+                    <th>Part Number</th>
+                    <th class="text-center">Qty</th>
+                    <th class="text-end">Unit Price</th>
+                    <th class="text-end">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${lines.map(line => `
+                    <tr>
+                        <td>${line.line_number}</td>
+                        <td><strong>${line.part_number}</strong></td>
+                        <td class="text-center">${line.quantity}</td>
+                        <td class="text-end">${po.currency_code} ${parseFloat(line.unit_price).toFixed(2)}</td>
+                        <td class="text-end">${po.currency_code} ${parseFloat(line.line_total).toFixed(2)}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+            <tfoot class="table-light">
+                <tr>
+                    <td colspan="4" class="text-end fw-bold">Total:</td>
+                    <td class="text-end fw-bold">${po.currency_code} ${parseFloat(po.total_value).toFixed(2)}</td>
+                </tr>
+            </tfoot>
+        </table>
+        
+        ${po.customer_notes ? `
+        <div class="alert alert-info mt-3">
+            <strong>Customer Notes:</strong><br>${po.customer_notes}
+        </div>
+        ` : ''}
+    `;
+}
+
+function openStatusModal(poId, currentStatus) {
+    document.getElementById('status_po_id').value = poId;
+    document.getElementById('new_status').value = currentStatus;
+    document.getElementById('status_notes').value = '';
+    
+    const modal = new bootstrap.Modal(document.getElementById('statusModal'));
+    modal.show();
+}
+
+function submitStatusUpdate() {
+    const poId = document.getElementById('status_po_id').value;
+    const newStatus = document.getElementById('new_status').value;
+    const notes = document.getElementById('status_notes').value;
+    
+    fetch(`/admin/portal-pos/${poId}/update-status`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            status: newStatus,
+            notes: notes
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to update status'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred');
+    });
+}
+
+// Auto-refresh every 2 minutes for new orders
+setInterval(() => {
+    const submitted = document.querySelectorAll('.table-warning').length;
+    if (submitted > 0) {
+        console.log('Auto-refreshing for new orders...');
+        location.reload();
+    }
+}, 120000);
+</script>
+
+<style>
+.table-hover tbody tr:hover {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+.sticky-top {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+</style>
+
+{% endblock %}

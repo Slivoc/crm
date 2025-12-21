@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Customer Quotes (CQs)</h2>
+        <a href="{{ url_for('cqs.import_cqs') }}" class="btn btn-primary">Import CQs</a>
+    </div>
+    
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>CQ Number</th>
+                <th>Customer</th>
+                <th>Status</th>
+                <th>Entry Date</th>
+                <th>Due Date</th>
+                <th>Currency</th>
+                <th>Lines</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for cq in cqs %}
+            <tr>
+                <td><a href="{{ url_for('cqs.view_cq', cq_id=cq.id) }}">{{ cq.cq_number }}</a></td>
+                <td>{{ cq.customer_name }}</td>
+                <td>{{ cq.status }}</td>
+                <td>{{ cq.entry_date }}</td>
+                <td>{{ cq.due_date }}</td>
+                <td>{{ cq.currency_code }}</td>
+                <td>{{ cq.line_count }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('cqs.delete_cq', cq_id=cq.id) }}" style="display:inline;">
+                        <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure?')">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

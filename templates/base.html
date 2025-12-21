@@ -1,0 +1,1972 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Sproutt{% endblock %}</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- In your base.html head section -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- CSS files first -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <link href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" rel="stylesheet" />
+
+    <!-- JavaScript files in correct order -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='lumen.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='solid-colors.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/contacts.css') }}">
+    {% block extra_css %}{% endblock %}
+    <!-- In head after Bootstrap -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.5/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-icons@6.6.6/css/flag-icons.min.css">
+    <script type="module">
+        import ChartUtils from '/static/js/chart-utils.js';
+        window.ChartUtils = ChartUtils; // Make it available globally if needed
+    </script>
+    <script src="{{ url_for('static', filename='js/bootstrap-modal-fix.js') }}"></script>
+
+
+    <style>
+        /* Main content area */
+        .main-content {
+            margin-top: 50px;
+            margin-left: 280px;
+            padding: 20px;
+        }
+
+        .btn-toggle-nav a {
+            padding: 0.25rem 1rem;
+            color: #333;
+            text-decoration: none;
+            font-size: 1rem;
+        }
+
+        .btn-toggle-nav a:hover,
+        .btn-toggle-nav a:focus {
+            background-color: #e6f0ff;
+            color: #0066cc;
+        }
+
+        .btn-toggle[aria-expanded="true"]::after {
+            transform: rotate(180deg);
+        }
+
+        .breadcrumb {
+            background-color: transparent;
+            border: none;
+            padding: 0;
+            margin: 0;
+            font-size: 1rem;
+        }
+
+        .breadcrumb-item {
+            color: #333;
+        }
+
+        .breadcrumb-item a {
+            text-decoration: none;
+            color: #333;
+            font-weight: bold;
+        }
+
+        .breadcrumb-item a:hover {
+            color: #0066cc;
+        }
+
+        .breadcrumb-item.active {
+            color: #6c757d;
+        }
+
+        #search-results-container {
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        #search-results .nav-item {
+            border-bottom: 1px solid #ddd;
+        }
+
+        #search-results .nav-link {
+            padding: 10px;
+            color: #333;
+        }
+
+        #search-results .nav-link:hover {
+            background-color: #f1f1f1;
+        }
+
+        #search-results .disabled {
+            color: #999;
+        }
+
+        #customer-results-container {
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            max-height: 500px;
+            overflow-y: auto;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            min-width: 450px;
+        }
+
+        #customer-results .nav-item {
+            border-bottom: 1px solid #ddd;
+        }
+
+        #customer-results .nav-link {
+            padding: 10px;
+            color: #333;
+        }
+
+        #customer-results .nav-link:hover {
+            background-color: #f1f1f1;
+        }
+
+        #customer-results .disabled {
+            color: #999;
+        }
+
+        /* Customer search item styling */
+        .customer-search-item {
+            transition: background-color 0.2s;
+        }
+
+        .customer-search-item:hover {
+            background-color: #f1f1f1;
+        }
+
+        .customer-name {
+            cursor: pointer;
+        }
+
+        .customer-edit-btn {
+            flex-shrink: 0;
+        }
+
+        /* Customer search with add button styling */
+        .customer-search-container {
+            position: relative;
+            display: flex;
+            align-items: stretch;
+        }
+
+        .customer-search-container .form-control {
+            border-top-right-radius: 0;
+            border-bottom-right-radius: 0;
+            border-right: none;
+        }
+
+        .customer-search-container .btn-add-customer {
+            border-top-left-radius: 0;
+            border-bottom-left-radius: 0;
+            border-left: 1px solid #dee2e6;
+            padding: 0.375rem 0.75rem;
+            font-size: 0.875rem;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .customer-search-container .btn-add-customer:hover {
+            border-left: 1px solid #0d6efd;
+        }
+
+        .customer-search-container .btn-add-customer:focus {
+            border-left: 1px solid #0d6efd;
+            box-shadow: none;
+        }
+
+        /* Collapsible sections styling */
+        .collapsible-sections {
+            transition: all 0.3s ease;
+        }
+
+        .collapsible-sections.collapsed {
+            opacity: 0;
+            max-height: 0;
+            overflow: hidden;
+            padding: 0;
+            margin: 0;
+        }
+
+        /* Always visible sections */
+        .always-visible {
+            border-bottom: 1px solid #e9ecef;
+            padding-bottom: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Toast container positioning */
+        #toastContainer {
+            position: fixed;
+            top: 70px; /* Below top-pane */
+            right: 20px;
+            z-index: 1100; /* Above sidebar */
+        }
+        .apollo-search-item {
+    padding: 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #dee2e6;
+    transition: background-color 0.2s;
+}
+
+.apollo-search-item:hover {
+    background-color: #f8f9fa;
+}
+
+.apollo-search-item:last-child {
+    border-bottom: none;
+}
+
+.apollo-search-item .company-name {
+    font-weight: 600;
+    color: #495057;
+}
+
+.apollo-search-item .company-details {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-top: 4px;
+}
+
+.apollo-search-item .company-website {
+    color: #007bff;
+    text-decoration: none;
+    font-size: 0.875rem;
+}
+
+.apollo-search-item .company-website:hover {
+    text-decoration: underline;
+}
+
+#apolloSearchResults {
+    position: relative;
+    z-index: 1050;
+}
+
+.dropdown-menu.show {
+    display: block !important;
+
+}
+
+/* Contact info styling - from contacts.html */
+.contact-info {
+    font-size: 0.875rem;
+    line-height: 1.3;
+}
+
+.contact-detail {
+    display: flex;
+    align-items: center;
+    margin-bottom: 2px;
+}
+
+.contact-detail:last-child {
+    margin-bottom: 0;
+}
+
+.contact-detail i {
+    width: 16px;
+    margin-right: 6px;
+    color: #6c757d;
+}
+
+/* Contact Search Results Container */
+#contact-results-container {
+    width: 400px;
+    max-width: 90vw;
+}
+
+#contact-results {
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* Contact Search Item */
+.contact-search-item {
+    position: relative;
+    padding: 12px 100px 12px 12px; /* Right padding for buttons */
+    cursor: pointer;
+    border-bottom: 1px solid #e9ecef;
+    transition: background-color 0.2s;
+}
+
+.contact-search-item:last-child {
+    border-bottom: none;
+}
+
+.contact-search-item:hover {
+    background-color: #f8f9fa;
+}
+
+.contact-search-item.disabled {
+    cursor: default;
+    color: #6c757d;
+    text-align: center;
+    padding: 16px;
+}
+
+.contact-search-item.disabled:hover {
+    background-color: transparent;
+}
+
+/* Contact Info */
+.contact-info {
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.contact-name {
+    font-weight: 600;
+    font-size: 14px;
+    color: #212529;
+    margin-bottom: 4px;
+}
+
+.contact-detail {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #6c757d;
+    margin-bottom: 2px;
+}
+
+.contact-detail i {
+    font-size: 11px;
+}
+
+.contact-customer {
+    font-size: 12px;
+    color: #495057;
+    margin-top: 4px;
+}
+
+.contact-status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    color: white;
+    margin-top: 4px;
+}
+
+/* Quick Action Buttons */
+.contact-quick-actions {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    pointer-events: auto;
+}
+
+.contact-quick-action-btn {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+    background: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 14px;
+    color: #6c757d;
+    flex-shrink: 0;
+}
+
+.contact-quick-action-btn:hover {
+    background: #f8f9fa;
+    border-color: #0d6efd;
+    color: #0d6efd;
+    transform: scale(1.05);
+}
+
+.contact-quick-action-btn:active {
+    transform: scale(0.95);
+}
+
+/* Enhanced project section styling - ADD THIS TO EXISTING STYLES */
+
+/* Larger, more readable text for project items */
+.btn-toggle-nav {
+    font-size: 0.95rem !important; /* Increased from default small */
+}
+
+/* Project dropdown improvements */
+#projectsDropdown {
+    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+    border: 1px solid #dee2e6;
+    transition: all 0.2s ease;
+    min-height: 40px;
+}
+
+#projectsDropdown:hover {
+    background: linear-gradient(135deg, #e9ecef 0%, #f8f9fa 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+
+
+
+/* Stage item styling */
+.form-check {
+    padding: 8px 12px !important;
+    margin: 4px 0 !important;
+    border-radius: 6px;
+    background: white;
+    border: 1px solid #e9ecef;
+    transition: all 0.2s ease;
+    font-size: 0.9rem !important;
+}
+
+.form-check:hover {
+    background: #f8f9fa;
+    border-color: #dee2e6;
+    transform: translateX(2px);
+}
+
+/* Completed stages styling */
+.form-check:has(input:checked) {
+    background: #d4edda;
+    border-color: #c3e6cb;
+    opacity: 0.8;
+}
+
+#project-stages-list .form-check:has(input:checked) label {
+    text-decoration: line-through;
+    color: #6c757d;
+}
+
+/* Substages styling */
+.ms-4 .form-check {
+    background: #f8f9fa;
+    font-size: 0.85rem !important;
+    padding: 6px 10px !important;
+    margin-left: 0 !important;
+    border-left: 3px solid #dee2e6;
+}
+
+.ms-4 .form-check:hover {
+    background: #e9ecef;
+}
+
+.ms-4 .form-check:has(input:checked) {
+    background: #d1ecf1;
+    border-left-color: #bee5eb;
+}
+
+/* Fix Option 1: Reset positioning for form-check-input */
+.form-check-input {
+    transform: none !important; /* Remove scaling that might shift position */
+    margin-right: 0.5rem !important; /* Standard Bootstrap spacing */
+    margin-left: 0 !important; /* Ensure no left margin */
+    position: relative !important; /* Ensure proper positioning context */
+}
+
+/* Better text wrapping */
+.form-check-label {
+    word-break: break-word;
+    line-height: 1.3;
+    font-weight: 500;
+}
+
+.ms-4 .form-check-label {
+    font-weight: 400;
+}
+
+/* Add job button styling */
+.text-primary {
+    display: inline-block;
+    padding: 10px 15px;
+    border: 2px dashed #dee2e6;
+    border-radius: 6px;
+    background: transparent;
+    transition: all 0.2s ease;
+    text-decoration: none !important;
+}
+
+.text-primary:hover {
+    border-color: #0d6efd;
+    background: rgba(13, 110, 253, 0.05);
+    transform: translateY(-1px);
+}
+
+/* Project container improvements */
+.project-stages-container {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%) !important;
+}
+
+        /* Style for the repositioned dropdown */
+.dropdown-menu.repositioned {
+    position: fixed !important;
+    z-index: 1060 !important;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
+}
+/* Updated dropdown menu styling */
+.dropdown-menu {
+    padding: 12px !important;  /* Inner padding for the container */
+    /* no need to touch background or border-radius */
+}
+
+.dropdown-item {
+    margin: 3px 0;      /* vertical gap between items */
+    padding: 8px 12px;  /* comfortable clickable area */
+    border-radius: 0;   /* ensure it's square, not rounded */
+    background: transparent;
+    box-shadow: none;
+    color: inherit;
+}
+
+.dropdown-item:hover,
+.dropdown-item.active {
+    background: #f6f6f6;  /* or any very subtle shade for hover */
+    color: inherit;
+    border-radius: 0;
+}
+/* Simple rounded edges for dropdown items - preserves existing colors and layout */
+
+
+.dropdown-item {
+    border-radius: 6px !important; /* Override the existing border-radius: 0 */
+    font-weight: 600 !important; /* Make text bold */
+}
+
+.dropdown-item:hover,
+.dropdown-item:focus {
+    border-radius: 6px !important; /* Maintain rounded edges on hover */
+}
+
+.dropdown-item.active {
+    border-radius: 6px !important; /* Maintain rounded edges when selected */
+}
+
+/* For your sidebar nav items */
+.btn-toggle-nav a {
+    margin: 2px 8px;
+    border-radius: 10px;
+    padding: 8px 16px;
+    transition: all 0.2s ease;
+}
+
+.btn-toggle-nav a:hover {
+    background: linear-gradient(135deg, #e6f0ff 0%, #f0f8ff 100%);
+    transform: translateX(6px);
+    box-shadow: 0 3px 12px rgba(0, 102, 204, 0.15);
+}
+
+/* Global autofill disable for all form inputs */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0 1000px white inset !important;
+    -webkit-text-fill-color: #000 !important;
+    transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Alternative approach - completely disable autofill styling */
+input[autocomplete="off"] {
+    -webkit-box-shadow: 0 0 0 1000px white inset;
+    box-shadow: 0 0 0 1000px white inset;
+}
+
+/* Remove autofill background for dark themes */
+input:-webkit-autofill {
+    -webkit-box-shadow: 0 0 0px 1000px white inset;
+    box-shadow: 0 0 0px 1000px white inset;
+}
+    </style>
+    {% block head %}{% endblock %}
+</head>
+
+<body>
+    <!-- Main Layout: Sidebar and Main Content -->
+    <div class="d-flex">
+        <!-- Sidebar -->
+        <div class="flex-shrink-0 p-3" style="width: 280px;">
+            <a href="/" class="d-flex align-items-center pb-3 mb-3 link-dark text-decoration-none border-bottom">
+                <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo" width="30" height="24" class="me-2">
+                <span class="fs-5 fw-semibold">Sproutt</span>
+            </a>
+
+            <!-- Always Visible Section -->
+            <ul class="list-unstyled ps-0 always-visible">
+                <li class="mb-1">
+                    <a href="{{ url_for('dashboard.view_dashboard') }}" class="btn btn-toggle align-items-center rounded d-flex">
+                        <i class="bi bi-speedometer2 me-2"></i>
+                        Main Dashboard
+                    </a>
+                    {% if current_user.is_authenticated %}
+                    <a href="{{ url_for('salespeople.activity', salesperson_id=current_user.get_salesperson_id()) }}" class="btn btn-toggle align-items-center rounded d-flex">
+                        <i class="bi bi-speedometer2 me-2"></i>
+                        My CRM
+                    </a>
+                    {% endif %}
+                </li>
+
+                <!-- Projects section -->
+                <li class="mb-1">
+                    <button class="btn btn-toggle align-items-center rounded collapsed d-flex" data-bs-toggle="collapse" data-bs-target="#projects-collapse" aria-expanded="false">
+                        <i class="bi bi-kanban me-2"></i>
+                        Projects
+                    </button>
+                    <div class="collapse show" id="projects-collapse">
+                        <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
+                            <li>
+                                <a href="#" class="link-dark text-decoration-none dropdown-toggle d-flex align-items-center justify-content-between px-3 py-2 bg-light rounded"
+   id="projectsDropdown" data-bs-toggle="manual" aria-expanded="false" style="min-height: 40px;">
+    <div class="d-flex align-items-center">
+        <i class="bi bi-folder me-2 text-primary"></i>
+        <span class="fw-semibold text-truncate" style="max-width: 180px;" title="{% if project %}{{ project.name }}{% else %}Select a Project{% endif %}">
+            {% if project %}
+                {{ project.name }}
+            {% else %}
+                Select a Project
+            {% endif %}
+        </span>
+    </div>
+</a>
+<ul class="dropdown-menu shadow border-0" aria-labelledby="projectsDropdown" style="min-width: 250px;">
+                                    <li><a class="dropdown-item" href="{{ url_for('projects.list_projects') }}">Go to All Projects</a></li>
+                                    <li><hr class="dropdown-divider"></li>
+                                    {% for proj in projects %}
+                                        <li>
+                                            <a class="dropdown-item {% if session.get('active_project_id') == proj.id %}active{% endif %}"
+                                               href="javascript:setActiveProject({{ proj.id }})">
+                                                {{ proj.name }}
+                                            </a>
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            </li>
+                            <div class="collapse show" id="active-project-collapse">
+                                <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small border rounded-3 bg-light mx-2 p-2" id="project-stages-list">
+                                    {% include 'components/project_stages_list.html' %}
+                                </ul>
+                            </div>
+                        </ul>
+                    </div>
+                </li>
+            </ul>
+
+            <!-- Toggle Button -->
+            <!-- Replace the existing toggle button with: -->
+<div class="d-flex justify-content-center mb-3">
+    <button class="btn btn-outline-secondary btn-sm w-100" id="sidebarToggle" onclick="toggleSidebarSections()">
+        <i class="bi bi-chevron-down me-1"></i>
+        <span class="toggle-text">Show More</span>
+    </button>
+</div>
+
+            <!-- Collapsible Sections (Hidden by default) -->
+            <ul class="list-unstyled ps-0 collapsible-sections collapsed" id="collapsibleSections">
+                <li class="mb-1">
+                    <button class="btn btn-toggle align-items-center rounded collapsed d-flex" data-bs-toggle="collapse" data-bs-target="#sales-collapse" aria-expanded="false">
+                        <i class="bi bi-graph-up me-2"></i>
+                        Sales
+                    </button>
+                    <div class="collapse" id="sales-collapse">
+                        <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
+                            <li><a href="{{ url_for('rfqs.rfqs') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-file-text me-2"></i>RFQs</a></li>
+                            <li><a href="{{ url_for('customers.customers') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-people me-2"></i>Customers</a></li>
+                            <li><a href="{{ url_for('sales_orders.list_sales_orders') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-bag me-2"></i>Sales Orders</a></li>
+                            <li><a href="{{ url_for('customers.enrich_dashboard') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-bullseye me-2"></i>Prospecting</a></li>
+                            <li><a href="{{ url_for('sales_suggestions.sales_suggestions') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-lightbulb me-2"></i>Sales Suggestions</a></li>
+                            <li><a href="{{ url_for('invoices.list_invoices') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-receipt me-2"></i>Invoices</a></li>
+                        </ul>
+                    </div>
+                </li>
+
+<!-- Portal Section -->
+<li class="mb-1">
+    <button class="btn btn-toggle align-items-center rounded collapsed d-flex" data-bs-toggle="collapse" data-bs-target="#portal-collapse" aria-expanded="false">
+        <i class="bi bi-globe me-2"></i>
+        Portal
+    </button>
+<div class="collapse" id="portal-collapse">
+    <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
+        <li>
+            <a href="http://127.0.0.1:5001/login"
+               class="link-dark rounded d-flex align-items-center ps-3 py-1"
+               target="_blank">
+               <i class="bi bi-box-arrow-up-right me-2"></i>Open Portal
+            </a>
+        </li>
+        <li>
+            <a href="{{ url_for('portal_admin.portal_admin_home') }}"
+               class="link-dark rounded d-flex align-items-center ps-3 py-1">
+               <i class="bi bi-speedometer2 me-2"></i>Dashboard
+            </a>
+        </li>
+        <li>
+            <a href="{{ url_for('portal_admin.portal_users') }}"
+               class="link-dark rounded d-flex align-items-center ps-3 py-1">
+               <i class="bi bi-people me-2"></i>Users
+            </a>
+        </li>
+        <li>
+            <a href="{{ url_for('portal_admin.portal_requests') }}"
+               class="link-dark rounded d-flex align-items-center ps-3 py-1">
+               <i class="bi bi-file-text me-2"></i>Quote Requests
+            </a>
+        </li>
+        <li>
+            <a href="{{ url_for('portal_admin.customer_portal_settings') }}"
+               class="link-dark rounded d-flex align-items-center ps-3 py-1">
+               <i class="bi bi-gear me-2"></i>Customer Settings
+            </a>
+        </li>
+        <li>
+            <a href="{{ url_for('portal_admin.view_search_history') }}"
+               class="link-dark rounded d-flex align-items-center ps-3 py-1">
+               <i class="bi bi-search me-2"></i>Search History
+            </a>
+        </li>
+
+        <!-- Fixed test portal button -->
+        <li>
+            <a href="{{ url_for('portal_admin.test_portal') }}"
+               class="link-dark rounded d-flex align-items-center ps-3 py-1">
+               <i class="fas fa-vial me-2"></i>Test Portal
+            </a>
+        </li>
+
+        <li>
+            <a href="/portal-admin/purchase-orders"
+               class="link-dark rounded d-flex align-items-center ps-3 py-1">
+               <i class="bi bi-bag-check me-2"></i>Purchase Orders
+            </a>
+        </li>
+
+        <!-- NEW: Pricing Agreement Requests -->
+        <li>
+            <a href="{{ url_for('portal_admin.pricing_agreement_requests') }}"
+               class="link-dark rounded d-flex align-items-center ps-3 py-1">
+               <i class="bi bi-file-contract me-2"></i>Agreement Requests
+            </a>
+        </li>
+
+    </ul>
+</div>
+</li>
+
+                <!-- Purchasing Section -->
+              <li class="mb-1">
+    <button class="btn btn-toggle align-items-center rounded collapsed d-flex" data-bs-toggle="collapse" data-bs-target="#purchasing-collapse" aria-expanded="false">
+        <i class="bi bi-cart me-2"></i>
+        Purchasing
+    </button>
+    <div class="collapse" id="purchasing-collapse">
+        <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
+            <li><a href="{{ url_for('suppliers.suppliers') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-building me-2"></i>Suppliers</a></li>
+            <li><a href="{{ url_for('offers.offers_list') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-tag me-2"></i>Offers</a></li>
+            <li><a href="{{ url_for('purchase_orders.list_purchase_orders') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-bag-check me-2"></i>Purchase Orders</a></li>
+            <li><a href="{{ url_for('expediting.expedite_dashboard') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-speedometer2 me-2"></i>Expediting</a></li>
+            <li><a href="{{ url_for('purchase_suggestions.purchase_suggestions') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-cart-plus me-2"></i>Purchase Suggestions</a></li>
+        </ul>
+    </div>
+</li>
+
+<!-- Inventory Section -->
+<li class="mb-1">
+    <button class="btn btn-toggle align-items-center rounded collapsed d-flex" data-bs-toggle="collapse" data-bs-target="#inventory-collapse" aria-expanded="false">
+        <i class="bi bi-box me-2"></i>
+        Inventory
+    </button>
+    <div class="collapse" id="inventory-collapse">
+        <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
+            <li><a href="{{ url_for('parts.parts') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-cpu me-2"></i>Parts</a></li>
+            <li><a href="{{ url_for('manufacturers.manufacturers') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-tools me-2"></i>Manufacturers</a></li>
+            <li><a href="{{ url_for('excess.view_excess_lists') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-box-seam me-2"></i>Excess Stock Lists</a></li>
+            <li><a href="/bom/" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-list-check me-2"></i>BoMs</a></li>
+            <li><a href="/stock/" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-arrow-left-right me-2"></i>Stock Movements</a></li>
+            <li><a href="/price_lists/" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-receipt me-2"></i>Price Lists</a></li>
+            <li><a href="/marketplace/export-page" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-shop me-2"></i>Airbus Marketplace</a></li>
+        </ul>
+    </div>
+</li>
+
+                <!-- Finance Section -->
+               <!-- <li class="mb-1">
+                    <button class="btn btn-toggle align-items-center rounded collapsed d-flex" data-bs-toggle="collapse" data-bs-target="#finance-collapse" aria-expanded="false">
+                        <i class="bi bi-calculator me-2"></i>
+                        Finance
+                    </button>
+                    <div class="collapse" id="finance-collapse">
+                        <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
+                            <li><a href="{{ url_for('finance.dashboard') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-graph-up me-2"></i>Dashboard</a></li>
+                            <li><a href="{{ url_for('finance.list_journal_entries') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-journal-text me-2"></i>Journal Entries</a></li>
+                            <li><a href="{{ url_for('finance.list_accounts') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-list-columns me-2"></i>Chart of Accounts</a></li>
+                            <li><a href="{{ url_for('invoices.list_invoices') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-receipt me-2"></i>Invoices</a></li>
+                            <li><a href="{{ url_for('finance.list_fiscal_years') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-calendar3 me-2"></i>Fiscal Periods</a></li>
+                            <li class="dropdown-divider border-top my-1"></li>
+                            <li><a href="{{ url_for('finance.trial_balance_report') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-file-earmark-bar-graph me-2"></i>Trial Balance</a></li>
+                            <li><a href="{{ url_for('finance.income_statement_report') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-graph-up-arrow me-2"></i>Income Statement</a></li>
+                            <li><a href="{{ url_for('finance.balance_sheet_report') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-clipboard-data me-2"></i>Balance Sheet</a></li>
+                        </ul>
+                    </div>
+                </li>-->
+
+             <!-- Emails Section -->
+<li class="mb-1">
+    <button class="btn btn-toggle align-items-center rounded collapsed d-flex" data-bs-toggle="collapse" data-bs-target="#emails-collapse" aria-expanded="false">
+        <i class="bi bi-envelope me-2"></i>
+        Emails
+    </button>
+    <div class="collapse" id="emails-collapse">
+        <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
+            <li>
+                <a href="{{ url_for('templates.list_templates') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1">
+                    <i class="bi bi-file-earmark-text me-2"></i>
+                    Templates
+                </a>
+            </li>
+            <li>
+                <a href="/bulk_emails/" class="link-dark rounded d-flex align-items-center ps-3 py-1">
+                    <i class="bi bi-send me-2"></i>
+                    Bulk Emails
+                </a>
+            </li>
+            <li>
+                <a href="{{ url_for('signatures.manage_signatures') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1">
+                    <i class="bi bi-pen me-2"></i>
+                    Signatures
+                </a>
+            </li>
+        </ul>
+    </div>
+</li>
+
+                <li class="mb-1">
+                    <a href="{{ url_for('dynamic_table_bp.dynamic_query') }}" class="btn btn-toggle align-items-center rounded d-flex">
+                        <i class="bi bi-bar-chart me-2"></i>
+                        Reporting
+                    </a>
+                </li>
+                <li class="mb-1">
+                    <a href="{{ url_for('imports.unified_imports') }}" class="btn btn-toggle align-items-center rounded d-flex">
+                        <i class="bi bi-upload me-2"></i>
+                        Import
+                    </a>
+                </li>
+            </ul>
+
+<hr>
+            <!-- Bottom section of sidebar after all menu items -->
+            <ul class="list-unstyled ps-0">
+                <!-- Admin link - only shown when logged in and has admin permission -->
+                {% if current_user.is_authenticated and current_user.can(Permission.ADMIN) %}
+                    <li class="mb-1">
+                        <a href="{{ url_for('admin.users') }}" class="btn btn-toggle align-items-center rounded d-flex">
+                            <i class="bi bi-shield-lock me-2"></i>
+                            User Management
+                        </a>
+                    </li>
+                {% endif %}
+
+                <!-- User section -->
+                {% if current_user.is_authenticated %}
+                    <li class="mb-1">
+                        <div class="dropdown">
+                            <a href="#" class="btn btn-toggle align-items-center rounded d-flex dropdown-toggle"
+                               id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                <img src="{{ url_for('static', filename='profile-icon.png') }}"
+                                     alt="{{ current_user.username }}"
+                                     width="24" height="24"
+                                     class="rounded-circle me-2">
+                                <span>{{ current_user.username }}</span>
+                            </a>
+                            <ul class="dropdown-menu text-small shadow" aria-labelledby="userDropdown">
+                                <li hidden>
+                                    <div class="px-3">
+                                        <label for="salesperson_select" class="form-label">Select Salesperson</label>
+                                        <select id="salesperson_select" class="form-select">
+                                            <option value="">Select Salesperson</option>
+                                            {% for salesperson in salespeople %}
+                                                <option value="{{ salesperson.id }}">{{ salesperson.name }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                </li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item d-flex align-items-center" href="{{ url_for('settings.settings') }}">
+                                    <i class="bi bi-gear me-2"></i>Settings
+                                </a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item d-flex align-items-center" href="{{ url_for('auth.logout') }}">
+                                    <i class="bi bi-box-arrow-right me-2"></i>Logout
+                                </a></li>
+                            </ul>
+                        </div>
+                    </li>
+                {% else %}
+                    <li class="mb-1">
+                        <a class="btn btn-toggle align-items-center rounded d-flex" href="{{ url_for('auth.login') }}">
+                            <i class="bi bi-box-arrow-in-right me-2"></i>
+                            Login
+                        </a>
+                    </li>
+{% endif %}
+            </ul>
+        </div>  <!-- Close the sidebar div -->
+
+        <!-- Main Content Area -->
+        <div class="main-content flex-grow-1">
+            <!-- Top Pane (Breadcrumbs + Shortcuts) -->
+            <div class="top-pane d-flex justify-content-between align-items-center">
+                <!-- Breadcrumbs -->
+                <nav aria-label="breadcrumb">
+                    <ol class="breadcrumb mb-0">
+                        {% for label, link in breadcrumbs %}
+                            {% if loop.last %}
+                                <li class="breadcrumb-item active" aria-current="page">{{ label }}</li>
+                            {% else %}
+                                <li class="breadcrumb-item"><a href="{{ link }}">{{ label }}</a></li>
+                            {% endif %}
+                        {% endfor %}
+                    </ol>
+                </nav>
+
+                <!-- Shortcuts (right-aligned) -->
+                <div class="d-flex gap-2 position-relative">
+                    <!-- Part Number Search -->
+                    <div class="position-relative">
+                        <input type="text" class="form-control" name="quick_search" placeholder="quick search part number" style="width: 200px;">
+                        <div id="search-results-container" class="position-absolute mt-1" style="z-index: 1000; width: 100%;">
+                            <ul id="search-results" class="list-group">
+                                <!-- Search results will be dynamically inserted here -->
+                            </ul>
+                        </div>
+                    </div>
+
+
+
+<!-- Contact Search -->
+<div class="position-relative">
+    <input type="text" class="form-control" name="contact_search" placeholder="quick search contact" style="width: 250px;">
+    <div id="contact-results-container" class="position-absolute mt-1" style="z-index: 1000;">
+        <div id="contact-results">
+            <!-- Contact search results will be dynamically inserted here -->
+        </div>
+    </div>
+</div>
+
+                    <!-- Customer Search with Add Button -->
+                    <div class="customer-search-container position-relative">
+                        <input type="text" class="form-control" name="customer_search" placeholder="quick search customer" style="width: 250px;" autocomplete="off">
+                        <button type="button" class="btn btn-primary btn-add-customer" onclick="openAddCustomerModal()" title="Add New Customer">
+                            <i class="bi bi-plus"></i>
+                        </button>
+                        <div id="customer-results-container" class="position-absolute mt-1" style="z-index: 1000; left: 0; top: 100%;">
+                            <ul id="customer-results" class="list-group">
+                                <!-- Customer search results will be dynamically inserted here -->
+                            </ul>
+                        </div>
+                    </div>  <!-- End of customer-search-container -->
+
+<!-- Global Quick Search (replaces RFQ search) -->
+<form id="global-quick-search" class="d-flex" style="width: 250px;">
+    <input class="form-control me-2" type="search" placeholder="Quick jump: list ID, 3245-231, part number..." aria-label="Quick search">
+    <button class="btn btn-outline-primary" type="submit">Go</button>
+</form>
+
+{% for shortcut in shortcuts %}
+                        <a href="{{ shortcut.link }}" class="btn btn-{{ shortcut.class }}">{{ shortcut.label }}</a>
+                    {% endfor %}
+                    {% for shortcut in shortcuts %}
+    <a href="{{ shortcut.link }}" class="btn btn-{{ shortcut.class }}">{{ shortcut.label }}</a>
+{% endfor %}
+                                            <a href="{{ url_for('parts_list.parts_list') }}" class="btn btn-primary">
+        <i class="bi bi-list"></i>
+    </a>
+                </div>
+
+            </div>
+
+            <!-- Actual content block -->
+            <div class="container-fluid mt-3">
+                {% block content %}{% endblock %}
+            </div>
+        </div>
+    </div>
+
+ <!-- Enhanced Add Customer Modal -->
+<div class="modal fade" id="addCustomerModal" tabindex="-1" aria-labelledby="addCustomerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addCustomerModalLabel">Add New Customer</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addCustomerForm">
+                    <!-- Apollo Search Section -->
+                    <div class="mb-4">
+                        <h6 class="border-bottom pb-2">Apollo Company Search</h6>
+                        <div class="mb-3">
+                            <label for="addCustomerApolloSearchInput" class="form-label">Search for company</label>
+                            <input type="text" class="form-control" id="addCustomerApolloSearchInput" placeholder="Start typing to search companies...">
+                            <div class="form-text">Search Apollo database to auto-fill company information</div>
+                        </div>
+
+                        <!-- Apollo Search Results Dropdown -->
+                        <div id="apolloSearchResults" class="dropdown-menu w-100 border" style="display: none; max-height: 300px; overflow-y: auto;">
+                            <!-- Search results will be populated here -->
+                        </div>
+
+                        <!-- Loading indicator -->
+                        <div id="apolloSearchLoading" class="text-center py-2 d-none">
+                            <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                <span class="visually-hidden">Searching...</span>
+                            </div>
+                            <span class="ms-2">Searching Apollo...</span>
+                        </div>
+                    </div>
+
+                    <!-- Company Information Section -->
+                    <div class="mb-4">
+                        <h6 class="border-bottom pb-2">Company Information</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="addCustomerName" class="form-label">Company Name *</label>
+                                <input type="text" class="form-control" id="addCustomerName" name="name" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="addCustomerCountry" class="form-label">Country (ISO-2)</label>
+                                <input type="text" class="form-control" id="addCustomerCountry" name="country" maxlength="2" placeholder="US">
+                            </div>
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="addCustomerWebsite" class="form-label">Website</label>
+                                <input type="url" class="form-control" id="addCustomerWebsite" name="website">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="addCustomerApolloId" class="form-label">Apollo ID</label>
+                                <input type="text" class="form-control" id="addCustomerApolloId" name="apollo_id" readonly>
+                                <div class="form-text">Auto-populated from Apollo search</div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="addCustomerNotes" class="form-label">Notes</label>
+                            <textarea class="form-control" id="addCustomerNotes" name="notes" rows="3" placeholder="Add notes about this customer setup, requirements, or context..."></textarea>
+                            <div class="form-text">Internal notes about why this customer was set up or special requirements</div>
+                        </div>
+                    </div>
+
+                    <!-- Payment & Terms Section -->
+                    <div class="mb-3">
+                        <h6 class="border-bottom pb-2">Payment Terms</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="addCustomerPaymentTerms" class="form-label">Payment Terms</label>
+                                <input type="text" class="form-control" id="addCustomerPaymentTerms" name="payment_terms" value="Pro-forma" readonly>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="addCustomerIncoterms" class="form-label">Incoterms</label>
+                                <input type="text" class="form-control" id="addCustomerIncoterms" name="incoterms" value="EXW" readonly>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Selected Apollo Company Display -->
+                    <div id="selectedApolloCompany" class="alert alert-info d-none">
+                        <h6><i class="bi bi-building"></i> Selected Apollo Company</h6>
+                        <div id="apolloCompanyDetails"></div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="clearApolloSelection()">
+                            Clear Selection
+                        </button>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveCustomerBtn">Save Customer</button>
+            </div>
+        </div>
+    </div>
+</div>
+    <!-- Toast Container -->
+    <div id="toastContainer"></div>
+
+    <!-- Scripts -->
+    {% block scripts %}
+    <script>
+        // Function to open the add customer modal with pre-filled data
+// Function to open the add customer modal with optional pre-filled data
+function openAddCustomerModal(customerName = null) {
+    const customerNameInput = document.getElementById('addCustomerName');
+    const apolloSearchInput = document.getElementById('addCustomerApolloSearchInput');
+
+    // Clear any existing data first
+    if (customerNameInput) {
+        customerNameInput.value = '';
+    }
+    if (apolloSearchInput) {
+        apolloSearchInput.value = '';
+    }
+
+    // Show the modal first
+    const modal = new bootstrap.Modal(document.getElementById('addCustomerModal'));
+    modal.show();
+
+    // Wait for modal to be fully shown, then populate and trigger search
+    document.getElementById('addCustomerModal').addEventListener('shown.bs.modal', function handler() {
+        // Option 1: Use passed parameter if provided
+        if (customerName && customerName.trim()) {
+            if (customerNameInput) {
+                customerNameInput.value = customerName.trim();
+            }
+            if (apolloSearchInput) {
+                apolloSearchInput.value = customerName.trim();
+                // Trigger Apollo search
+                const event = new Event('input', { bubbles: true });
+                apolloSearchInput.dispatchEvent(event);
+            }
+        }
+        // Option 2: Fall back to search input if no parameter passed
+        else {
+            const customerSearchInput = document.querySelector('input[name="customer_search"]');
+            if (customerSearchInput && customerSearchInput.value.trim()) {
+                const searchValue = customerSearchInput.value.trim();
+                if (customerNameInput) {
+                    customerNameInput.value = searchValue;
+                }
+                if (apolloSearchInput) {
+                    apolloSearchInput.value = searchValue;
+                    const event = new Event('input', { bubbles: true });
+                    apolloSearchInput.dispatchEvent(event);
+                }
+            }
+        }
+
+        // Remove this event listener after it runs once
+        this.removeEventListener('shown.bs.modal', handler);
+    });
+}
+        // Sidebar toggle functionality
+        function toggleSidebarSections() {
+            const sectionsContainer = document.getElementById('collapsibleSections');
+            const toggleBtn = document.getElementById('sidebarToggle');
+            const toggleText = toggleBtn.querySelector('.toggle-text');
+            const isCollapsed = sectionsContainer.classList.contains('collapsed');
+
+            if (isCollapsed) {
+                // Show sections
+                sectionsContainer.classList.remove('collapsed');
+                toggleBtn.classList.remove('collapsed');
+                toggleText.textContent = 'Show Less';
+                localStorage.setItem('sidebarSectionsVisible', 'true');
+            } else {
+                // Hide sections
+                sectionsContainer.classList.add('collapsed');
+                toggleBtn.classList.add('collapsed');
+                toggleText.textContent = 'Show More';
+                localStorage.setItem('sidebarSectionsVisible', 'false');
+            }
+        }
+
+        // Initialize sidebar state on page load
+        function initializeSidebarState() {
+            const sectionsContainer = document.getElementById('collapsibleSections');
+            const toggleBtn = document.getElementById('sidebarToggle');
+            const toggleText = toggleBtn.querySelector('.toggle-text');
+            const isVisible = localStorage.getItem('sidebarSectionsVisible') === 'true';
+
+            if (isVisible) {
+                sectionsContainer.classList.remove('collapsed');
+                toggleBtn.classList.remove('collapsed');
+                toggleText.textContent = 'Show Less';
+            } else {
+                // Default: sections are collapsed
+                sectionsContainer.classList.add('collapsed');
+                toggleBtn.classList.add('collapsed');
+                toggleText.textContent = 'Show More';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            // Initialize sidebar state
+            initializeSidebarState();
+
+            const salespersonDropdown = document.getElementById('salesperson_select');
+            if (salespersonDropdown) {
+                // Set initial value from localStorage
+                const storedSalespersonId = localStorage.getItem('salesperson_id');
+                if (storedSalespersonId) {
+                    salespersonDropdown.value = storedSalespersonId;
+                }
+
+                // Update localStorage on change
+                salespersonDropdown.addEventListener('change', function () {
+                    localStorage.setItem('salesperson_id', this.value);
+                });
+            }
+        });
+
+        $(document).ready(function() {
+            // Function to handle the live search
+            $('input[name="quick_search"]').on('input', function() {
+                var query = $(this).val();
+
+                if (query.length > 1) {
+                    $.ajax({
+                        url: "{{ url_for('parts.part_number_search') }}",
+                        type: 'GET',
+                        data: { query: query },
+                        success: function(data) {
+                            var resultDropdown = $('#search-results');
+                            resultDropdown.empty();  // Clear previous results
+
+                            if (data.length > 0) {
+                                // Display only part_number but use base_part_number for the href link
+                                data.forEach(function(item) {
+                                    resultDropdown.append(
+                                        '<li class="nav-item">' +
+                                        '<a class="nav-link" href="/parts/' + item.base_part_number + '">' +
+                                        item.part_number + '</a>' +
+                                        '</li>'
+                                    );
+                                });
+                            } else {
+                                resultDropdown.append('<li class="nav-item"><a class="nav-link disabled">No results found</a></li>');
+                            }
+                        }
+                    });
+                } else {
+                    $('#search-results').empty();  // Clear the dropdown if no input
+                }
+            });
+
+            // Updated customer search with parent companies and associations
+            let customerSearchTimeout;
+            $('input[name="customer_search"]').on('input', function() {
+                var query = $(this).val();
+
+                clearTimeout(customerSearchTimeout);
+
+                if (query.length > 1) {
+                    customerSearchTimeout = setTimeout(function() {
+                        $.ajax({
+                            url: "{{ url_for('customers.customer_search') }}",
+                            type: 'GET',
+                            data: { q: query, limit: 15 },
+                            success: function(data) {
+                                var resultDropdown = $('#customer-results');
+                                resultDropdown.empty();
+
+                                if (data.length > 0) {
+                                    // Create a map to track customers that are subsidiaries
+                                    var subsidiaryIds = new Set();
+                                    var customerAssociations = {};
+
+                                    // First pass: collect all customer IDs to check for associations
+                                    var customerIds = data.map(c => c.id);
+
+                                    // Fetch association counts in one request
+                                    $.ajax({
+                                        url: '/customers/associations/bulk',
+                                        type: 'GET',
+                                        data: { ids: customerIds.join(',') }
+                                    }).then(function(assocMap) {
+                                        customerAssociations = assocMap || {};
+                                        data.forEach(function(customer) {
+                                            var assocData = customerAssociations[customer.id] || {};
+                                            var parentsCount = assocData.parents_count || (assocData.parents ? assocData.parents.length : 0);
+                                            if (parentsCount > 0) {
+                                                subsidiaryIds.add(customer.id);
+                                            }
+                                        });
+                                    }).catch(function() {
+                                        customerAssociations = {};
+                                    }).always(function() {
+                                        // Separate parent companies from subsidiaries
+                                        var parentCompanies = [];
+                                        var subsidiaryCompanies = [];
+
+                                        data.forEach(function(customer) {
+                                            if (subsidiaryIds.has(customer.id)) {
+                                                subsidiaryCompanies.push(customer);
+                                            } else {
+                                                parentCompanies.push(customer);
+                                            }
+                                        });
+
+                                        // Render parent companies first
+                                        if (parentCompanies.length > 0) {
+                                            renderCustomerGroup(parentCompanies, customerAssociations, resultDropdown, 'Parent Companies', true);
+                                        }
+
+                                        // Render subsidiaries if any
+                                        if (subsidiaryCompanies.length > 0) {
+                                            if (parentCompanies.length > 0) {
+                                                resultDropdown.append('<div class="customer-divider"><hr style="margin: 8px 0; border-color: #dee2e6;"></div>');
+                                            }
+                                            renderCustomerGroup(subsidiaryCompanies, customerAssociations, resultDropdown, 'Subsidiary Companies', false);
+                                        }
+
+                                        attachCustomerClickHandlers();
+                                    });
+                                } else {
+                                    resultDropdown.append('<li class="nav-item"><div class="px-3 py-2 text-muted"><i>No results found</i></div></li>');
+                                }
+                            }
+                        });
+                    }, 300); // Debounce by 300ms
+                } else {
+                    $('#customer-results').empty();
+                }
+            });
+
+            function renderCustomerGroup(customers, associations, container, groupTitle, isParentGroup) {
+                if (groupTitle && customers.length > 0) {
+                    container.append(`
+                        <div class="customer-group-header px-3 py-2" style="background: #f8f9fa; border-bottom: 2px solid #dee2e6; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; color: #6c757d; letter-spacing: 0.5px;">
+                            ${groupTitle} (${customers.length})
+                        </div>
+                    `);
+                }
+
+                customers.forEach(function(customer) {
+                    var assocData = associations[customer.id] || { associations: [], parents: [] };
+                    var associationsCount = assocData.associations_count || (assocData.associations ? assocData.associations.length : 0);
+                    var parentsCount = assocData.parents_count || (assocData.parents ? assocData.parents.length : 0);
+                    var hasSubsidiaries = associationsCount > 0;
+                    var hasParent = parentsCount > 0;
+
+                    // Build status badge
+                    var statusBadge = '';
+                    if (customer.status_name) {
+                        statusBadge = `<span class="badge bg-secondary" style="font-size: 0.65rem;">${customer.status_name}</span>`;
+                    }
+
+                    // Build priority indicator
+                    var priorityIndicator = '';
+                    if (customer.priority_name && customer.priority_color) {
+                        priorityIndicator = `<span class="badge" style="background-color: ${customer.priority_color}; font-size: 0.65rem;">${customer.priority_name}</span>`;
+                    }
+
+                    // Build association indicators
+                    var associationBadges = '';
+                    if (hasSubsidiaries) {
+                        associationBadges += `<span class="badge bg-info" style="font-size: 0.65rem;" title="${associationsCount} subsidiaries"><i class="bi bi-building"></i> ${associationsCount}</span> `;
+                    }
+                    if (hasParent) {
+                        associationBadges += `<span class="badge bg-warning text-dark" style="font-size: 0.65rem;" title="Has parent company"><i class="bi bi-diagram-3"></i></span> `;
+                    }
+
+                    // Build metadata line
+                    var metadata = [];
+                    if (customer.country) {
+                        metadata.push(`<span class="text-muted"><i class="bi bi-geo-alt"></i> ${customer.country}</span>`);
+                    }
+                    if (customer.website) {
+                        metadata.push(`<span class="text-muted"><i class="bi bi-globe"></i> ${customer.website.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}</span>`);
+                    }
+                    if (customer.assigned_salesperson_name) {
+                        metadata.push(`<span class="text-muted"><i class="bi bi-person"></i> ${customer.assigned_salesperson_name}</span>`);
+                    }
+                    var metadataHtml = metadata.length > 0 ? `<div class="customer-metadata" style="font-size: 0.7rem; margin-top: 2px;">${metadata.join(' • ')}</div>` : '';
+
+                    var customerHtml = `
+                        <li class="nav-item customer-search-item" style="border-bottom: 1px solid #e9ecef;">
+                            <div class="d-flex align-items-start p-2" style="cursor: pointer;">
+                                <div class="flex-grow-1 customer-info" data-customer-id="${customer.id}">
+                                    <div class="d-flex align-items-center gap-2 mb-1">
+                                        <span class="customer-name fw-semibold" style="font-size: 0.9rem;">${customer.name}</span>
+                                        ${statusBadge}
+                                        ${priorityIndicator}
+                                        ${associationBadges}
+                                    </div>
+                                    ${metadataHtml}
+                                    ${customer.description ? `<div class="text-muted" style="font-size: 0.7rem; font-style: italic; margin-top: 2px;">${customer.description.substring(0, 80)}${customer.description.length > 80 ? '...' : ''}</div>` : ''}
+                                </div>
+                                <button class="btn btn-sm btn-outline-primary customer-edit-btn flex-shrink-0"
+                                        data-customer-id="${customer.id}"
+                                        title="Edit Customer"
+                                        style="padding: 4px 8px; font-size: 11px; margin-left: 8px;"
+                                        onclick="event.stopPropagation(); window.location.href='/customers/${customer.id}/edit'">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                            </div>
+                        </li>
+                    `;
+                    container.append(customerHtml);
+                });
+            }
+
+            function attachCustomerClickHandlers() {
+                $('.customer-info').off('click').on('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const customerId = $(this).data('customer-id');
+
+                    if (window.customerOverviewModal) {
+                        window.customerOverviewModal.show(customerId);
+                    } else {
+                        console.warn('Customer overview modal not available');
+                    }
+
+                    $('input[name="customer_search"]').val('');
+                    $('#customer-results').empty();
+                });
+
+                $('.customer-search-item').hover(
+                    function() {
+                        $(this).css('background-color', '#f8f9fa');
+                    },
+                    function() {
+                        $(this).css('background-color', '');
+                    }
+                );
+            }
+
+        // Global Quick Search Handler
+$('#global-quick-search').on('submit', function(e) {
+    e.preventDefault();
+    const q = $(this).find('input[type="search"]').val().trim();
+
+    if (!q) return;
+
+    // Quick quote pattern: 3245 or 3245-231
+    const match = q.match(/^(\d+)(?:-(\d+))?$/);
+    if (match) {
+        const listId = match[1];
+        const supplierId = match[2];
+        if (supplierId) {
+            // With supplier: go to quick quote
+            window.location = `/parts_list/parts-lists/${listId}/quick-quote/${supplierId}`;
+        } else {
+            // Just list ID: go to view page
+            window.location = `/parts_list/view/${listId}`;
+        }
+        return;
+    }
+
+    // Fallback: normal part number / list search
+    window.location = `/parts_list/parts-lists/search?q=${encodeURIComponent(q)}`;
+});
+    });
+    </script>
+    {% endblock %}
+
+    <script>
+        const API_KEY = "{{ config['API_KEY'] }}";
+    </script>
+
+    <!-- Rest of your existing script includes and modals... -->
+    {% include 'components/activity_modal.html' %}
+    {% include 'components/email_modal.html' %}
+    {% include 'components/apollo_lead_finder_modal.html' %}
+    {% include 'components/rich_text_modal.html' %}
+    <script src="{{ url_for('static', filename='js/rich_text_modal.js') }}" defer></script>
+    {% include 'components/modals/customer_modal.html' %}
+    {% include 'components/modals/create_tag_modal.html' %}
+    <script src="{{ url_for('static', filename='js/contacts.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/modals/add_customer_modal_fixed.js') }}"></script>
+
+
+    <script>
+
+document.addEventListener('DOMContentLoaded', () => {
+    try {
+        const customerPreview = new CustomerPreviewModal();
+        window.customerPreview = customerPreview;
+    } catch (e) {
+        console.warn('CustomerPreviewModal not available:', e.message);
+    }
+
+    // Get DOM elements
+    const stagesList = document.getElementById('project-stages-list');
+    const projectsDropdown = document.getElementById('projectsDropdown');
+    const dropdownText = projectsDropdown ? projectsDropdown.querySelector('span') : null;
+
+    // Project stages functions
+    function loadStages(projectId) {
+        fetch(`/projects/sidebar-stages/${projectId}`)
+            .then(response => response.text())
+            .then(html => {
+                if (stagesList) {
+                    stagesList.innerHTML = html;
+                    // Re-initialize completed stages toggle after loading new stages
+                    initializeCompletedStagesToggle();
+                }
+            })
+            .catch(error => console.error('Error loading stages:', error));
+    }
+
+    // Global functions
+    window.setActiveProject = (projectId) => {
+        fetch(`/projects/set-active/${projectId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Update the dropdown text
+                    if (dropdownText) {
+                        dropdownText.textContent = data.projectName || "Select a Project";
+                        dropdownText.setAttribute('title', data.projectName || "Select a Project");
+                    }
+
+                    // Update all dropdown items to show active state
+                    document.querySelectorAll('.dropdown-menu a.dropdown-item').forEach(item => {
+                        item.classList.remove('active');
+                    });
+
+                    // Find and mark the selected item as active
+                    const selectedItem = document.querySelector(`a[href="javascript:setActiveProject(${projectId})"]`);
+                    if (selectedItem) {
+                        selectedItem.classList.add('active');
+                    }
+
+                    // Load stages for the new project
+                    loadStages(projectId);
+
+                    // Store the active project ID globally
+                    window.activeProjectId = projectId;
+                } else {
+                    console.error('Failed to set active project');
+                }
+            })
+            .catch(error => console.error('Error setting active project:', error));
+    };
+
+    window.updateStageStatus = (stageId, isComplete) => {
+        fetch(`/projects/${stageId}/update_stage_status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: isComplete ? 2 : 1 })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                console.error('Failed to update stage status');
+                document.getElementById(`stage-${stageId}`).checked = !isComplete;
+            } else {
+                // Reload stages to update the completed section
+                const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+                if (projectId) {
+                    loadStages(projectId);
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error updating stage status:', error);
+            document.getElementById(`stage-${stageId}`).checked = !isComplete;
+        });
+    };
+
+    window.addNewJob = () => {
+        // Make sure we have the current project ID
+        const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+        if (!projectId) {
+            alert('Please select a project first');
+            return;
+        }
+
+        const modal = new bootstrap.Modal(document.getElementById('newJobModal'));
+        modal.show();
+    };
+
+    window.saveNewStage = () => {
+        const stageName = document.getElementById('stageName').value;
+        const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+
+        if (!stageName || !stageName.trim()) {
+            alert('Please enter a stage name');
+            return;
+        }
+
+        if (!projectId) {
+            alert('Please select a project first');
+            return;
+        }
+
+        fetch(`/projects/${projectId}/add_stage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: stageName.trim(), status_id: 1 })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const modal = bootstrap.Modal.getInstance(document.getElementById('newJobModal'));
+                modal.hide();
+                document.getElementById('stageName').value = ''; // Clear the input
+                loadStages(projectId); // Reload stages for the current project
+            } else {
+                alert('Failed to add stage: ' + (data.message || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error adding stage');
+        });
+    };
+
+    window.initializeCompletedStagesToggle = () => {
+        const toggleHeaders = document.querySelectorAll('.completed-stages-header');
+        toggleHeaders.forEach(header => {
+            if (!header.hasAttribute('data-initialized')) {
+                header.setAttribute('data-initialized', 'true');
+                header.addEventListener('click', function() {
+                    const list = this.nextElementSibling;
+                    this.classList.toggle('collapsed');
+                    list.classList.toggle('collapsed');
+
+                    // Save state to localStorage
+                    const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+                    if (projectId) {
+                        const isCollapsed = this.classList.contains('collapsed');
+                        localStorage.setItem(`completed-stages-${projectId}`, isCollapsed);
+                    }
+                });
+
+                // Restore state from localStorage
+                const projectId = window.activeProjectId || {{ session.get('active_project_id') or 'null' }};
+                if (projectId) {
+                    const savedState = localStorage.getItem(`completed-stages-${projectId}`);
+                    if (savedState === 'false') {
+                        header.classList.remove('collapsed');
+                        header.nextElementSibling.classList.remove('collapsed');
+                    }
+                }
+            }
+        });
+    };
+
+    // Initialize the page
+    const activeProjectId = {{ session.get('active_project_id') or 'null' }};
+    if (activeProjectId) {
+        window.activeProjectId = activeProjectId;
+        loadStages(activeProjectId);
+    }
+
+    // Initialize sidebar state
+    initializeSidebarState();
+});
+
+// Sidebar toggle functionality
+function toggleSidebarSections() {
+    const sectionsContainer = document.getElementById('collapsibleSections');
+    const toggleBtn = document.getElementById('sidebarToggle');
+    const toggleText = toggleBtn.querySelector('.toggle-text');
+    const toggleIcon = toggleBtn.querySelector('i');
+    const isCollapsed = sectionsContainer.classList.contains('collapsed');
+
+    if (isCollapsed) {
+        // Show sections
+        sectionsContainer.classList.remove('collapsed');
+        toggleText.textContent = 'Show Less';
+        toggleIcon.classList.remove('bi-chevron-down');
+        toggleIcon.classList.add('bi-chevron-up');
+        localStorage.setItem('sidebarSectionsVisible', 'true');
+    } else {
+        // Hide sections
+        sectionsContainer.classList.add('collapsed');
+        toggleText.textContent = 'Show More';
+        toggleIcon.classList.remove('bi-chevron-up');
+        toggleIcon.classList.add('bi-chevron-down');
+        localStorage.setItem('sidebarSectionsVisible', 'false');
+    }
+}
+
+// Initialize sidebar state on page load
+function initializeSidebarState() {
+    const sectionsContainer = document.getElementById('collapsibleSections');
+    const toggleBtn = document.getElementById('sidebarToggle');
+    const toggleText = toggleBtn.querySelector('.toggle-text');
+    const toggleIcon = toggleBtn.querySelector('i');
+    const isVisible = localStorage.getItem('sidebarSectionsVisible') === 'true';
+
+    if (isVisible) {
+        sectionsContainer.classList.remove('collapsed');
+        toggleText.textContent = 'Show Less';
+        toggleIcon.classList.remove('bi-chevron-down');
+        toggleIcon.classList.add('bi-chevron-up');
+    } else {
+        // Default: sections are collapsed
+        sectionsContainer.classList.add('collapsed');
+        toggleText.textContent = 'Show More';
+        toggleIcon.classList.remove('bi-chevron-up');
+        toggleIcon.classList.add('bi-chevron-down');
+    }
+}
+
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Move projects dropdown to body for proper positioning
+    const projectsDropdown = document.getElementById('projectsDropdown');
+    const dropdownMenu = projectsDropdown ? projectsDropdown.nextElementSibling : null;
+
+    if (projectsDropdown && dropdownMenu) {
+        // Move dropdown menu to body
+        document.body.appendChild(dropdownMenu);
+        dropdownMenu.classList.add('repositioned');
+
+        // Handle dropdown positioning
+        projectsDropdown.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Get the position of the trigger button
+            const rect = this.getBoundingClientRect();
+
+            // Position the dropdown
+            // Position the dropdown with more width
+dropdownMenu.style.position = 'fixed';
+dropdownMenu.style.left = rect.left + 'px';
+dropdownMenu.style.top = (rect.bottom + 2) + 'px';
+dropdownMenu.style.minWidth = '300px'; // Increased from Math.max(250, rect.width)
+dropdownMenu.style.width = 'auto';
+dropdownMenu.style.zIndex = '1060';
+
+            // Toggle dropdown
+            const isVisible = dropdownMenu.classList.contains('show');
+
+            // Hide all other dropdowns first
+            document.querySelectorAll('.dropdown-menu.show').forEach(menu => {
+                menu.classList.remove('show');
+            });
+
+            if (!isVisible) {
+                dropdownMenu.classList.add('show');
+            }
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!projectsDropdown.contains(e.target) && !dropdownMenu.contains(e.target)) {
+                dropdownMenu.classList.remove('show');
+            }
+        });
+
+        // Handle dropdown item clicks
+        dropdownMenu.addEventListener('click', function(e) {
+            if (e.target.classList.contains('dropdown-item')) {
+                dropdownMenu.classList.remove('show');
+            }
+        });
+    }
+});
+// Global autofill disable script - add to base.html
+document.addEventListener('DOMContentLoaded', function() {
+    // Function to disable autofill on all inputs
+    function disableAutofill() {
+        // Get all forms and add autocomplete="off"
+        const forms = document.querySelectorAll('form');
+        forms.forEach(form => {
+            form.setAttribute('autocomplete', 'off');
+        });
+
+        // Get all input, select, and textarea elements
+        const inputs = document.querySelectorAll('input, select, textarea');
+        inputs.forEach(input => {
+            // Skip inputs that should keep autocomplete (like hidden fields)
+            if (input.type !== 'hidden' && input.type !== 'submit' && input.type !== 'button') {
+                input.setAttribute('autocomplete', 'off');
+
+                // For extra security, also add these attributes
+                input.setAttribute('autocapitalize', 'off');
+                input.setAttribute('autocorrect', 'off');
+                input.setAttribute('spellcheck', 'false');
+            }
+        });
+    }
+
+    // Run on page load
+    disableAutofill();
+
+    // Also run when new content is dynamically added (for modals, AJAX content, etc.)
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.addedNodes) {
+                mutation.addedNodes.forEach(function(node) {
+                    if (node.nodeType === 1) { // Element node
+                        // Check if the added node contains forms or inputs
+                        const newInputs = node.querySelectorAll ? node.querySelectorAll('input, select, textarea') : [];
+                        newInputs.forEach(input => {
+                            if (input.type !== 'hidden' && input.type !== 'submit' && input.type !== 'button') {
+                                input.setAttribute('autocomplete', 'off');
+                                input.setAttribute('autocapitalize', 'off');
+                                input.setAttribute('autocorrect', 'off');
+                                input.setAttribute('spellcheck', 'false');
+                            }
+                        });
+
+                        // Also check if the node itself is a form or input
+                        if (node.tagName === 'FORM') {
+                            node.setAttribute('autocomplete', 'off');
+                        }
+                        if (['INPUT', 'SELECT', 'TEXTAREA'].includes(node.tagName) &&
+                            node.type !== 'hidden' && node.type !== 'submit' && node.type !== 'button') {
+                            node.setAttribute('autocomplete', 'off');
+                            node.setAttribute('autocapitalize', 'off');
+                            node.setAttribute('autocorrect', 'off');
+                            node.setAttribute('spellcheck', 'false');
+                        }
+                    }
+                });
+            }
+        });
+    });
+
+    // Start observing
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+});
+    </script>
+
+
+    <script src="{{ url_for('static', filename='js/apollo_lead_finder.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/salesperson-manager.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/email_modal.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/manufacturer.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/activity_modal.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/tag_modal.js') }}"></script>
+
+
+<!-- Updated New Job Modal with Parent Stage Selection -->
+<div class="modal fade" id="newJobModal" tabindex="-1" aria-labelledby="newJobModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="newJobModalLabel">Add New Stage</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="newJobForm" onsubmit="event.preventDefault(); saveNewStageWithParent();">
+                    <div class="mb-3">
+                        <label for="stageName" class="form-label">Stage Name</label>
+                        <input type="text" class="form-control" id="stageName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="parentStageSelect" class="form-label">Parent Stage (Optional)</label>
+                        <select class="form-select" id="parentStageSelect" name="parent_stage_id">
+                            <option value="">None (Top-level stage)</option>
+                            <!-- Options will be populated by JavaScript -->
+                        </select>
+                        <div class="form-text">
+                            Select a parent stage to create this as a substage, or leave as "None" to create a top-level stage.
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveNewStageWithParent()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Move the Add Project Modal to base template to avoid timing issues -->
+<div class="modal fade" id="addProjectModal" tabindex="-1" aria-labelledby="addProjectModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addProjectModalLabel">Add New Project</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="newProjectForm" onsubmit="event.preventDefault(); saveNewProject();">
+                    <div class="mb-3">
+                        <label for="newProjectName" class="form-label">Project Name *</label>
+                        <input type="text" class="form-control" id="newProjectName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="newProjectDescription" class="form-label">Description</label>
+                        <textarea class="form-control" id="newProjectDescription" rows="3" placeholder="Optional project description..."></textarea>
+                    </div>
+                    <div class="alert alert-info">
+                        <small><i class="bi bi-info-circle me-1"></i>Project will be assigned to customer ID 270 and the selected salesperson.</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" onclick="saveNewProject()">Create Project</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<style>
+.contact-quick-action-btn {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;  /* ADD THIS */
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+    background: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 14px;
+    color: #6c757d;
+}
+
+.contact-quick-actions {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: row;  /* ADD THIS */
+    gap: 8px;
+}
+</style>
+<!-- Add this before the closing </body> tag -->
+<!-- Contact Preview Modal -->
+{% include 'components/modals/contact_preview_modal.html' %}
+    {% include 'components/modals/customer_overview_modal.html' %}
+
+<!-- Contact Preview & Search Scripts -->
+<script src="{{ url_for('static', filename='js/universal_contact_preview.js') }}"></script>
+<script src="{{ url_for('static', filename='js/contact_search.js') }}"></script>
+
+{% block extra_js %}{% endblock %}
+</body>
+</html>

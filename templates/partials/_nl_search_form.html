@@ -1,0 +1,27 @@
+<form method="get" action="{{ url_for('customers.natural_language_search') }}" id="nlSearchForm">
+    <div class="row">
+        <div class="col-md-10">
+            <div class="form-floating">
+                <input type="text"
+                       class="form-control"
+                       id="nlQuery"
+                       name="query"
+                       placeholder="Try: Show me manufacturing companies in Asia"
+                       value="{{ nl_query if nl_query else '' }}">
+                <label for="nlQuery">Search with natural language</label>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary h-100 w-100">
+                <i class="bi bi-search me-2"></i>Search
+            </button>
+        </div>
+    </div>
+    <div class="mt-2">
+        <small class="text-muted">
+            Example searches:
+            <a href="#" class="text-decoration-none" onclick="setNLQuery('Show me manufacturing companies in Asia')">manufacturing in Asia</a>,
+            <a href="#" class="text-decoration-none" onclick="setNLQuery('Find companies in Europe tagged with automotive')">automotive in Europe</a>
+        </small>
+    </div>
+</form>

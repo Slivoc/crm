@@ -1,0 +1,482 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Header with view toggle -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Projects</h2>
+        <div class="btn-group" role="group">
+            <a href="{{ url_for('projects.list_projects') }}" class="btn btn-outline-primary">List View</a>
+            <a href="{{ url_for('projects.kanban_projects') }}" class="btn btn-primary">Kanban View</a>
+        </div>
+    </div>
+
+    <!-- Filter controls -->
+    <div class="card shadow p-3 border-0 mb-4">
+        <div class="card-body">
+            <form id="filter-form" class="row g-3">
+                <div class="col-md-3">
+                    <label for="filter-customer" class="form-label">Customer</label>
+                    <select id="filter-customer" class="form-select">
+                        <option value="">All Customers</option>
+                        {% for customer in customers %}
+                        <option value="{{ customer.id }}">{{ customer.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="filter-salesperson" class="form-label">Salesperson</label>
+                    <select id="filter-salesperson" class="form-select">
+                        <option value="">All Salespeople</option>
+                        {% for salesperson in salespeople %}
+                        <option value="{{ salesperson.id }}"
+                                {% if not show_all and current_user.get_salesperson_id() == salesperson.id %}selected{% endif %}>
+                            {{ salesperson.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button type="button" id="apply-filters" class="btn btn-primary">Apply Filters</button>
+                    <button type="button" id="reset-filters" class="btn btn-outline-secondary ms-2">Reset</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create New Project Button -->
+    <button type="button" class="btn btn-success mb-4" data-bs-toggle="modal" data-bs-target="#createProjectModal">
+        <i class="bi bi-plus-circle"></i> Create New Project
+    </button>
+
+    <!-- Kanban Board -->
+    <div class="kanban-container">
+        <div class="row flex-nowrap overflow-auto pb-3" id="kanban-board">
+            {% for status in statuses %}
+            <div class="col-md-4 kanban-column" data-status-id="{{ status.id }}">
+                <div class="card shadow h-100">
+                    <div class="card-header bg-light">
+                        <h5 class="mb-0">{{ status.status }}</h5>
+                        <span class="badge bg-secondary column-count">0</span>
+                    </div>
+                    <div class="card-body p-2 kanban-cards" style="max-height: calc(100vh - 250px); overflow-y: auto;">
+                        <!-- Cards will be loaded here -->
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<!-- Create Project Modal -->
+<div class="modal fade" id="createProjectModal" tabindex="-1" aria-labelledby="createProjectModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="createProjectModalLabel">Create New Project</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="create-project-form" method="post">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Project Name:</label>
+                        <input type="text" id="name" name="name" class="form-control" placeholder="Enter project name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description:</label>
+                        <textarea id="description" name="description" class="form-control" placeholder="Enter project description"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="customer_id" class="form-label">Customer:</label>
+                        <div class="position-relative">
+                            <input type="text" id="customer_search" class="form-control" placeholder="Search customers..." autocomplete="off">
+                            <select id="customer_id" name="customer_id" class="form-select d-none" required>
+                                {% for customer in customers %}
+                                <option value="{{ customer.id }}">{{ customer.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <div id="customer_search_results" class="position-absolute w-100 mt-1 d-none">
+                                <ul class="list-group shadow">
+                                    {% for customer in customers %}
+                                    <li class="list-group-item list-group-item-action customer-option" data-value="{{ customer.id }}" data-name="{{ customer.name }}">
+                                        {{ customer.name }}
+                                    </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="salesperson_id" class="form-label">Salesperson:</label>
+                        <select id="salesperson_id" name="salesperson_id" class="form-select">
+                            <option value="">Select a salesperson</option>
+                            {% for salesperson in salespeople %}
+                            <option value="{{ salesperson.id }}"
+                                    {% if current_user.get_salesperson_id() == salesperson.id %}selected{% endif %}>
+                                {{ salesperson.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="status_id" class="form-label">Status:</label>
+                        <select id="status_id" name="status_id" class="form-select" required>
+                            {% for status in statuses %}
+                            <option value="{{ status.id }}">{{ status.status }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="estimated_value" class="form-label">Estimated Value:</label>
+                        <div class="input-group">
+                            <span class="input-group-text">$</span>
+                            <input type="number" id="estimated_value" name="estimated_value" class="form-control" step="0.01" min="0">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="save-project-btn">Create Project</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize the Kanban board with the projects from server-side rendering
+    populateKanbanBoard(initialProjects);
+    updateColumnCounts();
+
+    // Customer search functionality
+    initCustomerSearch();
+
+    // Create project form submission
+    initProjectForm();
+
+    // Filter functionality
+    initFilters();
+
+    // Drag and drop functionality
+    initDragAndDrop();
+});
+
+// The projects data passed from the server
+const initialProjects = {{ projects|tojson|safe }};
+
+function populateKanbanBoard(projects) {
+    // Clear all columns first
+    document.querySelectorAll('.kanban-cards').forEach(column => {
+        column.innerHTML = '';
+    });
+
+    // Group projects by status
+    projects.forEach(project => {
+        if (project.status_id) {
+            const column = document.querySelector(`.kanban-column[data-status-id="${project.status_id}"] .kanban-cards`);
+            if (column) {
+                column.appendChild(createProjectCard(project));
+            }
+        }
+    });
+}
+
+function createProjectCard(project) {
+    const card = document.createElement('div');
+    card.className = 'card mb-2 project-card';
+    card.setAttribute('data-project-id', project.id);
+    card.setAttribute('draggable', 'true');
+
+    const valueDisplay = project.estimated_value
+        ? `<span class="badge bg-success">$${parseFloat(project.estimated_value).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>`
+        : '';
+
+    const nextStepDisplay = project.next_stage_name
+        ? `<div class="text-muted small">Next: ${project.next_stage_name}</div>`
+        : '';
+
+    const deadlineDisplay = project.next_stage_deadline_formatted
+        ? `<div class="text-muted small">Due: ${project.next_stage_deadline_formatted}</div>`
+        : '';
+
+    card.innerHTML = `
+        <div class="card-body p-2">
+            <h6 class="card-title mb-1">${project.name}</h6>
+            <div class="text-muted small">${project.customer_name}</div>
+            ${nextStepDisplay}
+            ${deadlineDisplay}
+            <div class="d-flex justify-content-between align-items-center mt-2">
+                ${valueDisplay}
+                <span class="text-muted small">${project.salesperson_name || 'No salesperson'}</span>
+            </div>
+        </div>
+    `;
+
+    // Add click event to show project details
+    card.addEventListener('click', () => showProjectDetails(project.id));
+
+    // Add drag events
+    card.addEventListener('dragstart', handleDragStart);
+
+    return card;
+}
+
+function showProjectDetails(projectId) {
+    // Redirect to the existing edit page
+    window.location.href = `/projects/${projectId}/edit`;
+}
+
+
+
+function initCustomerSearch() {
+    const customerSearch = document.getElementById('customer_search');
+    const customerSelect = document.getElementById('customer_id');
+    const searchResults = document.getElementById('customer_search_results');
+    const customerOptions = document.querySelectorAll('.customer-option');
+
+    if (customerSearch && customerSelect && searchResults) {
+        // Initialize the search input with the selected customer's name if one is selected
+        const selectedOption = customerSelect.options[customerSelect.selectedIndex];
+        if (selectedOption) {
+            customerSearch.value = selectedOption.text;
+        }
+
+        // Show results when focusing on search input
+        customerSearch.addEventListener('focus', function() {
+            searchResults.classList.remove('d-none');
+        });
+
+        // Filter results as user types
+        customerSearch.addEventListener('input', function() {
+            const searchTerm = this.value.toLowerCase();
+            let hasVisibleOptions = false;
+
+            customerOptions.forEach(option => {
+                const name = option.dataset.name.toLowerCase();
+                if (name.includes(searchTerm)) {
+                    option.style.display = 'block';
+                    hasVisibleOptions = true;
+                } else {
+                    option.style.display = 'none';
+                }
+            });
+
+            // Only show results container if there are matching options
+            if (hasVisibleOptions) {
+                searchResults.classList.remove('d-none');
+            } else {
+                searchResults.classList.add('d-none');
+            }
+        });
+
+        // Handle selecting a customer
+        customerOptions.forEach(option => {
+            option.addEventListener('click', function() {
+                const id = this.dataset.value;
+                const name = this.dataset.name;
+                customerSelect.value = id;
+                customerSearch.value = name;
+                searchResults.classList.add('d-none');
+            });
+        });
+
+        // Handle clicking outside
+        document.addEventListener('click', function(e) {
+            if (!customerSearch.contains(e.target) && !searchResults.contains(e.target)) {
+                searchResults.classList.add('d-none');
+            }
+        });
+    }
+}
+
+function initProjectForm() {
+    const createForm = document.getElementById('create-project-form');
+    const saveButton = document.getElementById('save-project-btn');
+    const modal = document.getElementById('createProjectModal');
+
+    if (createForm && saveButton) {
+        saveButton.addEventListener('click', () => {
+            // Validate form
+            if (!createForm.checkValidity()) {
+                createForm.reportValidity();
+                return;
+            }
+
+            // Submit form
+            const formData = new FormData(createForm);
+
+            fetch('/projects/new', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Close modal and refresh board
+                    bootstrap.Modal.getInstance(modal).hide();
+                    createForm.reset();
+                    initKanban(); // Reload all projects
+                } else {
+                    throw new Error(data.error || 'Failed to create project');
+                }
+            })
+            .catch(error => {
+                console.error('Error creating project:', error);
+                alert('Failed to create project: ' + error.message);
+            });
+        });
+    }
+}
+
+function initFilters() {
+    const filterCustomer = document.getElementById('filter-customer');
+    const filterSalesperson = document.getElementById('filter-salesperson');
+    const applyButton = document.getElementById('apply-filters');
+    const resetButton = document.getElementById('reset-filters');
+
+    if (applyButton) {
+        applyButton.addEventListener('click', () => {
+            const customerId = filterCustomer.value;
+            const salespersonId = filterSalesperson.value;
+
+            // Call API with filters
+            fetch(`/projects/api/projects?customer_id=${customerId}&salesperson_id=${salespersonId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        populateKanbanBoard(data.projects);
+                        updateColumnCounts();
+                    } else {
+                        console.error('Failed to load filtered projects:', data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading filtered projects:', error);
+                });
+        });
+    }
+
+    if (resetButton) {
+        resetButton.addEventListener('click', () => {
+            filterCustomer.value = '';
+            filterSalesperson.value = '';
+            // Reload the page to reset filters
+            window.location.href = '/projects/kanban';
+        });
+    }
+}
+
+function updateColumnCounts() {
+    document.querySelectorAll('.kanban-column').forEach(column => {
+        const count = column.querySelectorAll('.project-card').length;
+        column.querySelector('.column-count').textContent = count;
+    });
+}
+
+// Drag and drop functionality
+function initDragAndDrop() {
+    const columns = document.querySelectorAll('.kanban-cards');
+
+    columns.forEach(column => {
+        column.addEventListener('dragover', handleDragOver);
+        column.addEventListener('drop', handleDrop);
+    });
+}
+
+function handleDragStart(e) {
+    e.dataTransfer.setData('text/plain', e.target.dataset.projectId);
+    e.dataTransfer.effectAllowed = 'move';
+}
+
+function handleDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    const projectId = e.dataTransfer.getData('text/plain');
+    const targetColumn = e.currentTarget.closest('.kanban-column');
+    const newStatusId = targetColumn.dataset.statusId;
+
+    // Update project status via API
+    fetch(`/projects/${projectId}/update_status`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `status_id=${newStatusId}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Move the card to the new column
+            const card = document.querySelector(`.project-card[data-project-id="${projectId}"]`);
+            if (card && e.currentTarget) {
+                e.currentTarget.appendChild(card);
+                updateColumnCounts();
+            } else {
+                // If we can't find the card or target, reload the page
+                window.location.reload();
+            }
+        } else {
+            throw new Error(data.error || 'Failed to update project status');
+        }
+    })
+    .catch(error => {
+        console.error('Error updating project status:', error);
+        alert('Failed to update project status: ' + error.message);
+        // Instead of calling initKanban which doesn't exist anymore, reload the page
+        window.location.reload();
+    });
+}
+</script>
+
+<style>
+.kanban-container {
+    min-height: calc(100vh - 300px);
+}
+
+.kanban-column {
+    min-width: 300px;
+}
+
+.project-card {
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.project-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.column-count {
+    margin-left: 8px;
+}
+
+#customer_search_results {
+    z-index: 1000;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.customer-option {
+    cursor: pointer;
+}
+
+.customer-option:hover {
+    background-color: #f8f9fa;
+}
+
+@media (max-width: 768px) {
+    .kanban-column {
+        min-width: 250px;
+    }
+}
+</style>
+{% endblock %}

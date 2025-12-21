@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block content %}
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Include Handsontable CSS -->
+    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/handsontable@8.4.0/dist/handsontable.full.min.css">
+
+    <!-- Include Handsontable JS -->
+    <script src="https://cdn.jsdelivr.net/npm/handsontable@8.4.0/dist/handsontable.full.min.js"></script>
+
+    <title>Handsontable File Viewer</title>
+</head>
+<body>
+
+<!-- Container for Handsontable -->
+<div id="handsontable-container" style="margin-top: 20px;"></div>
+
+<script>
+    // Data passed from the backend
+    const fileData = {{ file_data | tojson }};
+    const columns = {{ columns | tojson }};
+
+    // Initialize Handsontable with the data from the file
+    const container = document.getElementById('handsontable-container');
+    const hot = new Handsontable(container, {
+        data: fileData,
+        colHeaders: columns,
+        rowHeaders: true,
+        filters: true,
+        dropdownMenu: true,
+        columnSorting: true
+    });
+</script>
+
+</body>
+</html>
+{% endblock %}

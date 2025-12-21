@@ -1,0 +1,533 @@
+<!--&lt;!&ndash; Enhanced Add Customer Modal &ndash;&gt;-->
+<!--<div class="modal fade" id="addCustomerModal" tabindex="-1" aria-labelledby="addCustomerModalLabel" aria-hidden="true">-->
+<!--    <div class="modal-dialog modal-lg">-->
+<!--        <div class="modal-content">-->
+<!--            <div class="modal-header">-->
+<!--                <h5 class="modal-title" id="addCustomerModalLabel">Add New Customer</h5>-->
+<!--                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>-->
+<!--            </div>-->
+<!--            <div class="modal-body">-->
+<!--                <form id="addCustomerForm">-->
+<!--                    &lt;!&ndash; Apollo Search Section &ndash;&gt;-->
+<!--                    <div class="mb-4">-->
+<!--                        <h6 class="border-bottom pb-2">Apollo Company Search</h6>-->
+<!--                        <div class="mb-3">-->
+<!--                            <label for="apolloSearchInput" class="form-label">Search for company</label>-->
+<!--                            <input type="text" class="form-control" id="apolloSearchInput" placeholder="Start typing to search companies...">-->
+<!--                            <div class="form-text">Search Apollo database to auto-fill company information</div>-->
+<!--                        </div>-->
+
+<!--                        &lt;!&ndash; Apollo Search Results Dropdown &ndash;&gt;-->
+<!--                        <div id="apolloSearchResults" class="dropdown-menu w-100 border" style="display: none; max-height: 300px; overflow-y: auto;">-->
+<!--                            &lt;!&ndash; Search results will be populated here &ndash;&gt;-->
+<!--                        </div>-->
+
+<!--                        &lt;!&ndash; Loading indicator &ndash;&gt;-->
+<!--                        <div id="apolloSearchLoading" class="text-center py-2 d-none">-->
+<!--                            <div class="spinner-border spinner-border-sm text-primary" role="status">-->
+<!--                                <span class="visually-hidden">Searching...</span>-->
+<!--                            </div>-->
+<!--                            <span class="ms-2">Searching Apollo...</span>-->
+<!--                        </div>-->
+<!--                    </div>-->
+
+<!--                    &lt;!&ndash; Company Information Section &ndash;&gt;-->
+<!--                    <div class="mb-4">-->
+<!--                        <h6 class="border-bottom pb-2">Company Information</h6>-->
+<!--                        <div class="row mb-3">-->
+<!--                            <div class="col-md-6">-->
+<!--                                <label for="addCustomerName" class="form-label">Company Name *</label>-->
+<!--                                <input type="text" class="form-control" id="addCustomerName" name="name" required>-->
+<!--                            </div>-->
+<!--                            <div class="col-md-6">-->
+<!--                                <label for="addCustomerCountry" class="form-label">Country (ISO-2)</label>-->
+<!--                                <input type="text" class="form-control" id="addCustomerCountry" name="country" maxlength="2" placeholder="US">-->
+<!--                            </div>-->
+<!--                        </div>-->
+
+<!--                        <div class="row mb-3">-->
+<!--                            <div class="col-md-6">-->
+<!--                                <label for="addCustomerWebsite" class="form-label">Website</label>-->
+<!--                                <input type="url" class="form-control" id="addCustomerWebsite" name="website">-->
+<!--                            </div>-->
+<!--                            <div class="col-md-6">-->
+<!--                                <label for="addCustomerApolloId" class="form-label">Apollo ID</label>-->
+<!--                                <input type="text" class="form-control" id="addCustomerApolloId" name="apollo_id" readonly>-->
+<!--                                <div class="form-text">Auto-populated from Apollo search</div>-->
+<!--                            </div>-->
+<!--                        </div>-->
+
+<!--                        <div class="mb-3">-->
+<!--                            <label for="addCustomerDescription" class="form-label">Description</label>-->
+<!--                            <textarea class="form-control" id="addCustomerDescription" name="description" rows="3"></textarea>-->
+<!--                        </div>-->
+<!--                    </div>-->
+
+<!--                    &lt;!&ndash; Payment & Terms Section &ndash;&gt;-->
+<!--                    <div class="mb-3">-->
+<!--                        <h6 class="border-bottom pb-2">Payment Terms</h6>-->
+<!--                        <div class="row mb-3">-->
+<!--                            <div class="col-md-6">-->
+<!--                                <label for="addCustomerPaymentTerms" class="form-label">Payment Terms</label>-->
+<!--                                <input type="text" class="form-control" id="addCustomerPaymentTerms" name="payment_terms" value="Pro-forma" readonly>-->
+<!--                            </div>-->
+<!--                            <div class="col-md-6">-->
+<!--                                <label for="addCustomerIncoterms" class="form-label">Incoterms</label>-->
+<!--                                <input type="text" class="form-control" id="addCustomerIncoterms" name="incoterms" value="EXW" readonly>-->
+<!--                            </div>-->
+<!--                        </div>-->
+<!--                    </div>-->
+
+<!--                    &lt;!&ndash; Selected Apollo Company Display &ndash;&gt;-->
+<!--                    <div id="selectedApolloCompany" class="alert alert-info d-none">-->
+<!--                        <h6><i class="bi bi-building"></i> Selected Apollo Company</h6>-->
+<!--                        <div id="apolloCompanyDetails"></div>-->
+<!--                        <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="clearApolloSelection()">-->
+<!--                            Clear Selection-->
+<!--                        </button>-->
+<!--                    </div>-->
+<!--                </form>-->
+<!--            </div>-->
+<!--            <div class="modal-footer">-->
+<!--                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>-->
+<!--                <button type="button" class="btn btn-primary" id="saveCustomerBtn">Save Customer</button>-->
+<!--            </div>-->
+<!--        </div>-->
+<!--    </div>-->
+<!--</div>-->
+
+<!--<style>-->
+<!--#toastContainer {-->
+<!--    position: fixed;-->
+<!--    top: 70px; /* Below top-pane */-->
+<!--    right: 20px;-->
+<!--    z-index: 1100; /* Above sidebar */-->
+<!--}-->
+
+<!--.apollo-search-item {-->
+<!--    padding: 12px;-->
+<!--    cursor: pointer;-->
+<!--    border-bottom: 1px solid #dee2e6;-->
+<!--    transition: background-color 0.2s;-->
+<!--}-->
+
+<!--.apollo-search-item:hover {-->
+<!--    background-color: #f8f9fa;-->
+<!--}-->
+
+<!--.apollo-search-item:last-child {-->
+<!--    border-bottom: none;-->
+<!--}-->
+
+<!--.apollo-search-item .company-name {-->
+<!--    font-weight: 600;-->
+<!--    color: #495057;-->
+<!--}-->
+
+<!--.apollo-search-item .company-details {-->
+<!--    font-size: 0.875rem;-->
+<!--    color: #6c757d;-->
+<!--    margin-top: 4px;-->
+<!--}-->
+
+<!--.apollo-search-item .company-website {-->
+<!--    color: #007bff;-->
+<!--    text-decoration: none;-->
+<!--    font-size: 0.875rem;-->
+<!--}-->
+
+<!--.apollo-search-item .company-website:hover {-->
+<!--    text-decoration: underline;-->
+<!--}-->
+
+<!--#apolloSearchResults {-->
+<!--    position: relative;-->
+<!--    z-index: 1050;-->
+<!--}-->
+
+<!--.dropdown-menu.show {-->
+<!--    display: block !important;-->
+<!--}-->
+<!--</style>-->
+
+<!--<script>-->
+<!--// Enhanced Add Customer Modal Handler with Apollo Search-->
+<!--document.addEventListener('DOMContentLoaded', function() {-->
+<!--    // Get DOM elements-->
+<!--    const addCustomerForm = document.getElementById('addCustomerForm');-->
+<!--    const saveCustomerBtn = document.getElementById('saveCustomerBtn');-->
+<!--    const customerCountry = document.getElementById('addCustomerCountry');-->
+<!--    const apolloSearchInput = document.getElementById('apolloSearchInput');-->
+<!--    const apolloSearchResults = document.getElementById('apolloSearchResults');-->
+<!--    const apolloSearchLoading = document.getElementById('apolloSearchLoading');-->
+<!--    const selectedApolloCompany = document.getElementById('selectedApolloCompany');-->
+
+<!--    // Safely continue only if elements exist-->
+<!--    if (!addCustomerForm || !saveCustomerBtn) {-->
+<!--        console.log("Customer form elements not found on this page");-->
+<!--        return;-->
+<!--    }-->
+
+<!--    // Convert country input to uppercase-->
+<!--    customerCountry?.addEventListener('input', function() {-->
+<!--        this.value = this.value.toUpperCase();-->
+<!--    });-->
+
+<!--    // Apollo search functionality-->
+<!--    let apolloSearchTimeout;-->
+<!--    let selectedApolloData = null;-->
+
+<!--    // Debounced Apollo search-->
+<!--    apolloSearchInput?.addEventListener('input', function() {-->
+<!--        const searchTerm = this.value.trim();-->
+
+<!--        clearTimeout(apolloSearchTimeout);-->
+
+<!--        if (searchTerm.length < 2) {-->
+<!--            hideApolloResults();-->
+<!--            return;-->
+<!--        }-->
+
+<!--        apolloSearchTimeout = setTimeout(() => {-->
+<!--            searchApollo(searchTerm);-->
+<!--        }, 500);-->
+<!--    });-->
+
+<!--    // Hide results when clicking outside-->
+<!--    document.addEventListener('click', function(e) {-->
+<!--        if (!e.target.closest('#apolloSearchInput') && !e.target.closest('#apolloSearchResults')) {-->
+<!--            hideApolloResults();-->
+<!--        }-->
+<!--    });-->
+
+<!--    async function searchApollo(searchTerm) {-->
+<!--        try {-->
+<!--            showApolloLoading();-->
+
+<!--            const response = await fetch('/api/apollo-search-general', {-->
+<!--                method: 'POST',-->
+<!--                headers: {-->
+<!--                    'Content-Type': 'application/json',-->
+<!--                    'X-API-Key': API_KEY-->
+<!--                },-->
+<!--                body: JSON.stringify({ q_organization_name: searchTerm })-->
+<!--            });-->
+
+<!--            if (!response.ok) {-->
+<!--                throw new Error('Apollo search failed');-->
+<!--            }-->
+
+<!--            const data = await response.json();-->
+
+<!--            if (data.success) {-->
+<!--                displayApolloResults(data.data?.organizations || []);-->
+<!--            } else {-->
+<!--                throw new Error(data.error || 'Search failed');-->
+<!--            }-->
+<!--        } catch (error) {-->
+<!--            console.error('Error searching Apollo:', error);-->
+<!--            showApolloError('Failed to search Apollo. Please try again.');-->
+<!--        } finally {-->
+<!--            hideApolloLoading();-->
+<!--        }-->
+<!--    }-->
+
+<!--    function showApolloLoading() {-->
+<!--        apolloSearchLoading.classList.remove('d-none');-->
+<!--        apolloSearchResults.style.display = 'none';-->
+<!--    }-->
+
+<!--    function hideApolloLoading() {-->
+<!--        apolloSearchLoading.classList.add('d-none');-->
+<!--    }-->
+
+<!--    function displayApolloResults(organizations) {-->
+<!--        if (!organizations.length) {-->
+<!--            apolloSearchResults.innerHTML = `-->
+<!--                <div class="p-3 text-center text-muted">-->
+<!--                    <i class="bi bi-search"></i>-->
+<!--                    <p class="mb-0">No companies found</p>-->
+<!--                </div>-->
+<!--            `;-->
+<!--            apolloSearchResults.style.display = 'block';-->
+<!--            return;-->
+<!--        }-->
+
+<!--        const resultsHtml = organizations.map(org => `-->
+<!--            <div class="apollo-search-item" data-apollo-id="${org.id}" onclick="selectApolloCompany(this)">-->
+<!--                <div class="company-name">${org.name}</div>-->
+<!--                <div class="company-details">-->
+<!--                    ${org.website ? `<a href="${org.website}" target="_blank" class="company-website" onclick="event.stopPropagation()">${org.website}</a><br>` : ''}-->
+<!--                    ${org.employee_count ? `<span class="me-3"><i class="bi bi-people"></i> ${org.employee_count} employees</span>` : ''}-->
+<!--                    ${org.country ? `<span class="me-3"><i class="bi bi-geo-alt"></i> ${org.country}</span>` : ''}-->
+<!--                    ${org.domain ? `<span class="me-3"><i class="bi bi-globe"></i> ${org.domain}</span>` : ''}-->
+<!--                </div>-->
+<!--            </div>-->
+<!--        `).join('');-->
+
+<!--        apolloSearchResults.innerHTML = resultsHtml;-->
+<!--        apolloSearchResults.style.display = 'block';-->
+
+<!--        // Store the organization data for later use-->
+<!--        apolloSearchResults.setAttribute('data-organizations', JSON.stringify(organizations));-->
+<!--    }-->
+
+<!--    function hideApolloResults() {-->
+<!--        apolloSearchResults.style.display = 'none';-->
+<!--    }-->
+
+<!--    function showApolloError(message) {-->
+<!--        apolloSearchResults.innerHTML = `-->
+<!--            <div class="p-3 text-center text-danger">-->
+<!--                <i class="bi bi-exclamation-triangle"></i>-->
+<!--                <p class="mb-0">${message}</p>-->
+<!--            </div>-->
+<!--        `;-->
+<!--        apolloSearchResults.style.display = 'block';-->
+<!--    }-->
+
+<!--    // Make selectApolloCompany globally available-->
+<!--    window.selectApolloCompany = function(element) {-->
+<!--        const apolloId = element.dataset.apolloId;-->
+<!--        const organizations = JSON.parse(apolloSearchResults.getAttribute('data-organizations') || '[]');-->
+<!--        const selectedOrg = organizations.find(org => org.id === apolloId);-->
+
+<!--        if (!selectedOrg) {-->
+<!--            console.error('Selected organization not found');-->
+<!--            return;-->
+<!--        }-->
+
+<!--        selectedApolloData = selectedOrg;-->
+
+<!--        // Fill form fields-->
+<!--        document.getElementById('addCustomerName').value = selectedOrg.name || '';-->
+<!--        document.getElementById('addCustomerWebsite').value = selectedOrg.website || '';-->
+<!--        document.getElementById('addCustomerApolloId').value = selectedOrg.id || '';-->
+<!--        document.getElementById('addCustomerCountry').value = selectedOrg.country || '';-->
+
+<!--        // Set description with Apollo data-->
+<!--        const descriptionParts = [];-->
+<!--        if (selectedOrg.description) descriptionParts.push(selectedOrg.description);-->
+<!--        if (selectedOrg.employee_count) descriptionParts.push(`Employees: ${selectedOrg.employee_count}`);-->
+<!--        if (selectedOrg.domain) descriptionParts.push(`Domain: ${selectedOrg.domain}`);-->
+<!--        document.getElementById('addCustomerDescription').value = descriptionParts.join('\n');-->
+
+<!--        // Show selected company info-->
+<!--        displaySelectedApolloCompany(selectedOrg);-->
+
+<!--        // Clear search and hide results-->
+<!--        apolloSearchInput.value = '';-->
+<!--        hideApolloResults();-->
+<!--    };-->
+
+<!--    function displaySelectedApolloCompany(org) {-->
+<!--        const apolloCompanyDetails = document.getElementById('apolloCompanyDetails');-->
+<!--        apolloCompanyDetails.innerHTML = `-->
+<!--            <div class="row">-->
+<!--                <div class="col-md-6">-->
+<!--                    <strong>${org.name}</strong><br>-->
+<!--                    ${org.website ? `<a href="${org.website}" target="_blank">${org.website}</a><br>` : ''}-->
+<!--                    ${org.country ? `<span class="text-muted">Country: ${org.country}</span><br>` : ''}-->
+<!--                </div>-->
+<!--                <div class="col-md-6">-->
+<!--                    ${org.employee_count ? `<span class="text-muted">Employees: ${org.employee_count}</span><br>` : ''}-->
+<!--                    ${org.domain ? `<span class="text-muted">Domain: ${org.domain}</span><br>` : ''}-->
+<!--                    ${org.linkedin_url ? `<a href="${org.linkedin_url}" target="_blank" class="text-muted">LinkedIn</a>` : ''}-->
+<!--                </div>-->
+<!--            </div>-->
+<!--        `;-->
+<!--        selectedApolloCompany.classList.remove('d-none');-->
+<!--    }-->
+
+<!--    // Make clearApolloSelection globally available-->
+<!--    window.clearApolloSelection = function() {-->
+<!--        selectedApolloData = null;-->
+<!--        selectedApolloCompany.classList.add('d-none');-->
+
+<!--        // Clear form fields that were auto-filled-->
+<!--        document.getElementById('addCustomerName').value = '';-->
+<!--        document.getElementById('addCustomerWebsite').value = '';-->
+<!--        document.getElementById('addCustomerApolloId').value = '';-->
+<!--        document.getElementById('addCustomerCountry').value = '';-->
+<!--        document.getElementById('addCustomerDescription').value = '';-->
+<!--    };-->
+
+<!--    // Form submission handler (enhanced)-->
+<!--    saveCustomerBtn.addEventListener('click', async function(e) {-->
+<!--        e.preventDefault();-->
+
+<!--        // Basic form validation-->
+<!--        const nameInput = addCustomerForm.querySelector('#addCustomerName');-->
+<!--        if (!nameInput?.value.trim()) {-->
+<!--            showToast('Error', 'Company name is required', 'error');-->
+<!--            nameInput?.focus();-->
+<!--            return;-->
+<!--        }-->
+
+<!--        // Collect form data-->
+<!--        const formData = {-->
+<!--            name: nameInput.value.trim(),-->
+<!--            country: addCustomerForm.querySelector('#addCustomerCountry')?.value || '',-->
+<!--            apollo_id: addCustomerForm.querySelector('#addCustomerApolloId')?.value || '',-->
+<!--            website: addCustomerForm.querySelector('#addCustomerWebsite')?.value || '',-->
+<!--            description: addCustomerForm.querySelector('#addCustomerDescription')?.value || '',-->
+<!--            payment_terms: addCustomerForm.querySelector('#addCustomerPaymentTerms')?.value || 'Pro-forma',-->
+<!--            incoterms: addCustomerForm.querySelector('#addCustomerIncoterms')?.value || 'EXW'-->
+<!--        };-->
+
+<!--        // Add Apollo data if available-->
+<!--        if (selectedApolloData) {-->
+<!--            formData.apollo_data = selectedApolloData;-->
+<!--        }-->
+
+<!--        try {-->
+<!--            const response = await fetch('/customers/customers/new', {-->
+<!--                method: 'POST',-->
+<!--                headers: {-->
+<!--                    'Content-Type': 'application/json',-->
+<!--                },-->
+<!--                body: JSON.stringify(formData)-->
+<!--            });-->
+
+<!--            if (!response.ok) {-->
+<!--                throw new Error(`HTTP error! status: ${response.status}`);-->
+<!--            }-->
+
+<!--            const result = await response.json();-->
+
+<!--            if (result.success) {-->
+<!--                // Handle success-->
+<!--                handleCustomerAddSuccess(result);-->
+<!--            } else {-->
+<!--                throw new Error(result.error || 'Failed to add customer');-->
+<!--            }-->
+<!--        } catch (error) {-->
+<!--            console.error('Error adding customer:', error);-->
+<!--            showToast('Error', error.message || 'Failed to add customer', 'error');-->
+<!--        }-->
+<!--    });-->
+
+<!--    // Success handler function-->
+<!--    function handleCustomerAddSuccess(result) {-->
+<!--        // If there's a select widget, update it-->
+<!--        if (window.customerSelect?.addOption) {-->
+<!--            try {-->
+<!--                window.customerSelect.addOption({-->
+<!--                    value: result.customer_id,-->
+<!--                    text: result.customer_name-->
+<!--                });-->
+<!--                window.customerSelect.setValue(result.customer_id);-->
+<!--            } catch (error) {-->
+<!--                console.warn('Select widget update failed:', error);-->
+<!--            }-->
+<!--        }-->
+
+<!--        // Safely hide modal-->
+<!--        const modal = getModalInstance('addCustomerModal');-->
+<!--        if (modal) {-->
+<!--            modal.hide();-->
+<!--        } else {-->
+<!--            console.warn('Modal instance not found, cannot hide');-->
+<!--        }-->
+
+<!--        // Reset form and clear Apollo selection-->
+<!--        if (addCustomerForm) {-->
+<!--            addCustomerForm.reset();-->
+<!--        }-->
+<!--        clearApolloSelection();-->
+
+<!--        // Show success message-->
+<!--        showToast('Success', 'Customer added successfully');-->
+
+<!--        // Refresh customer list if the function exists-->
+<!--        if (typeof refreshCustomerList === 'function') {-->
+<!--            refreshCustomerList();-->
+<!--        } else if (typeof loadCustomers === 'function') {-->
+<!--            loadCustomers(1);-->
+<!--        }-->
+<!--    }-->
+
+<!--    // Toast notification function-->
+<!--    function showToast(title, message, type = 'success') {-->
+<!--        const toastContainer = document.getElementById('toastContainer');-->
+<!--        if (!toastContainer) return;-->
+
+<!--        const toastHTML = `-->
+<!--            <div class="toast align-items-center text-white bg-${type === 'success' ? 'success' : 'danger'} border-0"-->
+<!--                 role="alert"-->
+<!--                 aria-live="assertive"-->
+<!--                 aria-atomic="true">-->
+<!--                <div class="d-flex">-->
+<!--                    <div class="toast-body">-->
+<!--                        <strong>${title}:</strong> ${message}-->
+<!--                    </div>-->
+<!--                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>-->
+<!--                </div>-->
+<!--            </div>`;-->
+
+<!--        toastContainer.insertAdjacentHTML('beforeend', toastHTML);-->
+<!--        const toastElement = toastContainer.lastElementChild;-->
+<!--        const toast = new bootstrap.Toast(toastElement, {-->
+<!--            autohide: true,-->
+<!--            delay: 3000-->
+<!--        });-->
+<!--        toast.show();-->
+
+<!--        toastElement.addEventListener('hidden.bs.toast', function() {-->
+<!--            this.remove();-->
+<!--        });-->
+<!--    }-->
+
+<!--    // Reset form when modal is hidden-->
+<!--    const addCustomerModal = document.getElementById('addCustomerModal');-->
+<!--    if (addCustomerModal) {-->
+<!--        addCustomerModal.addEventListener('hidden.bs.modal', function() {-->
+<!--            addCustomerForm.reset();-->
+<!--            clearApolloSelection();-->
+<!--            hideApolloResults();-->
+<!--        });-->
+<!--    }-->
+
+<!--    // Helper function to safely get a Bootstrap modal instance-->
+<!--    function getModalInstance(modalId) {-->
+<!--        const modalElement = document.getElementById(modalId);-->
+<!--        if (!modalElement) {-->
+<!--            console.warn(`Modal element #${modalId} not found in the DOM`);-->
+<!--            return null;-->
+<!--        }-->
+
+<!--        try {-->
+<!--            return bootstrap.Modal.getOrCreateInstance(modalElement);-->
+<!--        } catch (error) {-->
+<!--            console.warn(`Error creating modal instance for #${modalId}:`, error);-->
+<!--            return null;-->
+<!--        }-->
+<!--    }-->
+<!--});-->
+
+<!--// Show modal function (can be called from outside)-->
+<!--function showAddCustomerModal() {-->
+<!--    const modal = getModalInstance('addCustomerModal');-->
+<!--    if (modal) {-->
+<!--        modal.show();-->
+<!--    } else {-->
+<!--        console.warn('Cannot show customer modal - not found');-->
+<!--    }-->
+<!--}-->
+
+<!--// Helper function to safely get a Bootstrap modal instance-->
+<!--function getModalInstance(modalId) {-->
+<!--    const modalElement = document.getElementById(modalId);-->
+<!--    if (!modalElement) {-->
+<!--        console.warn(`Modal element #${modalId} not found in the DOM`);-->
+<!--        return null;-->
+<!--    }-->
+
+<!--    try {-->
+<!--        return bootstrap.Modal.getOrCreateInstance(modalElement);-->
+<!--    } catch (error) {-->
+<!--        console.warn(`Error creating modal instance for #${modalId}:`, error);-->
+<!--        return null;-->
+<!--    }-->
+<!--}-->
+<!--</script>-->

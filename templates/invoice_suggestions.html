@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Invoice Suggestions</h2>
+
+    {% if invoices %}
+        <div class="card mt-3">
+            <div class="card-body">
+                {% for customer_id, data in invoices.items() %}
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h5 class="mb-0">{{ data.customer_name }}</h5>
+                    </div>
+                    <div class="card-body">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Select</th>
+                                    <th>Part Number</th>
+                                    <th>Quantity</th>
+                                    <th>Unit Price</th>
+                                    <th>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for line in data.lines %}
+                                <tr>
+
+<td>
+    <input type="checkbox" class="sales-line-checkbox" value="{{ line.sales_order_line_id }}">
+</td>
+
+
+                                    <td>{{ line.base_part_number }}</td>
+                                    <td>{{ line.quantity }}</td>
+                                    <td>€{{ line.price }}</td>
+                                    <td>€{{ line.quantity * line.price }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        <button class="btn btn-success generate-invoice-btn" data-customer="{{ customer_id }}">Generate Invoice</button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    {% else %}
+        <div class="alert alert-info mt-3" role="alert">
+            No invoice suggestions found. All sales orders are already invoiced.
+        </div>
+    {% endif %}
+</div>
+
+<script>
+    document.querySelectorAll(".generate-invoice-btn").forEach(button => {
+        button.addEventListener("click", function () {
+            let selectedLines = Array.from(document.querySelectorAll("input.sales-line-checkbox:checked"))
+                                    .map(checkbox => checkbox.value.trim())  // Collect only checked values
+
+            console.log("Selected Sales Order Lines:", selectedLines); // Debugging
+
+            if (selectedLines.length === 0) {
+                alert("Please select at least one sales order line.");
+                return;
+            }
+
+            fetch("/invoices/generate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sales_order_line_ids: selectedLines })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log("Response from Backend:", data); // Debugging
+                if (data.message) {
+                    alert("Invoices successfully generated!");
+                    window.location.href = "/invoices/";
+                }
+            })
+            .catch(error => console.error("Error:", error));
+        });
+    });
+</script>
+
+
+{% endblock %}

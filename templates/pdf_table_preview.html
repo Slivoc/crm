@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Extracted Table from PDF (OCR Method)</h1>
+
+<div class="table-responsive">
+    <table class="table table-striped table-bordered">
+        <thead>
+            <tr>
+                {% for header in headers %}
+                <th>{{ header }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in data %}
+            <tr>
+                {% for cell in row %}
+                <td>{{ cell if cell is not none else '' }}</td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="mt-3">
+    <a href="{{ url_for('offers.map_pdf_columns', offer_id=offer_id) }}" class="btn btn-primary">Proceed to Column Mapping</a>
+</div>
+
+<div class="mt-3">
+    <h2>Data Quality Notice</h2>
+    <p>This data has been extracted using OCR technology. Please review carefully for any inaccuracies.</p>
+</div>
+{% endblock %}

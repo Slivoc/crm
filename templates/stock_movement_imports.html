@@ -1,0 +1,141 @@
+{# templates/stock_movement_imports.html #}
+{% extends 'base.html' %}
+
+{% block title %}Stock Movement Imports{% endblock %}
+
+{% block content %}
+
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">Stock Movement Imports</h1>
+            
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Upload Stock Movement File</h5>
+                </div>
+                <div class="card-body">
+                    <form id="uploadForm">
+                        <div class="form-group">
+                            <label for="file">Select Excel File</label>
+                            <input type="file" class="form-control-file" id="file" accept=".xlsx,.xls" required>
+                            <small class="form-text text-muted">Only Excel files (.xlsx, .xls) are supported</small>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Upload</button>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="card-title mb-0">Uploaded Files</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Filename</th>
+                                    <th>Upload Date</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% if files %}
+                                    {% for file in files %}
+                                    <tr>
+                                        <td>{{ file.filename }}</td>
+                                        <td>{{ file.upload_date }}</td>
+                                        <td>
+                                            {% if file.import_status %}
+                                            <span class="badge badge-success">Imported</span>
+                                            {% else %}
+                                            <span class="badge badge-warning">Pending</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div class="btn-group">
+                                                <a href="{{ url_for('stock_movements.stock_movement_mapping', file_id=file.id) }}" class="btn btn-sm btn-primary">
+                                                    {% if file.import_status %}Re-import{% else %}Import{% endif %}
+                                                </a>
+                                                <button class="btn btn-sm btn-danger delete-file" data-id="{{ file.id }}">Delete</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                {% else %}
+                                    <tr>
+                                        <td colspan="4" class="text-center py-3">No files uploaded yet</td>
+                                    </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle file upload
+    document.getElementById('uploadForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const formData = new FormData();
+        const fileInput = document.getElementById('file');
+        
+        if (fileInput.files.length === 0) {
+            alert('Please select a file to upload');
+            return;
+        }
+        
+        formData.append('file', fileInput.files[0]);
+        
+        fetch('{{ url_for("stock_movements.upload_stock_movement_file") }}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.location.reload();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Upload error:', error);
+            alert('An error occurred during upload');
+        });
+    });
+    
+    // Handle file deletion
+    document.querySelectorAll('.delete-file').forEach(button => {
+        button.addEventListener('click', function() {
+            if (confirm('Are you sure you want to delete this file?')) {
+                const fileId = this.getAttribute('data-id');
+                
+                fetch(`/imports/files/${fileId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        window.location.reload();
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred during deletion');
+                });
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

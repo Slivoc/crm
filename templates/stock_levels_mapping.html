@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+
+{% block title %}Map Stock Levels Columns{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Page Header -->
+    <div class="page-header mb-4">
+        <h1><i class="fas fa-map-marked-alt me-2"></i>Map Stock Levels Columns</h1>
+        <p class="text-muted">Map the columns from your Excel file to the stock level fields.</p>
+    </div>
+
+    <!-- Warning Alert -->
+    <div class="alert alert-warning" role="alert">
+        <i class="fas fa-exclamation-triangle me-2"></i>
+        <strong>Warning:</strong> This will <strong>SET</strong> stock levels directly. Existing stock quantities 
+        will be replaced with values from your file. This does not create stock movements.
+    </div>
+
+    <!-- Mapping Card -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body p-4">
+            <h4 class="card-title mb-4">Column Mapping</h4>
+            
+            <form id="mappingForm">
+                {% for field in mapping_fields %}
+                <div class="row align-items-center mb-3 p-3 bg-light rounded">
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold mb-0">
+                            {{ field.label }}
+                            {% if field.required %}<span class="text-danger">*</span>{% endif %}
+                        </label>
+                    </div>
+                    <div class="col-md-9">
+                        <select class="form-select" 
+                                id="field_{{ field.field }}" 
+                                name="{{ field.field }}"
+                                {% if field.required %}required{% endif %}
+                                onchange="highlightColumn(this)">
+                            <option value="">-- Select Column --</option>
+                            {% for col in columns %}
+                            <option value="{{ loop.index0 }}">{{ col }}</option>
+                            {% endfor %}
+                        </select>
+                        {% if field.required %}
+                        <div class="text-danger small mt-1" id="error_{{ field.field }}" style="display: none;">
+                            This field is required
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </form>
+
+            <!-- Action Buttons -->
+            <div class="border-top pt-4 mt-4">
+                <button type="button" class="btn btn-success btn-lg px-5" id="processBtn">
+                    <i class="fas fa-play me-2"></i>Process Stock Levels
+                </button>
+                <a href="{{ url_for('stock_movements.upload_stock_levels_page') }}" class="btn btn-outline-secondary btn-lg ms-2">
+                    <i class="fas fa-arrow-left me-2"></i>Cancel
+                </a>
+            </div>
+
+            <!-- Progress Container -->
+            <div class="progress-container mt-3" id="progressContainer" style="display: none;">
+                <div class="progress" style="height: 25px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                         role="progressbar" 
+                         style="width: 100%">
+                        Processing...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Preview -->
+    <div class="card shadow-sm">
+        <div class="card-body p-4">
+            <h4 class="card-title mb-4">Data Preview</h4>
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>
+                Select columns above to see them highlighted in the preview. First 10 rows shown.
+            </div>
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover table-sm">
+                    <thead class="table-primary">
+                        <tr>
+                            <th>Row</th>
+                            {% for col in columns %}
+                            <th id="col_header_{{ loop.index0 }}">{{ col }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in file_data[:10] %}
+                        <tr>
+                            <td class="fw-bold">{{ row.row_index }}</td>
+                            {% for col in columns %}
+                            <td id="col_{{ loop.index0 }}_row_{{ loop.index0 }}">
+                                {{ row[col] if row[col] else '' }}
+                            </td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Results Modal -->
+<div class="modal fade" id="resultsModal" tabindex="-1" aria-labelledby="resultsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="resultsModalLabel">Import Results</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="resultsBody">
+                <!-- Results will be inserted here -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a href="{{ url_for('stock_movements.upload_stock_levels_page') }}" class="btn btn-primary">
+                    Upload Another File
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .highlighted-column {
+        background-color: #fff3cd !important;
+    }
+    .is-invalid {
+        border-color: #dc3545 !important;
+    }
+</style>
+
+<script>
+    const fileId = {{ file_id }};
+    const columnCount = {{ columns|length }};
+
+    function highlightColumn(selectElement) {
+        // Remove previous highlights from this field
+        const fieldName = selectElement.name;
+        document.querySelectorAll(`[data-highlighted-by="${fieldName}"]`).forEach(el => {
+            el.classList.remove('highlighted-column');
+            el.removeAttribute('data-highlighted-by');
+        });
+
+        // Add new highlight if a column is selected
+        const colIndex = selectElement.value;
+        if (colIndex !== '') {
+            // Highlight header
+            const header = document.getElementById(`col_header_${colIndex}`);
+            if (header) {
+                header.classList.add('highlighted-column');
+                header.setAttribute('data-highlighted-by', fieldName);
+            }
+
+            // Highlight all cells in that column
+            for (let row = 0; row < 10; row++) {
+                const cell = document.getElementById(`col_${colIndex}_row_${row}`);
+                if (cell) {
+                    cell.classList.add('highlighted-column');
+                    cell.setAttribute('data-highlighted-by', fieldName);
+                }
+            }
+        }
+    }
+
+    function validateForm() {
+        let isValid = true;
+        const selects = document.querySelectorAll('#mappingForm select');
+
+        console.log('Validating form...'); // Debug
+
+        selects.forEach(select => {
+            const isRequired = select.hasAttribute('required');
+            const errorDiv = document.getElementById(`error_${select.name}`);
+
+            console.log(`Field: ${select.name}, Required: ${isRequired}, Value: "${select.value}"`); // Debug
+
+            if (isRequired && !select.value) {
+                select.classList.add('is-invalid');
+                if (errorDiv) errorDiv.style.display = 'block';
+                isValid = false;
+                console.log(`Validation failed for ${select.name}`); // Debug
+            } else {
+                select.classList.remove('is-invalid');
+                if (errorDiv) errorDiv.style.display = 'none';
+            }
+        });
+
+        return isValid;
+    }
+
+    document.getElementById('processBtn').addEventListener('click', async () => {
+        console.log('Process button clicked'); // Debug
+
+        if (!validateForm()) {
+            alert('Please fill in all required fields');
+            return;
+        }
+
+        // Collect mapping - FIXED VERSION
+        const mapping = {};
+        const selects = document.querySelectorAll('#mappingForm select');
+        selects.forEach(select => {
+            if (select.value) {
+                mapping[select.name] = select.value;  // FIELD NAME as key, COLUMN INDEX as value
+            }
+        });
+
+        console.log('Mapping:', mapping); // Debug log
+
+        // Check for duplicate mappings
+        const mappedColumns = Object.values(mapping);  // Changed from Object.keys
+        const uniqueMapped = [...new Set(mappedColumns)];
+        if (mappedColumns.length !== uniqueMapped.length) {
+            alert('You have mapped the same column to multiple fields. Please fix this.');
+            return;
+        }
+
+        // Disable button and show progress
+        const processBtn = document.getElementById('processBtn');
+        processBtn.disabled = true;
+        processBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Processing...';
+        document.getElementById('progressContainer').style.display = 'block';
+
+        try {
+            const response = await fetch('{{ url_for("stock_movements.process_stock_levels_upload") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    file_id: fileId,
+                    mapping: mapping
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                showResults(result.results);
+            } else {
+                alert('Processing failed: ' + (result.message || 'Unknown error'));
+                processBtn.disabled = false;
+                processBtn.innerHTML = '<i class="fas fa-play me-2"></i>Process Stock Levels';
+                document.getElementById('progressContainer').style.display = 'none';
+            }
+        } catch (error) {
+            console.error('Processing error:', error);
+            alert('Processing failed: ' + error.message);
+            processBtn.disabled = false;
+            processBtn.innerHTML = '<i class="fas fa-play me-2"></i>Process Stock Levels';
+            document.getElementById('progressContainer').style.display = 'none';
+        }
+    });
+
+    function showResults(results) {
+        const resultsBody = document.getElementById('resultsBody');
+
+        let html = '<div class="mb-3">';
+        html += `<h6>Summary</h6>`;
+        html += `<ul class="list-group">`;
+        html += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                    Processed
+                    <span class="badge bg-primary rounded-pill">${results.processed}</span>
+                 </li>`;
+        html += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                    Created
+                    <span class="badge bg-success rounded-pill">${results.created}</span>
+                 </li>`;
+        html += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                    Deleted Old Records
+                    <span class="badge bg-warning rounded-pill">${results.deleted || 0}</span>
+                 </li>`;
+        html += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                    Not Found
+                    <span class="badge bg-danger rounded-pill">${results.not_found}</span>
+                 </li>`;
+        html += `</ul></div>`;
+
+        if (results.errors && results.errors.length > 0) {
+            html += '<div class="alert alert-danger">';
+            html += '<h6><i class="fas fa-exclamation-circle me-2"></i>Errors</h6>';
+            html += '<ul class="mb-0">';
+            results.errors.slice(0, 20).forEach(error => {
+                html += `<li>${error}</li>`;
+            });
+            if (results.errors.length > 20) {
+                html += `<li><em>... and ${results.errors.length - 20} more errors</em></li>`;
+            }
+            html += '</ul></div>';
+        }
+
+        if (results.created > 0) {
+            html += '<div class="alert alert-success">';
+            html += '<i class="fas fa-check-circle me-2"></i>';
+            html += `Successfully created ${results.created} stock record(s)!`;
+            html += '</div>';
+        }
+
+        resultsBody.innerHTML = html;
+
+        // Show modal
+        const modal = new bootstrap.Modal(document.getElementById('resultsModal'));
+        modal.show();
+
+        // Hide progress
+        document.getElementById('progressContainer').style.display = 'none';
+    }
+</script>
+{% endblock %}

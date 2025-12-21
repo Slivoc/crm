@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Create New Excess Stock List Form -->
+    <div class="card mb-4 shadow p-3 border-0">
+        <div class="card-header">
+            <strong>Create New Excess Stock List</strong>
+        </div>
+        <div class="card-body">
+            <form action="{{ url_for('excess.view_excess_lists') }}" method="post">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="customer_id" class="form-label">Customer:</label>
+                            <select id="customer_id" name="customer_id" class="form-select">
+                                <option value="">Select Customer</option>
+                                {% for customer in customers %}
+                                <option value="{{ customer.id }}">{{ customer.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="supplier_id" class="form-label">Supplier:</label>
+                            <select id="supplier_id" name="supplier_id" class="form-select">
+                                <option value="">Select Supplier</option>
+                                {% for supplier in suppliers %}
+                                <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="entered_date" class="form-label">Entered Date:</label>
+                            <input type="date" class="form-control" id="entered_date" name="entered_date" required>
+                        </div>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">Create Excess Stock List</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Existing Excess Stock Lists -->
+    <div class="card mb-4 shadow p-3 border-0">
+        <div class="card-header">
+            <strong>Existing Excess Stock Lists</strong>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Customer</th>
+                            <th>Supplier</th>
+                            <th>Entered Date</th>
+                            <th>Edit</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for excess_list in excess_lists %}
+                        <tr>
+                            <td>{{ excess_list.id }}</td>
+                            <td>{{ excess_list.customer_name or 'N/A' }}</td>
+                            <td>{{ excess_list.supplier_name or 'N/A' }}</td>
+                            <td>{{ excess_list.entered_date }}</td>
+                            <td>
+                                <a href="{{ url_for('excess.edit_excess_list', list_id=excess_list.id) }}" class="btn btn-secondary btn-sm">Edit</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>    document.addEventListener('DOMContentLoaded', function() {
+        var today = new Date().toISOString().split('T')[0];
+        document.getElementById('entered_date').value = today;
+    });</script>
+{% endblock %}

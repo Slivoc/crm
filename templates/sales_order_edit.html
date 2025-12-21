@@ -1,0 +1,553 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+    <form id="sales-order-form" method="POST">
+        <div class="row">
+            <!-- Left column: Sales Order details -->
+            <div class="col-md-6">
+                <div class="card mb-4 shadow p-3 border-0">
+                    <div class="mb-3">
+                        <label for="customer_id" class="form-label">Customer:</label>
+                        <select name="customer_id" id="customer_id" class="form-select">
+                            {% for customer in customers %}
+                                <option value="{{ customer.id }}" {% if customer.id == sales_order.customer_id %}selected{% endif %}>
+                                    {{ customer.name }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="customer_po_ref" class="form-label">Customer PO Reference:</label>
+                        <input type="text" name="customer_po_ref" id="customer_po_ref" class="form-control" value="{{ sales_order.customer_po_ref }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="sales_status_id" class="form-label">Status:</label>
+                        <select name="sales_status_id" id="sales_status_id" class="form-select">
+                            {% for status in statuses %}
+                                <option value="{{ status.id }}" {% if status.id == sales_order.sales_status_id %}selected{% endif %}>
+                                    {{ status.status_name }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <button type="submit" class="btn btn-primary">Update Sales Order</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right column: PDF Drop Zone -->
+            <div class="col-md-6">
+                <div class="card mb-4 shadow p-3 border-0">
+                    <h2 class="h5">PDF Upload</h2>
+                    <div id="drop-zone" class="border p-3 rounded bg-light text-center" style="cursor: pointer;">
+                        <p>Drag and drop a PDF here, or click to select</p>
+                        <input type="file" name="file" id="file-input" style="display: none;">
+                    </div>
+                    <div id="file-content" class="mt-3" {% if not file_content %}style="display: none;"{% endif %}>
+                        <h3 class="h6">File Content:</h3>
+                        <pre id="content-display">{{ file_content }}</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    <!-- Acknowledgments Section -->
+    <div class="card mb-4 shadow p-3 border-0">
+        <h2 class="h5">Acknowledgments</h2>
+        <div class="d-flex">
+            <a href="{{ url_for('sales_orders.generate_acknowledgment', sales_order_id=sales_order.id) }}" class="btn btn-primary me-2">Generate Acknowledgment</a>
+            <a href="{{ url_for('sales_orders.view_acknowledgments', sales_order_id=sales_order.id) }}" class="btn btn-secondary">View Acknowledgments</a>
+        </div>
+    </div>
+<!-- Add this just above the Sales Order Lines Section -->
+<div class="card mb-4 shadow p-3 border-0">
+    <h2 class="h5">Shipping Actions</h2>
+    <div class="d-flex mb-2">
+        <button id="mark-all-shipped" class="btn btn-success me-2">Mark All Lines as Shipped</button>
+        <button id="mark-selected-shipped" class="btn btn-warning">Mark Selected Lines as Shipped</button>
+    </div>
+</div>
+    <!-- Sales Order Lines Section -->
+    <div class="card mb-4 shadow p-3 border-0">
+        <h2 class="h5">Sales Order Lines</h2>
+        <form action="{{ url_for('sales_orders.update_sales_order_lines', sales_order_id=sales_order.id) }}" method="post">
+            <table class="table table-striped">
+<thead>
+    <tr>
+        <th><input type="checkbox" id="select-all-lines"></th>
+        <th>Line Number</th>
+        <th>Status</th>
+        <th>Part Number</th>
+        <th>Quantity</th>
+        <th>Shipped</th> <!-- New "Shipped Quantity" column -->
+        <th>Price</th>
+        <th>Promise Date</th>
+        <th>Ship Date</th>
+        <th>Requested Date</th>
+        <th>RFQ Line</th>
+        <th>Assigned PO</th>
+    </tr>
+</thead>
+<tbody>
+    {% for line in sales_order_lines %}
+    <tr>
+        <td><input type="checkbox" class="line-checkbox" data-line-id="{{ line.id }}"></td>
+        <td><input type="text" class="form-control-plaintext" name="line_number_{{ line.id }}" value="{{ line.line_number }}" readonly></td>
+        <td>{{ line['status_name'] or line['sales_status_id'] }}</td>
+        <td>{{ line.base_part_number }}</td>
+        <td><input type="number" class="form-control" name="quantity_{{ line.id }}" value="{{ line.quantity }}" onchange="updateLine({{ line.id }})"></td>
+        <td>
+            <input type="number" class="form-control" name="shipped_quantity_{{ line.id }}"
+                   value="{{ line.shipped_quantity or 0 }}" min="0" max="{{ line.quantity }}"
+                   onchange="updateShippedQuantity({{ line.id }})">
+        </td>
+        <td><input type="number" class="form-control" step="0.01" name="price_{{ line.id }}" value="{{ line.price }}" onchange="updateLine({{ line.id }})"></td>
+        <!-- Rest of the row remains the same -->
+                        <td><input type="date" class="form-control" name="promise_date_{{ line.id }}" value="{{ line.promise_date or '' }}" onchange="updateLine({{ line.id }})"></td>
+                        <td>
+                            <input type="date" class="form-control" name="ship_date_{{ line.id }}" id="ship_date_{{ line.id }}" value="{{ line.ship_date or '' }}" onchange="updateLine({{ line.id }})">
+                            <span id="warning_ship_date_{{ line.id }}" class="warning-icon" style="display:none;">⚠️</span>
+                        </td>
+                        <td><input type="date" class="form-control" name="requested_date_{{ line.id }}" value="{{ line.requested_date or '' }}" onchange="updateLine({{ line.id }})"></td>
+                        <td>
+                            <select class="form-select" name="rfq_line_{{ line.id }}" onchange="updateLine({{ line.id }})">
+                                <option value="">Select RFQ line</option>
+                                {% for rfq_line in line.rfq_options %}
+                                    <option value="{{ rfq_line.id }}" {% if rfq_line.id == line.rfq_line_id %}selected{% endif %}>
+                                        RFQ #{{ rfq_line.id }} - {{ rfq_line.supplier_name }} - {{ rfq_line.cost }} - {{ rfq_line.supplier_lead_time }} weeks
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </td>
+                        <td>
+                            {% if line.purchase_order_id %}
+                                PO #{{ line.purchase_order_id }} - {{ line.supplier_name }}
+                            {% else %}
+                                No PO Assigned
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </form>
+    </div>
+
+    <!-- Add Sales Order Line Section -->
+    <div class="card mb-4 shadow p-3 border-0">
+        <h2 class="h5">Add Sales Order Line</h2>
+        <form action="{{ url_for('sales_orders.add_sales_order_line', sales_order_id=sales_order.id) }}" method="post">
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <label for="line_number" class="form-label">Line Number:</label>
+                    <input type="text" class="form-control" id="line_number" name="line_number" value="{{ max_line_number + 1 }}" required>
+                </div>
+                <div class="col-md-4">
+                    <label for="part_number" class="form-label">Part Number:</label>
+                    <input type="text" class="form-control" id="part_number" name="part_number" required>
+                </div>
+                <div class="col-md-4">
+                    <label for="quantity" class="form-label">Quantity:</label>
+                    <input type="number" class="form-control" id="quantity" name="quantity" required>
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label for="price" class="form-label">Price:</label>
+                    <input type="number" class="form-control" step="0.01" id="price" name="price" required>
+                </div>
+                <div class="col-md-6">
+                    <label for="delivery_date" class="form-label">Delivery Date:</label>
+                    <input type="date" class="form-control" id="delivery_date" name="delivery_date" required>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Add Sales Order Line</button>
+        </form>
+    </div>
+</div>
+
+<script>
+window.onload = function() {
+    console.log("Checking dates on page load...");
+    checkDatesOnLoad();  // Run after the entire page has fully loaded
+};
+
+// Function to check ship date against promise date on page load
+function checkDatesOnLoad() {
+    const promiseDateInputs = document.querySelectorAll('input[name^="promise_date_"]');  // Get all promise date inputs
+    promiseDateInputs.forEach(promiseDateInput => {
+        // Log the name of the input to see how it's structured
+        console.log(`Promise Date Input Name: ${promiseDateInput.name}`);
+
+        // Use a regular expression to extract the numeric lineId (e.g., 4 from promise_date_4)
+        const lineIdMatch = promiseDateInput.name.match(/\d+$/);  // Match digits at the end of the name
+
+        if (lineIdMatch) {
+            const lineId = lineIdMatch[0];  // Extract the first matched number
+            console.log(`Extracted lineId: ${lineId}`);
+
+            // Select the ship_date input by its id using the correctly extracted lineId
+            const shipDateInput = document.getElementById(`ship_date_${lineId}`);
+
+            // Log the exact selector being used
+            console.log(`Looking for ship date input with ID: ship_date_${lineId}`);
+
+            // Log the HTML elements being processed
+            console.log(`Processing line ${lineId}: Promise Date Input =`, promiseDateInput, ", Ship Date Input =", shipDateInput);
+
+            if (promiseDateInput && shipDateInput) {
+                const promiseDate = promiseDateInput.value;
+                const shipDate = shipDateInput.value;
+
+                console.log(`Checking line ${lineId}: promiseDate = ${promiseDate}, shipDate = ${shipDate}`);
+
+                // Perform the check
+                if (new Date(shipDate) > new Date(promiseDate)) {
+                    document.getElementById(`warning_ship_date_${lineId}`).style.display = 'inline';  // Show warning icon
+                    shipDateInput.style.backgroundColor = '#ffcccc';  // Add background color
+                } else {
+                    document.getElementById(`warning_ship_date_${lineId}`).style.display = 'none';  // Hide warning icon
+                    shipDateInput.style.backgroundColor = '';  // Reset background color
+                }
+            } else {
+                console.log(`Skipping line ${lineId} as ship date input was not found.`);
+            }
+        } else {
+            console.log("Line ID could not be extracted. Skipping this line.");
+        }
+    });
+}
+
+
+function updateLine(lineId) {
+    // Get the values from the form inputs for the corresponding line
+    const rfqLineId = document.querySelector(`select[name="rfq_line_${lineId}"]`).value;
+    const quantity = document.querySelector(`input[name="quantity_${lineId}"]`).value;
+    const price = document.querySelector(`input[name="price_${lineId}"]`).value;
+    const promiseDate = document.querySelector(`input[name="promise_date_${lineId}"]`).value;
+    const shipDate = document.querySelector(`input[name="ship_date_${lineId}"]`).value;
+    const requestedDate = document.querySelector(`input[name="requested_date_${lineId}"]`).value;
+    const shippedQuantity = document.querySelector(`input[name="shipped_quantity_${lineId}"]`).value;
+
+    // Send an AJAX request using fetch to update the sales order line
+    fetch(`/sales_orders/${lineId}/update`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            rfq_line_id: rfqLineId,
+            quantity: quantity,
+            price: price,
+            promise_date: promiseDate,
+            ship_date: shipDate,
+            requested_date: requestedDate,
+            shipped_quantity: shippedQuantity
+        }),
+    })
+    .then(response => {
+        if (response.ok) {
+            return response.json();
+        }
+        throw new Error('Request failed with status ' + response.status);
+    })
+    .then(data => {
+        console.log('Line updated successfully', data);
+    })
+    .catch(error => {
+        console.error('There was an error updating the line:', error);
+    });
+}
+
+    // PDF drop zone handling
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const fileContent = document.getElementById('file-content');
+    const contentDisplay = document.getElementById('content-display');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    dropZone.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+
+    dropZone.addEventListener('dragleave', function () {
+        dropZone.classList.remove('dragover');
+    });
+
+    dropZone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        const files = e.dataTransfer.files;
+        if (files.length) {
+            fileInput.files = files;
+            handleFileUpload();
+        }
+    });
+
+    fileInput.addEventListener('change', handleFileUpload);
+
+    function handleFileUpload() {
+        if (fileInput.files.length > 0) {
+            const file = fileInput.files[0];
+            dropZone.innerHTML = `<p>Uploading: ${file.name}</p>`;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            axios.post(window.location.href, formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data'
+                }
+            })
+            .then(response => {
+                if (response.data.success) {
+                    contentDisplay.textContent = response.data.file_content;
+                    fileContent.style.display = 'block';
+                    dropZone.innerHTML = `<p>File uploaded: ${file.name}</p>`;
+                } else {
+                    dropZone.innerHTML = '<p>Error uploading file. Please try again.</p>';
+                }
+            })
+            .catch(error => {
+                dropZone.innerHTML = '<p>Error uploading file. Please try again.</p>';
+            });
+        }
+    }
+
+   document.addEventListener('DOMContentLoaded', function() {
+        // Select All checkbox
+        const selectAllCheckbox = document.getElementById('select-all-lines');
+        const lineCheckboxes = document.querySelectorAll('.line-checkbox');
+
+        selectAllCheckbox.addEventListener('change', function() {
+            lineCheckboxes.forEach(checkbox => {
+                checkbox.checked = selectAllCheckbox.checked;
+            });
+        });
+
+        // Mark All as Shipped button
+        document.getElementById('mark-all-shipped').addEventListener('click', function(e) {
+            e.preventDefault();
+            if (confirm('Are you sure you want to mark ALL lines as shipped?')) {
+                updateLinesStatus('all');
+            }
+        });
+
+        // Mark Selected as Shipped button
+        document.getElementById('mark-selected-shipped').addEventListener('click', function(e) {
+            e.preventDefault();
+            const selectedLineIds = getSelectedLineIds();
+            if (selectedLineIds.length === 0) {
+                alert('Please select at least one line to mark as shipped.');
+                return;
+            }
+
+            if (confirm(`Are you sure you want to mark ${selectedLineIds.length} selected line(s) as shipped?`)) {
+                updateLinesStatus('selected');
+            }
+        });
+    });
+
+    // Function to get selected line IDs
+    function getSelectedLineIds() {
+        const checkboxes = document.querySelectorAll('.line-checkbox:checked');
+        return Array.from(checkboxes).map(checkbox => checkbox.dataset.lineId);
+    }
+
+    // Function to update line statuses
+    function updateLinesStatus(mode) {
+    const salesOrderId = {{ sales_order.id }};
+    const url = `/sales_orders/${salesOrderId}/update_lines_status`;
+
+    let data = {
+        mode: mode
+    };
+
+    if (mode === 'selected') {
+        data.line_ids = getSelectedLineIds();
+    }
+
+    // Add today's date as the ship date
+    const today = new Date().toISOString().split('T')[0];
+    data.ship_date = today;
+
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Lines successfully marked as shipped!');
+            location.reload(); // Reload to show the updated statuses
+        } else {
+            alert('Error: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred while updating line statuses.');
+    });
+}
+
+function updateShipped(lineId, isShipped) {
+    // Get current ship date
+    const shipDateInput = document.querySelector(`input[name="ship_date_${lineId}"]`);
+    const hasShipDate = shipDateInput && shipDateInput.value;
+
+    // Send an AJAX request to update the shipped status
+    fetch(`/sales_orders/${lineId}/toggle_shipped`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            shipped: isShipped ? 1 : 0,
+            has_ship_date: hasShipDate
+        }),
+    })
+    .then(response => {
+        if (response.ok) {
+            return response.json();
+        }
+        throw new Error('Request failed with status ' + response.status);
+    })
+    .then(data => {
+        console.log('Shipped status updated successfully', data);
+        // If we marked as shipped and there was no ship date, reload to get the auto-added ship date
+        if (isShipped && !hasShipDate) {
+            location.reload();
+        }
+    })
+    .catch(error => {
+        console.error('There was an error updating the shipped status:', error);
+    });
+}
+function updateShippedQuantity(lineId) {
+    // Get the shipped quantity input
+    const shippedQuantityInput = document.querySelector(`input[name="shipped_quantity_${lineId}"]`);
+    const shippedQuantity = parseFloat(shippedQuantityInput.value);
+
+    // Get the total quantity for validation
+    const quantityInput = document.querySelector(`input[name="quantity_${lineId}"]`);
+    const totalQuantity = parseFloat(quantityInput.value);
+
+    // Validate shipped quantity
+    if (shippedQuantity > totalQuantity) {
+        alert(`Shipped quantity cannot exceed total quantity (${totalQuantity})`);
+        shippedQuantityInput.value = totalQuantity;
+    }
+
+    // Get current ship date
+    const shipDateInput = document.querySelector(`input[name="ship_date_${lineId}"]`);
+    const hasShipDate = shipDateInput && shipDateInput.value;
+
+    // Send an AJAX request to update the shipped quantity
+    fetch(`/sales_orders/${lineId}/update_shipped_quantity`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            shipped_quantity: shippedQuantity,
+            update_ship_date: !hasShipDate && shippedQuantity > 0
+        }),
+    })
+    .then(response => {
+        if (response.ok) {
+            return response.json();
+        }
+        throw new Error('Request failed with status ' + response.status);
+    })
+    .then(data => {
+        if (data.success) {
+            console.log('Shipped quantity updated successfully');
+            // If we added a ship date, reload to show it
+            if (!hasShipDate && shippedQuantity > 0) {
+                location.reload();
+            }
+        } else {
+            alert('Error: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('There was an error updating the shipped quantity:', error);
+    });
+}
+</script>
+<style>
+
+    .warning-icon {
+    color: red;
+    font-weight: bold;
+    margin-left: 5px;
+}
+
+/* Adjust column widths */
+td.col-line-number {
+    width: 5%;
+}
+
+td.col-status {
+    width: 7%;
+}
+
+td.col-part-number {
+    width: 15%;
+}
+
+td.col-quantity {
+    width: 8%;
+}
+
+td.col-price {
+    width: 10%;
+}
+
+/* Adjust the ship date input width to leave space for the warning icon */
+td.col-ship-date input[type="date"] {
+    width: 80%;  /* Adjust this percentage to control how much space is left */
+    box-sizing: border-box;  /* Ensure padding and borders don't affect width */
+}
+
+/* Styling for the warning icon */
+.warning-icon {
+    color: red;
+    font-weight: bold;
+    margin-left: 5px;  /* Adjust spacing */
+}
+
+td.col-promise-date,
+td.col-requested-date {
+    width: 12%;
+}
+
+td.col-po {
+    width: 18%;
+}
+
+
+/* Highlight input when there's a warning */
+td input.warning {
+    background-color: #ffcccc;  /* Light red background to indicate warning */
+}
+
+/* Ensure input fields inside td take the full width */
+td input[type="text"],
+td input[type="number"],
+td input[type="date"] {
+    width: 100%;
+    box-sizing: border-box;  /* Ensure padding and borders don't affect width */
+}
+
+</style>
+
+{% endblock %}

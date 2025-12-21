@@ -1,0 +1,124 @@
+{# templates/partials/customer_suggestions.html #}
+<!--
+<div class="suggestions-container">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>Company Name</th>
+                <th>Website URL</th>
+                <th>Country</th>
+                <th>Annual Revenue (EUR)</th>
+                <th>Main Product/Industry Focus</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for suggestion in suggestions %}
+            <tr>
+                <td>{{ suggestion.company_name }}</td>
+                <td>
+                    {% if suggestion.website %}
+                    <a href="{{ suggestion.website }}" target="_blank">{{ suggestion.website }}</a>
+                    {% endif %}
+                </td>
+                <td>{{ suggestion.country }}</td>
+                <td>{{ suggestion.estimated_revenue }}</td>
+                <td>{{ suggestion.product_focus }}</td>
+                <td>
+                    <button type="button"
+                            class="btn btn-sm btn-success"
+                            onclick='openCustomerModal({{ {
+                                "name": suggestion.company_name,
+                                "description": suggestion.description,
+                                "revenue": suggestion.estimated_revenue,
+                                "country": suggestion.country_code,
+                                "tagId": suggestion.tag_id,
+                                "productFocus": suggestion.product_focus
+                            }|tojson|safe }})'>
+                        <i class="bi bi-plus-circle"></i> Add
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    &lt;!&ndash; Keep the feedback section &ndash;&gt;
+    <div class="card mt-3 border-0 shadow-sm">
+        <div class="card-body">
+            <h6 class="card-title mb-3">Not quite what you're looking for?</h6>
+            <div class="mb-3">
+                <button class="btn btn-outline-secondary btn-sm me-2 mb-2" onclick="refineSuggestions('smaller')">
+                    Show me smaller companies
+                </button>
+                <button class="btn btn-outline-secondary btn-sm me-2 mb-2" onclick="refineSuggestions('larger')">
+                    Show me larger companies
+                </button>
+                <button class="btn btn-outline-secondary btn-sm me-2 mb-2" onclick="refineSuggestions('more-western')">
+                    Focus on Western Europe
+                </button>
+                <button class="btn btn-outline-secondary btn-sm me-2 mb-2" onclick="refineSuggestions('more-eastern')">
+                    Focus on Eastern Europe
+                </button>
+            </div>
+            <div class="input-group">
+                <input type="text" id="customFeedback" class="form-control form-control-sm"
+                       placeholder="Or tell us what you're looking for...">
+                <button class="btn btn-outline-primary btn-sm" onclick="sendCustomFeedback()">
+                    <i class="bi bi-send"></i> Send
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+-->
+
+    <style>
+/* Existing styles remain... */
+
+/* Citation styling */
+.ai-citation {
+    font-size: 0.8em;
+    vertical-align: super;
+    color: #2563eb;
+    text-decoration: none;
+    margin: 0 2px;
+}
+
+/* References section styling */
+.references-section {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #e5e7eb;
+}
+
+.references-section h2 {
+    font-size: 1.25rem;
+    color: #374151;
+    margin-bottom: 1rem;
+}
+
+.references-list {
+    font-size: 0.9rem;
+    color: #4b5563;
+    padding-left: 2rem;
+}
+
+.reference-item {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    line-height: 1.5;
+}
+
+.reference-number {
+    color: #2563eb;
+    font-weight: 600;
+    min-width: 2rem;
+}
+
+/* Make citations clickable and add hover effect */
+.ai-citation:hover {
+    color: #1e40af;
+    text-decoration: underline;
+</div>

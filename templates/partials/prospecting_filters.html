@@ -1,0 +1,157 @@
+{# partials/prospecting_filters.html #}
+<form method="get" action="{{ url_for('customers.prospecting') }}" class="mb-4" id="prospectingForm">
+    <input type="hidden" name="tab" value="filter">
+    <div class="row align-items-end">
+        <div class="col-md-3">
+            <label for="tag" class="form-label">Industry Tag:</label>
+            <select name="tag" id="tag" class="form-select">
+                <option value="">All Industries</option>
+                {% for tag in tags %}
+                    {{ render_tag_options(tag, 0, watched_tags) }}
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="continent" class="form-label">Continent:</label>
+            <select name="continent" id="continent" class="form-select">
+                <option value="">All Continents</option>
+                {% for continent in continents %}
+                    <option value="{{ continent }}" {% if continent == selected_continent %}selected{% endif %}>
+                        {{ continent }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="countries" class="form-label">Country (optional):</label>
+            <select name="countries" id="countries" class="form-select" {% if not available_countries %}disabled{% endif %}>
+                {% if available_countries %}
+                    <option value="">All Countries in {{ selected_continent }}</option>
+                    {% for country in available_countries %}
+                        <option value="{{ country.code }}" {% if country.code == selected_countries[0] %}selected{% endif %}>
+                            {{ country.name }}
+                        </option>
+                    {% endfor %}
+                {% else %}
+                    <option value="">Select a continent first</option>
+                {% endif %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary">Apply Filters</button>
+        </div>
+    </div>
+</form>
+
+{% if selected_tag_id %}
+    <button type="button" class="btn btn-success mb-4" id="generateTargetsBtn" data-bs-toggle="modal" data-bs-target="#confirmPromptModal">
+        <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+        <span class="btn-text">Generate Suggested Targets</span>
+    </button>
+{% endif %}
+
+<!-- AI Prompt Modal -->
+<div class="modal fade" id="confirmPromptModal" tabindex="-1" aria-labelledby="confirmPromptModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirmPromptModalLabel">Customize AI Prompt</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>You can customize the AI prompt below before generating target companies:</p>
+                <form method="post" action="{{ url_for('customers.prospecting', tag=selected_tag_id) }}" id="promptForm">
+                    <div class="mb-3">
+                        <label for="customPrompt" class="form-label">AI Prompt:</label>
+                        <textarea class="form-control font-monospace" id="customPrompt" name="custom_prompt" rows="10">{{ ai_prompt|default('No prompt generated yet.') }}</textarea>
+                    </div>
+                    <input type="hidden" name="selected_tag_id" value="{{ selected_tag_id }}">
+                    <input type="hidden" name="continent" value="{{ selected_continent }}">
+                    {% for country in selected_countries %}
+                        <input type="hidden" name="countries" value="{{ country }}">
+                    {% endfor %}
+                    <div class="d-flex justify-content-end gap-2">
+                        <button type="button" class="btn btn-outline-secondary" onclick="resetPrompt()">Reset to Default</button>
+                        <button type="submit" name="generate_insights" value="1" class="btn btn-success">
+                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                            <span class="btn-text">Generate Targets</span>
+                        </button>
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Store the original prompt when the modal opens
+let originalPrompt = '';
+
+document.addEventListener('DOMContentLoaded', function() {
+    const modal = document.getElementById('confirmPromptModal');
+    if (modal) {
+        modal.addEventListener('show.bs.modal', function () {
+            originalPrompt = document.getElementById('customPrompt').value;
+        });
+    }
+
+    // Handle continent changes
+    const continentSelect = document.getElementById('continent');
+    if (continentSelect) {
+        continentSelect.addEventListener('change', function() {
+            const countriesSelect = document.getElementById('countries');
+
+            if (!this.value) {
+                countriesSelect.disabled = true;
+                countriesSelect.innerHTML = '<option value="">Select a continent first</option>';
+                return;
+            }
+
+            fetch(`/customers/prospecting?continent=${encodeURIComponent(this.value)}`, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                countriesSelect.disabled = false;
+                countriesSelect.innerHTML = `<option value="">All Countries in ${this.value}</option>`;
+
+                if (data.available_countries) {
+                    data.available_countries.forEach(country => {
+                        const option = new Option(country.name, country.code);
+                        countriesSelect.add(option);
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching countries:', error);
+                countriesSelect.disabled = true;
+                countriesSelect.innerHTML = '<option value="">Error loading countries</option>';
+            });
+        });
+    }
+});
+
+function resetPrompt() {
+    document.getElementById('customPrompt').value = originalPrompt;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Get tab from URL params
+    const urlParams = new URLSearchParams(window.location.search);
+    const activeTab = urlParams.get('tab') || 'natural';
+
+    // Show the correct tab
+    const tab = new bootstrap.Tab(document.getElementById(`${activeTab}-tab`));
+    tab.show();
+
+    // Update URL when switching tabs
+    const tabList = document.getElementById('searchTabs');
+    tabList.addEventListener('shown.bs.tab', function (event) {
+        const tabId = event.target.id.replace('-tab', '');
+        const currentUrl = new URL(window.location);
+        currentUrl.searchParams.set('tab', tabId);
+        window.history.replaceState({}, '', currentUrl);
+    });
+});
+</script>

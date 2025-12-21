@@ -1,0 +1,609 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+
+    <!-- Header with Action Buttons -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="btn-group">
+            <a href="{{ url_for('parts.part_timeline', base_part_number=part_number.base_part_number) }}" class="btn btn-primary">
+                <i class="fas fa-chart-line"></i> View Timeline
+            </a>
+            <!-- Add Octopart Search Button -->
+            <button type="button" class="btn btn-info ms-2" onclick="openNexarModal('{{ part_number.part_number }}')">
+                <i class="bi bi-search"></i> Search Octopart
+            </button>
+        </div>
+    </div>
+
+    <div class="card shadow mb-4 border-0">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Part Number: {{ part_number.part_number }}</strong>
+            <button class="btn btn-link p-0" type="button" data-bs-toggle="collapse" data-bs-target="#partInfoContent" aria-expanded="true" aria-controls="partInfoContent">
+                <i class="bi bi-chevron-up"></i>
+            </button>
+        </div>
+        <div class="collapse show" id="partInfoContent">
+            <div class="card-body p-0">
+                <div class="row g-0">
+                    <!-- Part Info Section -->
+                    <div class="col-4 border-end">
+                        <div class="p-3">
+                            <p><strong>Base Part Number:</strong> {{ part_number.base_part_number }}</p>
+                            <p><strong>System Part Number:</strong> {{ part_number.system_part_number }}</p>
+                            <p><strong>Stock:</strong> {{ part_number.stock|default('Not available') }}</p>
+                        </div>
+                    </div>
+
+                                        <!-- Global Equivalents Section -->
+                    <div class="col-12 border-top">
+                        <div class="p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="text-muted">Global Equivalents</span>
+                            </div>
+
+                            {% if global_alternatives %}
+                                <div id="global-alts-list" class="mb-3">
+                                    {% for alt in global_alternatives %}
+                                        <a href="{{ url_for('parts.view_part_number', base_part_number=alt) }}"
+                                           class="badge rounded-pill text-bg-light border me-1 mb-1">
+                                            {{ alt }}
+                                        </a>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                <p id="global-alts-empty" class="text-muted mb-3">
+                                    No global equivalents defined yet.
+                                </p>
+                                <div id="global-alts-list" class="mb-3 d-none"></div>
+                            {% endif %}
+
+                            <div class="mb-2">
+                                <label for="global-alts-input" class="form-label mb-1">
+                                    Add global equivalents
+                                </label>
+                                <small class="text-muted d-block mb-1">
+                                    Paste or type multiple part numbers (comma, space or new line separated).
+                                </small>
+                                <textarea id="global-alts-input"
+                                          class="form-control form-control-sm"
+                                          rows="2"
+                                          placeholder="CR3212-2-2, NAS1097AD3-3, ASNA0083..., AF3212-2-2"></textarea>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-primary"
+                                        onclick="saveGlobalAlternatives('{{ part_number.base_part_number }}')">
+                                    Save Global Equivalents
+                                </button>
+                                <small id="global-alts-status" class="text-muted"></small>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <!-- Industry Distribution Section -->
+                    <div class="col-4 border-end">
+                        <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
+                            <span class="text-muted">Industry Distribution</span>
+                        </div>
+                        <div class="p-3">
+                            <canvas id="industryChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Top Customers Section -->
+                    <div class="col-4">
+                        <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
+                            <span class="text-muted">Top Customers</span>
+                        </div>
+                        <div class="p-3">
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Customer</th>
+                                            <th>Orders</th>
+                                            <th>Qty</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for customer in top_customers %}
+                                        <tr>
+                                            <td>{{ customer.name }}</td>
+                                            <td>{{ customer.order_count }}</td>
+                                            <td>{{ customer.total_quantity }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RFQ Lines Section -->
+    <div class="card mb-4 shadow p-3 border-0">
+        <div class="card-header">
+            <strong>RFQ Lines</strong>
+        </div>
+        <div class="card-body">
+            {% if rfq_lines %}
+            <div class="table-responsive">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>RFQ ID</th>
+                            <th>Entered Date</th>
+                            <th>Line Number</th>
+                            <th>Quantity</th>
+                            <th>Customer</th>
+                            <th>Price</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for rfq_line in rfq_lines %}
+                        <tr>
+                            <td><a href="{{ url_for('rfqs.edit_rfq', rfq_id=rfq_line.id) }}">{{ rfq_line.id }}</a></td>
+                            <td>{{ rfq_line.entered_date }}</td>
+                            <td>{{ rfq_line.line_number }}</td>
+                            <td>{{ rfq_line.quantity }}</td>
+                            <td>{{ rfq_line.customer }}</td>
+                            <td>{{ rfq_line.price }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p>No RFQ lines associated with this part number.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- PO Lines Section -->
+    <div class="card mb-4 shadow p-3 border-0">
+        <div class="card-header">
+            <strong>PO Lines</strong>
+        </div>
+        <div class="card-body">
+            {% if po_lines %}
+            <div class="table-responsive">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>PO ID</th>
+                            <th>PO Reference</th>
+                            <th>Line Number</th>
+                            <th>Quantity</th>
+                            <th>Price</th>
+                            <th>Supplier</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for po_line in po_lines %}
+                        <tr>
+                            <td>{{ po_line.id }}</td>
+                            <td>{{ po_line.purchase_order_ref }}</td>
+                            <td>{{ po_line.line_number }}</td>
+                            <td>{{ po_line.quantity }}</td>
+                            <td>{{ po_line.price }}</td>
+                            <td>{{ po_line.supplier }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p>No PO lines associated with this part number.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Requisitions Section -->
+    <div class="card mb-4 shadow p-3 border-0">
+        <div class="card-header">
+            <strong>Requisitions</strong>
+        </div>
+        <div class="card-body">
+            {% if requisitions %}
+            <div class="table-responsive">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Requisition ID</th>
+                            <th>Date</th>
+                            <th>Quantity</th>
+                            <th>Supplier</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for req in requisitions %}
+                        <tr>
+                            <td>{{ req.id }}</td>
+                            <td>{{ req.date }}</td>
+                            <td>{{ req.quantity }}</td>
+                            <td>{{ req.supplier }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p>No requisitions associated with this part number.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Sales Order Lines Section -->
+    <div class="card mb-4 shadow p-3 border-0">
+        <div class="card-header">
+            <strong>Sales Order Lines</strong>
+        </div>
+        <div class="card-body">
+            {% if sales_order_lines %}
+            <div class="table-responsive">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Sales Order Line ID</th>
+                            <th>Line Number</th>
+                            <th>Quantity</th>
+                            <th>Price</th>
+                            <th>Customer</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for sol in sales_order_lines %}
+                        <tr>
+                            <td>{{ sol.id }}</td>
+                            <td>{{ sol.line_number }}</td>
+                            <td>{{ sol.quantity }}</td>
+                            <td>{{ sol.price }}</td>
+                            <td>{{ sol.customer }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p>No sales order lines associated with this part number.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Nexar/Octopart Search Modal -->
+<div class="modal fade" id="nexarModal" tabindex="-1" aria-labelledby="nexarModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="nexarModalTitle">Octopart Data</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="nexarModalBody">
+        <!-- Content will be loaded dynamically -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script type="module">
+    import ChartUtils from '{{ url_for("static", filename="js/chart-utils.js") }}';
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const canvas = document.getElementById('industryChart');
+        const chartData = {{ chart_data|tojson }};
+
+        ChartUtils.createChart(canvas, {
+            type: 'pie',
+            data: chartData
+        });
+    });
+</script>
+
+<script>
+// Function to open the Nexar/Octopart modal
+function openNexarModal(partNumber) {
+    console.log('Opening Nexar modal for part number:', partNumber);
+
+    // Get the modal elements
+    const nexarModal = document.getElementById('nexarModal');
+    const modalTitle = document.getElementById('nexarModalTitle');
+    const modalBody = document.getElementById('nexarModalBody');
+
+    if (!nexarModal) {
+        console.error('Nexar modal element not found!');
+        return;
+    }
+
+    // Update the modal title with the part number
+    modalTitle.textContent = `Octopart Data: ${partNumber}`;
+
+    // Show loading state in the modal
+    modalBody.innerHTML = `
+        <div class="text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="text-muted mt-3 mb-0">Fetching data from Octopart...</p>
+        </div>
+    `;
+
+    // Create a bootstrap modal instance if it doesn't exist
+    if (!window.nexarModalInstance) {
+        window.nexarModalInstance = new bootstrap.Modal(nexarModal);
+    }
+
+    // Show the modal
+    window.nexarModalInstance.show();
+
+    // Fetch data from your backend API that will query Octopart
+    fetch(`/parts/octopart_search/${encodeURIComponent(partNumber)}`)
+        .then(response => {
+            console.log('Response status:', response.status);
+            if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('Received data from Octopart:', data);
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            // Render the data in the modal
+            renderOctopartData(data, modalBody);
+        })
+        .catch(error => {
+            console.error('Error fetching Octopart data:', error);
+            // Handle errors
+            modalBody.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    Error fetching data: ${error.message}
+                </div>
+                <div class="text-center mt-3">
+                    <button class="btn btn-outline-primary" onclick="openNexarModal('${partNumber}')">
+                        <i class="bi bi-arrow-clockwise me-2"></i>Retry
+                    </button>
+                </div>
+            `;
+        });
+}
+
+// Function to render Octopart data in the modal
+function renderOctopartData(data, container) {
+    // Check if we have results
+    if (!data.results || data.results.length === 0) {
+        container.innerHTML = `
+            <div class="alert alert-warning">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                No results found for this part number.
+            </div>
+        `;
+        return;
+    }
+
+    const result = data.results[0];
+    const part = result.part;
+
+    // Create HTML for the part info
+    let html = `
+        <div class="card mb-4 border-0 shadow-sm">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">Part Information</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <p><strong>MPN:</strong> ${part.mpn}</p>
+                        <p><strong>Manufacturer:</strong> ${part.manufacturer ? part.manufacturer.name : 'N/A'}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <p><strong>Description:</strong> ${part.descriptions && part.descriptions.length > 0 ? part.descriptions[0].text : 'N/A'}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Add specs if available
+    if (part.specs && part.specs.length > 0) {
+        html += `
+            <div class="card mb-4 border-0 shadow-sm">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Specifications</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+        `;
+
+        // Group specs into columns
+        const specsPerColumn = Math.ceil(part.specs.length / 2);
+        let leftColumnSpecs = '';
+        let rightColumnSpecs = '';
+
+        part.specs.forEach((spec, index) => {
+            const specHtml = `<p><strong>${spec.name}:</strong> ${spec.value}</p>`;
+            if (index < specsPerColumn) {
+                leftColumnSpecs += specHtml;
+            } else {
+                rightColumnSpecs += specHtml;
+            }
+        });
+
+        html += `
+                        <div class="col-md-6">
+                            ${leftColumnSpecs}
+                        </div>
+                        <div class="col-md-6">
+                            ${rightColumnSpecs}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Add seller offers if available
+    if (part.sellers && part.sellers.length > 0) {
+        html += `
+            <div class="card mb-4 border-0 shadow-sm">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Availability</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Supplier</th>
+                                    <th>Stock</th>
+                                    <th>MOQ</th>
+                                    <th>SKU</th>
+                                    <th>1+</th>
+                                    <th>10+</th>
+                                    <th>100+</th>
+                                    <th>1000+</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+        `;
+
+        part.sellers.forEach(seller => {
+            if (seller.offers && seller.offers.length > 0) {
+                const offer = seller.offers[0];
+                const prices = offer.prices || [];
+
+                // Find prices for different quantities
+                const priceMap = {
+                    1: 'N/A',
+                    10: 'N/A',
+                    100: 'N/A',
+                    1000: 'N/A'
+                };
+
+                prices.forEach(price => {
+                    const qty = price.quantity;
+                    if (qty in priceMap) {
+                        priceMap[qty] = `${price.price} ${price.currency}`;
+                    }
+                });
+
+                html += `
+                    <tr>
+                        <td>${seller.company ? seller.company.name : 'N/A'}</td>
+                        <td>${offer.inventoryLevel || 'N/A'}</td>
+                        <td>${offer.moq || 'N/A'}</td>
+                        <td>${offer.sku || 'N/A'}</td>
+                        <td>${priceMap[1]}</td>
+                        <td>${priceMap[10]}</td>
+                        <td>${priceMap[100]}</td>
+                        <td>${priceMap[1000]}</td>
+                    </tr>
+                `;
+            }
+        });
+
+        html += `
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Update the container with our HTML
+    container.innerHTML = html;
+}
+</script>
+<script>
+function saveGlobalAlternatives(basePartNumber) {
+    const textarea = document.getElementById('global-alts-input');
+    const statusEl = document.getElementById('global-alts-status');
+    const listEl = document.getElementById('global-alts-list');
+    const emptyMsg = document.getElementById('global-alts-empty');
+
+    if (!textarea) return;
+
+    const raw = textarea.value || '';
+
+    // Split by commas, whitespace, newlines
+    let tokens = raw
+        .split(/[\s,]+/)
+        .map(t => t.trim())
+        .filter(t => t.length > 0);
+
+    // If nothing entered, do nothing
+    if (tokens.length === 0) {
+        statusEl.textContent = 'Nothing to add.';
+        return;
+    }
+
+    statusEl.textContent = 'Saving...';
+
+    fetch(`/parts/${encodeURIComponent(basePartNumber)}/global_alts`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({ alternatives: tokens })
+    })
+    .then(resp => resp.json())
+    .then(data => {
+        if (!data.success) {
+            throw new Error(data.message || 'Unknown error');
+        }
+
+        // Clear textarea
+        textarea.value = '';
+
+        // Update status
+        statusEl.textContent = 'Saved.';
+
+        // Update the list display
+        if (data.alternatives && data.alternatives.length > 0) {
+            if (emptyMsg) {
+                emptyMsg.classList.add('d-none');
+            }
+            listEl.classList.remove('d-none');
+
+            // Rebuild pills
+            listEl.innerHTML = '';
+            data.alternatives.forEach(alt => {
+                const a = document.createElement('a');
+                a.href = `{{ url_for('parts.view_part_number', base_part_number='__ALT__') }}`.replace('__ALT__', alt);
+                a.className = 'badge rounded-pill text-bg-light border me-1 mb-1';
+                a.textContent = alt;
+                listEl.appendChild(a);
+            });
+        } else {
+            // No alts
+            listEl.innerHTML = '';
+            listEl.classList.add('d-none');
+            if (emptyMsg) {
+                emptyMsg.classList.remove('d-none');
+            }
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        statusEl.textContent = 'Error: ' + err.message;
+    });
+}
+</script>
+
+{% endblock %}

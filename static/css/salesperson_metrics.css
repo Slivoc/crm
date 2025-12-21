@@ -1,0 +1,155 @@
+/* Salesperson Metrics Tab Styles */
+
+.salesperson-metrics-container {
+  padding: 1rem 0;
+}
+
+/* Activity Timeline */
+.activity-timeline {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 0.5rem 1rem;
+}
+
+.date-separator {
+  position: relative;
+  text-align: center;
+  margin: 1rem 0;
+}
+
+.date-line {
+  position: absolute;
+  width: 100%;
+  top: 50%;
+  border-bottom: 1px solid #dee2e6;
+  z-index: 1;
+}
+
+.date-label {
+  display: inline-block;
+  background-color: #fff;
+  padding: 0 0.75rem;
+  position: relative;
+  z-index: 2;
+  font-size: 0.8rem;
+  color: #6c757d;
+  font-weight: 500;
+}
+
+.activity-item {
+  display: flex;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.activity-item:last-child {
+  border-bottom: none;
+}
+
+.activity-icon {
+  flex: 0 0 40px;
+  height: 40px;
+  margin-right: 0.75rem;
+  border-radius: 50%;
+  background-color: #f8f9fa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.activity-content {
+  flex: 1;
+}
+
+.activity-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.activity-time {
+  font-size: 0.75rem;
+  color: #6c757d;
+}
+
+.activity-title {
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.activity-details {
+  font-size: 0.875rem;
+  color: #6c757d;
+  margin-bottom: 0.25rem;
+}
+
+.activity-value {
+  font-weight: 500;
+  color: #198754;
+  margin-top: 0.25rem;
+}
+
+.activity-customer,
+.activity-contact {
+  font-size: 0.75rem;
+  color: #6c757d;
+  margin-top: 0.125rem;
+}
+
+/* Chart containers */
+.funnel-chart-container,
+.comm-chart-container {
+  height: 170px;
+  position: relative;
+}
+
+/* Media Queries */
+@media (max-width: 768px) {
+  .activity-timeline {
+    max-height: 350px;
+  }
+
+  .funnel-chart-container,
+  .comm-chart-container {
+    height: 200px;
+  }
+}
+
+/* Button active state override */
+.btn-outline-primary.active,
+.btn-outline-secondary.active {
+  color: #fff;
+}
+
+/* Loading placeholder effect */
+.placeholder {
+  display: inline-block;
+  min-height: 1em;
+  vertical-align: middle;
+  cursor: wait;
+  background-color: currentColor;
+  opacity: 0.15;
+}
+
+.placeholder.btn::before {
+  display: block;
+  content: "";
+}
+
+/* Width utilities */
+.w-25 {
+  width: 25% !important;
+}
+
+.w-50 {
+  width: 50% !important;
+}
+
+.w-75 {
+  width: 75% !important;
+}
+
+.w-100 {
+  width: 100% !important;
+}

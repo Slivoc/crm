@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Portal Quote Requests{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+
+    <h2>Portal Quote Requests</h2>
+
+    <!-- Status Filter -->
+    <div class="mb-3">
+        <div class="btn-group" role="group">
+            <a href="{{ url_for('portal_admin.portal_requests') }}" 
+               class="btn btn-sm {% if not status_filter %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                All
+            </a>
+            <a href="{{ url_for('portal_admin.portal_requests', status='pending') }}" 
+               class="btn btn-sm {% if status_filter == 'pending' %}btn-warning{% else %}btn-outline-warning{% endif %}">
+                Pending
+            </a>
+            <a href="{{ url_for('portal_admin.portal_requests', status='processing') }}" 
+               class="btn btn-sm {% if status_filter == 'processing' %}btn-info{% else %}btn-outline-info{% endif %}">
+                Processing
+            </a>
+            <a href="{{ url_for('portal_admin.portal_requests', status='quoted') }}" 
+               class="btn btn-sm {% if status_filter == 'quoted' %}btn-success{% else %}btn-outline-success{% endif %}">
+                Quoted
+            </a>
+            <a href="{{ url_for('portal_admin.portal_requests', status='declined') }}" 
+               class="btn btn-sm {% if status_filter == 'declined' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
+                Declined
+            </a>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <table class="table table-hover" id="requestsTable">
+                <thead>
+                    <tr>
+                        <th>Reference</th>
+                        <th>Customer</th>
+                        <th>Customer Ref</th>
+                        <th>User</th>
+                        <th>Lines</th>
+                        <th>Quoted</th>
+                        <th>Submitted</th>
+                        <th>Processed</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for req in requests %}
+                    <tr>
+                        <td><strong>{{ req.reference_number }}</strong></td>
+                        <td>{{ req.customer_name }}</td>
+                        <td>{{ req.customer_reference or '-' }}</td>
+                        <td>
+                            {{ req.first_name }} {{ req.last_name }}<br>
+                            <small class="text-muted">{{ req.user_email }}</small>
+                        </td>
+                        <td>{{ req.line_count }}</td>
+                        <td>{{ req.quoted_lines }} / {{ req.line_count }}</td>
+                        <td>{{ req.date_submitted }}</td>
+                        <td>{{ req.date_processed or '-' }}</td>
+                        <td>
+                            <span class="badge 
+                                {% if req.status == 'pending' %}bg-warning
+                                {% elif req.status == 'processing' %}bg-info
+                                {% elif req.status == 'quoted' %}bg-success
+                                {% elif req.status == 'declined' %}bg-secondary
+                                {% else %}bg-dark{% endif %}">
+                                {{ req.status | title }}
+                            </span>
+                        </td>
+                        <td>
+                            <a href="{{ url_for('portal_admin.view_portal_request', request_id=req.id) }}" 
+                               class="btn btn-sm btn-primary">View</a>
+                            {% if req.parts_list_id %}
+                            <a href="{{ url_for('parts_list.view_parts_list', list_id=req.parts_list_id) }}" 
+                               class="btn btn-sm btn-secondary">Parts List</a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+// Add DataTables if you want sorting/searching
+$(document).ready(function() {
+    $('#requestsTable').DataTable({
+        order: [[5, 'desc']], // Sort by submitted date
+        pageLength: 25
+    });
+});
+</script>
+{% endblock %}

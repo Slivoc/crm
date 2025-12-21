@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Import Customer Quotes</h2>
+    
+    <div class="card mt-4">
+        <div class="card-body">
+            <form method="POST" enctype="multipart/form-data" action="{{ url_for('cqs.import_cqs') }}">
+                <div class="mb-3">
+                    <label for="file" class="form-label">Upload CSV File (comma-delimited)</label>
+                    <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
+                    <div class="form-text">Select the CQ export file from your ERP system</div>
+                </div>
+
+                <div class="mb-3 form-check">
+                    <input type="checkbox" class="form-check-input" id="skip_auto_quoted" name="skip_auto_quoted" checked>
+                    <label class="form-check-label" for="skip_auto_quoted">
+                        Skip Auto-Quoted items (recommended)
+                    </label>
+                    <div class="form-text">When checked, CQs with status "Auto-Quoted" will not be imported</div>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Import CQs</button>
+                <a href="{{ url_for('cqs.cqs_list') }}" class="btn btn-secondary">Cancel</a>
+            </form>
+        </div>
+    </div>
+
+    <div class="alert alert-info mt-4">
+        <h5>Instructions:</h5>
+        <ul>
+            <li>Export CQs from ERP system as CSV (comma-delimited)</li>
+            <li>The system will automatically create customers if they don't exist</li>
+            <li>Part numbers will be normalized and added to the system</li>
+            <li>Expected columns: transactionHeaderId, transactionItemId, transactionalNumber, companyName, partNumber, etc.</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

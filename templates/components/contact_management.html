@@ -1,0 +1,1018 @@
+<!-- Contact Management Component -->
+<!-- Save as: templates/components/contact_management.html -->
+
+<div class="contact-management-container" data-customer-id="{{ customer.id }}">
+
+  <!-- Add Contact Form -->
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="mb-0">Add New Contact</h5>
+      <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#contactFormCollapse" aria-expanded="false">
+        <i class="bi bi-chevron-down"></i>
+      </button>
+    </div>
+    <div class="collapse show" id="contactFormCollapse">
+      <div class="card-body">
+        <form id="contact-add-form" class="row g-3">
+          <div class="col-md-3">
+            <label for="contact_first_name" class="form-label">First Name *</label>
+            <input type="text" id="contact_first_name" name="first_name" class="form-control" required>
+          </div>
+          <div class="col-md-3">
+            <label for="contact_second_name" class="form-label">Last Name</label>
+            <input type="text" id="contact_second_name" name="second_name" class="form-control">
+          </div>
+          <div class="col-md-3">
+            <label for="contact_email" class="form-label">Email *</label>
+            <input type="email" id="contact_email" name="email" class="form-control" required>
+          </div>
+          <div class="col-md-3">
+            <label for="contact_phone" class="form-label">Phone</label>
+            <input type="text" id="contact_phone" name="phone" class="form-control">
+          </div>
+          <div class="col-md-6">
+            <label for="contact_job_title" class="form-label">Job Title</label>
+            <input type="text" id="contact_job_title" name="job_title" class="form-control">
+          </div>
+          <div class="col-md-6">
+            <label for="contact_status" class="form-label">Status</label>
+            <select id="contact_status" name="status_id" class="form-select">
+              <!-- Options will be loaded dynamically -->
+            </select>
+          </div>
+          <div class="col-12">
+            <div id="contact-form-messages" class="alert d-none"></div>
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-person-plus"></i> Add Contact
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Contacts Table -->
+  <div class="card mb-4">
+    <div class="card-header">
+      <h5 class="mb-0">Contacts</h5>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0" id="contacts-table">
+          <thead class="table-light">
+            <tr>
+              <th>Name</th>
+              <th>Job Title</th>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="contacts-tbody">
+            {% for contact in contacts %}
+            <tr data-contact-id="{{ contact.id }}">
+              <td>
+                <div class="d-flex align-items-center">
+                  <div class="avatar-circle me-2 bg-primary">
+                    {{ contact.name[0]|upper }}{{ contact.second_name[0]|upper if contact.second_name else '' }}
+                  </div>
+                  <div>
+                    <div class="fw-medium">
+                      <span class="contact-name">{{ contact.name }}</span>
+                      <span class="contact-second-name">{{ contact.second_name if contact.second_name else "" }}</span>
+                      {% if contact.id == customer.primary_contact_id %}
+                        <span class="badge bg-primary ms-1">Primary</span>
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
+              </td>
+              <td>
+                <span class="contact-job-title">{{ contact.job_title if contact.job_title else "—" }}</span>
+              </td>
+              <td>
+                {% if contact.email %}
+                <a href="mailto:{{ contact.email }}" class="text-decoration-none contact-email">
+                  <i class="bi bi-envelope me-1"></i>{{ contact.email }}
+                </a>
+                {% else %}
+                <span class="contact-email">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if contact.phone %}
+                <a href="tel:{{ contact.phone }}" class="text-decoration-none contact-phone">
+                  <i class="bi bi-telephone me-1"></i>{{ contact.phone }}
+                </a>
+                {% else %}
+                <span class="contact-phone">—</span>
+                {% endif %}
+              </td>
+              <td>
+                <span class="badge contact-status" data-status-id="{{ contact.status_id or 2 }}" style="background-color: {{ contact.status_color or '#28a745' }};">
+                  {{ contact.status_name or 'Active' }}
+                </span>
+              </td>
+              <td>
+                <div class="btn-group">
+                  <button type="button" class="btn btn-primary edit-contact-btn"
+                          data-contact-id="{{ contact.id }}">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                  {% if contact.email %}
+                  <button type="button"
+                          class="btn btn-primary email-contact-btn"
+                          data-bs-toggle="modal"
+                          data-bs-target="#emailModal"
+                          data-contact-id="{{ contact.id }}"
+                          data-contact-name="{{ contact.name }} {{ contact.second_name }}"
+                          data-contact-email="{{ contact.email }}"
+                          data-customer-id="{{ customer.id }}">
+                    <i class="bi bi-envelope"></i>
+                  </button>
+                  {% endif %}
+                  <button type="button" class="btn btn-danger delete-contact-btn"
+                          data-contact-id="{{ contact.id }}">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </div>
+              </td>
+            </tr>
+            {% else %}
+            <tr id="no-contacts-row">
+              <td colspan="6" class="text-center py-4 text-muted">No contacts available for this customer.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Contact Modal -->
+  <div class="modal fade" id="editContactModal" tabindex="-1" aria-labelledby="editContactModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="editContactModalLabel">Edit Contact</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="contact-edit-form">
+            <input type="hidden" id="edit_contact_id" name="contact_id">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label for="edit_first_name" class="form-label">First Name *</label>
+                <input type="text" id="edit_first_name" name="first_name" class="form-control" required>
+              </div>
+              <div class="col-md-6">
+                <label for="edit_second_name" class="form-label">Last Name</label>
+                <input type="text" id="edit_second_name" name="second_name" class="form-control">
+              </div>
+              <div class="col-12">
+                <label for="edit_email" class="form-label">Email *</label>
+                <input type="email" id="edit_email" name="email" class="form-control" required>
+              </div>
+              <div class="col-md-6">
+                <label for="edit_phone" class="form-label">Phone</label>
+                <input type="text" id="edit_phone" name="phone" class="form-control">
+              </div>
+              <div class="col-md-6">
+                <label for="edit_status" class="form-label">Status</label>
+                <select id="edit_status" name="status_id" class="form-select">
+                  <!-- Options will be loaded dynamically -->
+                </select>
+              </div>
+              <div class="col-12">
+                <label for="edit_job_title" class="form-label">Job Title</label>
+                <input type="text" id="edit_job_title" name="job_title" class="form-control">
+              </div>
+              <!-- Add this after the edit_job_title field in the modal -->
+<div class="col-md-6">
+  <label for="edit_timezone" class="form-label">Timezone</label>
+  <select id="edit_timezone" name="timezone" class="form-select">
+    <option value="">Loading timezones...</option>
+  </select>
+  <small class="text-muted" id="timezone-hint"></small>
+</div>
+              <!-- Customer Selection -->
+              <div class="col-12">
+                <label for="edit_customer_search" class="form-label">Customer</label>
+                <div class="customer-search-container position-relative">
+                  <input type="text"
+                         id="edit_customer_search"
+                         class="form-control"
+                         placeholder="Type to search customers..."
+                         autocomplete="off">
+                  <input type="hidden" id="edit_customer_id" name="customer_id">
+                  <div id="customer-search-results" class="customer-search-results position-absolute w-100 d-none"></div>
+                </div>
+                <div class="current-customer mt-2 d-none">
+                  <small class="text-muted">Current customer: </small>
+                  <span id="current-customer-name" class="fw-medium"></span>
+                  <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="clear-customer-selection">
+                    <i class="bi bi-x"></i> Change
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div id="edit-contact-messages" class="alert d-none mt-3"></div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="save-contact-btn">Save Changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Suggested Contacts Card -->
+  <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="mb-0">
+        <i class="bi bi-person-plus-fill me-2"></i>
+        Suggested Contacts
+      </h5>
+      <button type="button" id="refresh-suggested-contacts" class="btn btn-sm btn-outline-secondary" disabled>
+        <i class="bi bi-arrow-clockwise"></i> Refresh
+      </button>
+    </div>
+    <div class="card-body p-0">
+      <div class="p-3 text-muted small">
+        These people have emailed with your company but aren't in your contacts list yet.
+      </div>
+      <div id="suggested-contacts-container">
+        <div class="text-center py-4">
+          <i class="bi bi-envelope-x text-muted" style="font-size: 2rem;"></i>
+          <p class="mt-3 text-muted mb-1">Email account not connected</p>
+          <p class="text-muted small">Check your email account is connected to enable suggested contacts.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.avatar-circle {
+  width: 35px;
+  height: 35px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
+  font-size: 0.8rem;
+}
+
+.contact-management-container .table th {
+  font-weight: 600;
+  color: #495057;
+  background-color: #f8f9fa;
+}
+
+.contact-management-container .btn-group .btn {
+  border: none;
+  margin-right: 2px;
+}
+
+.contact-management-container .btn-group .btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.contact-status {
+  background-color: #28a745 !important;
+  color: white !important;
+}
+
+/* Customer Search Styles */
+.customer-search-results {
+  background: white;
+  border: 1px solid #dee2e6;
+  border-radius: 0.375rem;
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1000;
+  top: 100%;
+}
+
+.customer-search-item {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #f1f3f4;
+  cursor: pointer;
+  transition: background-color 0.15s ease-in-out;
+}
+
+.customer-search-item:hover,
+.customer-search-item.active {
+  background-color: #f8f9fa;
+}
+
+.customer-search-item:last-child {
+  border-bottom: none;
+}
+
+.customer-search-item .customer-name {
+  font-weight: 500;
+  color: #212529;
+}
+
+.customer-search-item .customer-contact {
+  font-size: 0.875rem;
+  color: #6c757d;
+}
+
+.customer-search-item .customer-description {
+  font-size: 0.875rem;
+  color: #6c757d;
+  max-width: 100%;
+}
+
+.customer-search-item .customer-details {
+  font-size: 0.8rem;
+  color: #6c757d;
+  font-weight: 500;
+}
+
+.customer-search-container {
+  position: relative;
+}
+
+.current-customer {
+  background-color: #f8f9fa;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid #dee2e6;
+}
+</style>
+
+<script>
+// Contact Management JavaScript - Updated with Customer Selection
+(function() {
+  'use strict';
+
+  let contactStatuses = [];
+  let customerSearchTimeout;
+  let allTimezones = [];
+let currentCountryCode = null;
+
+  // Get customer ID
+  const getCustomerId = () => {
+    const container = document.querySelector('.contact-management-container');
+    return container ? container.dataset.customerId : null;
+  };
+
+  // Load all timezones
+const loadTimezones = async () => {
+  try {
+    const response = await fetch('/customers/timezones');
+    const result = await response.json();
+
+    if (result.success) {
+      allTimezones = result.timezones;
+      populateTimezoneSelect(allTimezones);
+    }
+  } catch (error) {
+    console.error('Failed to load timezones:', error);
+  }
+};
+
+// Populate timezone select
+const populateTimezoneSelect = (timezones, selectedTimezone = null) => {
+  const select = document.getElementById('edit_timezone');
+  if (!select) return;
+
+  select.innerHTML = '<option value="">Select timezone...</option>';
+
+  // Group by region
+  const grouped = {};
+  timezones.forEach(tz => {
+    const region = tz.value.split('/')[0];
+    if (!grouped[region]) grouped[region] = [];
+    grouped[region].push(tz);
+  });
+
+  // Add optgroups
+  Object.keys(grouped).sort().forEach(region => {
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = region;
+
+    grouped[region].forEach(tz => {
+      const option = document.createElement('option');
+      option.value = tz.value;
+      option.textContent = tz.label;
+      if (selectedTimezone && tz.value === selectedTimezone) {
+        option.selected = true;
+      }
+      optgroup.appendChild(option);
+    });
+
+    select.appendChild(optgroup);
+  });
+};
+
+// Suggest timezone based on country
+const suggestTimezoneForCountry = async (countryCode) => {
+  if (!countryCode) return;
+
+  try {
+    const response = await fetch(`/customers/timezone/suggest/${countryCode}`);
+    const result = await response.json();
+
+    if (result.success) {
+      const select = document.getElementById('edit_timezone');
+      const hintEl = document.getElementById('timezone-hint');
+
+      if (select) {
+        select.value = result.timezone;
+      }
+
+      if (hintEl && result.hint) {
+        hintEl.textContent = result.hint;
+        hintEl.classList.add('text-info');
+      }
+
+      // If multiple timezones, highlight the options
+      if (result.multiple && result.options) {
+        console.log('Multiple timezone options available:', result.options);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to suggest timezone:', error);
+  }
+};
+
+// Update the handleEditContact function to load timezone
+const handleEditContact = async (contactId) => {
+  console.log('DEBUG: Editing contact with ID:', contactId);
+
+  try {
+    const url = `/customers/contacts/${contactId}`;
+    console.log('DEBUG: Fetching from URL:', url);
+
+    const response = await fetch(url);
+    console.log('DEBUG: Response status:', response.status);
+
+    const result = await response.json();
+    console.log('DEBUG: Response JSON:', result);
+
+    if (result.success) {
+      const contact = result.contact;
+      console.log('DEBUG: Contact data received:', contact);
+
+      // Populate edit form
+      document.getElementById('edit_contact_id').value = contact.id;
+      document.getElementById('edit_first_name').value = contact.name || '';
+      document.getElementById('edit_second_name').value = contact.second_name || '';
+      document.getElementById('edit_email').value = contact.email || '';
+      document.getElementById('edit_phone').value = contact.phone || '';
+      document.getElementById('edit_job_title').value = contact.job_title || '';
+      document.getElementById('edit_status').value = contact.status_id || 1;
+      document.getElementById('edit_timezone').value = contact.timezone || 'UTC';
+
+      // Set customer information
+      document.getElementById('edit_customer_id').value = contact.customer_id || '';
+      if (contact.customer_name) {
+        document.getElementById('current-customer-name').textContent = contact.customer_name;
+        document.querySelector('.current-customer').classList.remove('d-none');
+      } else {
+        document.querySelector('.current-customer').classList.add('d-none');
+      }
+
+      // Get customer country and suggest timezone if not set
+      if (contact.customer_id && (!contact.timezone || contact.timezone === 'UTC')) {
+        const customerResponse = await fetch(`/customers/${contact.customer_id}`);
+        const customerResult = await customerResponse.json();
+        if (customerResult.success && customerResult.customer.country) {
+          await suggestTimezoneForCountry(customerResult.customer.country);
+        }
+      }
+
+      // Clear search field
+      document.getElementById('edit_customer_search').value = '';
+      hideCustomerSearchResults();
+
+      console.log('DEBUG: Form populated, showing modal');
+
+      // Show modal
+      const modal = new bootstrap.Modal(document.getElementById('editContactModal'));
+      modal.show();
+    } else {
+      console.error('DEBUG: API returned success=false:', result);
+      alert('Failed to load contact details: ' + (result.error || 'Unknown error'));
+    }
+  } catch (error) {
+    console.error('DEBUG: JavaScript error:', error);
+    alert('Failed to load contact details: ' + error.message);
+  }
+};
+
+// Update handleSaveContact to include timezone
+const handleSaveContact = async () => {
+  const form = document.getElementById('contact-edit-form');
+  const contactId = form.contact_id.value;
+
+  const formData = {
+    name: form.first_name.value.trim(),
+    second_name: form.second_name.value.trim(),
+    email: form.email.value.trim(),
+    phone: form.phone.value.trim(),
+    job_title: form.job_title.value.trim(),
+    status_id: form.status_id.value || 1,
+    customer_id: form.customer_id.value || null,
+    timezone: form.timezone.value || 'UTC'
+  };
+
+  try {
+    const response = await fetch(`/customers/contacts/${contactId}/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(formData)
+    });
+
+    const result = await response.json();
+
+    if (result.success) {
+      showMessage('edit-contact-messages', 'Contact updated successfully!', 'success');
+
+      // Update table row
+      updateContactInTable(contactId, formData);
+
+      // Hide modal after a short delay
+      setTimeout(() => {
+        const modal = bootstrap.Modal.getInstance(document.getElementById('editContactModal'));
+        modal.hide();
+      }, 1000);
+    } else {
+      showMessage('edit-contact-messages', result.error || 'Failed to update contact');
+    }
+  } catch (error) {
+    showMessage('edit-contact-messages', 'Failed to update contact. Please try again.');
+  }
+};
+
+
+  // Load contact statuses
+  const loadContactStatuses = async () => {
+    console.log('Loading contact statuses...');
+    try {
+      const response = await fetch('/customers/contact_statuses');
+      const result = await response.json();
+
+      console.log('Contact statuses response:', result);
+
+      if (result.success) {
+        contactStatuses = result.statuses;
+        console.log('Loaded statuses:', contactStatuses);
+        populateStatusSelects();
+        updateExistingTableRowStatuses();
+      } else {
+        console.error('Failed to load statuses:', result);
+        contactStatuses = [
+          {id: 1, name: 'Active', color: '#28a745'},
+          {id: 2, name: 'Inactive', color: '#ffc107'}
+        ];
+        populateStatusSelects();
+        updateExistingTableRowStatuses();
+      }
+    } catch (error) {
+      console.error('Failed to load contact statuses:', error);
+      contactStatuses = [
+        {id: 1, name: 'Active', color: '#28a745'},
+        {id: 2, name: 'Inactive', color: '#ffc107'}
+      ];
+      populateStatusSelects();
+      updateExistingTableRowStatuses();
+    }
+  };
+
+  // Update existing table rows with correct status information
+  const updateExistingTableRowStatuses = () => {
+    console.log('Updating existing table row statuses...');
+    const statusElements = document.querySelectorAll('.contact-status');
+
+    statusElements.forEach(statusEl => {
+      const statusId = statusEl.dataset.statusId;
+      const status = getStatusById(statusId);
+
+      console.log(`Updating status for ID ${statusId}:`, status);
+
+      statusEl.style.backgroundColor = status.color;
+      statusEl.textContent = status.name;
+    });
+  };
+
+  // Populate status select elements
+  const populateStatusSelects = () => {
+    console.log('Populating status selects with:', contactStatuses);
+    const selects = document.querySelectorAll('#contact_status, #edit_status');
+
+    console.log('Found select elements:', selects.length);
+
+    selects.forEach(select => {
+      select.innerHTML = '';
+      contactStatuses.forEach(status => {
+        const option = document.createElement('option');
+        option.value = status.id;
+        option.textContent = status.name;
+        select.appendChild(option);
+      });
+
+      console.log('Populated select with', select.options.length, 'options');
+    });
+  };
+
+  // Get status by ID
+  const getStatusById = (statusId) => {
+    const status = contactStatuses.find(s => s.id == statusId);
+    if (status) {
+      return status;
+    }
+
+    console.warn(`Status ID ${statusId} not found, using default`);
+    return {name: 'Unknown', color: '#6c757d'};
+  };
+
+  // Customer Search Functions
+  const searchCustomers = async (query) => {
+    console.log('DEBUG: searchCustomers called with query:', query);
+
+    if (!query || query.length < 2) {
+      console.log('DEBUG: Query too short, hiding results');
+      hideCustomerSearchResults();
+      return;
+    }
+
+    try {
+      const url = `/customers/search?q=${encodeURIComponent(query)}&limit=10`;
+      console.log('DEBUG: Fetching customer search from URL:', url);
+
+      const response = await fetch(url);
+      console.log('DEBUG: Customer search response status:', response.status);
+
+      const result = await response.json();
+      console.log('DEBUG: Customer search result:', result);
+
+      // Handle both response formats: {success: true, customers: [...]} or just [...]
+      let customers;
+      if (result.success !== undefined) {
+        // Standard format with success property
+        if (result.success) {
+          customers = result.customers;
+        } else {
+          console.log('DEBUG: Search failed:', result.error);
+          hideCustomerSearchResults();
+          return;
+        }
+      } else if (Array.isArray(result)) {
+        // Direct array response
+        customers = result;
+      } else {
+        console.log('DEBUG: Unexpected response format:', result);
+        hideCustomerSearchResults();
+        return;
+      }
+
+      console.log('DEBUG: Found customers:', customers);
+      displayCustomerSearchResults(customers);
+
+    } catch (error) {
+      console.error('DEBUG: Customer search error:', error);
+      hideCustomerSearchResults();
+    }
+  };
+
+  const displayCustomerSearchResults = (customers) => {
+    const resultsContainer = document.getElementById('customer-search-results');
+
+    if (!customers || customers.length === 0) {
+      resultsContainer.innerHTML = '<div class="customer-search-item text-muted">No customers found</div>';
+      resultsContainer.classList.remove('d-none');
+      return;
+    }
+
+    resultsContainer.innerHTML = customers.map(customer => {
+      const details = [];
+      if (customer.system_code) details.push(`Code: ${customer.system_code}`);
+      if (customer.country) details.push(customer.country.toUpperCase());
+      if (customer.fleet_size) details.push(`Fleet: ${customer.fleet_size}`);
+
+      return `
+        <div class="customer-search-item" data-customer-id="${customer.id}" data-customer-name="${customer.name}">
+          <div class="customer-name">${customer.name}</div>
+          ${customer.primary_contact_email ? `<div class="customer-contact"><i class="bi bi-person me-1"></i>${customer.primary_contact_name || customer.primary_contact_email}</div>` : ''}
+          ${customer.description ? `<div class="customer-description text-truncate">${customer.description}</div>` : ''}
+          ${details.length > 0 ? `<div class="customer-details">${details.join(' • ')}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    resultsContainer.classList.remove('d-none');
+  };
+
+  const hideCustomerSearchResults = () => {
+    const resultsContainer = document.getElementById('customer-search-results');
+    resultsContainer.classList.add('d-none');
+  };
+
+  const selectCustomer = (customerId, customerName) => {
+    document.getElementById('edit_customer_id').value = customerId;
+    document.getElementById('edit_customer_search').value = '';
+    document.getElementById('current-customer-name').textContent = customerName;
+    document.querySelector('.current-customer').classList.remove('d-none');
+    hideCustomerSearchResults();
+  };
+
+  const clearCustomerSelection = () => {
+    document.getElementById('edit_customer_id').value = '';
+    document.getElementById('edit_customer_search').value = '';
+    document.querySelector('.current-customer').classList.add('d-none');
+    hideCustomerSearchResults();
+  };
+
+  // Show message
+  const showMessage = (elementId, message, type = 'danger') => {
+    const msgEl = document.getElementById(elementId);
+    if (msgEl) {
+      msgEl.className = `alert alert-${type}`;
+      msgEl.textContent = message;
+      msgEl.classList.remove('d-none');
+      setTimeout(() => msgEl.classList.add('d-none'), 5000);
+    }
+  };
+
+  // Add contact form handler
+  const handleAddContact = async (event) => {
+    event.preventDefault();
+
+    const form = event.target;
+    const customerId = getCustomerId();
+
+    if (!customerId) {
+      showMessage('contact-form-messages', 'Customer ID not found');
+      return;
+    }
+
+    const formData = {
+      customer_id: customerId,
+      name: form.first_name.value.trim(),
+      second_name: form.second_name.value.trim(),
+      email: form.email.value.trim(),
+      phone: form.phone.value.trim(),
+      job_title: form.job_title.value.trim(),
+      status_id: form.status_id.value || null
+    };
+
+    try {
+      const response = await fetch('/customers/contacts/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        showMessage('contact-form-messages', 'Contact added successfully!', 'success');
+        form.reset();
+        addContactToTable(result.contact);
+      } else {
+        showMessage('contact-form-messages', result.error || 'Failed to add contact');
+      }
+    } catch (error) {
+      showMessage('contact-form-messages', 'Failed to add contact. Please try again.');
+    }
+  };
+
+
+
+  // Delete contact handler
+  const handleDeleteContact = async (contactId) => {
+    if (!confirm('Are you sure you want to delete this contact?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/customers/contacts/${contactId}/delete`, {
+        method: 'POST'
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        const row = document.querySelector(`tr[data-contact-id="${contactId}"]`);
+        if (row) {
+          row.remove();
+        }
+
+        const tbody = document.getElementById('contacts-tbody');
+        if (tbody.children.length === 0) {
+          tbody.innerHTML = '<tr id="no-contacts-row"><td colspan="6" class="text-center py-4 text-muted">No contacts available for this customer.</td></tr>';
+        }
+      } else {
+        alert('Failed to delete contact');
+      }
+    } catch (error) {
+      alert('Failed to delete contact');
+    }
+  };
+
+  // Add contact to table
+  const addContactToTable = (contact) => {
+    const tbody = document.getElementById('contacts-tbody');
+    const noContactsRow = document.getElementById('no-contacts-row');
+
+    if (noContactsRow) {
+      noContactsRow.remove();
+    }
+
+    const status = getStatusById(contact.status_id);
+
+    const row = document.createElement('tr');
+    row.setAttribute('data-contact-id', contact.id);
+    row.innerHTML = `
+      <td>
+        <div class="d-flex align-items-center">
+          <div class="avatar-circle me-2 bg-primary">
+            ${contact.name.charAt(0).toUpperCase()}${contact.second_name ? contact.second_name.charAt(0).toUpperCase() : ''}
+          </div>
+          <div>
+            <div class="fw-medium">
+              <span class="contact-name">${contact.name}</span>
+              <span class="contact-second-name">${contact.second_name || ''}</span>
+            </div>
+          </div>
+        </div>
+      </td>
+      <td><span class="contact-job-title">${contact.job_title || '—'}</span></td>
+      <td>
+        ${contact.email ?
+          `<a href="mailto:${contact.email}" class="text-decoration-none contact-email"><i class="bi bi-envelope me-1"></i>${contact.email}</a>` :
+          '<span class="contact-email">—</span>'}
+      </td>
+      <td>
+        ${contact.phone ?
+          `<a href="tel:${contact.phone}" class="text-decoration-none contact-phone"><i class="bi bi-telephone me-1"></i>${contact.phone}</a>` :
+          '<span class="contact-phone">—</span>'}
+      </td>
+      <td><span class="badge contact-status" data-status-id="${contact.status_id}" style="background-color: ${status.color};">${status.name}</span></td>
+      <td>
+        <div class="btn-group">
+          <button type="button" class="btn btn-primary edit-contact-btn" data-contact-id="${contact.id}">
+            <i class="bi bi-pencil"></i>
+          </button>
+          ${contact.email ?
+            `<button type="button" class="btn btn-sm btn-outline-primary email-contact-btn" data-bs-toggle="modal" data-bs-target="#emailModal" data-contact-id="${contact.id}" data-contact-name="${contact.name} ${contact.second_name}" data-contact-email="${contact.email}" data-customer-id="${getCustomerId()}">
+              <i class="bi bi-envelope"></i>
+            </button>` : ''}
+          <button type="button" class="btn btn-sm btn-outline-danger delete-contact-btn" data-contact-id="${contact.id}">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </td>
+    `;
+
+    tbody.appendChild(row);
+  };
+
+  // Update contact in table
+  const updateContactInTable = (contactId, contactData) => {
+    const row = document.querySelector(`tr[data-contact-id="${contactId}"]`);
+    if (!row) return;
+
+    const status = getStatusById(contactData.status_id);
+
+    row.querySelector('.contact-name').textContent = contactData.name;
+    row.querySelector('.contact-second-name').textContent = contactData.second_name || '';
+    row.querySelector('.contact-job-title').textContent = contactData.job_title || '—';
+
+    // Update phone with tel: link
+    const phoneEl = row.querySelector('.contact-phone');
+    const phoneParent = phoneEl.closest('a') || phoneEl.parentElement;
+
+    if (contactData.phone) {
+      if (phoneParent.tagName === 'A') {
+        phoneEl.innerHTML = `<i class="bi bi-telephone me-1"></i>${contactData.phone}`;
+        phoneParent.href = `tel:${contactData.phone}`;
+      } else {
+        phoneParent.innerHTML = `<a href="tel:${contactData.phone}" class="text-decoration-none contact-phone"><i class="bi bi-telephone me-1"></i>${contactData.phone}</a>`;
+      }
+    } else {
+      phoneParent.innerHTML = '<span class="contact-phone">—</span>';
+    }
+
+    const emailEl = row.querySelector('.contact-email');
+    const emailParent = emailEl.closest('a') || emailEl.parentElement;
+
+    if (contactData.email) {
+      if (emailParent.tagName === 'A') {
+        emailEl.innerHTML = `<i class="bi bi-envelope me-1"></i>${contactData.email}`;
+        emailParent.href = `mailto:${contactData.email}`;
+      } else {
+        emailParent.innerHTML = `<a href="mailto:${contactData.email}" class="text-decoration-none contact-email"><i class="bi bi-envelope me-1"></i>${contactData.email}</a>`;
+      }
+    } else {
+      emailParent.innerHTML = '<span class="contact-email">—</span>';
+    }
+
+    const statusEl = row.querySelector('.contact-status');
+    statusEl.style.backgroundColor = status.color;
+    statusEl.textContent = status.name;
+    statusEl.setAttribute('data-status-id', contactData.status_id);
+
+    const avatar = row.querySelector('.avatar-circle');
+    avatar.textContent = contactData.name.charAt(0).toUpperCase() + (contactData.second_name ? contactData.second_name.charAt(0).toUpperCase() : '');
+  };
+
+  // Initialize event listeners
+  document.addEventListener('DOMContentLoaded', () => {
+    // Load contact statuses first
+    loadContactStatuses();
+    loadTimezones();
+
+    // Add contact form
+    const addForm = document.getElementById('contact-add-form');
+    if (addForm) {
+      addForm.addEventListener('submit', handleAddContact);
+    }
+
+    // Save contact button
+    const saveBtn = document.getElementById('save-contact-btn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', handleSaveContact);
+    }
+
+    // Customer search functionality
+    const customerSearchInput = document.getElementById('edit_customer_search');
+    if (customerSearchInput) {
+      customerSearchInput.addEventListener('input', (e) => {
+        clearTimeout(customerSearchTimeout);
+        customerSearchTimeout = setTimeout(() => {
+          searchCustomers(e.target.value);
+        }, 300);
+      });
+
+      // Hide results when clicking outside
+      customerSearchInput.addEventListener('blur', (e) => {
+        // Delay hiding to allow for result selection
+        setTimeout(() => {
+          if (!document.querySelector('.customer-search-item:hover')) {
+            hideCustomerSearchResults();
+          }
+        }, 200);
+      });
+
+      // Show results when focusing if there's text
+      customerSearchInput.addEventListener('focus', (e) => {
+        if (e.target.value.length >= 2) {
+          searchCustomers(e.target.value);
+        }
+      });
+    }
+
+    // Clear customer selection button
+    const clearCustomerBtn = document.getElementById('clear-customer-selection');
+    if (clearCustomerBtn) {
+      clearCustomerBtn.addEventListener('click', clearCustomerSelection);
+    }
+
+    // Customer search results click handler
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('.customer-search-item')) {
+        const item = e.target.closest('.customer-search-item');
+        const customerId = item.dataset.customerId;
+        const customerName = item.dataset.customerName || item.querySelector('.customer-name').textContent;
+        selectCustomer(customerId, customerName);
+      }
+    });
+
+
+
+    // Event delegation for dynamic buttons
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('.edit-contact-btn')) {
+        const contactId = e.target.closest('.edit-contact-btn').dataset.contactId;
+        handleEditContact(contactId);
+      } else if (e.target.closest('.delete-contact-btn')) {
+        const contactId = e.target.closest('.delete-contact-btn').dataset.contactId;
+        handleDeleteContact(contactId);
+      }
+    });
+
+    // Handle modal cleanup
+    const editModal = document.getElementById('editContactModal');
+    if (editModal) {
+      editModal.addEventListener('hidden.bs.modal', () => {
+        // Clear customer search when modal is closed
+        clearCustomerSelection();
+        hideCustomerSearchResults();
+      });
+    }
+  });
+
+})();
+</script>

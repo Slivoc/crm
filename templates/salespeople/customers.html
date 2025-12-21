@@ -1,0 +1,3737 @@
+{% extends "base.html" %}
+
+{% block title %}{{ salesperson.name }} - Customer Management{% endblock %}
+
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/salespeople.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+<script type="module">
+import ChartUtils from '/static/js/chart-utils.js';
+window.ChartUtils = ChartUtils;
+</script>
+<style>
+  #customerDetailsCanvas {
+    --bs-offcanvas-width: 1600px;
+  }
+
+  /* Timeline styles for customer updates */
+  .timeline {
+    position: relative;
+    padding-left: 30px;
+  }
+  .timeline-item {
+    position: relative;
+    margin-bottom: 1.5rem;
+  }
+  .timeline-marker {
+    position: absolute;
+    left: -30px;
+    top: 0;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+  }
+  .timeline-content {
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #eee;
+  }
+
+  /* Styling for the historical spend column */
+  .historical-spend {
+    font-weight: 600;
+    color: #28a745;
+  }
+  .historical-spend.zero {
+    color: #6c757d;
+    font-weight: normal;
+  }
+  .historical-spend.high {
+    color: #dc3545;
+    font-weight: bold;
+  }
+
+  /* Styling for the estimated revenue column */
+  .estimated-revenue {
+    font-weight: 600;
+    color: #17a2b8;
+  }
+  .estimated-revenue.zero {
+    color: #6c757d;
+    font-weight: normal;
+  }
+  .estimated-revenue.high {
+    color: #fd7e14;
+    font-weight: bold;
+  }
+
+  /* Styling for fleet size column */
+  .fleet-size {
+    font-weight: 600;
+    color: #6f42c1;
+  }
+  .fleet-size.zero {
+    color: #6c757d;
+    font-weight: normal;
+  }
+  .fleet-size.large {
+    color: #e83e8c;
+    font-weight: bold;
+  }
+
+  /* Enhanced customer name column with logo, website, and country */
+  .customer-name-cell {
+    min-width: 250px;
+  }
+
+  .customer-info {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .customer-logo {
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+    object-fit: contain;
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .customer-details {
+    flex-grow: 1;
+    min-width: 0;
+  }
+
+  .customer-name {
+    font-weight: 600;
+    color: #212529;
+    margin: 0 0 4px 0;
+    line-height: 1.3;
+    font-size: 0.95rem;
+  }
+
+  .customer-website {
+    font-size: 0.75rem;
+    color: #6c757d;
+    margin: 0 0 4px 0;
+    line-height: 1.2;
+  }
+
+  .customer-website a {
+    color: #0d6efd;
+    text-decoration: none;
+    word-break: break-all;
+  }
+
+  .customer-website a:hover {
+    text-decoration: underline;
+  }
+
+  /* Country info styling within customer details */
+  .customer-country {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .country-flag {
+    width: 18px;
+    height: 13px;
+    border-radius: 2px;
+    object-fit: cover;
+    border: 1px solid #dee2e6;
+  }
+
+  .country-name {
+    font-size: 0.75rem;
+    color: #495057;
+    font-weight: 500;
+  }
+
+  /* Styling for tags */
+  .customer-tags {
+    max-width: 200px;
+    line-height: 1.4;
+  }
+  .tag-badge {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 12px;
+    background-color: #6c757d;
+    color: white;
+    display: inline-block;
+    white-space: nowrap;
+    margin-right: 4px;
+    margin-bottom: 3px;
+  }
+
+  /* Ensure consistent row height */
+  #customersTable tbody tr {
+    border-bottom: 1px solid #dee2e6;
+  }
+
+  #customersTable tbody td {
+    border-bottom: none;
+  }
+
+  /* Sortable table headers */
+  .sortable-header {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 20px !important;
+  }
+  .sortable-header:hover {
+    background-color: #f8f9fa;
+  }
+  .sort-icon {
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.5;
+  }
+  .sort-icon.active {
+    opacity: 1;
+  }
+  .time-ago {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    display: inline-block;
+    text-align: center;
+    background-color: #f8f9fa;
+    color: #495057;
+  }
+  .time-ago.medium {
+    background-color: #fff3cd;
+    color: #856404;
+  }
+
+  .time-ago.old {
+    background-color: #f8d7da;
+    color: #721c24;
+  }
+
+  .time-ago.very-stale {
+    background-color: #e2e3e5;
+    color: #6c757d;
+  }
+
+  /* Header filter styles */
+  .filter-row th {
+    padding: 8px 12px;
+    background-color: #f8f9fa;
+    border-top: 1px solid #dee2e6;
+    vertical-align: middle;
+  }
+
+  .header-filter {
+    width: 100%;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.875rem;
+    background-color: white;
+  }
+
+  .header-filter:focus {
+    border-color: #80bdff;
+    outline: 0;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+  }
+
+  .filter-select {
+    width: 100%;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.875rem;
+    background-color: white;
+    cursor: pointer;
+  }
+/* Enhanced tag filter dropdown styling */
+.tag-filter-container {
+  position: relative;
+}
+
+.tag-filter-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  min-width: 280px; /* Wider dropdown */
+  background: white;
+  border: 1px solid #ced4da;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  max-height: 250px; /* Slightly taller */
+  overflow-y: auto;
+  z-index: 1000;
+  display: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); /* Enhanced shadow */
+}
+
+.tag-filter-option {
+  padding: 6px 12px; /* Reduced padding for slimmer items */
+  cursor: pointer;
+  border-bottom: 1px solid #f8f9fa;
+  display: flex;
+  align-items: center;
+  font-size: 0.8rem; /* Slightly smaller font */
+  transition: background-color 0.15s ease;
+  min-height: 32px; /* Consistent slim height */
+}
+
+.tag-filter-option:hover {
+  background-color: #f8f9fa;
+}
+
+.tag-filter-option:last-child {
+  border-bottom: none;
+}
+
+/* Remove the manual styling for checkboxes since Bootstrap handles it */
+.tag-filter-option .form-check {
+  margin-bottom: 0;
+  min-height: auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.tag-filter-option .form-check-input {
+  margin-top: 0;
+  margin-right: 8px;
+  flex-shrink: 0;
+  width: 16px; /* Slightly smaller checkbox */
+  height: 16px;
+}
+
+.tag-filter-option .form-check-label {
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding-left: 0;
+  margin-bottom: 0;
+  flex-grow: 1;
+  line-height: 1.2;
+  font-weight: 400;
+}
+
+/* Special styling for "All Tags" option */
+.tag-filter-option:first-child {
+  background-color: #f8f9fa;
+  border-bottom: 2px solid #dee2e6;
+  font-weight: 500;
+}
+
+.tag-filter-option:first-child .form-check-label {
+  font-weight: 500;
+  color: #495057;
+}
+
+/* Improve scrollbar styling for better UX */
+.tag-filter-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tag-filter-dropdown::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3px;
+}
+
+.tag-filter-dropdown::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+.tag-filter-dropdown::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .tag-filter-dropdown {
+    min-width: 220px;
+    max-height: 200px;
+  }
+
+  .tag-filter-option {
+    padding: 8px 10px;
+    font-size: 0.75rem;
+  }
+}
+  .clear-filters-btn {
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    margin-left: 4px;
+  }
+
+  /* Enhanced customer column filter styling */
+  .dual-filter-container {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .dual-filter-container .header-filter {
+    font-size: 0.8rem;
+    padding: 3px 6px;
+  }
+
+  /* Table alignment fixes */
+  #customersTable th,
+  #customersTable td {
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  #customersTable th:nth-child(1),
+  #customersTable td:nth-child(1) {
+    min-width: 250px;
+    white-space: normal;
+  }
+
+  #customersTable th:nth-child(3),
+  #customersTable td:nth-child(3) {
+    min-width: 150px;
+    white-space: normal !important;
+    vertical-align: top !important;
+    padding-top: 12px !important;
+    padding-bottom: 12px !important;
+  }
+
+  #customersTable th:nth-child(7),
+  #customersTable td:nth-child(7) {
+    min-width: 200px;
+    white-space: normal;
+  }
+
+  #customersTable th:nth-child(9),
+  #customersTable td:nth-child(9) {
+    min-width: 150px;
+    white-space: normal;
+  }
+
+  /* Inline editing styles */
+  .editable-field {
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+    position: relative;
+    display: inline-block;
+  }
+
+  .editable-field:hover {
+    background-color: #f8f9fa;
+  }
+
+  .editable-field::after {
+    content: '\f4ca';
+    font-family: 'bootstrap-icons';
+    font-size: 0.6rem;
+    color: #6c757d;
+    margin-left: 4px;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .editable-field:hover::after {
+    opacity: 1;
+  }
+
+  .edit-form {
+    display: none;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .edit-form.active {
+    display: flex;
+  }
+
+  .edit-form input {
+    width: 100px;
+    padding: 2px 6px;
+    font-size: 0.875rem;
+  }
+
+  .edit-form .btn {
+    padding: 2px 6px;
+    font-size: 0.75rem;
+  }
+
+  .saving {
+    opacity: 0.6;
+    pointer-events: none;
+  }
+
+  .field-updated {
+    background-color: #d4edda !important;
+    transition: background-color 0.3s ease;
+  }
+
+  /* Enhanced status badge colors */
+  .status-badge {
+    font-weight: 600;
+    text-transform: capitalize;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+  }
+
+  .status-badge.clickable {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .status-badge.clickable:hover {
+    transform: scale(1.05);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+
+  .status-badge.clickable:active {
+    transform: scale(0.98);
+  }
+
+  .status-badge.clickable::after {
+    content: '\f4ca';
+    font-family: 'bootstrap-icons';
+    font-size: 0.6rem;
+    margin-left: 4px;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .status-badge.clickable:hover::after {
+    opacity: 0.7;
+  }
+
+  .status-badge.updating {
+    opacity: 0.6;
+    pointer-events: none;
+  }
+
+  .status-badge.updating::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spin 0.8s linear infinite;
+    margin-right: 4px;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Status badge color variations */
+  .status-badge[data-status*="active"] {
+    background-color: #28a745 !important;
+    color: white !important;
+  }
+
+  .status-badge[data-status*="contact identified"] {
+    background-color: #fd7e14 !important;
+    color: white !important;
+  }
+
+  .status-badge[data-status*="Target"] {
+    background-color: #17a2b8 !important;
+    color: white !important;
+  }
+
+  .status-badge[data-status*="qualified"] {
+    background-color: #007bff !important;
+    color: white !important;
+  }
+
+  .status-badge[data-status*="negotiat"] {
+    background-color: #ffc107 !important;
+    color: #212529 !important;
+  }
+
+  .status-badge[data-status*="target"] {
+    background-color: #dc3545 !important;
+    color: white !important;
+  }
+
+  .status-badge[data-status*="cold"] {
+    background-color: #6f42c1 !important;
+    color: white !important;
+  }
+
+  .status-badge[data-status*="inactive"],
+  .status-badge[data-status*="dormant"] {
+    background-color: #6c757d !important;
+    color: white !important;
+  }
+
+  .status-badge[data-status*="lost"],
+  .status-badge[data-status*="reject"] {
+    background-color: #495057 !important;
+    color: #adb5bd !important;
+  }
+
+  .status-badge[data-status*="hold"] {
+    background-color: #e9ecef !important;
+    color: #495057 !important;
+    border: 1px solid #adb5bd !important;
+  }
+
+  .status-badge[data-status="not set"] {
+    background-color: #f8f9fa !important;
+    color: #6c757d !important;
+    border: 1px dashed #dee2e6 !important;
+  }
+
+  .customer-contacts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.contacts-count {
+  font-size: 0.75rem;
+  color: #495057;
+  font-weight: 600;
+}
+
+.contacts-label {
+  font-size: 0.75rem;
+  color: #6c757d;
+  font-weight: 400;
+}
+
+/* Styling for different contact counts */
+.contacts-count[data-count="0"] {
+  color: #6c757d;
+  font-weight: normal;
+}
+
+.contacts-count[data-count-high="true"] {
+  color: #28a745;
+  font-weight: bold;
+}
+
+.customer-notes {
+  max-width: 250px;
+  line-height: 1.4;
+}
+
+.notes-preview {
+  font-size: 0.875rem;
+  color: #495057;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3; /* Limit to 3 lines */
+  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
+}
+
+.notes-preview p {
+  margin: 0 0 0.25rem 0;
+  font-size: inherit;
+}
+
+.notes-preview h1, .notes-preview h2, .notes-preview h3,
+.notes-preview h4, .notes-preview h5, .notes-preview h6 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0 0 0.25rem 0;
+  color: #212529;
+}
+
+.notes-preview ul, .notes-preview ol {
+  margin: 0;
+  padding-left: 1rem;
+  font-size: inherit;
+}
+
+.notes-preview li {
+  margin-bottom: 0;
+}
+
+.notes-preview strong {
+  font-weight: 600;
+}
+
+.notes-preview em {
+  font-style: italic;
+}
+
+.notes-preview blockquote {
+  border-left: 3px solid #dee2e6;
+  padding-left: 0.5rem;
+  margin: 0.25rem 0;
+  font-style: italic;
+  color: #6c757d;
+}
+
+.notes-preview code {
+  background-color: #f8f9fa;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.8rem;
+}
+
+/* Hover effect to show full content */
+.notes-preview:hover {
+  overflow: visible;
+  -webkit-line-clamp: unset;
+  background-color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  border-radius: 4px;
+  padding: 8px;
+  position: relative;
+  z-index: 10;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.priority-badge {
+  font-weight: 500;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.priority-badge.clickable:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.priority-badge.clickable:active {
+  transform: scale(0.98);
+}
+
+.priority-badge.updating {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.customer-development-point {
+  max-width: 250px;
+  line-height: 1.4;
+}
+
+.development-point {
+  font-size: 0.875rem;
+}
+
+.point-answer {
+  color: #495057;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.point-question {
+  font-style: italic;
+  line-height: 1.3;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+  <!-- Hidden fields for JavaScript access to current sort state -->
+  <input type="hidden" id="currentSort" value="{{ current_sort or '' }}">
+  <input type="hidden" id="currentOrder" value="{{ current_order or 'asc' }}">
+  <input type="hidden" id="salesPersonId" value="{{ salesperson.id }}">
+
+<!-- Updated header row for the customers page -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div>
+            <h2 class="fw-bold mb-1">Customers</h2>
+            <p class="text-muted mb-0">CRM view of customer accounts for {{ salesperson.name }}</p>
+        </div>
+    </div>
+    <div class="col-md-6 text-md-end">
+        <!-- Navigation Buttons - All in one line -->
+        <div class="d-inline-flex gap-2">
+            <!-- Salesperson Selector Dropdown -->
+            <div class="dropdown">
+                <button type="button" class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-person-circle"></i> {{ salesperson.name }}
+                </button>
+                <ul class="dropdown-menu">
+                    {% if all_salespeople %}
+                        {% for sp in all_salespeople %}
+                            {% if sp.id != salesperson.id %}
+                                <li>
+                                    <a class="dropdown-item" href="{{ url_for('salespeople.customers', salesperson_id=sp.id) }}">
+                                        <i class="bi bi-person"></i> {{ sp.name }}
+                                        {% if sp.customer_count > 0 %}
+                                            <span class="badge bg-secondary ms-2">{{ sp.customer_count }}</span>
+                                        {% endif %}
+                                    </a>
+                                </li>
+                            {% else %}
+                                <li>
+                                    <span class="dropdown-item active">
+                                        <i class="bi bi-person-check"></i> {{ sp.name }} (Current)
+                                    </span>
+                                </li>
+                            {% endif %}
+                        {% endfor %}
+                        <li><hr class="dropdown-divider"></li>
+                    {% endif %}
+                    <li>
+                        <a class="dropdown-item" href="{{ url_for('salespeople.dashboard') }}">
+                            <i class="bi bi-speedometer2"></i> Main Dashboard
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Existing Navigation Buttons -->
+            <a href="{{ url_for('salespeople.contacts', salesperson_id=salesperson.id) }}" class="btn btn-outline-primary">
+                <i class="bi bi-people"></i> Contacts
+            </a>
+            <a href="{{ url_for('salespeople.activity', salesperson_id=salesperson.id) }}" class="btn btn-outline-primary">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+        </div>
+    </div>
+</div>
+
+  <div class="row">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body table-container">
+          <div class="table-responsive">
+            <table class="table table-hover" id="customersTable">
+              <thead>
+  <tr>
+    <th class="sortable-header customer-name-cell" data-sort="name">
+      Customer
+      {% if current_sort == 'name' %}
+        <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+      {% else %}
+        <i class="bi bi-arrow-up-down sort-icon"></i>
+      {% endif %}
+    </th>
+    <th class="sortable-header" data-sort="status">
+      Status / Priority
+      {% if current_sort == 'status' %}
+        <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+      {% else %}
+        <i class="bi bi-arrow-up-down sort-icon"></i>
+      {% endif %}
+    </th>
+
+    <!-- Enhanced Tags header with bulk operations -->
+    <th>
+      <div class="d-flex align-items-center justify-content-between">
+        <span>Tags</span>
+        <div class="dropdown">
+          <button class="btn btn-sm btn-outline-primary dropdown-toggle ms-2"
+                  type="button"
+                  id="bulkTagDropdown"
+                  data-bs-toggle="dropdown"
+                  aria-expanded="false"
+                  title="Bulk tag actions">
+            <i class="bi bi-tags"></i>
+          </button>
+          <ul class="dropdown-menu" aria-labelledby="bulkTagDropdown">
+            <li>
+              <a class="dropdown-item" href="#" id="addTagToVisible">
+                <i class="bi bi-plus-circle text-success"></i> Add Tag to Visible
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="#" id="removeTagFromVisible">
+                <i class="bi bi-dash-circle text-danger"></i> Remove Tag from Visible
+              </a>
+            </li>
+            <li><hr class="dropdown-divider"></li>
+            <li>
+              <a class="dropdown-item" href="#" id="viewTagStats">
+                <i class="bi bi-bar-chart"></i> Tag Statistics
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </th>
+
+    <th class="sortable-header" data-sort="historical_spend">
+      Spend
+      {% if current_sort == 'historical_spend' %}
+        <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+      {% else %}
+        <i class="bi bi-arrow-up-down sort-icon"></i>
+      {% endif %}
+    </th>
+    <th class="sortable-header" data-sort="estimated_revenue">
+      Est. Revenue
+      {% if current_sort == 'estimated_revenue' %}
+        <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+      {% else %}
+        <i class="bi bi-arrow-up-down sort-icon"></i>
+      {% endif %}
+    </th>
+    <th class="sortable-header" data-sort="fleet_size">
+      Fleet Size
+      {% if current_sort == 'fleet_size' %}
+        <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+      {% else %}
+        <i class="bi bi-arrow-up-down sort-icon"></i>
+      {% endif %}
+    </th>
+    <th class="sortable-header" data-sort="latest_update">
+      Latest Update
+      {% if current_sort == 'latest_update' %}
+        <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+      {% else %}
+        <i class="bi bi-arrow-up-down sort-icon"></i>
+      {% endif %}
+    </th>
+    <th class="sortable-header" data-sort="most_recent_order">
+      Last Order
+      {% if current_sort == 'most_recent_order' %}
+        <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+      {% else %}
+        <i class="bi bi-arrow-up-down sort-icon"></i>
+      {% endif %}
+    </th>
+    <th class="sortable-header" data-sort="development">
+      Next Step
+      {% if current_sort == 'development' %}
+        <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+      {% else %}
+        <i class="bi bi-arrow-up-down sort-icon"></i>
+      {% endif %}
+    </th>
+    <th>Actions</th>
+  </tr>
+
+  <!-- Filter Row -->
+  <tr class="filter-row">
+    <th>
+      <div class="dual-filter-container">
+        <input type="text" class="header-filter" id="nameFilter" placeholder="Filter names...">
+        <input type="text" class="header-filter" id="countryFilter" placeholder="Filter countries...">
+      </div>
+    </th>
+    <th>
+      <div class="dual-filter-container">
+        <select class="filter-select" id="statusFilter">
+          <option value="">All Statuses</option>
+          {% for status in customer_statuses %}
+            <option value="{{ status.status }}" {% if status_filter == status.status %}selected{% endif %}>{{ status.status }}</option>
+          {% endfor %}
+        </select>
+        <select class="filter-select" id="priorityFilter">
+          <option value="">All Priorities</option>
+          {% for priority in priorities %}
+            <option value="{{ priority.id }}" {% if priority_filter == priority.id|string %}selected{% endif %}>{{ priority.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </th>
+    <th>
+      <div class="tag-filter-container">
+        <input type="text" class="header-filter" id="tagFilterInput" placeholder="Filter by tags..." readonly>
+        <div class="tag-filter-dropdown" id="tagFilterDropdown">
+          <!-- Tag options will be populated by JavaScript -->
+        </div>
+      </div>
+    </th>
+    <th></th>
+    <th></th>
+    <th></th>
+    <th></th>
+    <th></th>
+    <th></th>
+    <th>
+      <button type="button" class="btn btn-sm btn-outline-secondary clear-filters-btn" id="clearHeaderFilters">
+        <i class="bi bi-x"></i> Clear
+      </button>
+    </th>
+  </tr>
+</thead>
+              <tbody>
+                {% for customer in customers %}
+                  <tr class="customer-row"
+    data-name="{{ customer.name|lower }}"
+    data-status="{{ customer.customer_status or '' }}"
+    data-priority-id="{{ customer.priority_id or '' }}"
+    data-country="{{ (customer.country|country_code_to_name)|lower if customer.country else '' }}"
+    data-tags="{{ customer.tags|join(',')|lower if customer.tags else '' }}">
+                   <!-- In your main customer table template, update the customer name cell section -->
+<td class="customer-name-cell">
+  <div class="customer-info">
+    {% if customer.logo_url %}
+      <img src="{{ customer.logo_url }}" alt="{{ customer.name }} logo" class="customer-logo"
+           onerror="this.style.display='none';">
+    {% else %}
+      <div class="customer-logo d-flex align-items-center justify-content-center">
+        <i class="bi bi-building text-muted"></i>
+      </div>
+    {% endif %}
+    <div class="customer-details">
+      <div class="customer-name">{{ customer.name }}</div>
+      {% if customer.website %}
+        <div class="customer-website">
+          <a href="{{ customer.website if customer.website.startswith('http') else 'https://' + customer.website }}"
+             target="_blank" rel="noopener noreferrer">
+            {{ customer.website }}
+          </a>
+        </div>
+      {% endif %}
+      {% if customer.country %}
+        <div class="customer-country">
+          <img src="https://flagcdn.com/20x15/{{ customer.country.lower() }}.png"
+               alt="{{ customer.country|country_code_to_name }} flag" class="country-flag"
+               onerror="this.style.display='none';">
+          <span class="country-name">{{ customer.country|country_code_to_name }}</span>
+        </div>
+      {% endif %}
+      <!-- Add contacts count under country -->
+      <div class="customer-contacts">
+        <i class="bi bi-people me-1 text-muted"></i>
+        {% set contact_count = customer.contacts_count or 0 %}
+        <span class="contacts-count"
+              data-count="{{ contact_count }}"
+              {% if contact_count > 5 %}data-count-high="true"{% endif %}>
+          {{ contact_count }}
+        </span>
+        <span class="contacts-label">{{ 'contact' if contact_count == 1 else 'contacts' }}</span>
+      </div>
+                      </div>
+                    </td>
+                    <td>
+  {% set status = customer.customer_status or 'Not Set' %}
+  <span class="badge status-badge clickable"
+        data-status="{{ status.lower() }}"
+        data-customer-id="{{ customer.id }}"
+        title="Click to advance status">
+    {{ status }}
+  </span>
+
+  <!-- Priority badge -->
+  <div class="mt-1">
+    {% if customer.priority_name %}
+      <span class="badge priority-badge clickable"
+            style="background-color: {{ customer.priority_color }}; color: #333;"
+            data-customer-id="{{ customer.id }}"
+            title="Click to advance priority">
+        {{ customer.priority_name }}
+      </span>
+    {% else %}
+      <span class="badge priority-badge clickable"
+            style="background-color: #f8f9fa; color: #6c757d; border: 1px dashed #dee2e6;"
+            data-customer-id="{{ customer.id }}"
+            title="Click to set priority">
+        No Priority
+      </span>
+    {% endif %}
+  </div>
+</td>
+                    <td class="customer-tags">
+                      {% if customer.tags %}
+                        {% for tag in customer.tags %}
+                          <span class="tag-badge tag-{{ tag.lower().replace(' ', '-') }}">{{ tag }}</span>
+                        {% endfor %}
+                      {% else %}
+                        <span class="text-muted">No tags</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% set spend = customer.historical_spend or 0 %}
+                      {% if spend == 0 %}
+                        <span class="historical-spend zero">£0</span>
+                      {% elif spend > 100000 %}
+                        <span class="historical-spend high">{{ "£{:,.0f}".format(spend) }}</span>
+                      {% else %}
+                        <span class="historical-spend">{{ "£{:,.0f}".format(spend) }}</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% set est_revenue = customer.estimated_revenue or 0 %}
+                      <div class="editable-field estimated-revenue"
+                           data-field="estimated_revenue"
+                           data-value="{{ est_revenue }}"
+                           data-customer-id="{{ customer.id }}">
+                        {% if est_revenue == 0 %}
+                          <span class="estimated-revenue zero display-value">£0</span>
+                        {% elif est_revenue > 250000 %}
+                          <span class="estimated-revenue high display-value">{{ "£{:,.0f}".format(est_revenue) }}</span>
+                        {% else %}
+                          <span class="estimated-revenue display-value">{{ "£{:,.0f}".format(est_revenue) }}</span>
+                        {% endif %}
+                      </div>
+                      <form class="edit-form" method="post" action="{{ url_for('salespeople.update_customer_field') }}">
+                        <input type="hidden" name="customer_id" value="{{ customer.id }}">
+                        <input type="hidden" name="field" value="estimated_revenue">
+                        <input type="number" name="value" class="form-control form-control-sm" min="0" step="1000" required>
+                        <button type="submit" class="btn btn-success btn-sm">
+                          <i class="bi bi-check"></i>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm cancel-edit">
+                          <i class="bi bi-x"></i>
+                        </button>
+                      </form>
+                    </td>
+                    <td>
+                      {% set fleet = customer.fleet_size or 0 %}
+                      <div class="editable-field fleet-size"
+                           data-field="fleet_size"
+                           data-value="{{ fleet }}"
+                           data-customer-id="{{ customer.id }}">
+                        {% if fleet == 0 %}
+                          <span class="fleet-size zero display-value">-</span>
+                        {% elif fleet > 100 %}
+                          <span class="fleet-size large display-value">{{ "{:,}".format(fleet) }}</span>
+                        {% else %}
+                          <span class="fleet-size display-value">{{ "{:,}".format(fleet) }}</span>
+                        {% endif %}
+                      </div>
+                      <form class="edit-form" method="post" action="{{ url_for('salespeople.update_customer_field') }}">
+                        <input type="hidden" name="customer_id" value="{{ customer.id }}">
+                        <input type="hidden" name="field" value="fleet_size">
+                        <input type="number" name="value" class="form-control form-control-sm" min="0" required>
+                        <button type="submit" class="btn btn-success btn-sm">
+                          <i class="bi bi-check"></i>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm cancel-edit">
+                          <i class="bi bi-x"></i>
+                        </button>
+                      </form>
+                    </td>
+                    <td>
+                      {% if customer.latest_update %}
+                        <small class="d-block text-truncate" style="max-width: 250px;">{{ customer.latest_update }}</small>
+                        {% if customer.latest_update_contact_name %}
+                          <small class="text-primary">
+                            <i class="bi bi-person"></i> {{ customer.latest_update_contact_name }}
+                          </small>
+                        {% endif %}
+                        <small class="text-muted">{{ customer.latest_update_date }}</small>
+                      {% else %}
+                        <span class="text-muted">No updates</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if customer.most_recent_order_number %}
+                        <div class="d-flex flex-column order-info" data-order-date="{{ customer.most_recent_order_date }}">
+                          <span class="time-ago" data-date="{{ customer.most_recent_order_date }}">
+                            Loading...
+                          </span>
+                        </div>
+                      {% else %}
+                        <div class="d-flex flex-column order-info very-stale">
+                          <span class="time-ago very-stale">Never</span>
+                        </div>
+                      {% endif %}
+                    </td>
+             <!-- Replace the Notes column content with this -->
+<!-- Replace the Notes column content with this -->
+<td class="customer-development-point">
+  {% if customer.first_development_point %}
+    <div class="development-point">
+      {% if customer.first_development_point.answer %}
+        <div class="point-answer">
+          {{ customer.first_development_point.answer }}
+        </div>
+      {% else %}
+        <div class="point-question text-muted">
+          {{ customer.first_development_point.question }}
+        </div>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="development-point">
+      <span class="text-muted">No development points</span>
+    </div>
+  {% endif %}
+</td>
+                    <td>
+                      <div class="btn-group">
+                        <button type="button" class="btn btn-sm btn-primary customer-details-btn" data-customer-id="{{ customer.id }}">
+                          <i class="bi bi-eye"></i> View
+                        </button>
+                        <button type="button" class="btn btn-sm btn-success add-update-btn" data-customer-id="{{ customer.id }}" data-customer-name="{{ customer.name }}">
+                          <i class="bi bi-plus-circle"></i> Communication
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                {% else %}
+                  <tr>
+                    <td colspan="10" class="text-center py-3">
+                      <p class="text-muted">No customers found matching your criteria</p>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Customer Update Modal -->
+<div class="modal fade" id="customerUpdateModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="customerUpdateModalLabel">Add Customer Update</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="quickUpdateForm" method="post">
+          <input type="hidden" name="customer_id" id="updateCustomerId">
+
+          <div class="mb-3">
+            <label for="updateCustomerName" class="form-label">Customer</label>
+            <input type="text" class="form-control" id="updateCustomerName" readonly>
+          </div>
+
+          <div class="mb-3">
+            <label for="updateType" class="form-label">Update Type</label>
+            <select class="form-select" id="updateType" name="update_type" required>
+              <option value="generic">General Update</option>
+              <option value="email">Email Communication</option>
+              <option value="phone">Phone Communication</option>
+              <option value="meeting">Meeting</option>
+            </select>
+          </div>
+
+          <!-- Contact selection - shows when communication type is selected -->
+          <div class="mb-3" id="contactSelection" style="display: none;">
+            <label for="contactId" class="form-label">Contact (Optional)</label>
+            <select class="form-select" id="contactId" name="contact_id">
+              <option value="">Select a contact...</option>
+              <!-- Will be populated by JavaScript based on customer -->
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label for="updateText" class="form-label">
+              <span id="updateTextLabel">Update Details</span>
+              <small class="text-muted" id="updateTextHint"></small>
+            </label>
+            <textarea class="form-control" id="updateText" name="update_text" rows="3"></textarea>
+          </div>
+
+          <div class="d-grid">
+            <button type="submit" class="btn btn-primary">Save Update</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Customer Details Offcanvas -->
+<div class="offcanvas offcanvas-end" id="customerDetailsCanvas" tabindex="-1">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title" id="customerDetailsCanvasLabel">Customer Details</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body" id="customerDetailsContent">
+    <!-- Customer details content will be loaded here via AJAX -->
+  </div>
+</div>
+
+<!-- Development Plan Modal -->
+<div class="modal fade" id="developmentPlanModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="bi bi-chat-dots"></i> Development Notes - <span id="developmentCustomerName">Customer Name</span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="developmentPlanContent">
+          <!-- Development plan content will be loaded here -->
+          <div class="text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+              <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="text-muted mt-2">Loading development questions...</p>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* Simple Development Question Styles - No Dynamic Formatting */
+.development-question {
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  background-color: #fff;
+}
+
+.development-question-header {
+  padding: 1rem;
+  border-bottom: 1px solid #dee2e6;
+  background-color: #f5f9f5;
+  border-radius: 8px 8px 0 0;
+}
+
+.development-question-title {
+  margin: 0;
+  font-weight: 600;
+  color: #333;
+  font-size: 1rem;
+}
+
+.development-question-description {
+  color: #6c757d;
+  font-size: 0.9rem;
+  margin: 0.5rem 0 0 0;
+  line-height: 1.4;
+}
+
+.development-question-body {
+  padding: 1rem;
+}
+
+.development-answer-textarea {
+  width: 100%;
+  min-height: 120px;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  padding: 0.75rem;
+  font-size: 0.9rem;
+  resize: vertical;
+  font-family: inherit;
+  transition: border-color 0.15s ease-in-out;
+}
+
+.development-answer-textarea:focus {
+  border-color: #0d6efd;
+  outline: 0;
+  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+.development-answer-meta {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #dee2e6;
+  font-size: 0.8rem;
+  color: #6c757d;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.save-status {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.save-status.saving {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.save-status.saved {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.save-status.error {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.answer-changed {
+  border-color: #ffc107 !important;
+  background-color: #fffdf2 !important;
+}
+
+.development-point.clickable {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin: -4px -8px;
+}
+
+.development-point.clickable:hover {
+  background-color: #f8f9fa;
+  transform: translateX(2px);
+}
+</style>
+
+<script>
+// Simplified Development Plan Modal JavaScript
+document.addEventListener('DOMContentLoaded', function() {
+  const developmentPlanModal = new bootstrap.Modal(document.getElementById('developmentPlanModal'));
+  let currentCustomerId = null;
+  let saveTimeouts = new Map(); // Track save timeouts per question
+
+  // Make development points clickable
+  function initializeDevelopmentPointClicks() {
+    document.querySelectorAll('.development-point').forEach(element => {
+      element.classList.add('clickable');
+      element.addEventListener('click', function() {
+        const customerId = this.closest('tr').querySelector('.customer-details-btn').getAttribute('data-customer-id');
+        const customerName = this.closest('tr').querySelector('.customer-name').textContent;
+        openDevelopmentPlan(customerId, customerName);
+      });
+    });
+  }
+
+  function openDevelopmentPlan(customerId, customerName) {
+    currentCustomerId = customerId;
+    document.getElementById('developmentCustomerName').textContent = customerName;
+    developmentPlanModal.show();
+    loadDevelopmentPlan(customerId);
+  }
+
+  function loadDevelopmentPlan(customerId) {
+    const content = document.getElementById('developmentPlanContent');
+
+    content.innerHTML = `
+      <div class="text-center py-4">
+        <div class="spinner-border text-primary" role="status">
+          <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="text-muted mt-2">Loading development questions...</p>
+      </div>
+    `;
+
+    fetch(`/customers/${customerId}/development/api`)
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          renderDevelopmentQuestions(data.development_plan);
+        } else {
+          content.innerHTML = `
+            <div class="alert alert-danger">
+              <h5>Error Loading Questions</h5>
+              <p>${data.error || 'Failed to load development questions'}</p>
+            </div>
+          `;
+        }
+      })
+      .catch(error => {
+        console.error('Error loading development plan:', error);
+        content.innerHTML = `
+          <div class="alert alert-danger">
+            <h5>Error Loading Questions</h5>
+            <p>There was a problem loading the development questions. Please try again.</p>
+          </div>
+        `;
+      });
+  }
+function renderDevelopmentQuestions(questions) {
+  const content = document.getElementById('developmentPlanContent');
+
+  if (questions.length === 0) {
+    content.innerHTML = `
+      <div class="text-center py-4">
+        <i class="bi bi-chat-dots fs-1 text-muted"></i>
+        <p class="text-muted mt-2">No development questions configured yet.</p>
+      </div>
+    `;
+    return;
+  }
+
+  let html = '';
+
+  questions.forEach((question) => {
+    const lastUpdated = question.answered_at ?
+      `Last updated: ${new Date(question.answered_at).toLocaleDateString()} at ${new Date(question.answered_at).toLocaleTimeString()}` :
+      'Not answered yet';
+
+    html += `
+      <div class="development-question">
+        <div class="development-question-header">
+          <h6 class="development-question-title">
+            ${question.question}
+          </h6>
+          ${question.description ? `<p class="development-question-description">${question.description}</p>` : ''}
+        </div>
+        <div class="development-question-body">
+          <textarea
+            class="development-answer-textarea"
+            data-point-id="${question.point_id}"
+            placeholder="Enter your thoughts, notes, or current status for this area..."
+            oninput="handleAnswerChange(this)"
+          >${question.answer || ''}</textarea>
+
+          <div class="development-answer-meta">
+            <span>${lastUpdated}${question.answered_by ? ` by ${question.answered_by}` : ''}</span>
+            <span class="save-status" data-point-id="${question.point_id}" style="display: none;"></span>
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  content.innerHTML = html;
+}
+  // Auto-save functionality
+  window.handleAnswerChange = function(textarea) {
+    const pointId = textarea.getAttribute('data-point-id');
+    textarea.classList.add('answer-changed');
+
+    // Clear existing timeout for this question
+    if (saveTimeouts.has(pointId)) {
+      clearTimeout(saveTimeouts.get(pointId));
+    }
+
+    // Show saving status
+    const status = document.querySelector(`.save-status[data-point-id="${pointId}"]`);
+    status.textContent = 'Typing...';
+    status.className = 'save-status saving';
+    status.style.display = 'inline-block';
+
+    // Set new timeout to save after 2 seconds of no typing
+    const timeout = setTimeout(() => {
+      saveAnswer(pointId, textarea.value);
+    }, 2000);
+
+    saveTimeouts.set(pointId, timeout);
+  };
+
+  function saveAnswer(pointId, answer) {
+    const textarea = document.querySelector(`textarea[data-point-id="${pointId}"]`);
+    const status = document.querySelector(`.save-status[data-point-id="${pointId}"]`);
+
+    status.textContent = 'Saving...';
+    status.className = 'save-status saving';
+
+    fetch(`/customers/${currentCustomerId}/development/answer`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        development_point_id: pointId,
+        answer: answer.trim()
+      })
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        textarea.classList.remove('answer-changed');
+        status.textContent = 'Saved';
+        status.className = 'save-status saved';
+
+        // Hide status after 3 seconds
+        setTimeout(() => {
+          status.style.display = 'none';
+        }, 3000);
+
+        // Refresh main table if needed
+        if (typeof refreshTableContent === 'function') {
+          refreshTableContent();
+        }
+      } else {
+        status.textContent = 'Error saving';
+        status.className = 'save-status error';
+      }
+    })
+    .catch(error => {
+      console.error('Error saving answer:', error);
+      status.textContent = 'Error saving';
+      status.className = 'save-status error';
+    });
+  }
+
+  // Initialize
+  initializeDevelopmentPointClicks();
+
+  // Re-initialize after table refreshes
+  const originalRefreshTableContent = window.refreshTableContent;
+  if (originalRefreshTableContent) {
+    window.refreshTableContent = function() {
+      originalRefreshTableContent();
+      setTimeout(initializeDevelopmentPointClicks, 100);
+    };
+  }
+});
+</script>
+
+<!-- Add these modals after your existing customer modals in the template -->
+
+<!-- Bulk Tag Action Modal -->
+<div class="modal fade" id="bulkTagModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="bulkTagModalTitle">Bulk Tag Action</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="bulkTagContent">
+          <!-- Content will be populated by JavaScript -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="executeBulkAction">Execute</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tag Statistics Modal -->
+<div class="modal fade" id="tagStatsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="bi bi-bar-chart"></i> Tag Statistics
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="tagStatsContent">
+          <div class="text-center py-3">
+            <div class="spinner-border" role="status">
+              <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="text-muted mt-2">Loading tag statistics...</p>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* Enhanced styles for bulk tag operations */
+.visible-customers-list {
+  max-height: 250px;
+  overflow-y: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  padding: 0.75rem;
+  background-color: #f8f9fa;
+  margin-bottom: 1rem;
+}
+
+.customer-item {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #e9ecef;
+  font-size: 0.875rem;
+}
+
+.customer-item:last-child {
+  border-bottom: none;
+}
+
+.customer-item strong {
+  color: #212529;
+  font-weight: 600;
+}
+
+.tag-input-container {
+  position: relative;
+}
+
+.tag-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid #ced4da;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1050;
+  display: none;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.tag-suggestion {
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  border-bottom: 1px solid #f8f9fa;
+  transition: background-color 0.15s ease;
+}
+
+.tag-suggestion:hover {
+  background-color: #f8f9fa;
+}
+
+.tag-suggestion:last-child {
+  border-bottom: none;
+}
+
+.tag-suggestion.highlight {
+  background-color: #e3f2fd;
+  color: #1565c0;
+}
+
+/* Tag statistics styles with hierarchy support */
+.tag-statistics {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.tag-stat-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.tag-stat-item:last-child {
+  border-bottom: none;
+}
+
+.tag-stat-item.parent-tag {
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  margin-bottom: 2px;
+  padding: 0.75rem;
+}
+
+.tag-stat-item.child-tag {
+  background-color: #fff;
+  border-left: 3px solid #17a2b8;
+  margin-left: 10px;
+  padding-left: 0.5rem;
+}
+
+.tag-stat-name {
+  font-weight: 500;
+  color: #212529;
+  min-width: 120px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.tag-stat-item.parent-tag .tag-stat-name {
+  font-weight: 600;
+  color: #495057;
+}
+
+.tag-stat-item.child-tag .tag-stat-name {
+  font-weight: 400;
+  color: #6c757d;
+}
+
+.tag-stat-count {
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  min-width: 40px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.tag-stat-count.bg-primary {
+  background-color: #007bff !important;
+}
+
+.tag-stat-count.bg-info {
+  background-color: #17a2b8 !important;
+}
+
+.progress-container {
+  flex-grow: 1;
+  margin: 0 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.progress {
+  height: 8px;
+  flex-grow: 1;
+  background-color: #f8f9fa;
+}
+
+.progress-bar {
+  background-color: #007bff;
+  transition: width 0.3s ease;
+}
+
+.progress-percentage {
+  font-size: 0.75rem;
+  color: #6c757d;
+  min-width: 40px;
+  text-align: right;
+}
+
+/* Enhanced preview section */
+.preview-section {
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+}
+
+.preview-section h6 {
+  margin-bottom: 0.5rem;
+  color: #495057;
+}
+
+/* Action preview alert styling */
+.alert-info {
+  background-color: #d1ecf1;
+  border-color: #bee5eb;
+  color: #0c5460;
+}
+
+.alert-warning {
+  background-color: #fff3cd;
+  border-color: #ffeaa7;
+  color: #856404;
+}
+
+.alert-success {
+  background-color: #d4edda;
+  border-color: #c3e6cb;
+  color: #155724;
+}
+
+/* Loading states */
+.btn[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spinner-border-sm {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .visible-customers-list {
+    max-height: 150px;
+  }
+
+  .tag-stat-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .progress-container {
+    width: 100%;
+    margin: 0;
+  }
+}
+
+/* Enhanced dropdown menu for bulk actions */
+.dropdown-menu {
+  border: 1px solid #dee2e6;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+}
+
+.dropdown-item {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  transition: background-color 0.15s ease;
+}
+
+.dropdown-item:hover {
+  background-color: #f8f9fa;
+}
+
+.dropdown-item i {
+  width: 16px;
+  margin-right: 0.5rem;
+}
+
+/* Tag filter container enhancements */
+.tag-filter-container {
+  position: relative;
+}
+
+.tag-filter-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid #ced4da;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1000;
+  display: none;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.tag-filter-option {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #f8f9fa;
+  display: flex;
+  align-items: center;
+  font-size: 0.875rem;
+  transition: background-color 0.15s ease;
+}
+
+.tag-filter-option:hover {
+  background-color: #f8f9fa;
+}
+
+.tag-filter-option:last-child {
+  border-bottom: none;
+}
+
+.tag-filter-option input[type="checkbox"] {
+  margin-right: 8px;
+}
+</style>
+{% endblock %}
+{% block scripts %}
+{{ super() }}
+<script>
+// Enhanced JavaScript for the customer page to maintain filters and improve UX
+
+document.addEventListener('DOMContentLoaded', function () {
+  const customerDetailsCanvasEl = document.getElementById('customerDetailsCanvas');
+  const customerDetailsCanvas = new bootstrap.Offcanvas(customerDetailsCanvasEl);
+  const customerDetailsContent = document.getElementById('customerDetailsContent');
+  let chartInstance = null;
+
+  // Get current sort state from hidden fields
+  const currentSort = document.getElementById('currentSort').value;
+  const currentOrder = document.getElementById('currentOrder').value;
+  const salesPersonId = document.getElementById('salesPersonId').value;
+
+  // Add this function inside your DOMContentLoaded event listener
+function renderNotesMarkdown() {
+  // Check if marked library is available
+  if (typeof marked === 'undefined') {
+    console.warn('Marked library not available, loading from CDN...');
+    // Load marked library dynamically
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js';
+    script.onload = function() {
+      processNotesElements();
+    };
+    document.head.appendChild(script);
+  } else {
+    processNotesElements();
+  }
+}
+
+function processNotesElements() {
+  const notesElements = document.querySelectorAll('.notes-preview[data-notes]');
+
+  notesElements.forEach(element => {
+    const markdownText = element.getAttribute('data-notes');
+
+    if (markdownText && markdownText.trim()) {
+      try {
+        // Configure marked for safer rendering
+        if (typeof marked.setOptions === 'function') {
+          marked.setOptions({
+            sanitize: false, // We trust our own data
+            breaks: true,    // Convert line breaks to <br>
+            gfm: true       // GitHub Flavored Markdown
+          });
+        }
+
+        const htmlContent = marked.parse(markdownText);
+        element.innerHTML = htmlContent;
+      } catch (error) {
+        console.error('Error parsing markdown for notes:', error);
+        // Fallback to plain text with line breaks
+        element.textContent = markdownText;
+      }
+    }
+  });
+}
+
+
+  // Enhanced URL state management
+  const urlStateManager = {
+    // Get current URL parameters
+    getCurrentParams: function() {
+      const params = new URLSearchParams(window.location.search);
+      return {
+        sort: params.get('sort') || currentSort,
+        order: params.get('order') || currentOrder,
+        search: params.get('search') || '',
+        status: params.get('status') || '',
+        // Add any other filter parameters you need
+      };
+    },
+
+    // Update URL without page reload
+    updateURL: function(newParams) {
+      const url = new URL(window.location);
+      Object.entries(newParams).forEach(([key, value]) => {
+        if (value && value.trim() !== '') {
+          url.searchParams.set(key, value);
+        } else {
+          url.searchParams.delete(key);
+        }
+      });
+      window.history.replaceState({}, '', url);
+    },
+
+    // Get URL with current filters for AJAX requests
+    getFilteredURL: function(baseUrl) {
+      const params = this.getCurrentParams();
+      const url = new URL(baseUrl, window.location.origin);
+      Object.entries(params).forEach(([key, value]) => {
+        if (value && value.trim() !== '') {
+          url.searchParams.set(key, value);
+        }
+      });
+      return url.toString();
+    }
+  };
+
+  // Initialize components
+  initializeHeaderFilters();
+  initializeStatusBadgeHandlers();
+
+  // Enhanced sorting functionality that preserves filters
+  document.querySelectorAll('.sortable-header').forEach(header => {
+    header.addEventListener('click', function() {
+      const sortColumn = this.getAttribute('data-sort');
+      const currentParams = urlStateManager.getCurrentParams();
+
+      let newOrder = 'asc';
+      if (currentParams.sort === sortColumn && currentParams.order === 'asc') {
+        newOrder = 'desc';
+      }
+
+      // Update URL with new sort while preserving filters
+      const newParams = {
+        ...currentParams,
+        sort: sortColumn,
+        order: newOrder
+      };
+
+      const url = new URL(window.location);
+      Object.entries(newParams).forEach(([key, value]) => {
+        if (value && value.trim() !== '') {
+          url.searchParams.set(key, value);
+        } else {
+          url.searchParams.delete(key);
+        }
+      });
+
+      window.location.href = url.toString();
+    });
+  });
+
+  // Enhanced status badge bump function with filter preservation
+  async function bumpCustomerStatus(customerId, statusBadge) {
+    statusBadge.classList.add('updating');
+    statusBadge.setAttribute('title', 'Updating status...');
+
+    try {
+      const response = await fetch(`/customers/${customerId}/bump_status`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to update status');
+      }
+
+      if (data.success && data.new_status) {
+        statusBadge.textContent = data.new_status.name;
+        statusBadge.setAttribute('data-status', data.new_status.name.toLowerCase());
+        statusBadge.setAttribute('title', 'Click to advance status');
+
+        const row = statusBadge.closest('tr');
+        if (row) {
+          row.setAttribute('data-status', data.new_status.name);
+        }
+
+        const cell = statusBadge.closest('td');
+        cell.classList.add('field-updated');
+        setTimeout(() => {
+          cell.classList.remove('field-updated');
+        }, 1000);
+
+        // Show success message without refreshing
+        showSuccessToast('Status updated successfully');
+      } else {
+        throw new Error('Invalid response from server');
+      }
+
+    } catch (error) {
+      console.error('Error bumping status:', error);
+      showErrorToast('Failed to update status: ' + error.message);
+    } finally {
+      statusBadge.classList.remove('updating');
+    }
+  }
+
+  // Enhanced header filters with URL state management
+  function initializeHeaderFilters() {
+    // Get current URL parameters to initialize filters
+    const currentParams = urlStateManager.getCurrentParams();
+
+    // Set initial filter values from URL
+    const nameFilter = document.getElementById('nameFilter');
+    const statusFilter = document.getElementById('statusFilter');
+    const countryFilter = document.getElementById('countryFilter');
+
+    if (nameFilter && currentParams.search) {
+      nameFilter.value = currentParams.search;
+    }
+    if (statusFilter && currentParams.status) {
+      statusFilter.value = currentParams.status;
+    }
+
+    // Collect all unique tags from the table
+    const allTags = new Set();
+    document.querySelectorAll('.customer-row').forEach(row => {
+      const tags = row.getAttribute('data-tags');
+      if (tags && tags.trim()) {
+        tags.split(',').forEach(tag => {
+          const cleanTag = tag.trim();
+          if (cleanTag) {
+            allTags.add(cleanTag);
+          }
+        });
+      }
+    });
+
+    // Populate tag filter dropdown
+    const tagDropdown = document.getElementById('tagFilterDropdown');
+    const tagFilterInput = document.getElementById('tagFilterInput');
+    let selectedTags = new Set();
+
+    // Clear existing options
+    tagDropdown.innerHTML = '';
+
+    // Create "All Tags" option
+const allOption = document.createElement('div');
+allOption.className = 'tag-filter-option';
+allOption.innerHTML = `
+  <div class="form-check">
+    <input class="form-check-input" type="checkbox" id="allTags" checked>
+    <label class="form-check-label" for="allTags">All Tags</label>
+  </div>
+`;
+tagDropdown.appendChild(allOption);
+
+    // Create individual tag options
+Array.from(allTags).sort().forEach(tag => {
+  const option = document.createElement('div');
+  option.className = 'tag-filter-option';
+  const safeId = `tag-${tag.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  option.innerHTML = `
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="${safeId}" value="${tag}" checked>
+      <label class="form-check-label" for="${safeId}">${tag}</label>
+    </div>
+  `;
+  tagDropdown.appendChild(option);
+});
+    // Handle tag filter dropdown toggle
+    tagFilterInput.addEventListener('click', function() {
+      const isVisible = tagDropdown.style.display === 'block';
+      tagDropdown.style.display = isVisible ? 'none' : 'block';
+    });
+
+    // Enhanced filter application with URL updates
+    function applyFilters() {
+      const nameValue = nameFilter ? nameFilter.value.toLowerCase() : '';
+      const statusValue = statusFilter ? statusFilter.value : '';
+      const countryValue = countryFilter ? countryFilter.value.toLowerCase() : '';
+      const allTagsChecked = document.getElementById('allTags').checked;
+      const priorityValue = priorityFilter ? priorityFilter.value : '';
+
+      // Update URL with current filter state
+      const filterParams = urlStateManager.getCurrentParams();
+      filterParams.search = nameValue;
+      filterParams.status = statusValue;
+
+      urlStateManager.updateURL(filterParams);
+
+      let visibleCount = 0;
+
+      document.querySelectorAll('.customer-row').forEach(row => {
+        let visible = true;
+
+        // Name filter
+        if (nameValue) {
+          const rowName = row.getAttribute('data-name') || '';
+          if (!rowName.includes(nameValue)) {
+            visible = false;
+          }
+        }
+
+        // Status filter
+        if (statusValue) {
+          const rowStatus = row.getAttribute('data-status') || '';
+          if (rowStatus !== statusValue) {
+            visible = false;
+          }
+        }
+
+        // Country filter
+        if (countryValue) {
+          const rowCountry = (row.getAttribute('data-country') || '').toLowerCase();
+          if (!rowCountry.includes(countryValue)) {
+            visible = false;
+          }
+        }
+
+        if (priorityValue) {
+  const rowPriorityId = row.getAttribute('data-priority-id') || '';
+  if (rowPriorityId !== priorityValue) {
+    visible = false;
+  }
+}
+
+        // Tag filter
+        if (selectedTags.size > 0 && !allTagsChecked) {
+          const rowTagsStr = row.getAttribute('data-tags') || '';
+          if (rowTagsStr.trim()) {
+            const rowTags = rowTagsStr.split(',')
+              .map(tag => tag.trim().toLowerCase())
+              .filter(tag => tag.length > 0);
+
+            const hasMatchingTag = rowTags.some(rowTag => selectedTags.has(rowTag));
+            if (!hasMatchingTag) {
+              visible = false;
+            }
+          } else {
+            visible = false;
+          }
+        }
+
+        row.style.display = visible ? '' : 'none';
+        if (visible) visibleCount++;
+      });
+
+      updateTableEmptyState(visibleCount);
+    }
+
+  // Update the tag dropdown event handler to work with Bootstrap form-check structure
+
+tagDropdown.addEventListener('change', function(e) {
+  if (e.target.type === 'checkbox' && e.target.classList.contains('form-check-input')) {
+    const allTagsCheckbox = document.getElementById('allTags');
+    const tagCheckboxes = tagDropdown.querySelectorAll('input.form-check-input:not(#allTags)');
+
+    if (e.target.id === 'allTags') {
+      if (e.target.checked) {
+        tagCheckboxes.forEach(cb => cb.checked = true);
+        selectedTags.clear();
+        tagFilterInput.value = 'All Tags';
+      } else {
+        tagCheckboxes.forEach(cb => cb.checked = false);
+        selectedTags.clear();
+        tagFilterInput.value = 'No tags selected';
+      }
+    } else {
+      const checkedTags = Array.from(tagCheckboxes).filter(cb => cb.checked);
+
+      if (checkedTags.length === 0) {
+        allTagsCheckbox.checked = false;
+        selectedTags.clear();
+        tagFilterInput.value = 'No tags selected';
+      } else if (checkedTags.length === tagCheckboxes.length) {
+        allTagsCheckbox.checked = true;
+        selectedTags.clear();
+        tagFilterInput.value = 'All Tags';
+      } else {
+        allTagsCheckbox.checked = false;
+        selectedTags.clear();
+        checkedTags.forEach(cb => {
+          selectedTags.add(cb.value.trim().toLowerCase());
+        });
+        tagFilterInput.value = `${checkedTags.length} tags selected`;
+      }
+    }
+
+    applyFilters();
+  }
+});
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest('.tag-filter-container')) {
+        tagDropdown.style.display = 'none';
+      }
+    });
+
+    function updateTableEmptyState(visibleCount) {
+      const tbody = document.querySelector('#customersTable tbody');
+      let emptyRow = tbody.querySelector('.empty-state-row');
+
+      if (visibleCount === 0) {
+        if (!emptyRow) {
+          emptyRow = document.createElement('tr');
+          emptyRow.className = 'empty-state-row';
+          emptyRow.innerHTML = `
+            <td colspan="10" class="text-center py-3">
+              <p class="text-muted">No customers found matching your filters</p>
+            </td>
+          `;
+          tbody.appendChild(emptyRow);
+        }
+        emptyRow.style.display = '';
+      } else {
+        if (emptyRow) {
+          emptyRow.style.display = 'none';
+        }
+      }
+    }
+
+    // Initialize filter event listeners with debouncing
+    function debounce(func, wait) {
+      let timeout;
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
+    }
+
+    const debouncedApplyFilters = debounce(applyFilters, 300);
+
+    if (nameFilter) nameFilter.addEventListener('input', debouncedApplyFilters);
+    if (statusFilter) statusFilter.addEventListener('change', applyFilters);
+    if (countryFilter) countryFilter.addEventListener('input', debouncedApplyFilters);
+
+    // Clear filters button
+    const clearFiltersBtn = document.getElementById('clearHeaderFilters');
+    if (clearFiltersBtn) {
+      clearFiltersBtn.addEventListener('click', function() {
+        if (nameFilter) nameFilter.value = '';
+        if (statusFilter) statusFilter.value = '';
+        if (countryFilter) countryFilter.value = '';
+
+        // Reset tag filters
+        document.getElementById('allTags').checked = true;
+        tagDropdown.querySelectorAll('input[type="checkbox"]:not(#allTags)').forEach(cb => cb.checked = true);
+        selectedTags.clear();
+        tagFilterInput.value = 'All Tags';
+
+        // Clear URL parameters
+        urlStateManager.updateURL({
+          sort: currentSort,
+          order: currentOrder
+        });
+
+        applyFilters();
+      });
+    }
+
+    // Apply initial filters
+    applyFilters();
+  }
+
+  // Initialize status badge click handlers
+  function initializeStatusBadgeHandlers() {
+    document.querySelectorAll('.status-badge.clickable').forEach(badge => {
+      badge.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const customerId = this.getAttribute('data-customer-id');
+        if (customerId && !this.classList.contains('updating')) {
+          bumpCustomerStatus(parseInt(customerId), this);
+        }
+      });
+    });
+  }
+
+  // Enhanced customer details with filter preservation
+  document.querySelectorAll('.customer-details-btn').forEach(button => {
+    button.addEventListener('click', function () {
+      const customerId = this.getAttribute('data-customer-id');
+
+      customerDetailsContent.innerHTML = `<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>`;
+      customerDetailsCanvas.show();
+
+      // Use filtered URL for customer details request
+      const detailsUrl = urlStateManager.getFilteredURL(`/salespeople/customer_details/${customerId}`);
+
+      fetch(detailsUrl, {
+  headers: { 'X-Requested-With': 'XMLHttpRequest' }
+})
+  .then(response => response.text())
+  .then(html => {
+    customerDetailsContent.innerHTML = html;
+
+    // Initialize customer details content first
+    initializeCustomerDetailsContent(customerId);
+
+    // Then manually initialize the notes editor
+    initializeNotesEditorManually();
+  })
+        .catch(error => {
+          console.error('Error loading customer details:', error);
+          customerDetailsContent.innerHTML = `
+            <div class="alert alert-danger">
+              <h4>Error Loading Details</h4>
+              <p>There was a problem loading the customer details. Please try again.</p>
+            </div>
+          `;
+        });
+    });
+  });
+
+  // Enhanced customer update handling that preserves filters
+  function handleCustomerUpdateSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    const customerId = formData.get('customer_id');
+
+    const actionUrl = `/customers/${customerId}/add_update`;
+
+    fetch(actionUrl, {
+      method: 'POST',
+      body: formData,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // Close modal if open
+          const updateModal = bootstrap.Modal.getInstance(document.getElementById('customerUpdateModal'));
+          if (updateModal) updateModal.hide();
+
+          // If customer details is open, refresh it
+          if (customerDetailsCanvas._isShown) {
+            const detailsUrl = urlStateManager.getFilteredURL(`/salespeople/customer_details/${customerId}`);
+            fetch(detailsUrl, {
+              headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+              .then(res => res.text())
+              .then(html => {
+                customerDetailsContent.innerHTML = html;
+                initializeCustomerDetailsContent(customerId);
+              });
+          } else {
+            // Instead of full page reload, refresh table content with current filters
+            refreshTableContent();
+          }
+
+          form.reset();
+          const updateType = document.getElementById('updateType');
+          const contactSelection = document.getElementById('contactSelection');
+          const updateText = document.getElementById('updateText');
+
+          if (updateType) updateType.value = 'generic';
+          if (contactSelection) contactSelection.style.display = 'none';
+          if (updateText) updateText.required = true;
+
+          showSuccessToast('Update added successfully');
+        } else {
+          const errorMsg = document.createElement('div');
+          errorMsg.className = 'alert alert-danger mt-3';
+          errorMsg.textContent = data.error || 'An error occurred. Please try again.';
+          form.appendChild(errorMsg);
+
+          setTimeout(() => {
+            errorMsg.remove();
+          }, 3000);
+        }
+      })
+      .catch(error => {
+        console.error('Error submitting update:', error);
+        showErrorToast('Failed to submit update');
+      });
+  }
+
+  // Function to refresh table content while preserving filters
+function refreshTableContent() {
+  const currentUrl = urlStateManager.getFilteredURL(window.location.pathname);
+
+  fetch(currentUrl, {
+    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+  })
+    .then(response => response.text())
+    .then(html => {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const newTableBody = doc.querySelector('#customersTable tbody');
+
+      if (newTableBody) {
+        document.querySelector('#customersTable tbody').innerHTML = newTableBody.innerHTML;
+
+        // Reinitialize components for new content
+        initializeStatusBadgeHandlers();
+        initializeInlineEditing();
+        updateTimeAgoIndicators();
+        renderNotesMarkdown(); // ADD THIS LINE
+
+        // Reapply current filters
+        initializeHeaderFilters();
+      }
+    })
+    .catch(error => {
+      console.error('Error refreshing table:', error);
+      window.location.href = currentUrl;
+    });
+}
+
+  // Enhanced inline editing with proper form handling
+  function initializeInlineEditing() {
+    document.querySelectorAll('.editable-field').forEach(field => {
+      // Remove existing event listeners to prevent duplicates
+      const newField = field.cloneNode(true);
+      field.parentNode.replaceChild(newField, field);
+
+      newField.addEventListener('click', function() {
+        if (this.parentNode.querySelector('.edit-form.active')) return;
+
+        const form = this.parentNode.querySelector('.edit-form');
+        const input = form.querySelector('input[name="value"]');
+        const currentValue = this.getAttribute('data-value');
+
+        this.style.display = 'none';
+        form.classList.add('active');
+
+        input.value = currentValue;
+        input.focus();
+        input.select();
+      });
+    });
+
+    document.querySelectorAll('.cancel-edit').forEach(btn => {
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+
+      newBtn.addEventListener('click', function() {
+        const form = this.closest('.edit-form');
+        const field = form.parentNode.querySelector('.editable-field');
+
+        form.classList.remove('active');
+        field.style.display = 'inline-block';
+      });
+    });
+
+    document.querySelectorAll('.edit-form').forEach(form => {
+      const newForm = form.cloneNode(true);
+      form.parentNode.replaceChild(newForm, form);
+
+      newForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const formData = new FormData(this);
+        const field = this.parentNode.querySelector('.editable-field');
+        const displayValue = field.querySelector('.display-value');
+        const cell = this.closest('td');
+
+        this.classList.add('saving');
+
+        fetch(this.action, {
+          method: 'POST',
+          body: formData,
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            const newValue = formData.get('value');
+            const fieldType = formData.get('field');
+
+            if (fieldType === 'estimated_revenue') {
+              const formatted = new Intl.NumberFormat('en-GB', {
+                style: 'currency',
+                currency: 'GBP',
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0
+              }).format(parseInt(newValue));
+              displayValue.textContent = formatted;
+            } else {
+              displayValue.textContent = parseInt(newValue).toLocaleString();
+            }
+
+            field.setAttribute('data-value', newValue);
+
+            this.classList.remove('active', 'saving');
+            field.style.display = 'inline-block';
+
+            cell.classList.add('field-updated');
+            setTimeout(() => {
+              cell.classList.remove('field-updated');
+            }, 1000);
+
+            showSuccessToast('Field updated successfully');
+          } else {
+            showErrorToast('Error: ' + (data.error || 'Failed to update field'));
+            this.classList.remove('saving');
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          showErrorToast('An error occurred while updating the field');
+          this.classList.remove('saving');
+        });
+      });
+    });
+
+    // Handle Enter key to submit, Escape to cancel for new elements
+    document.querySelectorAll('.edit-form input[name="value"]').forEach(input => {
+      // Remove existing event listeners to prevent duplicates
+      const newInput = input.cloneNode(true);
+      input.parentNode.replaceChild(newInput, input);
+
+      newInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          this.closest('form').dispatchEvent(new Event('submit'));
+        } else if (e.key === 'Escape') {
+          this.closest('form').querySelector('.cancel-edit').click();
+        }
+      });
+    });
+  }
+
+  // Utility functions for toast notifications
+  function showSuccessToast(message) {
+    showToast(message, 'success');
+  }
+
+  function showErrorToast(message) {
+    showToast(message, 'danger');
+  }
+
+  function showToast(message, type) {
+    const toast = document.createElement('div');
+    toast.className = 'toast show position-fixed bottom-0 end-0 m-3';
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+      <div class="toast-header bg-${type} text-white">
+        <i class="bi bi-${type === 'success' ? 'check-circle' : 'exclamation-triangle'} me-2"></i>
+        <strong class="me-auto">${type === 'success' ? 'Success' : 'Error'}</strong>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+      </div>
+      <div class="toast-body">
+        ${message}
+      </div>
+    `;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+      if (toast.parentNode) {
+        toast.remove();
+      }
+    }, 5000);
+  }
+
+  // Initialize all components
+  initializeInlineEditing();
+  updateTimeAgoIndicators();
+  renderNotesMarkdown();
+
+  // Function to initialize customer details content
+  function initializeCustomerDetailsContent(customerId) {
+    if (!document.getElementById('customerIdInput')) {
+      const hiddenInput = document.createElement('input');
+      hiddenInput.type = 'hidden';
+      hiddenInput.id = 'customerIdInput';
+      hiddenInput.value = customerId;
+      customerDetailsContent.appendChild(hiddenInput);
+    }
+
+    const timeSelect = document.getElementById('timePeriod');
+    const canvas = document.getElementById('salesPerformanceChart');
+
+    if (timeSelect && canvas) {
+      loadChartData(timeSelect.value, customerId, canvas);
+      timeSelect.addEventListener('change', () => {
+        loadChartData(timeSelect.value, customerId, canvas);
+      });
+    }
+
+    const updateForm = customerDetailsContent.querySelector('#customerUpdateForm');
+    if (updateForm) {
+      updateForm.addEventListener('submit', handleCustomerUpdateSubmit);
+    }
+
+    setupNotesHandling();
+  }
+
+  // Quick update modal handling
+  const updateButtons = document.querySelectorAll('.add-update-btn');
+  const updateModal = new bootstrap.Modal(document.getElementById('customerUpdateModal'));
+  const updateForm = document.getElementById('quickUpdateForm');
+
+  if (updateForm) {
+    updateForm.addEventListener('submit', handleCustomerUpdateSubmit);
+  }
+
+  // Enhanced button click handler
+  updateButtons.forEach(button => {
+    button.addEventListener('click', function () {
+      const customerId = this.getAttribute('data-customer-id');
+      const customerName = this.getAttribute('data-customer-name');
+
+      const updateCustomerId = document.getElementById('updateCustomerId');
+      const updateCustomerName = document.getElementById('updateCustomerName');
+      const updateType = document.getElementById('updateType');
+      const contactSelection = document.getElementById('contactSelection');
+      const updateText = document.getElementById('updateText');
+      const contactId = document.getElementById('contactId');
+      const updateTextLabel = document.getElementById('updateTextLabel');
+      const updateTextHint = document.getElementById('updateTextHint');
+
+      if (updateCustomerId) updateCustomerId.value = customerId;
+      if (updateCustomerName) updateCustomerName.value = customerName;
+
+      loadCustomerContacts(customerId);
+
+      if (updateType) updateType.value = 'generic';
+      if (contactSelection) contactSelection.style.display = 'none';
+      if (updateText) {
+        updateText.required = true;
+        updateText.value = '';
+      }
+      if (contactId) contactId.value = '';
+      if (updateTextLabel) updateTextLabel.textContent = 'Update Details';
+      if (updateTextHint) updateTextHint.textContent = '';
+
+      updateModal.show();
+    });
+  });
+
+  // Handle update type changes
+  const updateType = document.getElementById('updateType');
+  if (updateType) {
+    updateType.addEventListener('change', function() {
+      const selectedType = this.value;
+      const contactSelection = document.getElementById('contactSelection');
+      const updateText = document.getElementById('updateText');
+      const updateTextLabel = document.getElementById('updateTextLabel');
+      const updateTextHint = document.getElementById('updateTextHint');
+
+      if (selectedType === 'generic') {
+        if (contactSelection) contactSelection.style.display = 'none';
+        if (updateText) updateText.required = true;
+        if (updateTextLabel) updateTextLabel.textContent = 'Update Details';
+        if (updateTextHint) updateTextHint.textContent = '';
+      } else {
+        if (contactSelection) contactSelection.style.display = 'block';
+        if (updateText) updateText.required = false;
+        if (updateTextLabel) updateTextLabel.textContent = 'Communication Notes';
+        if (updateTextHint) updateTextHint.textContent = '(Optional - will auto-generate if left blank)';
+      }
+    });
+  }
+
+  // Function to load customer contacts
+  function loadCustomerContacts(customerId) {
+    const contactId = document.getElementById('contactId');
+    if (!contactId) return;
+
+    fetch(`/customers/${customerId}/contacts/api`)
+      .then(response => response.json())
+      .then(data => {
+        contactId.innerHTML = '<option value="">Select a contact...</option>';
+        if (data.success && data.contacts) {
+          data.contacts.forEach(contact => {
+            const option = document.createElement('option');
+            option.value = contact.id;
+            option.textContent = `${contact.name} (${contact.email || contact.phone || 'No contact info'})`;
+            contactId.appendChild(option);
+          });
+        }
+      })
+      .catch(error => {
+        console.error('Error loading contacts:', error);
+      });
+  }
+
+  // Initialize time ago indicators
+  function updateTimeAgoIndicators() {
+    const timeAgoElements = document.querySelectorAll('.time-ago[data-date]');
+    const today = new Date();
+
+    timeAgoElements.forEach(element => {
+      const dateStr = element.getAttribute('data-date');
+      if (!dateStr || dateStr === '') return;
+
+      try {
+        const orderDate = new Date(dateStr);
+        const diffTime = today - orderDate;
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+        let timeText = '';
+        let className = 'time-ago';
+
+        if (diffDays === 0) {
+          timeText = 'Today';
+          className += ' recent';
+        } else if (diffDays === 1) {
+          timeText = '1 day ago';
+          className += ' recent';
+        } else if (diffDays < 7) {
+          timeText = `${diffDays} days ago`;
+          className += ' recent';
+        } else if (diffDays < 30) {
+          timeText = `${diffDays} days ago`;
+          className += ' medium';
+        } else if (diffDays < 90) {
+          const weeks = Math.floor(diffDays / 7);
+          timeText = weeks === 1 ? '1 week ago' : `${weeks} weeks ago`;
+          className += ' medium';
+        } else if (diffDays < 365) {
+          const months = Math.floor(diffDays / 30);
+          timeText = months === 1 ? '1 month ago' : `${months} months ago`;
+          className += ' old';
+        } else {
+          const years = Math.floor(diffDays / 365);
+          timeText = years === 1 ? '1 year ago' : `${years} years ago`;
+          className += ' very-stale';
+        }
+
+        element.textContent = timeText;
+        element.className = className;
+
+      } catch (error) {
+        console.error('Error parsing date:', dateStr, error);
+        element.textContent = 'Unknown';
+        element.className = 'time-ago very-stale';
+      }
+    });
+  }
+
+  function loadChartData(period, customerId, canvas) {
+    fetch(`/salespeople/customer_data/${customerId}?time_period=${period}`)
+      .then(res => res.json())
+      .then(data => {
+        const totalSalesElement = document.getElementById('totalSalesAmount');
+        if (totalSalesElement && data.total_sales !== undefined) {
+          const formattedAmount = new Intl.NumberFormat('en-GB', {
+            style: 'currency',
+            currency: 'GBP'
+          }).format(data.total_sales || 0);
+          totalSalesElement.textContent = formattedAmount;
+        }
+
+        const activeOrdersElement = document.getElementById('activeOrdersCount');
+        if (activeOrdersElement) {
+          activeOrdersElement.textContent = data.active_orders || 0;
+        }
+
+        const tagsContainer = document.getElementById('customerTagsDisplay');
+        if (tagsContainer && data.tags) {
+          tagsContainer.innerHTML = '';
+          if (data.tags.length > 0) {
+            data.tags.forEach(tag => {
+              const tagElement = document.createElement('span');
+              tagElement.className = 'tag-badge';
+              tagElement.textContent = tag;
+              tagsContainer.appendChild(tagElement);
+            });
+          } else {
+            tagsContainer.innerHTML = '<span class="text-muted">No tags assigned</span>';
+          }
+        }
+
+        if (!data.chart || !canvas) {
+          console.error("Missing chart data or canvas element");
+          return;
+        }
+
+        let config = {
+          type: 'bar',
+          data: {
+            labels: data.chart.labels,
+            datasets: [
+              {
+                label: 'RFQs',
+                data: data.chart.rfqs,
+                backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                yAxisID: 'y'
+              },
+              {
+                label: 'Order Value',
+                data: data.chart.orders,
+                backgroundColor: 'rgba(255, 99, 132, 0.6)',
+                borderColor: 'rgba(255, 99, 132, 1)',
+                type: 'line',
+                yAxisID: 'y1'
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                beginAtZero: true,
+                title: {
+                  display: true,
+                  text: 'RFQs'
+                }
+              },
+              y1: {
+                beginAtZero: true,
+                position: 'right',
+                grid: { drawOnChartArea: false },
+                title: {
+                  display: true,
+                  text: 'Order Value (£)'
+                }
+              }
+            },
+            plugins: {
+              title: {
+                display: true,
+                text: `Performance: RFQs and Order Value`,
+                font: { size: 16 }
+              },
+              legend: {
+                position: 'top',
+                align: 'center',
+                labels: { usePointStyle: true, boxWidth: 10, padding: 20 }
+              },
+              tooltip: {
+                callbacks: {
+                  label: function (context) {
+                    let label = context.dataset.label || '';
+                    if (label) label += ': ';
+                    if (context.dataset.label === 'Order Value') {
+                      return label + '£' + context.raw.toLocaleString();
+                    }
+                    return label + context.raw;
+                  }
+                }
+              }
+            }
+          }
+        };
+
+        if (chartInstance) chartInstance.destroy();
+        chartInstance = window.ChartUtils.createChart(canvas, config);
+      })
+      .catch(error => {
+        console.error("Error loading chart data:", error);
+        if (canvas) {
+          canvas.closest('.chart-container').innerHTML = `
+            <div class="alert alert-warning">
+              <p>Could not load chart data. Please try again later.</p>
+            </div>
+          `;
+        }
+      });
+  }
+
+  // Save customer notes functionality
+  function setupNotesHandling() {
+    const saveNotesBtn = document.getElementById('saveNotesBtn');
+    if (!saveNotesBtn) return;
+
+    const customerNotes = document.getElementById('customerNotes');
+    const customerId = document.getElementById('customerIdInput').value;
+
+    saveNotesBtn.addEventListener('click', function() {
+      const notes = customerNotes.value;
+
+      fetch('/salespeople/save_customer_notes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          customer_id: customerId,
+          notes: notes
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showSuccessToast('Notes saved successfully');
+        } else {
+          showErrorToast('Error saving notes: ' + data.error);
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        showErrorToast('An error occurred while saving notes');
+      });
+    });
+  }
+});
+function initializeNotesEditorManually() {
+  console.log('Manually initializing notes editor...');
+
+  // Get all elements
+  const toggleEditBtn = document.getElementById('toggleEditBtn');
+  const editorView = document.getElementById('editorView');
+  const previewView = document.getElementById('previewView');
+  const customerNotes = document.getElementById('customerNotes');
+  const notesPreview = document.getElementById('notesPreview');
+  const markdownToolbar = document.getElementById('markdownToolbar');
+  const saveNotesBtn = document.getElementById('saveNotesBtn');
+  const customerId = document.getElementById('customerIdInput')?.value;
+
+  // Check if notes elements exist
+  if (!toggleEditBtn || !editorView || !previewView || !customerNotes || !notesPreview) {
+    console.log('Notes editor elements missing');
+    return;
+  }
+
+  console.log('All notes elements found, attaching listeners...');
+
+  let isEditMode = false;
+
+  // Initialize preview
+  function initializePreview() {
+    const markdownText = customerNotes.value;
+    if (markdownText && markdownText.trim() && typeof marked !== 'undefined') {
+      try {
+        notesPreview.innerHTML = marked.parse(markdownText);
+      } catch (error) {
+        console.error('Error parsing markdown:', error);
+        notesPreview.textContent = markdownText;
+      }
+    }
+  }
+
+  function updatePreview() {
+    const markdownText = customerNotes.value;
+    if (markdownText && markdownText.trim() && typeof marked !== 'undefined') {
+      try {
+        notesPreview.innerHTML = marked.parse(markdownText);
+      } catch (error) {
+        console.error('Error parsing markdown:', error);
+        notesPreview.textContent = markdownText;
+      }
+    } else {
+      notesPreview.innerHTML = '';
+    }
+  }
+
+  // Markdown insertion function
+  function insertMarkdown(action) {
+    const textarea = customerNotes;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = textarea.value.substring(start, end);
+    let replacement = '';
+    let newCursorPos = start;
+
+    switch(action) {
+      case 'bold':
+        replacement = `**${selectedText || 'bold text'}**`;
+        newCursorPos = selectedText ? end + 4 : start + 2;
+        break;
+      case 'italic':
+        replacement = `*${selectedText || 'italic text'}*`;
+        newCursorPos = selectedText ? end + 2 : start + 1;
+        break;
+      case 'underline':
+        replacement = `~~${selectedText || 'strikethrough text'}~~`;
+        newCursorPos = selectedText ? end + 4 : start + 2;
+        break;
+      case 'h1':
+        replacement = `# ${selectedText || 'Heading 1'}`;
+        newCursorPos = selectedText ? end + 2 : start + 2;
+        break;
+      case 'h2':
+        replacement = `## ${selectedText || 'Heading 2'}`;
+        newCursorPos = selectedText ? end + 3 : start + 3;
+        break;
+      case 'h3':
+        replacement = `### ${selectedText || 'Heading 3'}`;
+        newCursorPos = selectedText ? end + 4 : start + 4;
+        break;
+      case 'list':
+        const lines = selectedText.split('\n');
+        replacement = lines.map(line => `- ${line}`).join('\n');
+        newCursorPos = end + (lines.length * 2);
+        break;
+      case 'quote':
+        replacement = `> ${selectedText || 'Quote text'}`;
+        newCursorPos = selectedText ? end + 2 : start + 2;
+        break;
+    }
+
+    textarea.value = textarea.value.substring(0, start) + replacement + textarea.value.substring(end);
+    textarea.focus();
+    textarea.setSelectionRange(newCursorPos, newCursorPos);
+  }
+
+  // Toolbar button handlers
+  const toolbarButtons = document.querySelectorAll('.markdown-toolbar [data-action]');
+  toolbarButtons.forEach(button => {
+    button.addEventListener('click', function() {
+      const action = this.dataset.action;
+      insertMarkdown(action);
+    });
+  });
+
+  // THE TOGGLE BUTTON HANDLER
+  toggleEditBtn.addEventListener('click', function() {
+    console.log('Toggle edit button clicked!');
+
+    isEditMode = !isEditMode;
+
+    if (isEditMode) {
+      // Switch to edit mode
+      previewView.style.display = 'none';
+      editorView.style.display = 'block';
+      if (markdownToolbar) markdownToolbar.style.display = 'block';
+      if (saveNotesBtn) saveNotesBtn.style.display = 'inline-block';
+
+      toggleEditBtn.innerHTML = '<i class="bi bi-eye"></i> Preview';
+      toggleEditBtn.classList.remove('btn-secondary');
+      toggleEditBtn.classList.add('btn-outline-secondary');
+
+      customerNotes.focus();
+    } else {
+      // Switch to preview mode
+      editorView.style.display = 'none';
+      previewView.style.display = 'block';
+      if (markdownToolbar) markdownToolbar.style.display = 'none';
+      if (saveNotesBtn) saveNotesBtn.style.display = 'none';
+
+      toggleEditBtn.innerHTML = '<i class="bi bi-pencil"></i> Edit';
+      toggleEditBtn.classList.remove('btn-outline-secondary');
+      toggleEditBtn.classList.add('btn-secondary');
+
+      updatePreview();
+    }
+  });
+
+  // Save functionality
+  if (saveNotesBtn && customerId) {
+    saveNotesBtn.addEventListener('click', function() {
+      const notes = customerNotes.value;
+
+      fetch('/salespeople/save_customer_notes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          customer_id: customerId,
+          notes: notes
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          saveNotesBtn.innerHTML = '<i class="bi bi-check"></i> Saved!';
+          saveNotesBtn.classList.remove('btn-outline-primary');
+          saveNotesBtn.classList.add('btn-success');
+
+          setTimeout(() => {
+            saveNotesBtn.innerHTML = '<i class="bi bi-save"></i> Save Notes';
+            saveNotesBtn.classList.remove('btn-success');
+            saveNotesBtn.classList.add('btn-outline-primary');
+          }, 2000);
+        } else {
+          alert('Error saving notes: ' + data.error);
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred while saving notes');
+      });
+    });
+  }
+
+  // Initialize preview
+  initializePreview();
+
+  console.log('Notes editor initialization complete!');
+}
+// Add priority badge click handlers
+document.querySelectorAll('.priority-badge.clickable').forEach(badge => {
+  badge.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const customerId = this.getAttribute('data-customer-id');
+    if (customerId && !this.classList.contains('updating')) {
+      bumpCustomerPriority(parseInt(customerId), this);
+    }
+  });
+});
+
+// Add this function
+async function bumpCustomerPriority(customerId, priorityBadge) {
+  priorityBadge.classList.add('updating');
+  priorityBadge.setAttribute('title', 'Updating priority...');
+
+  try {
+    const response = await fetch(`/customers/${customerId}/bump_priority`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to update priority');
+    }
+
+    if (data.success && data.new_priority) {
+      priorityBadge.textContent = data.new_priority.name;
+      priorityBadge.style.backgroundColor = data.new_priority.color;
+      priorityBadge.style.color = '#333';
+      priorityBadge.setAttribute('title', 'Click to advance priority');
+
+      const cell = priorityBadge.closest('td');
+      cell.classList.add('field-updated');
+      setTimeout(() => {
+        cell.classList.remove('field-updated');
+      }, 1000);
+
+      showSuccessToast('Priority updated successfully');
+    } else {
+      throw new Error('Invalid response from server');
+    }
+
+  } catch (error) {
+    console.error('Error bumping priority:', error);
+    showErrorToast('Failed to update priority: ' + error.message);
+  } finally {
+    priorityBadge.classList.remove('updating');
+  }
+}
+
+// Enhanced bulk tag operations JavaScript
+// Add this to your existing JavaScript in the customers.html template
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Initialize bulk tag functionality
+  initializeBulkTagOperations();
+
+  function initializeBulkTagOperations() {
+    const bulkTagModal = new bootstrap.Modal(document.getElementById('bulkTagModal'));
+    const tagStatsModal = new bootstrap.Modal(document.getElementById('tagStatsModal'));
+
+    let currentBulkAction = null;
+    let availableTags = [];
+
+    // Load available tags from the server
+    loadAvailableTags();
+
+    // Add tag to visible customers
+    document.getElementById('addTagToVisible').addEventListener('click', function(e) {
+      e.preventDefault();
+      const visibleCustomers = getVisibleCustomers();
+
+      if (visibleCustomers.length === 0) {
+        showErrorToast('No visible customers to apply tags to');
+        return;
+      }
+
+      currentBulkAction = 'add';
+      showBulkTagModal('Add Tag to Visible Customers', visibleCustomers, 'add');
+    });
+
+    // Remove tag from visible customers
+    document.getElementById('removeTagFromVisible').addEventListener('click', function(e) {
+      e.preventDefault();
+      const visibleCustomers = getVisibleCustomers();
+
+      if (visibleCustomers.length === 0) {
+        showErrorToast('No visible customers to remove tags from');
+        return;
+      }
+
+      currentBulkAction = 'remove';
+      showBulkTagModal('Remove Tag from Visible Customers', visibleCustomers, 'remove');
+    });
+
+    // View tag statistics
+    document.getElementById('viewTagStats').addEventListener('click', function(e) {
+      e.preventDefault();
+      showTagStatistics();
+    });
+
+    // Execute bulk action
+    document.getElementById('executeBulkAction').addEventListener('click', function() {
+      executeBulkTagAction();
+    });
+
+    function getVisibleCustomers() {
+      const visibleRows = document.querySelectorAll('.customer-row[style=""], .customer-row:not([style*="none"])');
+      return Array.from(visibleRows).map(row => {
+        const customerId = row.querySelector('.customer-details-btn').getAttribute('data-customer-id');
+        const customerName = row.querySelector('.customer-name').textContent.trim();
+        const currentTags = Array.from(row.querySelectorAll('.tag-badge')).map(badge => badge.textContent.trim());
+
+        return {
+          id: customerId,
+          name: customerName,
+          currentTags: currentTags
+        };
+      });
+    }
+
+    function showBulkTagModal(title, customers, action) {
+      document.getElementById('bulkTagModalTitle').textContent = title;
+
+      const content = document.getElementById('bulkTagContent');
+      content.innerHTML = `
+        <div class="mb-3">
+          <h6>Affected Customers (${customers.length}):</h6>
+          <div class="visible-customers-list">
+            ${customers.map(customer => `
+              <div class="customer-item">
+                <strong>${customer.name}</strong>
+                ${customer.currentTags.length > 0 ?
+                  `<br><small class="text-muted">Current tags: ${customer.currentTags.join(', ')}</small>` :
+                  '<br><small class="text-muted">No current tags</small>'
+                }
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="bulkTagInput" class="form-label">
+            ${action === 'add' ? 'Tag to Add:' : 'Tag to Remove:'}
+          </label>
+          <div class="tag-input-container">
+            <input type="text"
+                   class="form-control"
+                   id="bulkTagInput"
+                   placeholder="${action === 'add' ? 'Enter tag name...' : 'Enter tag to remove...'}"
+                   autocomplete="off">
+            <div class="tag-suggestions" id="tagSuggestions"></div>
+          </div>
+          ${action === 'add' ?
+            '<small class="form-text text-muted">You can create a new tag or select from existing ones.</small>' :
+            '<small class="form-text text-muted">Only tags that exist on the selected customers will be shown.</small>'
+          }
+        </div>
+
+        <div class="mb-3" id="previewSection" style="display: none;">
+          <h6>Preview:</h6>
+          <div id="actionPreview" class="alert alert-info"></div>
+        </div>
+      `;
+
+      // Store customers data for later use
+      document.getElementById('bulkTagModal').setAttribute('data-customers', JSON.stringify(customers));
+
+      // Initialize tag input with suggestions
+      initializeTagInput(action, customers);
+
+      bulkTagModal.show();
+    }
+
+    function initializeTagInput(action, customers) {
+      const tagInput = document.getElementById('bulkTagInput');
+      const suggestions = document.getElementById('tagSuggestions');
+      const previewSection = document.getElementById('previewSection');
+      const actionPreview = document.getElementById('actionPreview');
+
+      let filteredTags = availableTags;
+
+      if (action === 'remove') {
+        // For remove action, only show tags that exist on at least one customer
+        const customerTags = new Set();
+        customers.forEach(customer => {
+          customer.currentTags.forEach(tag => customerTags.add(tag.toLowerCase()));
+        });
+        filteredTags = availableTags.filter(tag => customerTags.has(tag.toLowerCase()));
+      }
+
+      tagInput.addEventListener('input', function() {
+        const value = this.value.toLowerCase().trim();
+
+        if (value.length === 0) {
+          suggestions.style.display = 'none';
+          previewSection.style.display = 'none';
+          return;
+        }
+
+        // Filter suggestions
+        const matches = filteredTags.filter(tag =>
+          tag.toLowerCase().includes(value)
+        ).slice(0, 10);
+
+        if (matches.length > 0) {
+          suggestions.innerHTML = matches.map(tag =>
+            `<div class="tag-suggestion" data-tag="${tag}">${tag}</div>`
+          ).join('');
+          suggestions.style.display = 'block';
+        } else {
+          suggestions.style.display = 'none';
+        }
+
+        // Show preview
+        updateActionPreview(action, this.value.trim(), customers);
+      });
+
+      // Handle suggestion clicks
+      suggestions.addEventListener('click', function(e) {
+        if (e.target.classList.contains('tag-suggestion')) {
+          const tag = e.target.getAttribute('data-tag');
+          tagInput.value = tag;
+          suggestions.style.display = 'none';
+          updateActionPreview(action, tag, customers);
+        }
+      });
+
+      // Hide suggestions when clicking outside
+      document.addEventListener('click', function(e) {
+        if (!e.target.closest('.tag-input-container')) {
+          suggestions.style.display = 'none';
+        }
+      });
+
+      function updateActionPreview(action, tagName, customers) {
+        if (!tagName.trim()) {
+          previewSection.style.display = 'none';
+          return;
+        }
+
+        let affectedCount = 0;
+        let previewText = '';
+
+        if (action === 'add') {
+          affectedCount = customers.filter(customer =>
+            !customer.currentTags.some(tag => tag.toLowerCase() === tagName.toLowerCase())
+          ).length;
+
+          previewText = `Will add "${tagName}" to ${affectedCount} customer${affectedCount !== 1 ? 's' : ''}.`;
+
+          if (affectedCount < customers.length) {
+            const alreadyHave = customers.length - affectedCount;
+            previewText += ` ${alreadyHave} customer${alreadyHave !== 1 ? 's' : ''} already have this tag.`;
+          }
+        } else {
+          affectedCount = customers.filter(customer =>
+            customer.currentTags.some(tag => tag.toLowerCase() === tagName.toLowerCase())
+          ).length;
+
+          previewText = `Will remove "${tagName}" from ${affectedCount} customer${affectedCount !== 1 ? 's' : ''}.`;
+
+          if (affectedCount < customers.length) {
+            const dontHave = customers.length - affectedCount;
+            previewText += ` ${dontHave} customer${dontHave !== 1 ? 's don\'t' : ' doesn\'t'} have this tag.`;
+          }
+        }
+
+        actionPreview.textContent = previewText;
+        actionPreview.className = `alert ${affectedCount > 0 ? 'alert-info' : 'alert-warning'}`;
+        previewSection.style.display = 'block';
+      }
+    }
+
+    function executeBulkTagAction() {
+      const tagInput = document.getElementById('bulkTagInput');
+      const tagName = tagInput.value.trim();
+
+      if (!tagName) {
+        showErrorToast('Please enter a tag name');
+        return;
+      }
+
+      const customersData = JSON.parse(document.getElementById('bulkTagModal').getAttribute('data-customers'));
+      const executeBtn = document.getElementById('executeBulkAction');
+
+      // Show loading state
+      executeBtn.disabled = true;
+      executeBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
+
+      // Perform the bulk action
+      fetch('/salespeople/bulk_tag_action', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          action: currentBulkAction,
+          tag_name: tagName,
+          customer_ids: customersData.map(c => c.id),
+          salesperson_id: salesPersonId
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          bulkTagModal.hide();
+
+          // Refresh the table to show updated tags
+          refreshTableContent();
+
+          showSuccessToast(`Successfully ${currentBulkAction === 'add' ? 'added' : 'removed'} tag "${tagName}" ${currentBulkAction === 'add' ? 'to' : 'from'} ${data.affected_count} customer${data.affected_count !== 1 ? 's' : ''}`);
+
+          // Reload available tags
+          loadAvailableTags();
+        } else {
+          showErrorToast('Error: ' + (data.error || 'Failed to perform bulk action'));
+        }
+      })
+      .catch(error => {
+        console.error('Error performing bulk action:', error);
+        showErrorToast('An error occurred while performing the bulk action');
+      })
+      .finally(() => {
+        executeBtn.disabled = false;
+        executeBtn.innerHTML = 'Execute';
+      });
+    }
+
+    // Add these functions to your existing JavaScript section
+
+function buildCommunicationsTable(communicationsData, showGroupHeaders = false) {
+  const types = Object.keys(communicationsData);
+
+  if (types.length === 0) {
+    return `
+      <div class="comm-empty-state">
+        <i class="bi bi-chat-dots"></i>
+        <p>No communications found</p>
+      </div>
+    `;
+  }
+
+  let html = `
+    <table class="table comm-table">
+      <thead>
+        <tr>
+          <th style="width: 25%;">Contact</th>
+          <th style="width: 15%;">Type</th>
+          <th style="width: 45%;">Notes</th>
+          <th style="width: 15%;">Time</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  // Preserve original grouping: types first, then companies within types
+  types.forEach(type => {
+    const companies = Object.keys(communicationsData[type] || {});
+
+    // Add type header if showing group headers
+    if (showGroupHeaders && types.length > 1) {
+      const typeCount = companies.reduce((sum, company) =>
+        sum + communicationsData[type][company].length, 0);
+
+      html += `
+        <tr>
+          <td colspan="4" class="comm-group-divider">
+            <i class="bi bi-${getIconForCommType(type)} me-2"></i>
+            ${type} (${typeCount})
+          </td>
+        </tr>
+      `;
+    }
+
+    // Process companies within this type
+    companies.forEach(company => {
+      const communications = communicationsData[type][company];
+
+      communications.forEach((comm, index) => {
+        const timeFormatted = comm.time ?
+          new Date(`1970-01-01T${comm.time}`).toLocaleTimeString([], {
+            hour: '2-digit', minute: '2-digit', hour12: true
+          }) : '';
+
+        const notes = comm.notes && comm.notes.trim() ?
+          comm.notes : 'No notes recorded';
+
+        const notesClass = comm.notes && comm.notes.trim() ?
+          'comm-notes-content' : 'comm-notes-empty';
+
+        html += `
+          <tr>
+            <td>
+              <div class="comm-contact-name">${comm.contact_name}</div>
+              <div class="comm-company-type">
+                ${company}
+                ${comm.job_title ? ` • ${comm.job_title}` : ''}
+              </div>
+            </td>
+            <td>
+              <span class="badge bg-light text-dark comm-type-badge">
+                <i class="bi bi-${getIconForCommType(type)} me-1"></i>
+                ${type}
+              </span>
+            </td>
+            <td>
+              <div class="${notesClass}">${notes}</div>
+            </td>
+            <td class="comm-time-info">
+              ${timeFormatted}
+            </td>
+          </tr>
+        `;
+      });
+    });
+  });
+
+  html += '</tbody></table>';
+  return html;
+}
+
+function getIconForCommType(type) {
+  const icons = {
+    'Phone': 'telephone',
+    'Call': 'telephone',
+    'Email': 'envelope',
+    'Meeting': 'calendar-event',
+    'Video Call': 'camera-video',
+    'Text': 'chat-text',
+    'Visit': 'geo-alt',
+    'Other': 'chat-dots'
+  };
+  return icons[type] || 'chat-dots';
+}
+
+    function loadAvailableTags() {
+      fetch('/salespeople/available_tags', {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          availableTags = data.tags;
+        }
+      })
+      .catch(error => {
+        console.error('Error loading available tags:', error);
+      });
+    }
+
+    function showTagStatistics() {
+      const content = document.getElementById('tagStatsContent');
+
+      fetch('/salespeople/tag_statistics', {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          const stats = data.statistics;
+          const totalCustomers = data.total_customers;
+
+          if (stats.length === 0) {
+            content.innerHTML = '<p class="text-muted text-center">No tags found</p>';
+          } else {
+            content.innerHTML = `
+              <div class="mb-3">
+                <h6>Tag Usage Statistics</h6>
+                <p class="text-muted">Total customers: ${totalCustomers}</p>
+                <small class="text-muted">Hierarchical view showing parent and child tags</small>
+              </div>
+
+              <div class="tag-statistics">
+                ${stats.map(stat => `
+                  <div class="tag-stat-item ${stat.level > 0 ? 'child-tag' : 'parent-tag'}">
+                    <div class="tag-stat-name" style="padding-left: ${stat.level * 20}px;">
+                      ${stat.level > 0 ? '<i class="bi bi-arrow-return-right me-1 text-muted"></i>' : ''}
+                      ${stat.has_children ? '<i class="bi bi-folder me-1"></i>' : '<i class="bi bi-tag me-1"></i>'}
+                      ${stat.tag.trim()}
+                    </div>
+                    <div class="progress-container">
+                      <div class="progress">
+                        <div class="progress-bar ${stat.level > 0 ? 'bg-info' : 'bg-primary'}"
+                             role="progressbar"
+                             style="width: ${(stat.count / totalCustomers * 100).toFixed(1)}%">
+                        </div>
+                      </div>
+                      <small class="text-muted progress-percentage">${(stat.count / totalCustomers * 100).toFixed(1)}%</small>
+                    </div>
+                    <div class="tag-stat-count ${stat.level > 0 ? 'bg-info' : 'bg-primary'}">${stat.count}</div>
+                  </div>
+                `).join('')}
+              </div>
+            `;
+          }
+        } else {
+          content.innerHTML = '<div class="alert alert-danger">Error loading tag statistics</div>';
+        }
+      })
+      .catch(error => {
+        console.error('Error loading tag statistics:', error);
+        content.innerHTML = '<div class="alert alert-danger">Error loading tag statistics</div>';
+      });
+
+      tagStatsModal.show();
+    }
+  }
+
+  // Expose refresh function globally for other parts of the code
+  window.refreshTableContent = window.refreshTableContent || function() {
+    // Your existing refresh logic here
+    const currentUrl = urlStateManager.getFilteredURL(window.location.pathname);
+
+    fetch(currentUrl, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(response => response.text())
+    .then(html => {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const newTableBody = doc.querySelector('#customersTable tbody');
+
+      if (newTableBody) {
+        document.querySelector('#customersTable tbody').innerHTML = newTableBody.innerHTML;
+
+        // Reinitialize components for new content
+        initializeStatusBadgeHandlers();
+        initializeInlineEditing();
+        updateTimeAgoIndicators();
+        renderNotesMarkdown();
+
+        // Reapply current filters
+        initializeHeaderFilters();
+      }
+    })
+    .catch(error => {
+      console.error('Error refreshing table:', error);
+      window.location.href = currentUrl;
+    });
+  };
+});
+</script>
+{% endblock %}

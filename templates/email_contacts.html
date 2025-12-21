@@ -1,0 +1,1467 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container py-4">
+    <h5 class="mb-4">Email Contact Scanner</h5>
+
+    <!-- Start scan button -->
+    <button id="startScanButton" onclick="startContactScan()" class="btn btn-primary mb-4">
+        Start Scanning
+    </button>
+
+    <!-- Loading state -->
+    <div id="loadingState" class="text-center py-5 d-none">
+        <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <h4 class="mb-3">Scanning Email Contacts...</h4>
+        <div id="currentEmail" class="text-muted"></div>
+        <div class="progress mt-3" style="height: 4px;">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
+        </div>
+    </div>
+
+    <div id="errorState" class="alert alert-danger d-none" role="alert">
+        An error occurred while scanning contacts. Please try again.
+    </div>
+
+    <div id="resultsContainer" class="d-none">
+        <!-- New Contacts Table -->
+        <div class="mb-5">
+            <h2 class="h4 mb-3">New Contacts</h2>
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Contact</th>
+                            <th>Emails Found</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="newContactsTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Existing Customer Contacts Table -->
+<!--        <div class="mb-5">
+            <h2 class="h4 mb-3">Existing Customer Contacts</h2>
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Contact</th>
+                            <th>Emails Found</th>
+                            <th>Customer</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="existingContactsTableBody"></tbody>
+                </table>
+            </div>
+        </div>-->
+
+        <!-- Existing Supplier Contacts Table -->
+<!--        <div class="mb-5">
+            <h2 class="h4 mb-3">Existing Supplier Contacts</h2>
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Contact</th>
+                            <th>Emails Found</th>
+                            <th>Supplier</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="existingSupplierContactsTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>-->
+
+<!-- Add Contact Modal -->
+<div class="modal fade" id="addContactModal" tabindex="-1" aria-labelledby="addContactModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addContactModalLabel">Add New Contact</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addContactForm">
+                    <input type="hidden" id="contactEmail">
+
+                    <!-- Contact Type Selection -->
+                    <div class="mb-3">
+                        <label class="form-label">Contact Type</label>
+                        <div class="btn-group w-100" role="group">
+                            <input type="radio" class="btn-check" name="contactType" id="customerType" value="customer" checked>
+                            <label class="btn btn-outline-primary" for="customerType">Customer Contact</label>
+
+                            <input type="radio" class="btn-check" name="contactType" id="supplierType" value="supplier">
+                            <label class="btn btn-outline-primary" for="supplierType">Supplier Contact</label>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="firstName" class="form-label">First Name</label>
+                        <input type="text" class="form-control" id="firstName">
+                    </div>
+                    <div class="mb-3">
+                        <label for="secondName" class="form-label">Second Name</label>
+                        <input type="text" class="form-control" id="secondName">
+                    </div>
+
+                    <!-- Customer Section -->
+                    <div id="customerSection" class="mb-3">
+                        <label for="customerSelect" class="form-label">Customer</label>
+                        <div class="input-group">
+                            <select class="form-select" id="customerSelect">
+                                <option value="">Select Customer...</option>
+                            </select>
+                            <button class="btn btn-outline-secondary" type="button" onclick="showQuickCustomerForm()">
+                                + New
+                            </button>
+                        </div>
+                        <!-- Quick Customer Creation Form -->
+                        <div id="quickCustomerForm" class="border rounded p-3 mt-2 d-none">
+                            <div class="mb-3">
+                                <label for="newCustomerName" class="form-label">New Customer Name</label>
+                                <input type="text" class="form-control" id="newCustomerName">
+                            </div>
+                            <div class="mb-2">
+                                <button type="button" class="btn btn-primary btn-sm" onclick="createCustomer()">
+                                    Create Customer
+                                </button>
+                                <button type="button" class="btn btn-link btn-sm" onclick="hideQuickCustomerForm()">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Supplier Section -->
+                    <div id="supplierSection" class="mb-3 d-none">
+                        <label for="supplierSelect" class="form-label">Supplier</label>
+                        <div class="input-group">
+                            <select class="form-select" id="supplierSelect">
+                                <option value="">Select Supplier...</option>
+                            </select>
+                            <button class="btn btn-outline-secondary" type="button" onclick="showQuickSupplierForm()">
+                                + New
+                            </button>
+                        </div>
+                        <!-- Quick Supplier Creation Form -->
+                        <div id="quickSupplierForm" class="border rounded p-3 mt-2 d-none">
+                            <div class="mb-3">
+                                <label for="newSupplierName" class="form-label">New Supplier Name</label>
+                                <input type="text" class="form-control" id="newSupplierName">
+                            </div>
+                            <div class="mb-2">
+                                <button type="button" class="btn btn-primary btn-sm" onclick="createSupplier()">
+                                    Create Supplier
+                                </button>
+                                <button type="button" class="btn btn-link btn-sm" onclick="hideQuickSupplierForm()">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveContact()">Save Contact</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Email Preview Modal -->
+<div class="modal fade" id="emailPreviewModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="emailPreviewTitle">Email Preview</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="emailPreviewBody">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.email-content {
+    max-height: 500px;
+    overflow-y: auto;
+}
+.position-relative {
+    position: relative;
+}
+.select-search-wrapper {
+    margin-bottom: 1rem;
+}
+
+.domain-card {
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    margin-bottom: 1.5rem;
+    background: #fff;
+}
+
+
+
+.contact-list {
+    padding: 0;
+    margin: 0;
+    list-style: none;
+}
+
+.contact-item {
+    padding: 1rem;
+    border-bottom: 1px solid #eee;
+}
+
+.contact-item:last-child {
+    border-bottom: none;
+}
+
+.contact-item .latest-activity {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-top: 0.25rem;
+}
+
+.contact-email {
+    color: #495057;
+    font-weight: 500;
+}
+
+.domain-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+    color: #495057;
+}
+
+.domain-badge i {
+    color: #6c757d;
+}
+
+.action-buttons {
+    margin-top: 0.75rem;
+}
+
+    /* Add some spacing between action buttons */
+.action-buttons .btn {
+    margin-right: 0.5rem;
+}
+
+.domain-group {
+    margin-bottom: 2rem;
+}
+
+.domain-suggestions {
+    margin-top: 0.5rem;
+}
+
+.domain-section {
+    margin-bottom: 2rem;
+    background: #fff;
+}
+
+.domain-header {
+    background: #f8f9fa;
+    padding: 0.75rem 1rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    margin-bottom: 0.5rem;
+}
+.domain-group:last-child {
+    margin-bottom: 0;
+}
+
+.domain-header {
+    background-color: #f8f9fa !important;
+}
+.domain-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.domain-title h5 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+.contact-row {
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #eee;
+}
+
+.contact-row:last-child {
+    border-bottom: none;
+}
+
+.contact-name {
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+}
+
+.contact-email {
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.contact-latest {
+    color: #666;
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+}
+
+.actions-group {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.domain-suggestions .badge {
+    padding: 0.5rem;
+    font-weight: normal;
+}
+
+.bulk-actions {
+    margin-top: 0.75rem;
+}
+
+.domain-spacer td {
+    --bs-table-bg: transparent !important;
+    --bs-table-bg-state: transparent !important;
+    --bs-table-accent-bg: transparent !important;
+}
+
+.domain-header {
+    background-color: #f8f9fa; /* Match background */
+    padding: 0.75rem 1rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    margin-bottom: 2rem; /* Creates space after domain group */
+}
+
+.contact-cell {
+    padding-left: 1rem !important;
+}
+
+</style>
+
+<script>
+let contactModal = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    const addContactModal = document.getElementById('addContactModal');
+    contactModal = new bootstrap.Modal(addContactModal);
+
+    // Set up contact type toggle handlers
+    document.querySelectorAll('input[name="contactType"]').forEach(radio => {
+        radio.addEventListener('change', toggleContactType);
+    });
+
+    // Initialize searchable selects
+    initializeSearchableSelect(document.getElementById('customerSelect'), "Customer");
+    initializeSearchableSelect(document.getElementById('supplierSelect'), "Supplier");
+
+    addContactModal.addEventListener('show.bs.modal', () => {
+        loadCustomers();
+        loadSuppliers();
+    });
+});
+
+function startContactScan() {
+    console.log("Starting scan...");
+
+    document.getElementById('loadingState').classList.remove('d-none');
+    document.getElementById('resultsContainer').classList.add('d-none');
+    document.getElementById('errorState').classList.add('d-none');
+    document.getElementById('startScanButton').disabled = true;
+
+    document.getElementById('currentEmail').textContent = 'Initializing scan...';
+
+    const eventSource = new EventSource('/api/scan-contacts');
+
+    eventSource.onmessage = (event) => {
+        console.log("Received message:", event.data);
+        const data = JSON.parse(event.data);
+
+        if (data.error) {
+            showError(data.error);
+            eventSource.close();
+            document.getElementById('startScanButton').disabled = false;
+            return;
+        }
+
+        if (data.status === 'processing') {
+            document.getElementById('currentEmail').textContent =
+                `Currently processing: ${data.email}`;
+            return;
+        }
+
+        if (data.status === 'completed') {
+            displayResults(
+                data.new_contacts || [],
+                data.existing_contacts || [],
+                data.existing_supplier_contacts || []
+            );
+            eventSource.close();
+            document.getElementById('startScanButton').disabled = false;
+            document.getElementById('loadingState').classList.add('d-none');
+            return;
+        }
+    };
+
+    eventSource.onerror = (error) => {
+        console.error("EventSource error:", error);
+        showError('Connection lost. Please refresh the page.');
+        eventSource.close();
+        document.getElementById('startScanButton').disabled = false;
+        document.getElementById('loadingState').classList.add('d-none');
+    };
+}
+
+async function displayResults(newContacts, existingContacts, existingSupplierContacts) {
+    document.getElementById('loadingState').classList.add('d-none');
+    document.getElementById('resultsContainer').classList.remove('d-none');
+
+    // Process customer contacts - use the array directly
+const processedCustomerContacts = (existingContacts || []).map(contact => {
+        if (!contact) return null;
+        return {
+            ...contact,
+            email: contact.email || (contact.name && contact.customer_name ?
+                `${contact.name.toLowerCase().replace(/\s+/g, '.')}@${contact.customer_name.toLowerCase().replace(/[^a-z0-9]/g, '')}.com` :
+                null)
+        };
+    }).filter(contact => contact && contact.email);
+
+    // Process supplier contacts
+const processedSupplierContacts = (existingSupplierContacts || []).map(contact => ({
+    ...contact,
+    // Use the actual email if it exists, fallback to constructed one only if needed
+    email: contact.email || (contact.supplier_name ?
+        `sales@${contact.supplier_name.toLowerCase().replace(/[^a-z0-9]/g, '')}.com` :
+        'sales@unknown.com')
+}));
+
+    const groupByDomain = (contacts) => {
+        return (contacts || []).reduce((acc, contact) => {
+            if (!contact) {
+                console.warn('Invalid contact:', contact);
+                return acc;
+            }
+
+            let email = contact.email;
+            if (!email) {
+                console.warn('Contact without email:', contact);
+                return acc;
+            }
+
+            const domain = email.split('@')[1];
+            if (!acc[domain]) {
+                acc[domain] = [];
+            }
+
+            acc[domain].push(contact);
+            return acc;
+        }, {});
+    };
+
+    // Add console.log statements for debugging
+    console.log('New Contacts:', newContacts);
+    console.log('Existing Customer Contacts:', processedCustomerContacts);
+    console.log('Existing Supplier Contacts:', processedSupplierContacts);
+
+    const newContactsByDomain = groupByDomain(newContacts);
+    const existingContactsByDomain = groupByDomain(processedCustomerContacts);
+    const supplierContactsByDomain = groupByDomain(processedSupplierContacts);
+
+    // Render all tables
+    await Promise.all([
+        renderGroupedTable(newContactsByDomain, 'newContactsTableBody', 'new'),
+        renderGroupedTable(existingContactsByDomain, 'existingContactsTableBody', 'customer'),
+        renderGroupedTable(supplierContactsByDomain, 'existingSupplierContactsTableBody', 'supplier')
+    ]);
+
+    // Show summary
+    const summary = document.createElement('div');
+    summary.className = 'alert alert-info mt-3';
+    summary.innerHTML = `
+        Found ${newContacts.length} new contacts across ${Object.keys(newContactsByDomain).length} domains,
+        ${processedCustomerContacts.length} existing customer contacts across ${Object.keys(existingContactsByDomain).length} domains, and
+        ${processedSupplierContacts.length} existing supplier contacts across ${Object.keys(supplierContactsByDomain).length} domains.
+    `;
+    document.getElementById('resultsContainer').insertBefore(summary, document.getElementById('resultsContainer').firstChild);
+}
+
+function renderContactRow(contact, type = 'new') {
+    const safeEmail = contact.email.replace(/'/g, '&#39;');
+    const safeName = (contact.name || '').replace(/'/g, '&#39;');
+
+    return `
+        <tr>
+            <td class="contact-cell">
+                <strong>${safeName || 'Unknown'}</strong><br>
+                <small class="text-muted">${safeEmail}</small>
+                ${contact.latest_email ? `
+                    <br><small class="text-muted">
+                        Latest: ${contact.latest_email.subject || 'No subject'}
+                        (${contact.latest_email.date || 'No date'})
+                    </small>
+                ` : ''}
+            </td>
+            <td>${contact.email_count || 0}</td>
+            <td class="text-end">
+                <div class="btn-group">
+                    ${type === 'new' ? `
+                        <button onclick="showAddContactModal('${safeEmail}', '${safeName}')"
+                                class="btn btn-primary btn-sm">ADD CONTACT</button>
+                    ` : `
+                        <a href="/${type === 'supplier' ? 'supplier-contacts' : 'contacts'}/${contact.contact_id || '#'}"
+                           class="btn btn-outline-primary btn-sm">View</a>
+                    `}
+                    <button onclick="showEmailPreview('${safeEmail}')"
+                            class="btn btn-outline-secondary btn-sm">VIEW EMAIL</button>
+                </div>
+            </td>
+        </tr>`;
+}
+
+async function renderGroupedTable(contactsByDomain, tableBodyId, type = 'new') {
+    const tableBody = document.getElementById(tableBodyId);
+    if (!tableBody) return;
+    tableBody.innerHTML = '';
+
+    let isFirst = true;
+
+    for (const [domain, contacts] of Object.entries(contactsByDomain)) {
+        let suggestionsHtml = '';
+        let bulkAssignHtml = '';
+
+        try {
+            const [customerResponse, supplierResponse] = await Promise.all([
+                fetch(`/customers/by-domain/${domain}`),
+                fetch(`/suppliers/by-domain/${domain}`)
+            ]);
+
+            const customers = await customerResponse.json();
+            const suppliers = await supplierResponse.json();
+
+            if (customers.length > 0 || suppliers.length > 0) {
+                suggestionsHtml = '<div class="domain-suggestions mt-2">';
+                bulkAssignHtml = '<div class="bulk-actions mt-2">';
+
+                if (customers.length > 0) {
+                    suggestionsHtml += `
+                        <span class="badge bg-success me-2">
+                            <i class="bi bi-building"></i> Possible Customer: ${customers.map(c => c.name).join(', ')}
+                        </span>`;
+
+                    customers.forEach(customer => {
+                        bulkAssignHtml += `
+                            <button onclick="prepareBulkAssign('customer', ${customer.id}, '${domain}', ${JSON.stringify(contacts.map(c => c.email)).replace(/"/g, '&quot;')})"
+                                    class="btn btn-success btn-sm me-2">
+                                <i class="bi bi-people-fill"></i>
+                                Add all as ${customer.name} contacts
+                            </button>`;
+                    });
+                }
+
+                if (suppliers.length > 0) {
+                    suggestionsHtml += `
+                        <span class="badge bg-info">
+                            <i class="bi bi-truck"></i> Possible Supplier: ${suppliers.map(s => s.name).join(', ')}
+                        </span>`;
+
+                    suppliers.forEach(supplier => {
+                        bulkAssignHtml += `
+                            <button onclick="prepareBulkAssign('supplier', ${supplier.id}, '${domain}', ${JSON.stringify(contacts.map(c => c.email)).replace(/"/g, '&quot;')})"
+                                    class="btn btn-info btn-sm me-2">
+                                <i class="bi bi-truck"></i>
+                                Add all as ${supplier.name} contacts
+                            </button>`;
+                    });
+                }
+
+                suggestionsHtml += '</div>';
+                bulkAssignHtml += '</div>';
+            }
+        } catch (error) {
+            console.error('Error fetching domain suggestions:', error);
+        }
+
+        // Add spacer between domains (except for first domain)
+        if (!isFirst) {
+            tableBody.innerHTML += `<tr><td colspan="4"><hr class="my-4 border-0 bg-gray-300 h-1 rounded"/></td></tr>`;
+        }
+        isFirst = false;
+
+        const domainHtml = `
+            <tr class="domain-header">
+                <td colspan="4">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h5 class="mb-0">
+                                <i class="bi bi-globe"></i> ${domain}
+                                <small class="text-muted">(${contacts.length} contact${contacts.length > 1 ? 's' : ''})</small>
+                            </h5>
+                            ${suggestionsHtml}
+                            ${bulkAssignHtml}
+                        </div>
+                        <button onclick="ignoreDomain('${contacts[0].email}', '${domain}')"
+                                class="btn btn-outline-danger btn-sm">
+                            <i class="bi bi-ban"></i> IGNORE DOMAIN
+                        </button>
+                    </div>
+                </td>
+            </tr>`;
+
+        const contactsHtml = contacts.map(contact => renderContactRow(contact, type)).join('');
+        tableBody.innerHTML += domainHtml + contactsHtml;
+    }
+}
+
+
+function initializeSearchableSelect(selectElement, placeholder = "Search...") {
+    if (!selectElement) return;
+
+    // Store original options when initializing
+    const originalOptions = Array.from(selectElement.options).map(opt => ({
+        value: opt.value,
+        text: opt.text
+    }));
+
+    // Create wrapper if it doesn't exist
+    let wrapper = selectElement.closest('.select-search-wrapper');
+    if (!wrapper) {
+        wrapper = document.createElement('div');
+        wrapper.className = 'select-search-wrapper position-relative';
+        selectElement.parentNode.insertBefore(wrapper, selectElement);
+        wrapper.appendChild(selectElement);
+    }
+
+    // Create or get existing search input
+    let searchInput = wrapper.querySelector('input[type="text"]');
+    if (!searchInput) {
+        searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.className = 'form-control mb-2';
+        searchInput.placeholder = `Search ${placeholder}...`;
+        wrapper.insertBefore(searchInput, selectElement);
+    }
+
+    // Clear any existing event listeners
+    const newSearchInput = searchInput.cloneNode(true);
+    searchInput.parentNode.replaceChild(newSearchInput, searchInput);
+    searchInput = newSearchInput;
+
+    // Function to update select options based on search
+    function updateOptions(searchTerm) {
+        // Clear current options
+        selectElement.innerHTML = '';
+
+        // Add default empty option
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = `Select ${placeholder}...`;
+        selectElement.appendChild(defaultOption);
+
+        // Filter and add matching options
+        originalOptions.forEach(original => {
+            if (!searchTerm || original.text.toLowerCase().includes(searchTerm.toLowerCase())) {
+                const option = document.createElement('option');
+                option.value = original.value;
+                option.textContent = original.text;
+                selectElement.appendChild(option);
+            }
+        });
+    }
+
+    // Add event listener for search input
+    searchInput.addEventListener('input', (e) => {
+        updateOptions(e.target.value);
+    });
+
+    // Reset function for modal
+    function resetSelect() {
+        searchInput.value = '';
+        updateOptions('');
+    }
+
+    // Add reset handler for modal
+    const modal = selectElement.closest('.modal');
+    if (modal) {
+        modal.addEventListener('hidden.bs.modal', resetSelect);
+    }
+
+    // Initial population
+    resetSelect();
+}
+
+// Update the loadCustomers and loadSuppliers functions to reinitialize properly
+async function loadCustomers() {
+    try {
+        const response = await fetch('/customers');
+        const customers = await response.json();
+        const select = document.getElementById('customerSelect');
+
+        // Clear and add default option
+        select.innerHTML = '<option value="">Select Customer...</option>';
+
+        // Add customer options
+        customers.forEach(customer => {
+            const option = document.createElement('option');
+            option.value = customer.id;
+            option.textContent = customer.name;
+            select.appendChild(option);
+        });
+
+        // Initialize searchable select
+        initializeSearchableSelect(select, "Customer");
+    } catch (error) {
+        console.error('Error loading customers:', error);
+        showToast('Failed to load customers', 'error');
+    }
+}
+
+function showQuickCustomerForm() {
+    document.getElementById('quickCustomerForm').classList.remove('d-none');
+}
+
+function hideQuickCustomerForm() {
+    document.getElementById('quickCustomerForm').classList.add('d-none');
+    document.getElementById('newCustomerName').value = '';
+}
+
+async function createCustomer() {
+    const customerName = document.getElementById('newCustomerName').value;
+    if (!customerName.trim()) {
+        showToast('Please enter a customer name', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/customers/customers/new', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ name: customerName })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            const select = document.getElementById('customerSelect');
+            const option = document.createElement('option');
+            option.value = data.customer_id;
+            option.textContent = data.customer_name;
+            select.appendChild(option);
+            select.value = data.customer_id;
+
+            hideQuickCustomerForm();
+            showToast('Customer created successfully');
+        } else {
+            showToast(data.error || 'Failed to create customer', 'error');
+        }
+    } catch (error) {
+        console.error('Error creating customer:', error);
+        showToast('Failed to create customer', 'error');
+    }
+}
+
+// Supplier Loading and Creation
+async function loadSuppliers() {
+    try {
+        const response = await fetch('/suppliers/api/list');
+        const suppliers = await response.json();
+        const select = document.getElementById('supplierSelect');
+
+        // Clear and add default option
+        select.innerHTML = '<option value="">Select Supplier...</option>';
+
+        // Add supplier options
+        suppliers.forEach(supplier => {
+            const option = document.createElement('option');
+            option.value = supplier.id;
+            option.textContent = supplier.name;
+            select.appendChild(option);
+        });
+
+        // Initialize searchable select
+        initializeSearchableSelect(select, "Supplier");
+    } catch (error) {
+        console.error('Error loading suppliers:', error);
+        showToast('Failed to load suppliers', 'error');
+    }
+}
+
+function showQuickSupplierForm() {
+    document.getElementById('quickSupplierForm').classList.remove('d-none');
+}
+
+function hideQuickSupplierForm() {
+    document.getElementById('quickSupplierForm').classList.add('d-none');
+    document.getElementById('newSupplierName').value = '';
+}
+
+async function createSupplier() {
+    const supplierName = document.getElementById('newSupplierName').value;
+    const contactEmail = document.getElementById('contactEmail').value;
+
+    if (!supplierName.trim()) {
+        showToast('Please enter a supplier name', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/suppliers/create', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+                name: supplierName,
+                email: contactEmail
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            const select = document.getElementById('supplierSelect');
+            const option = document.createElement('option');
+            option.value = data.supplier_id;
+            option.textContent = data.supplier_name;
+            select.appendChild(option);
+            select.value = data.supplier_id;
+
+            hideQuickSupplierForm();
+            showToast('Supplier created successfully');
+        } else {
+            showToast(data.error || 'Failed to create supplier', 'error');
+        }
+    } catch (error) {
+        console.error('Error creating supplier:', error);
+        showToast('Failed to create supplier', 'error');
+    }
+}
+// Contact Modal and Saving
+function toggleContactType(event) {
+    const customerSection = document.getElementById('customerSection');
+    const supplierSection = document.getElementById('supplierSection');
+
+    if (!customerSection || !supplierSection) {
+        console.error('Contact type sections not found');
+        return;
+    }
+
+    if (event.target.value === 'customer') {
+        customerSection.classList.remove('d-none');
+        supplierSection.classList.add('d-none');
+    } else {
+        customerSection.classList.add('d-none');
+        supplierSection.classList.remove('d-none');
+    }
+}
+
+function showAddContactModal(email, name = '') {
+    if (!contactModal) {
+        contactModal = new bootstrap.Modal(document.getElementById('addContactModal'));
+    }
+
+    const emailInput = document.getElementById('contactEmail');
+    const firstNameInput = document.getElementById('firstName');
+    const secondNameInput = document.getElementById('secondName');
+
+    if (!emailInput || !firstNameInput || !secondNameInput) {
+        console.error('Modal form elements not found');
+        return;
+    }
+
+    const names = name.trim().split(' ');
+    const firstName = names[0] || '';
+    const secondName = names.slice(1).join(' ');
+
+    emailInput.value = email;
+    firstNameInput.value = firstName;
+    secondNameInput.value = secondName;
+
+    const customerTypeRadio = document.getElementById('customerType');
+    if (customerTypeRadio) {
+        customerTypeRadio.checked = true;
+    }
+
+    const customerSection = document.getElementById('customerSection');
+    const supplierSection = document.getElementById('supplierSection');
+
+    if (customerSection && supplierSection) {
+        customerSection.classList.remove('d-none');
+        supplierSection.classList.add('d-none');
+    }
+
+    contactModal.show();
+}
+
+async function saveContact() {
+    const submitButton = document.querySelector('.modal-footer .btn-primary');
+    if (!submitButton) return;
+
+    submitButton.disabled = true;
+
+    const contactType = document.querySelector('input[name="contactType"]:checked');
+    if (!contactType) {
+        showToast('Please select a contact type', 'error');
+        submitButton.disabled = false;
+        return;
+    }
+
+    // Base form data
+    const formData = {
+        email: document.getElementById('contactEmail')?.value,
+        second_name: document.getElementById('secondName')?.value // Common for both types
+    };
+
+    // Add first name field based on contact type
+    if (contactType.value === 'customer') {
+        formData.name = document.getElementById('firstName')?.value; // For customers
+        formData.customer_id = document.getElementById('customerSelect')?.value || null;
+        formData.supplier_id = null;
+    } else {
+        formData.first_name = document.getElementById('firstName')?.value; // For suppliers
+        formData.supplier_id = document.getElementById('supplierSelect')?.value || null;
+        formData.customer_id = null;
+    }
+
+    try {
+        const endpoint = contactType.value === 'customer' ?
+            '/customers/contacts/add' :
+            '/suppliers/supplier-contacts/add';
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify(formData)
+        });
+
+        const data = await response.json();
+
+        if (data.success || response.ok) {
+            contactModal.hide();
+            showToast('Contact added successfully', 'success');
+            if (data.contact) {
+                updateContactsTable(data.contact);
+            }
+        } else {
+            throw new Error(data.error || 'Failed to add contact');
+        }
+    } catch (error) {
+        console.error('Error saving contact:', error);
+        showToast(error.message || 'Failed to add contact', 'error');
+    } finally {
+        submitButton.disabled = false;
+    }
+}
+
+// Email Preview
+async function showEmailPreview(email) {
+    const modal = new bootstrap.Modal(document.getElementById('emailPreviewModal'));
+    const modalBody = document.getElementById('emailPreviewBody');
+    const modalTitle = document.getElementById('emailPreviewTitle');
+
+    try {
+        modalBody.innerHTML = '<div class="text-center"><div class="spinner-border"></div></div>';
+        modal.show();
+
+        const response = await fetch(`/api/get-latest-email?email=${encodeURIComponent(email)}`);
+        const data = await response.json();
+
+        if (response.ok) {
+            modalTitle.textContent = data.subject;
+            modalBody.innerHTML = `
+                <div class="mb-3">
+                    <strong>From:</strong> ${email}<br>
+                    <strong>Date:</strong> ${data.date}<br>
+                </div>
+                <div class="email-content">
+                    ${data.body.includes('<html') ? data.body : `<pre>${data.body}</pre>`}
+                </div>
+            `;
+        } else {
+            modalBody.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+        }
+    } catch (error) {
+        modalBody.innerHTML = '<div class="alert alert-danger">Failed to load email</div>';
+    }
+}
+
+// Domain Actions
+async function ignoreDomain(email, domain) {
+    if (!confirm(`Are you sure you want to ignore all emails from the domain ${domain}?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/ignore-domain', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                domain: domain,
+                reason: 'Manually ignored'
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showToast('Domain ignored successfully');
+            document.querySelectorAll(`tr[data-domain="${domain}"]`).forEach(row => row.remove());
+        } else {
+            showToast(data.error || 'Failed to ignore domain', 'error');
+        }
+    } catch (error) {
+        showToast('Failed to ignore domain', 'error');
+    }
+}
+
+async function bulkAssignContacts(type, companyId, domain, emails) {
+    if (!confirm(`Are you sure you want to add all contacts from ${domain} as ${type} contacts?`)) {
+        return;
+    }
+
+    const loadingToast = showToast(`Processing ${emails.length} contacts...`, 'info', false);
+    let successCount = 0;
+    let errorCount = 0;
+
+    try {
+        for (const email of emails) {
+            try {
+                const endpoint = type === 'customer' ?
+                    '/customers/contacts/add' :
+                    '/suppliers/supplier-contacts/add';
+
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: email,
+                        customer_id: type === 'customer' ? companyId : null,
+                        supplier_id: type === 'supplier' ? companyId : null,
+                        first_name: email.split('@')[0].split('.')[0],
+                        second_name: email.split('@')[0].split('.')[1] || ''
+                    })
+                });
+
+                if (response.ok) {
+                    successCount++;
+                } else {
+                    errorCount++;
+                }
+            } catch (error) {
+                console.error('Error processing contact:', email, error);
+                errorCount++;
+            }
+        }
+
+        loadingToast.remove();
+        showToast(
+            `Processed ${successCount} contacts successfully${errorCount > 0 ? `, ${errorCount} failed` : ''}`,
+            errorCount > 0 ? 'warning' : 'success'
+        );
+
+        if (successCount > 0) {
+            // Find all rows with this domain
+            const domainRows = document.querySelectorAll(`tr[data-domain="${domain}"]`);
+
+            // Find the domain header (it's the previous sibling of the first domain row)
+            if (domainRows.length > 0) {
+                const firstDomainRow = domainRows[0];
+                const domainHeader = firstDomainRow.previousElementSibling;
+
+                // Remove the domain header if found
+                if (domainHeader && domainHeader.classList.contains('table-secondary')) {
+                    domainHeader.remove();
+                }
+
+                // Remove all the domain rows
+                domainRows.forEach(row => row.remove());
+            }
+        }
+
+    } catch (error) {
+        console.error('Error in bulk assignment:', error);
+        loadingToast.remove();
+        showToast('Error processing bulk assignment', 'error');
+    }
+}
+
+function updateContactsTable(contact) {
+    // Remove from new contacts if exists
+    const newContactRow = document.querySelector(`#newContactsTableBody tr[data-email="${contact.email}"]`);
+    if (newContactRow) {
+        newContactRow.remove();
+    }
+
+    // Check if existing contacts table exists
+    const existingContactsBody = document.getElementById('existingContactsTableBody');
+    if (!existingContactsBody) {
+        console.warn('Existing contacts table not found - might need page refresh');
+        return;
+    }
+
+    const newRow = document.createElement('tr');
+    newRow.setAttribute('data-domain', contact.domain || '');
+    newRow.setAttribute('data-email', contact.email);
+
+    // Use first_name for suppliers, name for customers
+    const displayName = contact.name || contact.first_name || 'Unknown';
+
+    newRow.innerHTML = `
+        <td>
+            <strong>${displayName}</strong><br>
+            <small class="text-muted">${contact.email}</small>
+        </td>
+        <td>${contact.email_count || 1}</td>
+        <td>${contact.customer_name || '<em>No Customer</em>'}</td>
+        <td>
+            <div class="btn-group">
+                <a href="/contacts/${contact.id}"
+                   class="btn btn-outline-primary btn-sm">View</a>
+                <button onclick="showEmailPreview('${contact.email}')"
+                        class="btn btn-outline-secondary btn-sm">View Email</button>
+                <button onclick="ignoreDomain('${contact.email}', '${contact.domain || ''}')"
+                        class="btn btn-outline-danger btn-sm">Ignore Domain</button>
+            </div>
+        </td>
+    `;
+
+    existingContactsBody.insertBefore(newRow, existingContactsBody.firstChild);
+}
+
+// Error and Toast Notifications
+function showError(message) {
+    document.getElementById('loadingState').classList.add('d-none');
+    const errorDiv = document.getElementById('errorState');
+    errorDiv.textContent = message;
+    errorDiv.classList.remove('d-none');
+}
+
+function showToast(message, type = 'success', autoHide = true) {
+    const toastContainer = document.getElementById('toastContainer') || createToastContainer();
+    const toast = document.createElement('div');
+    toast.className = `toast show bg-${type === 'error' ? 'danger' : type} text-white`;
+    toast.innerHTML = `
+        <div class="toast-body">
+            ${message}
+            <button type="button" class="btn-close btn-close-white ms-2" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    toastContainer.appendChild(toast);
+    if (autoHide) {
+        setTimeout(() => toast.remove(), 3000);
+    }
+    return toast;
+}
+
+function createToastContainer() {
+    const container = document.createElement('div');
+    container.id = 'toastContainer';
+    container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+    document.body.appendChild(container);
+    return container;
+}
+
+// Domain Helper Functions
+async function loadDomainSuggestions(emailId) {
+    const dropdownButton = document.getElementById(`addContactDropdown-${emailId}`);
+    const email = dropdownButton.getAttribute('data-email');
+    const name = dropdownButton.getAttribute('data-name');
+    const domain = email.split('@')[1];
+    const suggestionsDiv = document.getElementById(`suggestions-${emailId}`);
+    const loadingItem = document.getElementById(`loadingItem-${emailId}`);
+
+    try {
+        const [customerResponse, supplierResponse] = await Promise.all([
+            fetch(`/customers/by-domain/${domain}`),
+            fetch(`/suppliers/by-domain/${domain}`)
+        ]);
+
+        const customers = await customerResponse.json();
+        const suppliers = await supplierResponse.json();
+
+        loadingItem.style.display = 'none';
+        let html = '';
+
+        if (customers && customers.length > 0) {
+            html += '<li><h6 class="dropdown-header">Customer Suggestions</h6></li>';
+            customers.forEach(customer => {
+                html += `
+                    <li>
+                        <a class="dropdown-item" href="#"
+                           onclick="showAddContactModal('${email}', '${name}', 'customer', ${customer.id})">
+                            <i class="bi bi-building"></i> ${customer.name}
+                        </a>
+                    </li>`;
+            });
+        }
+
+        if (suppliers && suppliers.length > 0) {
+            if (customers && customers.length > 0) {
+                html += '<li><hr class="dropdown-divider"></li>';
+            }
+            html += '<li><h6 class="dropdown-header">Supplier Suggestions</h6></li>';
+            suppliers.forEach(supplier => {
+                html += `
+                    <li>
+                        <a class="dropdown-item" href="#"
+                           onclick="showAddContactModal('${email}', '${name}', 'supplier', ${supplier.id})">
+                            <i class="bi bi-truck"></i> ${supplier.name}
+                        </a>
+                    </li>`;
+            });
+        }
+
+        if (!customers.length && !suppliers.length) {
+            html += `
+                <li class="dropdown-item-text">
+                    <small class="text-muted">No suggestions found for ${domain}</small>
+                </li>`;
+        }
+
+        suggestionsDiv.innerHTML = html;
+
+    } catch (error) {
+        console.error('Error loading domain suggestions:', error);
+        loadingItem.innerHTML = `<small class="text-danger">Error loading suggestions</small>`;
+    }
+}
+
+// Event Listeners for Dropdowns
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('[id^="addContactDropdown-"]').forEach(button => {
+        button.addEventListener('show.bs.dropdown', function() {
+            const emailId = this.id.split('-')[1];
+            loadDomainSuggestions(emailId, this);
+        });
+    });
+});
+
+let bulkReviewModal;
+let currentBulkData = {
+    type: null,
+    companyId: null,
+    domain: null,
+    contacts: []
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    bulkReviewModal = new bootstrap.Modal(document.getElementById('bulkReviewModal'));
+
+    // Handle "Select All" checkbox
+    document.getElementById('selectAll').addEventListener('change', function() {
+        const checkboxes = document.querySelectorAll('#bulkReviewTableBody input[type="checkbox"]');
+        checkboxes.forEach(checkbox => checkbox.checked = this.checked);
+        updateSelectedCount();
+    });
+});
+
+function prepareBulkAssign(type, companyId, domain, emails) {
+    currentBulkData = {
+        type,
+        companyId,
+        domain,
+        contacts: emails.map(email => ({
+            email,
+            firstName: email.split('@')[0].split('.')[0] || '',
+            lastName: email.split('@')[0].split('.')[1] || '',
+            selected: true
+        }))
+    };
+
+    // Populate the review table
+    const tbody = document.getElementById('bulkReviewTableBody');
+    tbody.innerHTML = currentBulkData.contacts.map((contact, index) => `
+        <tr>
+            <td>
+                <input type="checkbox" class="form-check-input"
+                       onchange="updateSelectedCount()"
+                       checked data-index="${index}">
+            </td>
+            <td>${contact.email}</td>
+            <td>
+                <input type="text" class="form-control"
+                       value="${contact.firstName}"
+                       onchange="updateContact(${index}, 'firstName', this.value)">
+            </td>
+            <td>
+                <input type="text" class="form-control"
+                       value="${contact.lastName}"
+                       onchange="updateContact(${index}, 'lastName', this.value)">
+            </td>
+        </tr>
+    `).join('');
+
+    updateSelectedCount();
+    bulkReviewModal.show();
+}
+
+function updateContact(index, field, value) {
+    currentBulkData.contacts[index][field] = value;
+}
+
+function updateSelectedCount() {
+    const checkboxes = document.querySelectorAll('#bulkReviewTableBody input[type="checkbox"]');
+    const selectedCount = Array.from(checkboxes).filter(cb => cb.checked).length;
+    document.getElementById('selectedCount').textContent = `${selectedCount}`;
+
+    // Update the contacts' selected status
+    checkboxes.forEach(checkbox => {
+        const index = checkbox.dataset.index;
+        currentBulkData.contacts[index].selected = checkbox.checked;
+    });
+}
+
+async function confirmBulkAssign() {
+    const confirmButton = document.querySelector('#bulkReviewModal .btn-primary');
+    confirmButton.disabled = true;
+    confirmButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
+
+    const selectedContacts = currentBulkData.contacts.filter(contact => contact.selected);
+    let successCount = 0;
+    let errorCount = 0;
+
+    try {
+        for (const contact of selectedContacts) {
+            try {
+                const endpoint = currentBulkData.type === 'customer' ?
+                    '/customers/contacts/add' :
+                    '/suppliers/supplier-contacts/add';
+
+                // Create request body based on contact type
+                const requestBody = {
+                    email: contact.email,
+                    customer_id: currentBulkData.type === 'customer' ? currentBulkData.companyId : null,
+                    supplier_id: currentBulkData.type === 'supplier' ? currentBulkData.companyId : null,
+                    second_name: contact.lastName // This is common for both types
+                };
+
+                // Only the first name field differs between customer and supplier
+                if (currentBulkData.type === 'customer') {
+                    requestBody.name = contact.firstName;
+                } else {
+                    requestBody.first_name = contact.firstName;
+                }
+
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (response.ok) {
+                    successCount++;
+                } else {
+                    errorCount++;
+                }
+            } catch (error) {
+                console.error('Error processing contact:', contact.email, error);
+                errorCount++;
+            }
+        }
+
+        bulkReviewModal.hide();
+        showToast(
+            `Added ${successCount} contacts successfully${errorCount > 0 ? `, ${errorCount} failed` : ''}`,
+            errorCount > 0 ? 'warning' : 'success'
+        );
+
+        if (successCount > 0) {
+            // Remove the processed domain group from the table
+            const domainRows = document.querySelectorAll(`tr[data-domain="${currentBulkData.domain}"]`);
+            domainRows.forEach(row => {
+                if (row.previousElementSibling?.classList.contains('domain-header')) {
+                    row.previousElementSibling.remove();
+                }
+                row.remove();
+            });
+        }
+
+    } catch (error) {
+        console.error('Error in bulk assignment:', error);
+        showToast('Error processing bulk assignment', 'error');
+    } finally {
+        confirmButton.disabled = false;
+        confirmButton.textContent = 'Confirm & Add Contacts';
+    }
+}
+</script>
+
+<!-- Bulk Review Modal -->
+<!-- Bulk Review Modal -->
+<div class="modal fade" id="bulkReviewModal" tabindex="-1" aria-labelledby="bulkReviewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="bulkReviewModalLabel">Review Contacts</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i> Review and edit contact details before adding them
+                </div>
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>
+                                    <input type="checkbox" class="form-check-input" id="selectAll" checked>
+                                </th>
+                                <th>Email</th>
+                                <th>First Name</th>
+                                <th>Last Name</th>
+                            </tr>
+                        </thead>
+                        <tbody id="bulkReviewTableBody">
+                            <!-- Rows will be added dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <span class="me-auto">
+                    <span id="selectedCount"></span> contacts selected
+                </span>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="confirmBulkAssign()">
+                    Confirm & Add Contacts
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

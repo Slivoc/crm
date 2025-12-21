@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RFQ Excel View</title>
+
+    <!-- Handsontable CSS and JS from CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+        <style>
+        #rfq-lines-table {
+            width: 20%; /* Slim down the table */
+            height: 400px;
+            max-width: 100%; /* Ensure it doesn't exceed the viewport */
+            overflow-x: auto; /* Enable horizontal scrolling if needed */
+        }
+    </style>
+</head>
+<body>
+    <h1>RFQ Excel View: {{ rfq.customer_ref }}</h1>
+
+    <div id="rfq-lines-table" style="width: 80%; height: 400px;"></div>
+    <button id="save-btn">Save Changes</button>
+
+    <script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const container = document.getElementById('rfq-lines-table');
+        const data = {{ rfq_lines_json | tojson }};
+
+        // Initialize Handsontable
+        const hot = new Handsontable(container, {
+            licenseKey: 'non-commercial-and-evaluation',
+            data: data,
+            colHeaders: ['Line Number', 'Base Part Number', 'Quantity', 'Supplier', 'Price', 'Lead Time'],
+            columns: [
+                { data: 'line_number', readOnly: true },
+                { data: 'base_part_number' },  // Editable part number
+                { data: 'quantity', type: 'numeric' },  // Editable quantity
+                { data: 'supplier', readOnly: true },
+                { data: 'price', type: 'numeric', numericFormat: { pattern: '0,0.00' }, readOnly: true },
+                { data: 'lead_time', type: 'numeric', readOnly: true }
+            ],
+                            colHeaders: true,
+                rowHeaders: true,
+                // Set the column widths
+                colWidths: [100, 100, 150, 100, 120],  // Adjust these values as needed
+                width: '100%',  // Make the table responsive to the container
+                stretchH: 'all',  // Ensure it uses available width
+                height: 400,
+                licenseKey: 'non-commercial-and-evaluation'  // Replace if needed
+            rowHeaders: true,
+            contextMenu: true,
+            stretchH: 'all',
+            height: 'auto',
+            width: '100%',
+            manualColumnResize: true,
+            manualRowResize: true,
+            dropdownMenu: true,
+            filters: true
+        });
+
+document.getElementById('save-btn').addEventListener('click', function() {
+    const updatedData = hot.getData();
+
+    fetch('/rfqs/{{ rfq.id }}/view_and_edit', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ part_numbers_data: updatedData })
+    })
+    .then(response => {
+        if (response.redirected) {
+            // If the response is a redirect, navigate to the new location
+            window.location.href = response.url;
+        } else {
+            // If no redirection, assume JSON response
+            return response.json();
+        }
+    })
+    .then(result => {
+        if (result && result.success) {
+            alert('Data saved successfully!');
+        } else if (result) {
+            alert('Error saving data.');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error); // Debugging: log any errors
+        alert('An error occurred while saving.');
+    });
+});
+
+
+</script>
+
+</body>
+</html>

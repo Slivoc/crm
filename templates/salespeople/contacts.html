@@ -1,0 +1,2926 @@
+{% extends "base.html" %}{% block title %}{{ salesperson.name }} - Contact Management{% endblock %}{% block head %}
+{{ super() }}<link rel="stylesheet" href="{{ url_for('static', filename='css/salespeople.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/bulk-selection.css') }}">
+<style>
+  #contactDetailsCanvas {
+    --bs-offcanvas-width: 1600px;
+  }
+
+  /* FIXED: Checkbox column width */
+  .table th:first-child,
+  .table td:first-child {
+    width: 50px !important;
+    min-width: 50px !important;
+    max-width: 50px !important;
+    text-align: center;
+    padding: 8px 4px !important;
+    vertical-align: middle;
+  }  /* FIXED: Select all container styling */
+  .select-all-container td {
+    width: auto !important;
+    max-width: none !important;
+  }  /* Timeline styles for contact communications /
+  .timeline {
+    position: relative;
+    padding-left: 30px;
+  }
+  .timeline-item {
+    position: relative;
+    margin-bottom: 1.5rem;
+  }
+  .timeline-marker {
+    position: absolute;
+    left: -30px;
+    top: 0;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+  }
+  .timeline-content {
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #eee;
+  }
+  / Communication type badges /
+  .badge-email {
+    background-color: #4CAF50;
+  }
+  .badge-phone {
+    background-color: #2196F3;
+  }
+  .badge-meeting {
+    background-color: #9C27B0;
+  }
+  .badge-video {
+    background-color: #FF9800;
+  }
+  .badge-other {
+    background-color: #607D8B;
+  }
+  / Improved sortable table headers /
+  .sortable-header {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 20px !important;
+  }
+  .sortable-header:hover {
+    background-color: #f8f9fa;
+  }
+  .sort-icon {
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.5;
+  }
+  .sort-icon.active {
+    opacity: 1;
+  }
+  / Header filter styles */
+  .filter-row th {
+    padding: 8px 12px;
+    background-color: #f8f9fa;
+    border-top: 1px solid #dee2e6;
+    vertical-align: middle;
+  }  .header-filter {
+    width: 100%;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.875rem;
+    background-color: white;
+  }  .header-filter:focus {
+    border-color: #80bdff;
+    outline: 0;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+  }  .filter-select {
+    width: 100%;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.875rem;
+    background-color: white;
+    cursor: pointer;
+  }  /* Multi-select adjustments */
+  .filter-select[multiple] {
+    height: auto;
+    min-height: 100px;
+  }  .clear-filters-btn {
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    margin-left: 4px;
+  }  /* Contact info styling */
+  .contact-info {
+    font-size: 0.875rem;
+    line-height: 1.3;
+  }  .contact-detail {
+    display: flex;
+    align-items: center;
+    margin-bottom: 2px;
+  }  .contact-detail:last-child {
+    margin-bottom: 0;
+  }  .contact-detail i {
+    width: 16px;
+    margin-right: 6px;
+    color: #6c757d;
+  }  /* Copy button styling */
+  .copy-btn {
+    padding: 0.1rem 0.4rem;
+    font-size: 0.75rem;
+    margin-left: 4px;
+  }  .bump-status-btn {
+    transition: all 0.2s ease;
+    user-select: none;
+  }  .bump-status-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  }  .bump-status-btn:active {
+    transform: scale(0.95);
+  }  .dropdown.show {
+    position: relative;
+    z-index: 1060;
+  }  .contact-row {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }  .contact-row:hover {
+    background-color: #f8f9fa;
+  }  /* Prevent row hover when hovering over interactive elements */
+  .contact-row:has(.btn:hover, .dropdown:hover, .copy-btn:hover, .bump-status-btn:hover) {
+    background-color: inherit;
+  }  /* Bulk selection styles */
+  .bulk-selection-bar {
+    position: fixed;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(45deg, #007bff, #0056b3);
+    color: white;
+    padding: 0.75rem 1.5rem;
+    border-radius: 0 0 0.5rem 0.5rem;
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+    z-index: 1030;
+    min-width: 400px;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+  }  .bulk-selection-bar.show {
+    opacity: 1;
+    visibility: visible;
+  }  .select-all-container {
+    background-color: #f8f9fa;
+    border-bottom: 2px solid #dee2e6;
+  }  .select-all-container td {
+    padding: 12px;
+    font-weight: 500;
+  }  .contact-row.selected {
+    background-color: #e3f2fd !important;
+    border-left: 4px solid #2196F3;
+  }  .selected-contact-item {
+    display: flex;
+    justify-content: between;
+    align-items: center;
+    padding: 0.75rem;
+    background-color: #f8f9fa;
+    border-radius: 0.375rem;
+    margin-bottom: 0.5rem;
+  }  .remove-selected-btn {
+    background: none;
+    border: none;
+    color: #dc3545;
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 50%;
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }  .remove-selected-btn:hover {
+    background-color: #f5c6cb;
+  }  .bulk-action-btn {
+    display: block;
+    width: 100%;
+    margin-bottom: 0.5rem;
+    text-align: left;
+  }  .bulk-actions-summary {
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 0.375rem;
+    margin-bottom: 1.5rem;
+  }</style>
+{% endblock %}{% block content %}<div class="container-fluid">
+  <!-- Hidden fields for JavaScript access to current sort state -->
+  <input type="hidden" id="currentSort" value="{{ current_sort or '' }}">
+  <input type="hidden" id="currentOrder" value="{{ current_order or 'asc' }}">
+  <input type="hidden" id="salesPersonId" value="{{ salesperson.id }}">
+
+  <!-- Bulk Selection Bar -->
+  <div class="bulk-selection-bar" id="bulkSelectionBar">
+    <div class="d-flex justify-content-between align-items-center">
+      <div>
+        <span class="selected-count" id="selectedCount">0</span> contacts selected
+      </div>
+      <div class="d-flex gap-2">
+        <button type="button" class="btn btn-light btn-sm" id="bulkActionsBtn">
+          <i class="bi bi-gear"></i> Bulk Actions
+        </button>
+        <button type="button" class="btn btn-outline-light btn-sm" id="clearSelectionBtn">
+          <i class="bi bi-x"></i> Clear Selection
+        </button>
+      </div>
+    </div>
+  </div>
+
+<!-- Updated header row for contacts page -->
+<div class="row mb-4">
+  <div class="col-md-6">
+    <div>
+      <h2 class="fw-bold mb-1">Contacts</h2>
+      <p class="text-muted mb-0">CRM view of contacts for {{ salesperson.name }}</p>
+    </div>
+  </div>
+  <div class="col-md-6 text-md-end">
+    <!-- Navigation Buttons - All in one line -->
+    <div class="d-inline-flex gap-2">
+      <!-- Salesperson Selector Dropdown -->
+      <div class="dropdown">
+        <button type="button" class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-person-circle"></i> {{ salesperson.name }}
+        </button>
+        <ul class="dropdown-menu">
+          {% if all_salespeople %}
+            {% for sp in all_salespeople %}
+              {% if sp.id != salesperson.id %}
+                <li>
+                  <a class="dropdown-item" href="{{ url_for('salespeople.contacts', salesperson_id=sp.id) }}">
+                    <i class="bi bi-person"></i> {{ sp.name }}
+                    {% if sp.contact_count > 0 %}
+                      <span class="badge bg-secondary ms-2">{{ sp.contact_count }}</span>
+                    {% endif %}
+                  </a>
+                </li>
+              {% else %}
+                <li>
+                  <span class="dropdown-item active">
+                    <i class="bi bi-person-check"></i> {{ sp.name }} (Current)
+                  </span>
+                </li>
+              {% endif %}
+            {% endfor %}
+            <li><hr class="dropdown-divider"></li>
+          {% endif %}
+          <li>
+            <a class="dropdown-item" href="{{ url_for('salespeople.dashboard') }}">
+              <i class="bi bi-speedometer2"></i> Main Dashboard
+            </a>
+          </li>
+        </ul>
+      </div>
+
+  <!-- Existing Navigation Buttons -->
+  <a href="{{ url_for('salespeople.customers', salesperson_id=salesperson.id) }}" class="btn btn-outline-primary">
+    <i class="bi bi-people"></i> Customers
+  </a>
+  <a href="{{ url_for('salespeople.activity', salesperson_id=salesperson.id) }}" class="btn btn-outline-primary">
+    <i class="bi bi-arrow-left"></i> Back to Dashboard
+  </a>
+</div>  </div>
+</div>
+
+  <div class="row">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body table-container">
+          <div class="table-responsive">
+            <table class="table table-hover" id="contactsTable">
+              <thead>
+                <!-- Select All Row - FIXED -->
+                <tr class="select-all-container">
+                  <td colspan="9" style="padding: 12px; background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+                    <div class="d-flex align-items-center">
+                      <input type="checkbox" class="form-check-input select-all-checkbox me-2" id="selectAllCheckbox">
+                      <label for="selectAllCheckbox" class="form-check-label mb-0 fw-semibold">
+                        Select All Visible Contacts
+                      </label>
+                    </div>
+                  </td>
+                </tr>
+
+            <!-- Main Header Row -->
+            <tr>
+              <th style="width: 50px; text-align: center;">
+                <i class="bi bi-check-square text-muted"></i>
+              </th>
+              <th class="sortable-header" data-sort="name" style="width: 18%;">
+                Contact Details
+                {% if current_sort == 'name' %}
+                  <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+                {% else %}
+                  <i class="bi bi-arrow-up-down sort-icon"></i>
+                {% endif %}
+              </th>
+              <th class="sortable-header" data-sort="customer" style="width: 15%;">
+                Customer
+                {% if current_sort == 'customer' %}
+                  <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+                {% else %}
+                  <i class="bi bi-arrow-up-down sort-icon"></i>
+                {% endif %}
+              </th>
+              <th class="sortable-header" data-sort="status" style="width: 10%;">
+                Status
+                {% if current_sort == 'status' %}
+                  <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+                {% else %}
+                  <i class="bi bi-arrow-up-down sort-icon"></i>
+                {% endif %}
+              </th>
+              <!-- Add this in the filter row section, around line 330 --><th class="sortable-header" data-sort="latest_communication" style="width: 20%;">
+  Latest Communication
+  {% if current_sort == 'latest_communication' %}
+    <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+  {% else %}
+    <i class="bi bi-arrow-up-down sort-icon"></i>
+  {% endif %}
+</th>
+                  <th class="sortable-header" data-sort="days_since_contact" style="width: 10%;">
+  Days Since Contact
+  {% if current_sort == 'days_since_contact' %}
+    <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+  {% else %}
+    <i class="bi bi-arrow-up-down sort-icon"></i>
+  {% endif %}
+</th>
+                  <th style="width: 10%;">Notes</th>
+                  <th class="sortable-header" data-sort="communication_count" style="width: 5%;">
+                    Total
+                    {% if current_sort == 'communication_count' %}
+                      <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
+                    {% else %}
+                      <i class="bi bi-arrow-up-down sort-icon"></i>
+                    {% endif %}
+                  </th>
+<th style="width: 10%;">Actions</th>
+                </tr>
+
+<!-- Filter Row -->
+<tr class="filter-row">
+  <th style="text-align: center;"></th>
+
+  <!-- Name Filter -->
+  <th>
+    <input type="text" class="header-filter" id="nameFilter" placeholder="Filter names..." value="{{ name_filter or '' }}">
+  </th>
+
+  <!-- Customer Filter with Customer Status Dropdown -->
+  <th>
+    <div class="d-flex flex-column gap-1">
+      <input type="text" class="header-filter" id="customerFilter" placeholder="Filter customers..." style="font-size: 0.8rem;" value="{{ customer_filter or '' }}">
+
+      <!-- Customer Status Checkboxes -->
+      <div class="dropdown">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle w-100" type="button" id="customerStatusDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="font-size: 0.75rem;">
+          <i class="bi bi-funnel"></i> Customer Status
+        </button>
+        <ul class="dropdown-menu p-2" aria-labelledby="customerStatusDropdown" style="min-width: 200px;">
+          {% for status in customer_statuses %}
+            <li>
+              <div class="form-check">
+                <input class="form-check-input customer-status-checkbox" type="checkbox"
+                       value="{{ status.status|lower }}"
+                       id="custStatus{{ loop.index }}"
+                       {% if customer_status_filter and status.status|lower in customer_status_filter %}checked{% endif %}>
+                <label class="form-check-label" for="custStatus{{ loop.index }}" style="font-size: 0.875rem;">
+                  {{ status.status }}
+                </label>
+              </div>
+            </li>
+          {% endfor %}
+          <li>
+            <div class="form-check">
+              <input class="form-check-input customer-status-checkbox" type="checkbox"
+                     value="no status"
+                     id="custStatusNone"
+                     {% if customer_status_filter and 'no status' in customer_status_filter %}checked{% endif %}>
+              <label class="form-check-label" for="custStatusNone" style="font-size: 0.875rem;">
+                No Status
+              </label>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </th>
+
+  <!-- Contact Status Checkboxes -->
+  <th>
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-secondary dropdown-toggle w-100" type="button" id="contactStatusDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="font-size: 0.75rem;">
+        <i class="bi bi-funnel"></i> Contact Status
+      </button>
+      <ul class="dropdown-menu p-2" aria-labelledby="contactStatusDropdown" style="min-width: 200px;">
+        {% for status in contact_statuses %}
+          <li>
+            <div class="form-check">
+              <input class="form-check-input contact-status-checkbox" type="checkbox"
+                     value="{{ status.name|lower }}"
+                     id="contStatus{{ loop.index }}"
+                     {% if status_filter and status.name|lower in status_filter %}checked{% endif %}>
+              <label class="form-check-label" for="contStatus{{ loop.index }}" style="font-size: 0.875rem;">
+                {{ status.name }}
+              </label>
+            </div>
+          </li>
+        {% endfor %}
+        <li>
+          <div class="form-check">
+            <input class="form-check-input contact-status-checkbox" type="checkbox"
+                   value="no status"
+                   id="contStatusNone"
+                   {% if status_filter and 'no status' in status_filter %}checked{% endif %}>
+            <label class="form-check-label" for="contStatusNone" style="font-size: 0.875rem;">
+              No Status
+            </label>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </th>
+
+  <!-- Latest Communication - My Communications Filter -->
+  <th>
+    <div class="form-check" style="font-size: 0.75rem;">
+      <input class="form-check-input" type="checkbox" id="myCommunicationsFilter"
+             {{ 'checked' if my_communications_only else '' }}>
+      <label class="form-check-label" for="myCommunicationsFilter">
+        <i class="bi bi-person-check"></i> My comms
+      </label>
+    </div>
+  </th>
+
+  <!-- Days Since Contact -->
+  <th></th>
+
+  <!-- Notes -->
+  <th></th>
+
+  <!-- Total -->
+  <th></th>
+
+  <!-- Actions - Call List Filter and Clear Button -->
+  <th>
+    <div class="d-flex flex-column gap-1">
+      <div class="form-check" style="font-size: 0.75rem;">
+        <input class="form-check-input" type="checkbox" id="callListOnlyFilter"
+               {{ 'checked' if call_list_only else '' }}>
+        <label class="form-check-label" for="callListOnlyFilter">
+          <i class="bi bi-list-check"></i> Call list
+        </label>
+      </div>
+      <button type="button" class="btn btn-sm btn-outline-secondary clear-filters-btn" id="clearHeaderFilters">
+        <i class="bi bi-x"></i> Clear
+      </button>
+    </div>
+  </th>
+</tr>
+
+          </thead>
+          <tbody>
+            {% for contact in contacts %}
+            <tr class="contact-row"
+                data-contact-id="{{ contact.id }}"
+                data-customer-id="{{ contact.customer_id }}"
+                data-name="{{ (contact.name + ' ' + (contact.second_name or ''))|lower|trim }}"
+                data-customer="{{ contact.customer_name|lower }}"
+                data-customer-status="{{ (contact.customer_status_name or 'no status')|lower }}"
+                data-job-title="{{ (contact.job_title or '')|lower }}"
+                data-status="{{ (contact.status_name or 'no status')|lower }}">
+              <td>
+                <input type="checkbox" class="form-check-input contact-checkbox"
+                       data-contact-id="{{ contact.id }}"
+                       data-contact-name="{{ contact.name }}"
+                       data-customer-name="{{ contact.customer_name }}">
+              </td>
+              <td>
+                <div class="contact-info">
+                  <!-- Name -->
+                  <div class="fw-bold mb-1">
+                    {% if contact.second_name %}
+                      {{ contact.name }} {{ contact.second_name }}
+                    {% else %}
+                      {{ contact.name }}
+                    {% endif %}
+                  </div>
+
+                  <!-- Email -->
+                  {% if contact.email %}
+                  <div class="contact-detail">
+                    <i class="bi bi-envelope"></i>
+                    <a href="mailto:{{ contact.email }}" class="text-decoration-none">{{ contact.email }}</a>
+                    <button class="btn btn-link btn-sm copy-btn" data-email="{{ contact.email }}" title="Copy email">
+                      <i class="bi bi-clipboard"></i>
+                    </button>
+                  </div>
+                  {% endif %}
+
+                  <!-- Phone -->
+                  {% if contact.phone %}
+                  <div class="contact-detail">
+                    <i class="bi bi-telephone"></i>
+                    <a href="tel:{{ contact.phone }}" class="text-decoration-none">{{ contact.phone }}</a>
+                    <button class="btn btn-link btn-sm copy-btn" data-phone="{{ contact.phone }}" title="Copy phone">
+                      <i class="bi bi-clipboard"></i>
+                    </button>
+                  </div>
+                  {% endif %}
+
+                  <!-- Job Title -->
+                  {% if contact.job_title %}
+                  <div class="contact-detail">
+                    <i class="bi bi-briefcase"></i>
+                    <span class="text-muted">{{ contact.job_title }}</span>
+                  </div>
+                  {% endif %}
+                </div>
+              </td>
+              <td>
+                <div>{{ contact.customer_name }}</div>
+                {% if contact.customer_status_name %}
+                  <div class="mt-1">
+                    <span class="badge bg-secondary" style="font-size: 0.7em;">
+                      {{ contact.customer_status_name }}
+                    </span>
+                  </div>
+                {% else %}
+                  <div class="mt-1">
+                    <span class="badge bg-light text-dark" style="font-size: 0.7em;">
+                      No Status
+                    </span>
+                  </div>
+                {% endif %}
+              </td>
+              <td>
+                {% if contact.status_name %}
+                  <span class="badge bump-status-btn"
+                        style="background-color: {{ contact.status_color }}; cursor: pointer;"
+                        data-contact-id="{{ contact.id }}"
+                        title="Click to change status">
+                    {{ contact.status_name }}
+                  </span>
+                {% else %}
+                  <span class="badge bg-secondary bump-status-btn"
+                        data-contact-id="{{ contact.id }}"
+                        style="cursor: pointer;"
+                        title="Click to set status">
+                    No Status
+                  </span>
+                {% endif %}
+              </td>
+              <td>
+                {% if contact.latest_update %}
+                  <div class="d-flex align-items-center">
+                    <span class="badge {{ 'bg-success' if contact.latest_communication_type|lower == 'email' else 'bg-primary' if contact.latest_communication_type|lower == 'phone' else 'bg-info' if contact.latest_communication_type|lower == 'meeting' else 'bg-warning' if contact.latest_communication_type|lower == 'video call' else 'bg-secondary' }} me-2">
+                      {{ contact.latest_communication_type }}
+                    </span>
+                    <div class="flex-grow-1">
+                      <div class="text-truncate" style="max-width: 150px;">
+                        <small>{{ contact.latest_update|safe }}</small>
+                      </div>
+                      <div>
+                        <small class="text-muted">{{ contact.latest_communication_date_formatted }}</small>
+                      </div>
+                      {% if contact.latest_communication_user %}
+                        <div>
+                          <small class="text-muted">
+                            <i class="bi bi-person"></i> {{ contact.latest_communication_user }}
+                          </small>
+                        </div>
+                      {% endif %}
+                    </div>
+                  </div>
+                {% else %}
+                  <span class="text-muted">No communications</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if contact.days_since_contact is not none %}
+                  <span class="badge bg-{{ 'success' if contact.days_since_contact < 7 else 'warning' if contact.days_since_contact < 30 else 'danger' }}">
+                    {{ contact.days_since_contact }} days
+                  </span>
+                {% else %}
+                  <span class="text-muted">Never</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if contact.notes %}
+                  <div class="text-truncate" style="max-width: 200px;" title="{{ contact.notes }}">
+                    {{ contact.notes }}
+                  </div>
+                {% else %}
+                  <span class="text-muted">No notes</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if contact.communication_count > 0 %}
+                  <span class="badge bg-primary">{{ contact.communication_count }}</span>
+                {% else %}
+                  <span class="text-muted">0</span>
+                {% endif %}
+              </td>
+              <td>  <div class="btn-group-vertical btn-group-sm" role="group">
+    <!-- Quick action buttons row -->
+    <div class="btn-group btn-group-sm" role="group">
+      <button type="button" class="btn btn-success quick-communication-btn"
+              data-contact-id="{{ contact.id }}"
+              data-contact-name="{{ contact.name }}"
+              data-customer-id="{{ contact.customer_id }}"
+              data-customer-name="{{ contact.customer_name }}"
+              data-communication-type="email"
+              title="Quick Email Log">
+        <i class="bi bi-envelope"></i>
+      </button>
+      <button type="button" class="btn btn-primary quick-communication-btn"
+              data-contact-id="{{ contact.id }}"
+              data-contact-name="{{ contact.name }}"
+              data-customer-id="{{ contact.customer_id }}"
+              data-customer-name="{{ contact.customer_name }}"
+              data-communication-type="phone"
+              title="Quick Phone Log">
+        <i class="bi bi-telephone"></i>
+      </button>
+{% if contact.is_on_call_list %}
+  <button type="button" class="btn btn-success remove-from-call-list-btn"
+          data-contact-id="{{ contact.id }}"
+          data-contact-name="{{ contact.name }}"
+          data-call-list-id="{{ contact.call_list_id }}"
+          title="Click to remove from call list">
+    <i class="bi bi-check-circle-fill"></i>
+  </button>
+{% else %}
+  <button type="button" class="btn btn-warning add-to-call-list-btn"
+          data-contact-id="{{ contact.id }}"
+          data-contact-name="{{ contact.name }}"
+          title="Add to Call List">
+    <i class="bi bi-list-check"></i>
+  </button>
+{% endif %}
+      <button type="button" class="btn btn-secondary dropdown-toggle dropdown-toggle-split more-communication-btn"
+              data-bs-toggle="dropdown"
+              aria-expanded="false"
+              title="More communication types">
+        <i class="bi bi-three-dots"></i>
+        <span class="visually-hidden">More options</span>
+      </button>
+      <!-- Rest of dropdown menu stays the same -->
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="dropdown-item quick-communication-btn" href="#"
+                               data-contact-id="{{ contact.id }}"
+                               data-contact-name="{{ contact.name }}"
+                               data-customer-id="{{ contact.customer_id }}"
+                               data-customer-name="{{ contact.customer_name }}"
+                               data-communication-type="meeting">
+                              <i class="bi bi-calendar-event me-2"></i>Meeting
+                            </a>
+                          </li>
+                          <li>
+                            <a class="dropdown-item quick-communication-btn" href="#"
+                               data-contact-id="{{ contact.id }}"
+                               data-contact-name="{{ contact.name }}"
+                               data-customer-id="{{ contact.customer_id }}"
+                               data-customer-name="{{ contact.customer_name }}"
+                               data-communication-type="video">
+                              <i class="bi bi-camera-video me-2"></i>Video Call
+                            </a>
+                          </li>
+                          <li><hr class="dropdown-divider"></li>
+                          <li>
+                            <a class="dropdown-item add-communication-btn" href="#"
+                               data-contact-id="{{ contact.id }}"
+                               data-contact-name="{{ contact.name }}"
+                               data-customer-id="{{ contact.customer_id }}"
+                               data-customer-name="{{ contact.customer_name }}">
+                              <i class="bi bi-plus-circle me-2"></i>Custom Communication
+                            </a>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+                {% else %}
+                <tr class="empty-state-row" style="display: none;">
+                  <td colspan="9" class="text-center py-3">
+                    <p class="text-muted">No contacts found matching your filters</p>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="contactCommunicationModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="contactCommunicationModalLabel">Log Communication</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="communicationForm" method="post">
+          <input type="hidden" name="customer_id" id="communicationCustomerId">
+          <input type="hidden" name="contact_id" id="communicationContactId">
+
+      <div class="mb-3">
+        <label for="communicationContactName" class="form-label">Contact</label>
+        <input type="text" class="form-control" id="communicationContactName" readonly>
+      </div>
+
+      <div class="mb-3">
+        <label for="communicationCustomerName" class="form-label">Customer</label>
+        <input type="text" class="form-control" id="communicationCustomerName" readonly>
+      </div>
+
+      <div class="mb-3">
+        <label for="communicationType" class="form-label">Communication Type</label>
+        <select class="form-select" id="communicationType" name="update_type" required>
+          <option value="">Select type...</option>
+          <option value="email">Email</option>
+          <option value="phone">Phone</option>
+          <option value="meeting">Meeting</option>
+          <option value="video">Video Call</option>
+        </select>
+      </div>
+
+      <!-- NEW: Date picker field -->
+      <!-- Date and Time picker fields --><div class="row">
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label for="communicationDate" class="form-label">Date</label>
+      <input type="date" class="form-control" id="communicationDate" name="update_date" required>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label for="communicationTime" class="form-label">Time</label>
+      <input type="time" class="form-control" id="communicationTime" name="update_time">
+      <div class="form-text">Optional - defaults to current time</div>
+    </div>
+  </div>
+</div>
+
+      <div class="mb-3">
+        <label for="communicationNotes" class="form-label">
+          Communication Notes
+          <small class="text-muted">(Optional - will auto-generate if left blank)</small>
+        </label>
+        <!-- Preset Response Buttons -->
+        <div class="mb-2">
+          <small class="text-muted d-block mb-1">Quick responses:</small>
+          <div class="btn-group btn-group-sm" role="group">
+            <button type="button" class="btn btn-danger preset-response-btn" data-response="<i class='bi bi-x-circle-fill text-danger'></i> No answer">
+              <i class="bi bi-x-circle-fill"></i> No answer
+            </button>
+            <button type="button" class="btn btn-success preset-response-btn" data-response="<i class='bi bi-file-earmark-text-fill text-info'></i> RFQ received">
+              <i class="bi bi-file-earmark-text-fill"></i> RFQ received
+            </button>
+            <button type="button" class="btn btn-success preset-response-btn" data-response="<i class='bi bi-cart-check-fill text-success'></i> Order received">
+              <i class="bi bi-cart-check-fill"></i> Order received
+            </button>
+          </div>
+        </div>
+
+        <textarea class="form-control" id="communicationNotes" name="update_text" rows="4"></textarea>
+      </div>
+
+      <div class="d-grid">
+        <button type="submit" class="btn btn-primary">Save Communication</button>
+      </div>
+    </form>
+  </div>
+</div>  </div>
+</div>
+
+<!-- 2. NEW: EDIT UPDATE MODAL -->
+<div class="modal fade" id="editUpdateModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Edit Update</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="editUpdateForm" method="post">
+          <input type="hidden" id="editUpdateId" name="update_id">
+
+      <div class="row">
+        <div class="col-md-6">
+          <div class="mb-3">
+            <label for="editUpdateDate" class="form-label">Date</label>
+            <input type="date" class="form-control" id="editUpdateDate" name="update_date" required>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="mb-3">
+            <label for="editCommunicationType" class="form-label">Communication Type</label>
+            <select class="form-select" id="editCommunicationType" name="communication_type">
+              <option value="generic">Generic Update</option>
+              <option value="email">Email</option>
+              <option value="phone">Phone</option>
+              <option value="meeting">Meeting</option>
+              <option value="video">Video Call</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <label for="editContactSelect" class="form-label">Contact (Optional)</label>
+        <select class="form-select" id="editContactSelect" name="contact_id">
+          <option value="">No specific contact</option>
+          <!-- Options will be populated dynamically -->
+        </select>
+        <div class="form-text">
+          <i class="bi bi-info-circle"></i>
+          If you change the contact, the customer will automatically update to match.
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <label for="editUpdateText" class="form-label">Update Text</label>
+        <textarea class="form-control" id="editUpdateText" name="update_text" rows="4" required></textarea>
+        <div class="form-text">
+          For email/phone communications, this will auto-generate if left blank.
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-between">
+        <button type="button" class="btn btn-danger" id="deleteUpdateBtn">
+          <i class="bi bi-trash"></i> Delete Update
+        </button>
+        <div>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>  </div>
+</div>
+
+<!-- 3. NEW: DELETE CONFIRMATION MODAL -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Confirm Delete</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to delete this update? This action cannot be undone.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Contact Details Offcanvas -->
+<div class="offcanvas offcanvas-end" id="contactDetailsCanvas" tabindex="-1">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title" id="contactDetailsCanvasLabel">Contact Details</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body" id="contactDetailsContent">
+    <!-- Contact details content will be loaded here via AJAX -->
+  </div>
+</div>
+
+<!-- Bulk Actions Offcanvas -->
+<div class="offcanvas offcanvas-end" id="bulkActionsCanvas" tabindex="-1">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title">
+      <i class="bi bi-gear me-2"></i>Bulk Actions
+    </h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body">
+    <!-- Summary Section -->
+    <div class="bulk-actions-summary">
+      <h6 class="fw-bold mb-3">
+        <i class="bi bi-info-circle me-2"></i>Selection Summary
+      </h6>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span>Selected Contacts:</span>
+        <span class="badge bg-primary" id="bulkSelectedCount">0</span>
+      </div>
+      <div class="text-muted small">
+        Actions will be applied to all selected contacts below.
+      </div>
+    </div>
+
+<!-- Action Buttons Section -->
+<div class="mb-4">
+  <h6 class="fw-bold mb-3">
+    <i class="bi bi-lightning me-2"></i>Available Actions
+  </h6>
+
+  <button type="button" class="btn btn-outline-primary bulk-action-btn" id="bulkSendEmailBtn">  <i class="bi bi-envelope me-2"></i>Send Email
+</button>  <button type="button" class="btn btn-outline-primary bulk-action-btn" id="bulkChangeStatusBtn">
+    <i class="bi bi-tag me-2"></i>Change Status
+  </button>
+
+  <button type="button" class="btn btn-outline-success bulk-action-btn" id="bulkAddCommunicationBtn">
+    <i class="bi bi-chat-dots me-2"></i>Log Communication
+  </button>
+
+  <button type="button" class="btn btn-outline-info bulk-action-btn" id="bulkExportBtn">
+    <i class="bi bi-download me-2"></i>Export Selected
+  </button>
+
+  <button type="button" class="btn btn-outline-warning bulk-action-btn" id="bulkAssignToUserBtn">
+    <i class="bi bi-person-plus me-2"></i>Assign to User
+  </button>
+
+  <button type="button" class="btn btn-outline-secondary bulk-action-btn" id="bulkAddNotesBtn">
+    <i class="bi bi-sticky me-2"></i>Add Notes
+  </button>
+</div>
+
+<!-- Selected Contacts List -->
+<div class="mb-3">
+  <h6 class="fw-bold mb-3">
+    <i class="bi bi-people me-2"></i>Selected Contacts
+  </h6>
+  <div class="selected-contacts-list" id="selectedContactsList">
+    <div class="text-center text-muted py-3" id="noSelectionMessage">
+      <i class="bi bi-inbox"></i>
+      <div>No contacts selected</div>
+      <small>Select contacts from the table to see them here</small>
+    </div>
+  </div>
+</div>
+
+<!-- Clear Selection -->
+<div class="d-grid">
+  <button type="button" class="btn btn-outline-danger" id="clearAllSelectionsBtn">
+    <i class="bi bi-x-circle me-2"></i>Clear All Selections
+  </button>
+</div>  </div>
+</div>
+
+<!-- Bulk Status Change Modal -->
+<div class="modal fade" id="bulkStatusModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Change Status for Selected Contacts</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="bulkStatusSelect" class="form-label">New Status</label>
+          <select class="form-select" id="bulkStatusSelect" required>
+            <option value="">Select a status...</option>
+            {% for status in contact_statuses %}
+              <option value="{{ status.id }}">{{ status.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle"></i> This will update the status for all selected contacts.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="confirmBulkStatus">Update Status</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Communication Modal -->
+<div class="modal fade" id="bulkCommunicationModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Log Communication for Selected Contacts</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="bulkCommType" class="form-label">Communication Type</label>
+          <select class="form-select" id="bulkCommType" required>
+            <option value="">Select type...</option>
+            <option value="email">Email</option>
+            <option value="phone">Phone</option>
+            <option value="meeting">Meeting</option>
+            <option value="video">Video Call</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label for="bulkCommNotes" class="form-label">Notes</label>
+          <textarea class="form-control" id="bulkCommNotes" rows="4"
+            placeholder="Enter communication notes..." required></textarea>
+        </div>
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle"></i> This communication will be logged for all selected contacts.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="confirmBulkComm">Log Communication</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Notes Modal -->
+<div class="modal fade" id="bulkNotesModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Add Notes to Selected Contacts</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="bulkNotesText" class="form-label">Notes</label>
+          <textarea class="form-control" id="bulkNotesText" rows="4"
+            placeholder="Enter notes to add..." required></textarea>
+        </div>
+        <div class="mb-3">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="appendNotes" checked>
+            <label class="form-check-label" for="appendNotes">
+              Append to existing notes (uncheck to replace)
+            </label>
+          </div>
+        </div>
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle"></i> These notes will be added to all selected contacts.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="confirmBulkNotes">Add Notes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Assignment Modal -->
+<div class="modal fade" id="bulkAssignModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Reassign Selected Contacts</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="bulkAssignSelect" class="form-label">Assign to Salesperson</label>
+          <select class="form-select" id="bulkAssignSelect" required>
+            <option value="">Select a salesperson...</option>
+            <!-- Options will be populated dynamically -->
+          </select>
+        </div>
+        <div class="alert alert-warning">
+          <i class="bi bi-exclamation-triangle"></i>
+          <strong>Warning:</strong> This will reassign the entire customer(s) to the new salesperson,
+          including all contacts under those customers.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-warning" id="confirmBulkAssign">Reassign Contacts</button>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- Add this near your other modals -->
+{% include "components/email_modal.html" %}
+{% endblock %}
+
+{% block scripts %}<!-- In your scripts section -->
+<script src="{{ url_for('static', filename='js/email_modal.js') }}"></script>
+
+{{ super() }}<script>
+// Define the save notes URL
+window.SAVE_NOTES_URL = "{{ url_for('salespeople.save_contact_notes') }}";
+
+document.addEventListener('DOMContentLoaded', function () {
+  // Initialize edit functionality FIRST
+  initializeEditUpdateFunctionality();
+
+  const contactDetailsCanvasEl = document.getElementById('contactDetailsCanvas');
+  const contactDetailsCanvas = new bootstrap.Offcanvas(contactDetailsCanvasEl);
+  const contactDetailsContent = document.getElementById('contactDetailsContent');
+
+  // Get current sort state from hidden fields
+  const currentSort = document.getElementById('currentSort').value;
+  const currentOrder = document.getElementById('currentOrder').value;
+  const salesPersonId = document.getElementById('salesPersonId').value;
+
+  // Set today's date as default for new communications
+  const communicationDateField = document.getElementById('communicationDate');
+  if (communicationDateField) {
+    const today = new Date().toISOString().split('T')[0];
+    communicationDateField.value = today;
+  }
+
+  // DEFINE HELPER FUNCTIONS EARLY
+  function setupContactDetailsEventListeners() {
+    const contactDetailsContent = document.getElementById('contactDetailsContent');
+
+    // Set up edit buttons for updates
+    const editButtons = contactDetailsContent.querySelectorAll('.edit-update-btn');
+    console.log('Setting up edit buttons:', editButtons.length); // Debug log
+
+    editButtons.forEach(button => {
+      button.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        console.log('Edit button clicked'); // Debug log
+
+        const updateData = {
+          id: this.getAttribute('data-update-id'),
+          date: this.getAttribute('data-update-date'),
+          text: this.getAttribute('data-update-text'),
+          communication_type: this.getAttribute('data-communication-type'),
+          contact_id: this.getAttribute('data-contact-id'),
+          customer_id: this.getAttribute('data-customer-id')
+        };
+
+        console.log('Update data:', updateData); // Debug log
+
+        if (window.openEditUpdateModal) {
+          window.openEditUpdateModal(updateData);
+        } else {
+          console.error('openEditUpdateModal function not available');
+        }
+      });
+    });
+
+    // Re-setup communication form handler
+    const detailsUpdateForm = contactDetailsContent.querySelector('#contactCommunicationForm');
+    if (detailsUpdateForm) {
+      detailsUpdateForm.addEventListener('submit', handleCommunicationSubmit);
+    }
+
+    // Re-setup save notes handler
+    setupSaveNotesHandler();
+
+    // Set today's date as default for communication date in details modal
+    const detailsCommunicationDate = contactDetailsContent.querySelector('#detailsCommunicationDate');
+    if (detailsCommunicationDate) {
+      const today = new Date().toISOString().split('T')[0];
+      detailsCommunicationDate.value = today;
+    }
+  }
+
+  function setupSaveNotesHandler() {
+    const saveNotesBtn = contactDetailsContent.querySelector('#saveNotesBtn');
+    if (!saveNotesBtn) return;
+
+    const contactNotes = contactDetailsContent.querySelector('#contactNotes');
+    const contactIdInput = contactDetailsContent.querySelector('#contactIdInput');
+
+    if (!contactIdInput) return;
+
+    const contactId = contactIdInput.value;
+
+    saveNotesBtn.addEventListener('click', function() {
+      const notes = contactNotes.value;
+
+      fetch(window.SAVE_NOTES_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          contact_id: contactId,
+          notes: notes
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showToast('Notes saved successfully', 'success');
+        } else {
+          alert('Error saving notes: ' + data.error);
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred while saving notes');
+      });
+    });
+  }
+
+  function refreshContactDetails() {
+    const contactDetailsContent = document.getElementById('contactDetailsContent');
+    const salesPersonId = document.getElementById('salesPersonId').value;
+
+    // Get current contact ID from the details panel
+    const contactIdInput = contactDetailsContent.querySelector('#contactIdInput');
+    if (!contactIdInput) return;
+
+    const contactId = contactIdInput.value;
+
+    contactDetailsContent.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
+
+    fetch('/salespeople/contact_details/' + contactId + '?salesperson_id=' + salesPersonId, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(response => response.text())
+    .then(html => {
+      contactDetailsContent.innerHTML = html;
+
+      // FIXED: Reattach event listeners for the refreshed content
+      setupContactDetailsEventListeners();
+    })
+    .catch(error => {
+      console.error('Error refreshing contact details:', error);
+      contactDetailsContent.innerHTML = '<div class="alert alert-danger">Error refreshing details</div>';
+    });
+  }
+
+  // Make functions globally available
+  window.refreshContactDetails = refreshContactDetails;
+  window.setupContactDetailsEventListeners = setupContactDetailsEventListeners;
+
+  // Initialize header filters
+  initializeHeaderFilters();
+
+  // Initialize bulk selection
+  initializeBulkSelection();
+
+  // ... rest of your existing code (contact row click handling, etc.)
+
+  // Contact row click handling
+  document.querySelectorAll('.contact-row').forEach(row => {
+    row.addEventListener('click', function(e) {
+      // List of selectors for elements that should NOT trigger row click
+      const interactiveSelectors = [
+        '.btn',
+        '.dropdown-toggle',
+        '.dropdown-menu',
+        '.dropdown-item',
+        '.copy-btn',
+        '.bump-status-btn',
+        '.quick-communication-btn',
+        '.contact-details-btn',
+        '.add-communication-btn',
+        '.more-communication-btn',
+        '.contact-checkbox',
+        'input[type="checkbox"]',
+        'a[href^="mailto:"]',
+        'a[href^="tel:"]'
+      ];
+
+      const isInteractiveElement = interactiveSelectors.some(selector => {
+        return e.target.closest(selector) !== null;
+      });
+
+      if (!isInteractiveElement) {
+        const contactId = this.querySelector('[data-contact-id]')?.getAttribute('data-contact-id');
+
+        if (contactId) {
+          contactDetailsContent.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
+          contactDetailsCanvas.show();
+
+          fetch('/salespeople/contact_details/' + contactId + '?salesperson_id=' + salesPersonId, {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+          })
+            .then(response => response.text())
+            .then(html => {
+              contactDetailsContent.innerHTML = html;
+
+              // CRITICAL: Call setup function after loading
+              setupContactDetailsEventListeners();
+            })
+            .catch(error => {
+              console.error('Error loading contact details:', error);
+              contactDetailsContent.innerHTML = '<div class="alert alert-danger"><h4>Error Loading Details</h4><p>There was a problem loading the contact details. Please try again.</p></div>';
+            });
+        }
+      }
+    });
+  });
+
+  // ... rest of your existing code
+
+  // Fix dropdown z-index issues
+  const observer = new MutationObserver(function(mutations) {
+    mutations.forEach(function(mutation) {
+      if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+        const target = mutation.target;
+        if (target.classList.contains('dropdown-menu')) {
+          const row = target.closest('tr');
+          if (row) {
+            if (target.classList.contains('show')) {
+              row.style.position = 'relative';
+              row.style.zIndex = '1060';
+            } else {
+              row.style.position = '';
+              row.style.zIndex = '';
+            }
+          }
+        }
+      }
+    });
+  });
+
+  // Start observing dropdown menus
+  document.querySelectorAll('.dropdown-menu').forEach(menu => {
+    observer.observe(menu, { attributes: true, attributeFilter: ['class'] });
+  });
+
+  // Sorting functionality that preserves ALL current filters
+document.querySelectorAll('.sortable-header').forEach(header => {
+  header.addEventListener('click', function() {
+    const sortColumn = this.getAttribute('data-sort');
+
+    let newOrder = 'asc';
+    if (currentSort === sortColumn && currentOrder === 'asc') {
+      newOrder = 'desc';
+    }
+
+    // Build URL preserving ALL current parameters
+    const url = new URL(window.location);
+
+    // Preserve ALL existing query parameters (filters)
+    const nameFilter = document.getElementById('nameFilter').value;
+    const customerFilter = document.getElementById('customerFilter').value;
+    const customerStatusFilter = Array.from(document.getElementById('customerStatusFilter').selectedOptions).map(opt => opt.value);
+    const statusFilter = Array.from(document.getElementById('statusFilter').selectedOptions).map(opt => opt.value);
+    const myCommunicationsOnly = document.getElementById('myCommunicationsFilter').checked;
+    const callListOnly = document.getElementById('callListOnlyFilter').checked; // ADD THIS LINE
+
+    // Set all filter parameters if they have values
+    if (nameFilter) url.searchParams.set('name_filter', nameFilter);
+    else url.searchParams.delete('name_filter');
+
+    if (customerFilter) url.searchParams.set('customer_filter', customerFilter);
+    else url.searchParams.delete('customer_filter');
+
+    // Handle multi-select for customer status
+    url.searchParams.delete('customer_status_filter');
+    if (customerStatusFilter.length > 0) {
+      customerStatusFilter.forEach(val => url.searchParams.append('customer_status_filter', val));
+    }
+
+    // Handle multi-select for status
+    url.searchParams.delete('status_filter');
+    if (statusFilter.length > 0) {
+      statusFilter.forEach(val => url.searchParams.append('status_filter', val));
+    }
+
+    if (myCommunicationsOnly) url.searchParams.set('my_communications_only', 'true');
+    else url.searchParams.delete('my_communications_only');
+
+    // ADD THESE LINES:
+    if (callListOnly) url.searchParams.set('call_list_only', 'true');
+    else url.searchParams.delete('call_list_only');
+
+    // Set the sort parameters
+    url.searchParams.set('sort', sortColumn);
+    url.searchParams.set('order', newOrder);
+
+    window.location.href = url.toString();
+  });
+});
+
+  function initializeHeaderFilters() {
+  // Get filter elements
+  const nameFilter = document.getElementById('nameFilter');
+  const customerFilter = document.getElementById('customerFilter');
+  const customerStatusCheckboxes = document.querySelectorAll('.customer-status-checkbox');
+  const contactStatusCheckboxes = document.querySelectorAll('.contact-status-checkbox');
+  const myCommunicationsFilter = document.getElementById('myCommunicationsFilter');
+  const callListOnlyFilter = document.getElementById('callListOnlyFilter');
+
+  // Debounce function
+  function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+
+  // Function to get selected checkbox values
+  function getCheckedValues(checkboxes) {
+    return Array.from(checkboxes)
+      .filter(cb => cb.checked)
+      .map(cb => cb.value);
+  }
+
+  // Apply server-side filters
+  const applyServerSideFilters = debounce(function() {
+    const url = new URL(window.location);
+
+    // Get filter values
+    const nameValue = nameFilter.value.trim();
+    const customerValue = customerFilter.value.trim();
+    const customerStatusValues = getCheckedValues(customerStatusCheckboxes);
+    const contactStatusValues = getCheckedValues(contactStatusCheckboxes);
+    const myCommunicationsOnly = myCommunicationsFilter.checked;
+    const callListOnlyValue = callListOnlyFilter.checked;
+
+    // Set or remove parameters
+    if (nameValue) url.searchParams.set('name_filter', nameValue);
+    else url.searchParams.delete('name_filter');
+
+    if (customerValue) url.searchParams.set('customer_filter', customerValue);
+    else url.searchParams.delete('customer_filter');
+
+    // Handle multi-select for customer status
+    url.searchParams.delete('customer_status_filter');
+    if (customerStatusValues.length > 0) {
+      customerStatusValues.forEach(val => url.searchParams.append('customer_status_filter', val));
+    }
+
+    // Handle multi-select for contact status
+    url.searchParams.delete('status_filter');
+    if (contactStatusValues.length > 0) {
+      contactStatusValues.forEach(val => url.searchParams.append('status_filter', val));
+    }
+
+    if (myCommunicationsOnly) {
+      url.searchParams.set('my_communications_only', 'true');
+    } else {
+      url.searchParams.delete('my_communications_only');
+    }
+
+    if (callListOnlyValue) {
+      url.searchParams.set('call_list_only', 'true');
+    } else {
+      url.searchParams.delete('call_list_only');
+    }
+
+    // Preserve sort
+    const currentSort = document.getElementById('currentSort').value;
+    const currentOrder = document.getElementById('currentOrder').value;
+    if (currentSort) {
+      url.searchParams.set('sort', currentSort);
+      url.searchParams.set('order', currentOrder);
+    }
+
+    window.location.href = url.toString();
+  }, 500);
+
+  // Event listeners
+  nameFilter.addEventListener('input', applyServerSideFilters);
+  customerFilter.addEventListener('input', applyServerSideFilters);
+
+  // Checkbox listeners - apply filter when dropdown closes
+  customerStatusCheckboxes.forEach(cb => {
+    cb.addEventListener('change', applyServerSideFilters);
+  });
+
+  contactStatusCheckboxes.forEach(cb => {
+    cb.addEventListener('change', applyServerSideFilters);
+  });
+
+  myCommunicationsFilter.addEventListener('change', applyServerSideFilters);
+  callListOnlyFilter.addEventListener('change', applyServerSideFilters);
+
+  // Client-side filtering for immediate feedback
+  nameFilter.addEventListener('input', applyClientSideFilters);
+  customerFilter.addEventListener('input', applyClientSideFilters);
+
+  customerStatusCheckboxes.forEach(cb => {
+    cb.addEventListener('change', applyClientSideFilters);
+  });
+
+  contactStatusCheckboxes.forEach(cb => {
+    cb.addEventListener('change', applyClientSideFilters);
+  });
+
+  // Clear filters button
+  document.getElementById('clearHeaderFilters').addEventListener('click', function() {
+    nameFilter.value = '';
+    customerFilter.value = '';
+
+    customerStatusCheckboxes.forEach(cb => cb.checked = false);
+    contactStatusCheckboxes.forEach(cb => cb.checked = false);
+
+    myCommunicationsFilter.checked = false;
+    callListOnlyFilter.checked = false;
+
+    const url = new URL(window.location);
+    url.searchParams.delete('name_filter');
+    url.searchParams.delete('customer_filter');
+    url.searchParams.delete('customer_status_filter');
+    url.searchParams.delete('status_filter');
+    url.searchParams.delete('my_communications_only');
+    url.searchParams.delete('call_list_only');
+
+    window.location.href = url.toString();
+  });
+
+  // Apply initial client-side filtering
+  applyClientSideFilters();
+
+  function applyClientSideFilters() {
+    const nameValue = nameFilter.value.toLowerCase();
+    const customerValue = customerFilter.value.toLowerCase();
+    const customerStatusValues = getCheckedValues(customerStatusCheckboxes);
+    const contactStatusValues = getCheckedValues(contactStatusCheckboxes);
+
+    let visibleCount = 0;
+
+    document.querySelectorAll('.contact-row').forEach(row => {
+      let visible = true;
+
+      if (nameValue) {
+        const rowName = row.getAttribute('data-name');
+        if (!rowName.includes(nameValue)) visible = false;
+      }
+
+      if (customerValue) {
+        const rowCustomer = row.getAttribute('data-customer');
+        if (!rowCustomer.includes(customerValue)) visible = false;
+      }
+
+      if (customerStatusValues.length > 0) {
+        const rowCustomerStatus = row.getAttribute('data-customer-status');
+        if (!customerStatusValues.includes(rowCustomerStatus)) visible = false;
+      }
+
+      if (contactStatusValues.length > 0) {
+        const rowStatus = row.getAttribute('data-status');
+        if (!contactStatusValues.includes(rowStatus)) visible = false;
+      }
+
+      row.style.display = visible ? '' : 'none';
+      if (visible) visibleCount++;
+    });
+
+    updateTableEmptyState(visibleCount);
+  }
+
+  window.applyClientSideFilters = applyClientSideFilters;
+}
+
+  function updateTableEmptyState(visibleCount) {
+    const tbody = document.querySelector('#contactsTable tbody');
+    let emptyRow = tbody.querySelector('.empty-state-row');
+
+    if (visibleCount === 0) {
+      if (!emptyRow) {
+        emptyRow = document.createElement('tr');
+        emptyRow.className = 'empty-state-row';
+        emptyRow.innerHTML = '<td colspan="9" class="text-center py-3"><p class="text-muted">No contacts found matching your filters</p></td>';
+        tbody.appendChild(emptyRow);
+      }
+      emptyRow.style.display = '';
+    } else {
+      if (emptyRow) {
+        emptyRow.style.display = 'none';
+      }
+    }
+  }
+
+  // Communication modal handling
+  const communicationButtons = document.querySelectorAll('.add-communication-btn');
+  const communicationModal = new bootstrap.Modal(document.getElementById('contactCommunicationModal'));
+  const communicationForm = document.getElementById('communicationForm');
+  const communicationContactId = document.getElementById('communicationContactId');
+  const communicationCustomerId = document.getElementById('communicationCustomerId');
+  const communicationContactName = document.getElementById('communicationContactName');
+  const communicationCustomerName = document.getElementById('communicationCustomerName');
+
+  communicationButtons.forEach(button => {
+    button.addEventListener('click', function () {
+      communicationContactId.value = this.getAttribute('data-contact-id');
+      communicationCustomerId.value = this.getAttribute('data-customer-id');
+      communicationContactName.value = this.getAttribute('data-contact-name');
+      communicationCustomerName.value = this.getAttribute('data-customer-name');
+      communicationModal.show();
+    });
+  });
+
+  communicationForm.addEventListener('submit', handleCommunicationSubmit);
+
+  // Handle preset response buttons using event delegation
+document.addEventListener('click', function(e) {
+  if (e.target.closest('.preset-response-btn')) {
+    const button = e.target.closest('.preset-response-btn');
+    const response = button.getAttribute('data-response');
+    const notesField = document.getElementById('communicationNotes');
+    notesField.value = response;
+    notesField.focus();
+  }
+});
+
+  // Function to handle communication form submissions
+  function handleCommunicationSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    const customerId = formData.get('customer_id');
+
+    // Use the customers unified route instead of salespeople route
+    const actionUrl = '/customers/' + customerId + '/add_update';
+
+    fetch(actionUrl, {
+      method: 'POST',
+      body: formData,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // If the modal is open, close it
+          if (communicationModal._isShown) communicationModal.hide();
+
+          // If the contact details panel is open, refresh it
+          if (contactDetailsCanvas._isShown) {
+            const contactId = formData.get('contact_id');
+            fetch('/salespeople/contact_details/' + contactId + '?salesperson_id=' + salesPersonId, {
+              headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+              .then(res => res.text())
+              .then(html => {
+                contactDetailsContent.innerHTML = html;
+
+                // Reattach event listeners
+                const detailsUpdateForm = contactDetailsContent.querySelector('#contactCommunicationForm');
+                if (detailsUpdateForm) {
+                  detailsUpdateForm.addEventListener('submit', handleCommunicationSubmit);
+                }
+                setupSaveNotesHandler();
+              });
+          } else {
+            // Otherwise, refresh the entire page
+            window.location.reload();
+          }
+
+          // Reset the form
+          form.reset();
+
+          // Show success toast
+          showToast('Communication logged successfully', 'success');
+        } else {
+          // Show error message
+          const errorMsg = document.createElement('div');
+          errorMsg.className = 'alert alert-danger mt-3';
+          errorMsg.textContent = data.error || 'An error occurred. Please try again.';
+          form.appendChild(errorMsg);
+
+          // Remove error message after 3 seconds
+          setTimeout(() => {
+            errorMsg.remove();
+          }, 3000);
+        }
+      })
+      .catch(error => {
+        console.error('Error submitting communication:', error);
+        showToast('An error occurred while logging communication', 'error');
+      });
+  }
+
+  // Copy functionality for email and phone
+  document.querySelectorAll('.copy-btn').forEach(button => {
+    button.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const email = this.getAttribute('data-email');
+      const phone = this.getAttribute('data-phone');
+      const textToCopy = email || phone;
+
+      if (textToCopy) {
+        // Use the clipboard API to copy the text
+        navigator.clipboard.writeText(textToCopy).then(() => {
+          // Show temporary success message
+          const original = this.innerHTML;
+          this.innerHTML = '<i class="bi bi-check"></i>';
+          this.classList.add('btn-success');
+          this.classList.remove('btn-link');
+
+          setTimeout(() => {
+            this.innerHTML = original;
+            this.classList.remove('btn-success');
+            this.classList.add('btn-link');
+          }, 1500);
+        }).catch(err => {
+          console.error('Could not copy text: ', err);
+        });
+      }
+    });
+  });
+
+  // Status bumping functionality
+  document.querySelectorAll('.bump-status-btn').forEach(button => {
+    button.addEventListener('click', function(e) {
+      e.preventDefault();
+
+      const contactId = this.getAttribute('data-contact-id');
+      const originalText = this.textContent;
+      const originalColor = this.style.backgroundColor;
+
+      // Show loading state
+      this.textContent = 'Updating...';
+      this.style.opacity = '0.6';
+      this.style.pointerEvents = 'none';
+
+      // Send AJAX request to bump status
+      fetch('/customers/contacts/' + contactId + '/bump_status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // Update the badge with new status
+          this.textContent = data.new_status.name;
+          this.style.backgroundColor = data.new_status.color;
+
+          // IMPORTANT: Update the row's data attribute for filtering
+          const row = this.closest('tr');
+          if (row) {
+            row.setAttribute('data-status', data.new_status.name.toLowerCase());
+          }
+
+          // Brief flash effect to show change
+          this.style.transform = 'scale(1.1)';
+          setTimeout(() => {
+            this.style.transform = 'scale(1)';
+          }, 200);
+
+          // Show success toast
+          showToast('Status updated successfully', 'success');
+        } else {
+          // Revert on error
+          this.textContent = originalText;
+          this.style.backgroundColor = originalColor;
+          showToast('Error updating status: ' + data.error, 'error');
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        // Revert on error
+        this.textContent = originalText;
+        this.style.backgroundColor = originalColor;
+        showToast('An error occurred while updating the status', 'error');
+      })
+      .finally(() => {
+        // Restore interactive state
+        this.style.opacity = '1';
+        this.style.pointerEvents = 'auto';
+      });
+    });
+  });
+
+  // Handle quick communication buttons (both buttons and dropdown items)
+  document.querySelectorAll('.quick-communication-btn').forEach(button => {
+    button.addEventListener('click', function(e) {
+      e.preventDefault();
+
+      const contactId = this.getAttribute('data-contact-id');
+      const contactName = this.getAttribute('data-contact-name');
+      const customerId = this.getAttribute('data-customer-id');
+      const customerName = this.getAttribute('data-customer-name');
+      const communicationType = this.getAttribute('data-communication-type');
+
+      // Open the communication modal with pre-selected type
+      openCommunicationModal(contactId, contactName, customerId, customerName, communicationType);
+    });
+  });
+
+  function openCommunicationModal(contactId, contactName, customerId, customerName, preSelectedType = null) {
+    const communicationModal = new bootstrap.Modal(document.getElementById('contactCommunicationModal'));
+
+    // Populate the modal fields
+    document.getElementById('communicationContactId').value = contactId;
+    document.getElementById('communicationCustomerId').value = customerId;
+    document.getElementById('communicationContactName').value = contactName;
+    document.getElementById('communicationCustomerName').value = customerName;
+
+    // Pre-select communication type if provided
+    if (preSelectedType) {
+      document.getElementById('communicationType').value = preSelectedType;
+    } else {
+      document.getElementById('communicationType').value = '';
+    }
+
+    // Clear the notes field
+    document.getElementById('communicationNotes').value = '';
+
+    // Show the modal
+    communicationModal.show();
+
+    // Focus on the notes field if type is pre-selected, otherwise focus on type dropdown
+    if (preSelectedType) {
+      setTimeout(() => {
+        document.getElementById('communicationNotes').focus();
+      }, 300);
+    } else {
+      setTimeout(() => {
+        document.getElementById('communicationType').focus();
+      }, 300);
+    }
+  }
+
+// FIXED: Bulk selection functionality with proper scope management
+function initializeBulkSelection() {
+  // State management using Map for better performance
+  const selectedContacts = new Map();
+
+  // UI Elements
+  const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+  const bulkSelectionBar = document.getElementById('bulkSelectionBar');
+  const selectedCountSpan = document.getElementById('selectedCount');
+  const bulkActionsBtn = document.getElementById('bulkActionsBtn');
+  const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+  const bulkActionsCanvasEl = document.getElementById('bulkActionsCanvas');
+  const bulkActionsCanvas = new bootstrap.Offcanvas(bulkActionsCanvasEl);
+
+  // Bulk action button handlers
+  const bulkChangeStatusBtn = document.getElementById('bulkChangeStatusBtn');
+  const bulkAddCommunicationBtn = document.getElementById('bulkAddCommunicationBtn');
+  const bulkExportBtn = document.getElementById('bulkExportBtn');
+  const bulkAssignToUserBtn = document.getElementById('bulkAssignToUserBtn');
+  const bulkAddNotesBtn = document.getElementById('bulkAddNotesBtn');
+  const bulkSendEmailBtn = document.getElementById('bulkSendEmailBtn');
+
+  // UPDATED: Bulk Email Modal Function - now includes customer_id
+function openBulkEmailModal() {
+  const recipients = [];
+
+  selectedContacts.forEach(contact => {
+    const row = contact.element;
+    const emailElement = row.querySelector('a[href^="mailto:"]');
+    const jobTitleElement = row.querySelector('.contact-detail i.bi-briefcase + span');
+
+    // ADDED: Get customer ID from the row data attributes
+    const customerIdElement = row.querySelector('[data-customer-id]');
+    const customerId = customerIdElement ? customerIdElement.getAttribute('data-customer-id') : '';
+
+    const recipientData = {
+      id: contact.id,
+      name: contact.name,
+      email: emailElement ? emailElement.textContent.trim() : '',
+      title: jobTitleElement ? jobTitleElement.textContent.trim() : '',
+      company: contact.customer,
+      customerId: customerId // ADDED: Include customer ID
+    };
+
+    if (recipientData.email) {
+      recipients.push(recipientData);
+    }
+  });
+
+  if (recipients.length === 0) {
+    showToast('None of the selected contacts have email addresses', 'warning');
+    return;
+  }
+
+  if (recipients.length < selectedContacts.size) {
+    const excluded = selectedContacts.size - recipients.length;
+    showToast(`${excluded} contact(s) excluded due to missing email addresses`, 'warning');
+  }
+
+  if (window.emailModalInstance) {
+    window.emailModalInstance.clearRecipients();
+    window.emailModalInstance.addMultipleRecipients(recipients);
+
+    const emailModal = new bootstrap.Modal(document.getElementById('emailModal'));
+    emailModal.show();
+
+    bulkActionsCanvas.hide();
+
+    showToast(`Email modal opened with ${recipients.length} recipients`, 'success');
+  } else {
+    showToast('Email modal not available. Please refresh the page and try again.', 'error');
+  }
+}
+
+ // Handle individual checkbox changes
+  document.addEventListener('change', function(e) {
+    if (e.target.classList.contains('contact-checkbox')) {
+      e.stopPropagation();
+
+      const checkbox = e.target;
+      const contactId = checkbox.getAttribute('data-contact-id');
+      const contactName = checkbox.getAttribute('data-contact-name');
+      const customerName = checkbox.getAttribute('data-customer-name');
+      const row = checkbox.closest('tr');
+
+      if (checkbox.checked) {
+        const contactData = {
+          id: contactId,
+          name: contactName,
+          customer: customerName,
+          element: row
+        };
+        selectedContacts.set(contactId, contactData);
+        row.classList.add('selected');
+      } else {
+        selectedContacts.delete(contactId);
+        row.classList.remove('selected');
+      }
+
+      updateBulkSelectionUI();
+      updateSelectAllCheckbox();
+    }
+  });
+
+  // Handle select all checkbox
+  if (selectAllCheckbox) {
+    selectAllCheckbox.addEventListener('change', function() {
+      const isChecked = this.checked;
+      const visibleCheckboxes = getVisibleCheckboxes();
+
+      if (isChecked) {
+        visibleCheckboxes.forEach(checkbox => {
+          if (!checkbox.checked) {
+            checkbox.checked = true;
+
+            const contactId = checkbox.getAttribute('data-contact-id');
+            const contactName = checkbox.getAttribute('data-contact-name');
+            const customerName = checkbox.getAttribute('data-customer-name');
+            const row = checkbox.closest('tr');
+
+            const contactData = {
+              id: contactId,
+              name: contactName,
+              customer: customerName,
+              element: row
+            };
+            selectedContacts.set(contactId, contactData);
+            row.classList.add('selected');
+          }
+        });
+      } else {
+        clearAllSelections();
+      }
+
+      updateBulkSelectionUI();
+    });
+  }
+
+  // Handle bulk actions button
+  if (bulkActionsBtn) {
+    bulkActionsBtn.addEventListener('click', function() {
+      updateSelectedContactsList();
+      bulkActionsCanvas.show();
+    });
+  }
+
+  // Handle clear selection button
+  if (clearSelectionBtn) {
+    clearSelectionBtn.addEventListener('click', function() {
+      clearAllSelections();
+    });
+  }
+
+  // Handle clear all selections in offcanvas
+  const clearAllSelectionsBtn = document.getElementById('clearAllSelectionsBtn');
+  if (clearAllSelectionsBtn) {
+    clearAllSelectionsBtn.addEventListener('click', function() {
+      clearAllSelections();
+      bulkActionsCanvas.hide();
+    });
+  }
+
+  // FIXED: Email button handler - now properly scoped
+  if (bulkSendEmailBtn) {
+    bulkSendEmailBtn.addEventListener('click', function() {
+      if (selectedContacts.size === 0) {
+        showToast('No contacts selected for email', 'warning');
+        return;
+      }
+      openBulkEmailModal(); // This now has access to selectedContacts
+    });
+  }
+
+  // Other bulk action handlers...
+  if (bulkChangeStatusBtn) {
+    bulkChangeStatusBtn.addEventListener('click', function() {
+      if (selectedContacts.size === 0) {
+        showToast('No contacts selected', 'warning');
+        return;
+      }
+      showBulkStatusChangeModal();
+    });
+  }
+
+  if (bulkAddCommunicationBtn) {
+    bulkAddCommunicationBtn.addEventListener('click', function() {
+      if (selectedContacts.size === 0) {
+        showToast('No contacts selected', 'warning');
+        return;
+      }
+      showBulkCommunicationModal();
+    });
+  }
+
+  if (bulkExportBtn) {
+    bulkExportBtn.addEventListener('click', function() {
+      if (selectedContacts.size === 0) {
+        showToast('No contacts selected for export', 'warning');
+        return;
+      }
+      performBulkExport();
+    });
+  }
+
+  if (bulkAssignToUserBtn) {
+    bulkAssignToUserBtn.addEventListener('click', function() {
+      if (selectedContacts.size === 0) {
+        showToast('No contacts selected', 'warning');
+        return;
+      }
+      showBulkAssignModal();
+    });
+  }
+
+  if (bulkAddNotesBtn) {
+    bulkAddNotesBtn.addEventListener('click', function() {
+      if (selectedContacts.size === 0) {
+        showToast('No contacts selected', 'warning');
+        return;
+      }
+      showBulkNotesModal();
+    });
+  }
+
+    // Bulk Status Change Modal Functions
+    function showBulkStatusChangeModal() {
+      const modal = new bootstrap.Modal(document.getElementById('bulkStatusModal'));
+
+      // Update modal title with count
+      const modalTitle = document.querySelector('#bulkStatusModal .modal-title');
+      modalTitle.textContent = 'Change Status for ' + selectedContacts.size + ' Contacts';
+
+      modal.show();
+
+      // Remove any existing event listeners to prevent duplicates
+      const confirmBtn = document.getElementById('confirmBulkStatus');
+      const newConfirmBtn = confirmBtn.cloneNode(true);
+      confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+      // Add click handler
+      newConfirmBtn.addEventListener('click', function() {
+        const statusId = document.getElementById('bulkStatusSelect').value;
+        if (!statusId) {
+          showToast('Please select a status', 'warning');
+          return;
+        }
+        performBulkStatusChange(statusId, modal);
+      });
+    }
+
+    function performBulkStatusChange(statusId, modal) {
+      const contactIds = Array.from(selectedContacts.keys());
+
+      // Show loading state
+      const confirmBtn = document.getElementById('confirmBulkStatus');
+      const originalText = confirmBtn.textContent;
+      confirmBtn.textContent = 'Updating...';
+      confirmBtn.disabled = true;
+
+      fetch('/salespeople/' + salesPersonId + '/bulk-change-status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          contact_ids: contactIds,
+          status_id: statusId
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showToast(data.message, 'success');
+          modal.hide();
+
+          // Clear selections and refresh
+          clearAllSelections();
+          setTimeout(() => {
+            window.location.reload();
+          }, 1500);
+        } else {
+          showToast('Error: ' + data.error, 'error');
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        showToast('An error occurred while updating statuses', 'error');
+      })
+      .finally(() => {
+        // Restore button state
+        confirmBtn.textContent = originalText;
+        confirmBtn.disabled = false;
+      });
+    }
+
+    // Bulk Communication Modal Functions
+    function showBulkCommunicationModal() {
+      const modal = new bootstrap.Modal(document.getElementById('bulkCommunicationModal'));
+
+      // Update modal title with count
+      const modalTitle = document.querySelector('#bulkCommunicationModal .modal-title');
+      modalTitle.textContent = 'Log Communication for ' + selectedContacts.size + ' Contacts';
+
+      // Clear form
+      document.getElementById('bulkCommType').value = '';
+      document.getElementById('bulkCommNotes').value = '';
+
+      modal.show();
+
+      // Remove any existing event listeners
+      const confirmBtn = document.getElementById('confirmBulkComm');
+      const newConfirmBtn = confirmBtn.cloneNode(true);
+      confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+      newConfirmBtn.addEventListener('click', function() {
+        const commType = document.getElementById('bulkCommType').value;
+        const notes = document.getElementById('bulkCommNotes').value.trim();
+
+        if (!commType || !notes) {
+          showToast('Please fill in all fields', 'warning');
+          return;
+        }
+
+        performBulkCommunication(commType, notes, modal);
+      });
+    }
+
+    function performBulkCommunication(communicationType, notes, modal) {
+      const contactIds = Array.from(selectedContacts.keys());
+
+      const confirmBtn = document.getElementById('confirmBulkComm');
+      const originalText = confirmBtn.textContent;
+      confirmBtn.textContent = 'Logging...';
+      confirmBtn.disabled = true;
+
+      fetch('/salespeople/' + salesPersonId + '/bulk-add-communication', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          contact_ids: contactIds,
+          communication_type: communicationType,
+          notes: notes
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showToast(data.message, 'success');
+          modal.hide();
+
+          clearAllSelections();
+          setTimeout(() => {
+            window.location.reload();
+          }, 1500);
+        } else {
+          showToast('Error: ' + data.error, 'error');
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        showToast('An error occurred while logging communications', 'error');
+      })
+      .finally(() => {
+        confirmBtn.textContent = originalText;
+        confirmBtn.disabled = false;
+      });
+    }
+
+    // Bulk Notes Modal Functions
+    function showBulkNotesModal() {
+      const modal = new bootstrap.Modal(document.getElementById('bulkNotesModal'));
+
+      // Update modal title with count
+      const modalTitle = document.querySelector('#bulkNotesModal .modal-title');
+      modalTitle.textContent = 'Add Notes to ' + selectedContacts.size + ' Contacts';
+
+      // Clear form
+      document.getElementById('bulkNotesText').value = '';
+      document.getElementById('appendNotes').checked = true;
+
+      modal.show();
+
+      // Remove any existing event listeners
+      const confirmBtn = document.getElementById('confirmBulkNotes');
+      const newConfirmBtn = confirmBtn.cloneNode(true);
+      confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+      newConfirmBtn.addEventListener('click', function() {
+        const notes = document.getElementById('bulkNotesText').value.trim();
+        const append = document.getElementById('appendNotes').checked;
+
+        if (!notes) {
+          showToast('Please enter some notes', 'warning');
+          return;
+        }
+
+        performBulkAddNotes(notes, append, modal);
+      });
+    }
+
+    function performBulkAddNotes(notes, append, modal) {
+      const contactIds = Array.from(selectedContacts.keys());
+
+      const confirmBtn = document.getElementById('confirmBulkNotes');
+      const originalText = confirmBtn.textContent;
+      confirmBtn.textContent = 'Adding...';
+      confirmBtn.disabled = true;
+
+      fetch('/salespeople/' + salesPersonId + '/bulk-add-notes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          contact_ids: contactIds,
+          notes: notes,
+          append: append
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showToast(data.message, 'success');
+          modal.hide();
+
+          clearAllSelections();
+          setTimeout(() => {
+            window.location.reload();
+          }, 1500);
+        } else {
+          showToast('Error: ' + data.error, 'error');
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        showToast('An error occurred while adding notes', 'error');
+      })
+      .finally(() => {
+        confirmBtn.textContent = originalText;
+        confirmBtn.disabled = false;
+      });
+    }
+
+    // Bulk Assignment Modal Functions
+    function showBulkAssignModal() {
+      // First, fetch available salespeople
+      fetch('/salespeople/all-salespeople')
+      .then(response => response.json())
+      .then(data => {
+        if (!data.success) {
+          showToast('Error loading salespeople: ' + data.error, 'error');
+          return;
+        }
+
+        // Update modal title with count
+        const modalTitle = document.querySelector('#bulkAssignModal .modal-title');
+        modalTitle.textContent = 'Reassign ' + selectedContacts.size + ' Contacts';
+
+        // Populate salespeople options
+        const assignSelect = document.getElementById('bulkAssignSelect');
+        assignSelect.innerHTML = '<option value="">Select a salesperson...</option>';
+
+        data.salespeople.forEach(sp => {
+          const option = document.createElement('option');
+          option.value = sp.id;
+          option.textContent = sp.name;
+          assignSelect.appendChild(option);
+        });
+
+        const modal = new bootstrap.Modal(document.getElementById('bulkAssignModal'));
+        modal.show();
+
+        // Remove any existing event listeners
+        const confirmBtn = document.getElementById('confirmBulkAssign');
+        const newConfirmBtn = confirmBtn.cloneNode(true);
+        confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+        newConfirmBtn.addEventListener('click', function() {
+          const newSalespersonId = assignSelect.value;
+          if (!newSalespersonId) {
+            showToast('Please select a salesperson', 'warning');
+            return;
+          }
+
+          performBulkAssign(newSalespersonId, modal);
+        });
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        showToast('Error loading salespeople', 'error');
+      });
+    }
+
+    function performBulkAssign(newSalespersonId, modal) {
+      const contactIds = Array.from(selectedContacts.keys());
+
+      const confirmBtn = document.getElementById('confirmBulkAssign');
+      const originalText = confirmBtn.textContent;
+      confirmBtn.textContent = 'Reassigning...';
+      confirmBtn.disabled = true;
+
+      fetch('/salespeople/' + salesPersonId + '/bulk-assign-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          contact_ids: contactIds,
+          new_salesperson_id: newSalespersonId
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showToast(data.message, 'success');
+          modal.hide();
+
+          // Redirect since contacts may no longer belong to this salesperson
+          setTimeout(() => {
+            window.location.href = '/salespeople/dashboard';
+          }, 2000);
+        } else {
+          showToast('Error: ' + data.error, 'error');
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        showToast('An error occurred while reassigning contacts', 'error');
+      })
+      .finally(() => {
+        confirmBtn.textContent = originalText;
+        confirmBtn.disabled = false;
+      });
+    }
+
+    // Bulk Export Function
+    function performBulkExport() {
+      const contactIds = Array.from(selectedContacts.keys());
+
+      showToast('Preparing export...', 'info');
+
+      fetch('/salespeople/' + salesPersonId + '/bulk-export', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          contact_ids: contactIds
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // Create and download the CSV file
+          const blob = new Blob([data.csv_data], { type: 'text/csv' });
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = data.filename;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+
+          showToast('Successfully exported ' + data.contact_count + ' contacts', 'success');
+
+          // Clear selections after export
+          clearAllSelections();
+        } else {
+          showToast('Error: ' + data.error, 'error');
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        showToast('An error occurred during export', 'error');
+      });
+    }
+
+     // Helper functions
+  function getVisibleCheckboxes() {
+    return Array.from(document.querySelectorAll('.contact-checkbox'))
+      .filter(cb => {
+        const row = cb.closest('tr');
+        return row && row.style.display !== 'none';
+      });
+  }
+
+  function updateBulkSelectionUI() {
+    const count = selectedContacts.size;
+
+    if (selectedCountSpan) {
+      selectedCountSpan.textContent = count;
+    }
+
+    const bulkSelectedCount = document.getElementById('bulkSelectedCount');
+    if (bulkSelectedCount) {
+      bulkSelectedCount.textContent = count;
+    }
+
+    if (bulkSelectionBar) {
+      if (count > 0) {
+        bulkSelectionBar.classList.add('show');
+      } else {
+        bulkSelectionBar.classList.remove('show');
+      }
+    }
+  }
+
+  function updateSelectAllCheckbox() {
+    if (!selectAllCheckbox) return;
+
+    const visibleCheckboxes = getVisibleCheckboxes();
+    const checkedVisible = visibleCheckboxes.filter(cb => cb.checked);
+
+    if (checkedVisible.length === 0) {
+      selectAllCheckbox.checked = false;
+      selectAllCheckbox.indeterminate = false;
+    } else if (checkedVisible.length === visibleCheckboxes.length) {
+      selectAllCheckbox.checked = true;
+      selectAllCheckbox.indeterminate = false;
+    } else {
+      selectAllCheckbox.checked = false;
+      selectAllCheckbox.indeterminate = true;
+    }
+  }
+
+  function clearAllSelections() {
+    selectedContacts.forEach(contact => {
+      if (contact.element) {
+        contact.element.classList.remove('selected');
+        const checkbox = contact.element.querySelector('.contact-checkbox');
+        if (checkbox) checkbox.checked = false;
+      }
+    });
+
+    selectedContacts.clear();
+    if (selectAllCheckbox) {
+      selectAllCheckbox.checked = false;
+      selectAllCheckbox.indeterminate = false;
+    }
+    updateBulkSelectionUI();
+  }
+
+  function updateSelectedContactsList() {
+    const listContainer = document.getElementById('selectedContactsList');
+    const noSelectionMessage = document.getElementById('noSelectionMessage');
+
+    if (!listContainer) return;
+
+    if (selectedContacts.size === 0) {
+      if (noSelectionMessage) {
+        noSelectionMessage.style.display = 'block';
+      }
+      listContainer.innerHTML = '';
+      listContainer.appendChild(noSelectionMessage);
+      return;
+    }
+
+    if (noSelectionMessage) {
+      noSelectionMessage.style.display = 'none';
+    }
+
+    listContainer.innerHTML = '';
+
+    selectedContacts.forEach(contact => {
+      const contactItem = document.createElement('div');
+      contactItem.className = 'selected-contact-item';
+      contactItem.innerHTML = '<div><div class="fw-semibold">' + contact.name + '</div><div class="text-muted small">' + contact.customer + '</div></div><button type="button" class="remove-selected-btn" data-contact-id="' + contact.id + '" title="Remove from selection"><i class="bi bi-x"></i></button>';
+
+      // Handle individual removal
+      const removeBtn = contactItem.querySelector('.remove-selected-btn');
+      removeBtn.addEventListener('click', function() {
+        const contactId = this.getAttribute('data-contact-id');
+        const contact = selectedContacts.get(contactId);
+
+        if (contact && contact.element) {
+          contact.element.classList.remove('selected');
+          const checkbox = contact.element.querySelector('.contact-checkbox');
+          if (checkbox) checkbox.checked = false;
+        }
+
+        selectedContacts.delete(contactId);
+        updateBulkSelectionUI();
+        updateSelectAllCheckbox();
+        updateSelectedContactsList();
+      });
+
+      listContainer.appendChild(contactItem);
+    });
+  }
+    // Update bulk selection when filters change
+     // Update bulk selection when filters change
+  const originalApplyClientSideFilters = window.applyClientSideFilters;
+  if (originalApplyClientSideFilters) {
+    window.applyClientSideFilters = function() {
+      originalApplyClientSideFilters();
+      updateSelectAllCheckbox();
+    };
+  }
+
+  // FIXED: Make functions available globally with proper access to selectedContacts
+  window.bulkSelection = {
+    clearAllSelections,
+    updateSelectAllCheckbox,
+    selectedContacts,
+    updateBulkSelectionUI,
+    openBulkEmailModal // Make this available globally too
+  };
+}
+
+  // Helper function for toast notifications
+  function showToast(message, type = 'success') {
+    const bgClass = type === 'success' ? 'bg-success' :
+                    type === 'error' ? 'bg-danger' :
+                    type === 'warning' ? 'bg-warning' :
+                    'bg-info';
+
+    const toast = document.createElement('div');
+    toast.className = 'toast show position-fixed bottom-0 end-0 m-3';
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = '<div class="toast-header ' + bgClass + ' text-white"><strong class="me-auto">' + (type === 'success' ? 'Success' : type === 'error' ? 'Error' : type === 'warning' ? 'Warning' : 'Info') + '</strong><button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button></div><div class="toast-body">' + message + '</div>';
+    document.body.appendChild(toast);
+
+    // Auto-remove after 3 seconds
+    setTimeout(() => {
+      toast.remove();
+    }, 3000);
+  }
+});
+
+function initializeEditUpdateFunctionality() {
+  const editUpdateModal = new bootstrap.Modal(document.getElementById('editUpdateModal'));
+  const deleteConfirmModal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
+  const editUpdateForm = document.getElementById('editUpdateForm');
+
+  let currentUpdateId = null;
+
+  // CRITICAL: Make edit function globally available
+  window.openEditUpdateModal = function(updateData) {
+    console.log('Opening edit modal with data:', updateData); // Debug log
+
+    currentUpdateId = updateData.id;
+
+    // Populate the form
+    document.getElementById('editUpdateId').value = updateData.id;
+    document.getElementById('editUpdateDate').value = updateData.date;
+    document.getElementById('editCommunicationType').value = updateData.communication_type || 'generic';
+    document.getElementById('editUpdateText').value = updateData.text;
+
+    // Load contacts for the customer and populate dropdown
+    loadContactsForEdit(updateData.customer_id, updateData.contact_id);
+
+    editUpdateModal.show();
+  };
+
+  // ... rest of initializeEditUpdateFunctionality code
+
+  // Form submission handler
+  editUpdateForm.addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const updateId = formData.get('update_id');
+
+    // Show loading state
+    const submitBtn = this.querySelector('button[type="submit"]');
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = 'Saving...';
+    submitBtn.disabled = true;
+
+    fetch(`/customers/update/${updateId}/edit`, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        editUpdateModal.hide();
+        showToast('Update saved successfully!', 'success');
+
+        // Refresh the contact details if open, or reload page
+        if (window.contactDetailsCanvas && window.contactDetailsCanvas._isShown) {
+          // Refresh contact details
+          refreshContactDetails();
+        } else {
+          // Reload the page to show changes
+          window.location.reload();
+        }
+      } else {
+        showToast('Error: ' + data.error, 'error');
+      }
+    })
+    .catch(error => {
+      console.error('Error:', error);
+      showToast('An error occurred while saving the update', 'error');
+    })
+    .finally(() => {
+      submitBtn.textContent = originalText;
+      submitBtn.disabled = false;
+    });
+  });
+
+  // Delete button handler
+  document.getElementById('deleteUpdateBtn').addEventListener('click', function() {
+    editUpdateModal.hide();
+    deleteConfirmModal.show();
+  });
+
+  // Confirm delete handler
+  document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+    if (!currentUpdateId) return;
+
+    const submitBtn = this;
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = 'Deleting...';
+    submitBtn.disabled = true;
+
+    fetch(`/customers/update/${currentUpdateId}/delete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        deleteConfirmModal.hide();
+        showToast('Update deleted successfully!', 'success');
+
+        if (window.contactDetailsCanvas && window.contactDetailsCanvas._isShown) {
+          refreshContactDetails();
+        } else {
+          window.location.reload();
+        }
+      } else {
+        showToast('Error: ' + data.error, 'error');
+      }
+    })
+    .catch(error => {
+      console.error('Error:', error);
+      showToast('An error occurred while deleting the update', 'error');
+    })
+    .finally(() => {
+      submitBtn.textContent = originalText;
+      submitBtn.disabled = false;
+    });
+  });
+
+  // Contact selection change handler
+  document.getElementById('editContactSelect').addEventListener('change', function() {
+    const selectedContactId = this.value;
+    const communicationType = document.getElementById('editCommunicationType').value;
+    const updateTextArea = document.getElementById('editUpdateText');
+
+    if (selectedContactId && (communicationType === 'email' || communicationType === 'phone')) {
+      // Get contact name from the selected option
+      const selectedOption = this.options[this.selectedIndex];
+      const contactName = selectedOption.textContent;
+
+      if (communicationType === 'email') {
+        updateTextArea.value = `Emailed ${contactName}`;
+      } else if (communicationType === 'phone') {
+        updateTextArea.value = `Called ${contactName}`;
+      }
+    }
+  });
+
+  // Communication type change handler
+  document.getElementById('editCommunicationType').addEventListener('change', function() {
+    const selectedContactId = document.getElementById('editContactSelect').value;
+    const communicationType = this.value;
+    const updateTextArea = document.getElementById('editUpdateText');
+
+    if (selectedContactId && (communicationType === 'email' || communicationType === 'phone')) {
+      const contactSelect = document.getElementById('editContactSelect');
+      const selectedOption = contactSelect.options[contactSelect.selectedIndex];
+      const contactName = selectedOption.textContent;
+
+      if (communicationType === 'email') {
+        updateTextArea.value = `Emailed ${contactName}`;
+      } else if (communicationType === 'phone') {
+        updateTextArea.value = `Called ${contactName}`;
+      }
+    }
+  });
+}
+
+// Replace the existing loadContactsForEdit function with this:
+function loadContactsForEdit(customerId, selectedContactId = null) {
+  const contactSelect = document.getElementById('editContactSelect');
+
+  // Show loading
+  contactSelect.innerHTML = '<option value="">Loading contacts...</option>';
+  contactSelect.disabled = true;
+
+  fetch(`/salespeople/customer_details/${customerId}?format=contacts_json`)
+    .then(response => response.json())
+    .then(data => {
+      contactSelect.innerHTML = '<option value="">No specific contact</option>';
+
+      if (data.success && data.contacts) {
+        data.contacts.forEach(contact => {
+          const option = document.createElement('option');
+          option.value = contact.id;
+          option.textContent = contact.name;
+          if (selectedContactId && contact.id == selectedContactId) {
+            option.selected = true;
+          }
+          contactSelect.appendChild(option);
+        });
+      }
+
+      contactSelect.disabled = false;
+    })
+    .catch(error => {
+      console.error('Error loading contacts:', error);
+      contactSelect.innerHTML = '<option value="">Error loading contacts</option>';
+      contactSelect.disabled = false;
+    });
+}
+
+// Helper function for toast notifications (if not already defined)
+if (!window.showToast) {
+  window.showToast = function(message, type = 'success') {
+    const bgClass = type === 'success' ? 'bg-success' :
+                    type === 'error' ? 'bg-danger' :
+                    type === 'warning' ? 'bg-warning' :
+                    'bg-info';
+
+    const toast = document.createElement('div');
+    toast.className = 'toast show position-fixed bottom-0 end-0 m-3';
+    toast.setAttribute('role', 'alert');
+    toast.style.zIndex = '9999';
+    toast.innerHTML = `
+      <div class="toast-header ${bgClass} text-white">
+        <strong class="me-auto">${type.charAt(0).toUpperCase() + type.slice(1)}</strong>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+      </div>
+      <div class="toast-body">${message}</div>
+    `;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+      toast.remove();
+    }, 4000);
+  };
+}
+// Add this JavaScript to the contacts.html page, in the existing <script> section
+
+// Add to call list handler
+document.addEventListener('click', function(e) {
+  if (e.target.closest('.add-to-call-list-btn')) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const button = e.target.closest('.add-to-call-list-btn');
+    const contactId = button.getAttribute('data-contact-id');
+    const contactName = button.getAttribute('data-contact-name');
+    const salesPersonId = document.getElementById('salesPersonId').value;
+
+    // Show loading state
+    const icon = button.querySelector('i');
+    const originalIcon = icon.className;
+    icon.className = 'bi bi-hourglass-split';
+    button.disabled = true;
+
+    fetch(`/salespeople/${salesPersonId}/add-to-call-list`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        contact_id: contactId,
+        notes: '',
+        priority: 0
+      })
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        // Success - PERMANENTLY change to green checkmark button
+        icon.className = 'bi bi-check-circle-fill';
+        button.classList.remove('btn-warning');
+        button.classList.remove('add-to-call-list-btn');
+        button.classList.add('btn-success');
+        button.classList.add('remove-from-call-list-btn');
+        button.disabled = false; // Keep enabled so it can be clicked to remove
+        button.title = 'Click to remove from call list';
+
+        // Store the call_list_id for removal
+        button.setAttribute('data-call-list-id', data.call_list_id);
+
+        showToast(`${contactName} added to call list`, 'success');
+      } else {
+        // Error - revert
+        icon.className = originalIcon;
+        button.disabled = false;
+        showToast('Error: ' + data.error, 'error');
+      }
+    })
+    .catch(error => {
+      console.error('Error:', error);
+      icon.className = originalIcon;
+      button.disabled = false;
+      showToast('An error occurred', 'error');
+    });
+  }
+});
+
+// Remove from call list handler
+document.addEventListener('click', function(e) {
+  if (e.target.closest('.remove-from-call-list-btn')) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const button = e.target.closest('.remove-from-call-list-btn');
+    const contactId = button.getAttribute('data-contact-id');
+    const contactName = button.getAttribute('data-contact-name');
+    const callListId = button.getAttribute('data-call-list-id');
+    const salesPersonId = document.getElementById('salesPersonId').value;
+
+    // Show loading state
+    const icon = button.querySelector('i');
+    icon.className = 'bi bi-hourglass-split';
+    button.disabled = true;
+
+    fetch(`/salespeople/${salesPersonId}/remove-from-call-list`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        call_list_id: callListId,
+        contact_id: contactId
+      })
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        // Success - change back to yellow add button
+        icon.className = 'bi bi-list-check';
+        button.classList.remove('btn-success');
+        button.classList.remove('remove-from-call-list-btn');
+        button.classList.add('btn-warning');
+        button.classList.add('add-to-call-list-btn');
+        button.disabled = false;
+        button.title = 'Add to Call List';
+        button.removeAttribute('data-call-list-id');
+
+        showToast(`${contactName} removed from call list`, 'success');
+      } else {
+        // Error - revert
+        icon.className = 'bi bi-check-circle-fill';
+        button.disabled = false;
+        showToast('Error: ' + data.error, 'error');
+      }
+    })
+    .catch(error => {
+      console.error('Error:', error);
+      icon.className = 'bi bi-check-circle-fill';
+      button.disabled = false;
+      showToast('An error occurred', 'error');
+    });
+  }
+});
+</script>
+{% endblock %}
+

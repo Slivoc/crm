@@ -1,0 +1,344 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="h3 mb-0">
+                <i class="bi bi-graph-up-arrow me-2"></i>
+                Income Statement
+            </h1>
+        </div>
+        <div class="btn-group">
+            <button type="button" class="btn btn-outline-secondary" id="printBtn">
+                <i class="bi bi-printer me-1"></i>
+                Print
+            </button>
+            <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-download me-1"></i>
+                Export
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="#" id="exportPdf">Export as PDF</a></li>
+                <li><a class="dropdown-item" href="#" id="exportExcel">Export as Excel</a></li>
+                <li><a class="dropdown-item" href="#" id="exportCsv">Export as CSV</a></li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Filter Card -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form action="{{ url_for('finance.income_statement_report') }}" method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label for="fiscal_period_id" class="form-label">Fiscal Period</label>
+                    <select class="form-select" id="fiscal_period_id" name="fiscal_period_id" onchange="this.form.submit()">
+                        <option value="">Custom Date Range</option>
+                        {% for period in fiscal_periods %}
+                            <option value="{{ period.id }}" {% if selected_fiscal_period == period.id|string %}selected{% endif %}>
+                                {{ period.period_name }} - {{ period.year_name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="start_date" class="form-label">Start Date</label>
+                    <input type="date" class="form-control" id="start_date" name="start_date" value="{{ start_date }}" {% if selected_fiscal_period %}disabled{% endif %}>
+                </div>
+                <div class="col-md-3">
+                    <label for="end_date" class="form-label">End Date</label>
+                    <input type="date" class="form-control" id="end_date" name="end_date" value="{{ end_date }}" {% if selected_fiscal_period %}disabled{% endif %}>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary">Generate Report</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Income Statement -->
+    <div class="card">
+        <div class="card-header bg-light">
+            <h5 class="card-title mb-0">Income Statement for period {{ start_date }} to {{ end_date }}</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive" id="incomeStatementTable">
+                <!-- Revenue Section -->
+                <h5 class="mt-3 mb-3 text-primary">Revenue</h5>
+                <table class="table table-bordered table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 15%;">Account Number</th>
+                            <th style="width: 55%;">Account Name</th>
+                            <th style="width: 30%;" class="text-end">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if revenue_accounts %}
+                            {% for account in revenue_accounts %}
+                                <tr>
+                                    <td>{{ account.account_number }}</td>
+                                    <td>
+                                        <a href="{{ url_for('finance.view_account', account_id=account.id) }}">
+                                            {{ account.account_name }}
+                                        </a>
+                                    </td>
+                                    <td class="text-end">{{ format_currency(account.period_amount, '€') }}</td>
+                                </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="3" class="text-center">No revenue accounts found</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                    <tfoot class="table-light">
+                        <tr>
+                            <th colspan="2" class="text-end">Total Revenue</th>
+                            <th class="text-end">{{ format_currency(total_revenue, '€') }}</th>
+                        </tr>
+                    </tfoot>
+                </table>
+
+                <!-- Expenses Section -->
+                <h5 class="mt-4 mb-3 text-primary">Expenses</h5>
+                <table class="table table-bordered table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 15%;">Account Number</th>
+                            <th style="width: 55%;">Account Name</th>
+                            <th style="width: 30%;" class="text-end">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if expense_accounts %}
+                            {% for account in expense_accounts %}
+                                <tr>
+                                    <td>{{ account.account_number }}</td>
+                                    <td>
+                                        <a href="{{ url_for('finance.view_account', account_id=account.id) }}">
+                                            {{ account.account_name }}
+                                        </a>
+                                    </td>
+                                    <td class="text-end">{{ format_currency(account.period_amount, '€') }}</td>
+                                </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="3" class="text-center">No expense accounts found</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                    <tfoot class="table-light">
+                        <tr>
+                            <th colspan="2" class="text-end">Total Expenses</th>
+                            <th class="text-end">{{ format_currency(total_expenses, '€') }}</th>
+                        </tr>
+                    </tfoot>
+                </table>
+
+                <!-- Net Income Section -->
+                <div class="card mt-4">
+                    <div class="card-body {% if net_income >= 0 %}bg-success bg-opacity-10{% else %}bg-danger bg-opacity-10{% endif %}">
+                        <div class="row">
+                            <div class="col-md-9 text-end">
+                                <h5 class="mb-0">Net Income (Loss)</h5>
+                            </div>
+                            <div class="col-md-3 text-end">
+                                <h5 class="mb-0 {% if net_income >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                    {{ format_currency(net_income, '€') }}
+                                </h5>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Performance Metrics -->
+                <div class="row mt-4">
+                    <div class="col-md-4">
+                        <div class="card">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Gross Profit Margin</h6>
+                                <h3 class="mb-0">
+                                    {% if total_revenue > 0 %}
+                                        {{ ((total_revenue - total_expenses) / total_revenue * 100)|round(2) }}%
+                                    {% else %}
+                                        0.00%
+                                    {% endif %}
+                                </h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Expense Ratio</h6>
+                                <h3 class="mb-0">
+                                    {% if total_revenue > 0 %}
+                                        {{ (total_expenses / total_revenue * 100)|round(2) }}%
+                                    {% else %}
+                                        0.00%
+                                    {% endif %}
+                                </h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card">
+                            <div class="card-body text-center">
+                                <h6 class="text-muted mb-2">Net Profit Margin</h6>
+                                <h3 class="mb-0">
+                                    {% if total_revenue > 0 %}
+                                        {{ (net_income / total_revenue * 100)|round(2) }}%
+                                    {% else %}
+                                        0.00%
+                                    {% endif %}
+                                </h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Print Layout (hidden by default) -->
+    <div id="print-section" class="d-none">
+        <div class="container mt-4">
+            <div class="text-center mb-4">
+                <h3>Income Statement</h3>
+                <h5>For the period {{ start_date }} to {{ end_date }}</h5>
+            </div>
+            
+            <!-- Revenue Section -->
+            <h5 class="mt-4">Revenue</h5>
+            <table class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th>Account Number</th>
+                        <th>Account Name</th>
+                        <th class="text-end">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if revenue_accounts %}
+                        {% for account in revenue_accounts %}
+                            <tr>
+                                <td>{{ account.account_number }}</td>
+                                <td>{{ account.account_name }}</td>
+                                <td class="text-end">{{ format_currency(account.period_amount, '€') }}</td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="3" class="text-center">No revenue accounts found</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <th colspan="2" class="text-end">Total Revenue</th>
+                        <th class="text-end">{{ format_currency(total_revenue, '€') }}</th>
+                    </tr>
+                </tfoot>
+            </table>
+
+            <!-- Expenses Section -->
+            <h5 class="mt-4">Expenses</h5>
+            <table class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th>Account Number</th>
+                        <th>Account Name</th>
+                        <th class="text-end">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if expense_accounts %}
+                        {% for account in expense_accounts %}
+                            <tr>
+                                <td>{{ account.account_number }}</td>
+                                <td>{{ account.account_name }}</td>
+                                <td class="text-end">{{ format_currency(account.period_amount, '€') }}</td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="3" class="text-center">No expense accounts found</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <th colspan="2" class="text-end">Total Expenses</th>
+                        <th class="text-end">{{ format_currency(total_expenses, '€') }}</th>
+                    </tr>
+                </tfoot>
+            </table>
+
+            <!-- Net Income -->
+            <table class="table table-bordered mt-4">
+                <tr>
+                    <th class="text-end" style="width: 70%;">Net Income (Loss)</th>
+                    <th class="text-end" style="width: 30%;">{{ format_currency(net_income, '€') }}</th>
+                </tr>
+            </table>
+            
+            <div class="mt-5 text-center">
+                <p>Generated on {{ today_date }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Toggle date inputs based on fiscal period selection
+    const fiscalPeriodSelect = document.getElementById('fiscal_period_id');
+    const startDateInput = document.getElementById('start_date');
+    const endDateInput = document.getElementById('end_date');
+    
+    if (fiscalPeriodSelect) {
+        fiscalPeriodSelect.addEventListener('change', function() {
+            const isCustomRange = this.value === '';
+            startDateInput.disabled = !isCustomRange;
+            endDateInput.disabled = !isCustomRange;
+        });
+    }
+    
+    // Print functionality
+    const printBtn = document.getElementById('printBtn');
+    if (printBtn) {
+        printBtn.addEventListener('click', function() {
+            const printContent = document.getElementById('print-section');
+            const originalContent = document.body.innerHTML;
+            
+            document.body.innerHTML = printContent.innerHTML;
+            window.print();
+            document.body.innerHTML = originalContent;
+            
+            // Reattach event listeners after printing
+            document.addEventListener('DOMContentLoaded', function() {
+                // This will re-run all the JavaScript on the page
+            });
+        });
+    }
+    
+    // Export Functionality
+    // Similar to the trial balance export functions
+    // These would be implemented with appropriate libraries in a real application
+    
+    document.getElementById('exportCsv').addEventListener('click', function() {
+        alert('CSV export functionality would be implemented here');
+    });
+    
+    document.getElementById('exportExcel').addEventListener('click', function() {
+        alert('Excel export functionality would be implemented here');
+    });
+    
+    document.getElementById('exportPdf').addEventListener('click', function() {
+        alert('PDF export functionality would be implemented here');
+    });
+});
+</script>
+{% endblock %}

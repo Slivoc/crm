@@ -1,0 +1,1162 @@
+{% extends "base.html" %}
+{% block title %}{{ list_name }} - Excel View{% endblock %}
+{% block head %}
+{{ super() }}
+<link href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css" rel="stylesheet">
+<style>
+    .spinner-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+    }
+    .spinner-overlay.show {
+        display: flex;
+    }
+
+    .table-controls {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.375rem;
+        margin-bottom: 1rem;
+    }
+
+    .stat-badge {
+        display: inline-block;
+        padding: 0.5rem 1rem;
+        margin: 0.25rem;
+        border-radius: 0.375rem;
+        font-weight: 600;
+    }
+
+    /* Nested headers styling for grouped columns */
+    .handsontable thead th.supplier-group-header {
+        background: #0d6efd !important;
+        color: white !important;
+        font-weight: bold !important;
+        border-right: 2px solid #084298 !important;
+    }
+
+    .handsontable th.supplier-sub-header {
+        background: #cfe2ff !important;
+        color: #084298 !important;
+        font-size: 0.85em !important;
+    }
+
+    /* Highlight supplier column groups with borders */
+    .handsontable td.supplier-col-group {
+        border-right: 2px solid #dee2e6 !important;
+    }
+
+    .best-price-cell {
+        background: #d1e7dd !important;
+        font-weight: bold !important;
+    }
+
+    .no-bid-cell {
+        background: #f8d7da !important;
+        color: #721c24 !important;
+        font-style: italic;
+    }
+.handsontable td.supplier-group-even {
+    background-color: #f8f9fa !important;
+}
+
+.handsontable td.supplier-group-odd {
+    background-color: #ffffff !important;
+}
+.handsontable td.supplier-col-group {
+    border-right: 4px solid #6c757d !important;
+    box-shadow: 2px 0 3px rgba(0,0,0,0.1);
+}
+
+.handsontable th.supplier-col-group {
+    border-right: 4px solid #495057 !important;
+}
+</style>
+{% endblock %}
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Loading Spinner -->
+    <div class="spinner-overlay" id="partsListLoadingSpinner">
+        <div class="spinner-border text-light" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="mb-0">
+                            <i class="bi bi-table"></i> {{ list_name }} - Excel View
+                        </h5>
+                        <small class="text-white-50">{{ lines|length }} parts loaded</small>
+                    </div>
+                    <div class="btn-group">
+                        <button type="button" class="btn btn-success btn-sm" id="saveAllBtn">
+                            <i class="bi bi-save"></i> Save All Changes
+                        </button>
+                        <button type="button" class="btn btn-light btn-sm" id="exportPartsListBtn">
+                            <i class="bi bi-file-earmark-spreadsheet"></i> Export to Excel
+                        </button>
+                        <a href="{{ url_for('parts_list.view_parts_list', list_id=list_id) }}" class="btn btn-light btn-sm">
+                            <i class="bi bi-arrow-left"></i> Back to Overview
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card shadow-sm border-0">
+                <div class="card-body">
+                    <div class="d-flex flex-wrap justify-content-start align-items-center">
+                        <span class="stat-badge" style="background: #e7f5ff; color: #0d6efd;">
+                            <i class="bi bi-box-seam"></i> Total: {{ lines|length }}
+                        </span>
+                        <span class="stat-badge" style="background: #d1e7dd; color: #0f5132;" id="costedPartsCount">
+                            <i class="bi bi-check-circle"></i> Costed: 0
+                        </span>
+                        <span class="stat-badge" style="background: #f8d7da; color: #721c24;" id="missingCostCount">
+                            <i class="bi bi-exclamation-circle"></i> Missing: {{ lines|length }}
+                        </span>
+                        <span class="stat-badge" style="background: #fff3cd; color: #856404;" id="supplierQuotesCount">
+                            <i class="bi bi-people"></i> Suppliers: 0
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Table Controls -->
+    <div class="table-controls">
+        <div class="row g-3 align-items-center">
+            <div class="col-auto">
+                <button type="button" class="btn btn-primary btn-sm" id="addPartsListRowBtn">
+                    <i class="bi bi-plus-circle"></i> Add Row
+                </button>
+            </div>
+            <div class="col-auto">
+                <button type="button" class="btn btn-danger btn-sm" id="deletePartsListRowsBtn">
+                    <i class="bi bi-trash"></i> Delete Selected
+                </button>
+            </div>
+            <div class="col-auto">
+                <button type="button" class="btn btn-info btn-sm" id="addSupplierColumnBtn">
+                    <i class="bi bi-plus-square"></i> Add Supplier Quote
+                </button>
+            </div>
+            <div class="col-auto">
+                <button type="button" class="btn btn-warning btn-sm" id="loadQuotesBtn">
+                    <i class="bi bi-cloud-download"></i> Load Quotes from System
+                </button>
+            </div>
+            <div class="col-auto">
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="viewSuppliersBtn">
+                    <i class="bi bi-list-check"></i> View Supplier Quotes
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Handsontable Container -->
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card shadow-sm border-0">
+                <div class="card-body p-0">
+                    <div id="partsListHandsontableGrid" style="height: 600px; overflow: hidden;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Supplier Modal -->
+<div class="modal fade" id="addSupplierModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Supplier Quote Column</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Search for Supplier</label>
+                    <select class="form-select" id="supplierSearchSelect">
+                        <option value="">-- Type to search --</option>
+                    </select>
+                    <small class="text-muted">Start typing to search for suppliers</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Quote Reference (Optional)</label>
+                    <input type="text" class="form-control" id="quoteReference" placeholder="e.g., Q-2024-001">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Quote Date (Optional)</label>
+                    <input type="date" class="form-control" id="quoteDate">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirmAddSupplierBtn">Add Quote Columns</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- View Suppliers Modal -->
+<div class="modal fade" id="viewSuppliersModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Supplier Quotes for this List</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="supplierQuotesList"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+<script>
+let partsListHot;
+let allPartsData = [];
+let filteredData = [];
+let supplierColumns = [];
+const LIST_ID = {{ list_id }};
+
+function showPartsListSpinner() {
+    document.getElementById('partsListLoadingSpinner').classList.add('show');
+}
+
+function hidePartsListSpinner() {
+    document.getElementById('partsListLoadingSpinner').classList.remove('show');
+}
+
+function showPartsListAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    const container = document.querySelector('.container-fluid');
+    container.insertBefore(alertDiv, container.firstChild);
+    setTimeout(() => alertDiv.remove(), 5000);
+}
+
+function currencyRenderer(instance, td, row, col, prop, value, cellProperties) {
+    Handsontable.renderers.NumericRenderer.apply(this, arguments);
+
+    // Only check for no_bid on supplier price columns, NOT on chosen_cost
+    if (prop && prop.startsWith('supplier_') && prop.includes('_price')) {
+        const rowData = instance.getSourceDataAtRow(row);
+        const noBidProp = prop.replace('_price', '_no_bid');
+        const isNoBid = rowData[noBidProp];
+
+        if (isNoBid) {
+            td.innerHTML = 'No Bid';
+            td.classList.add('no-bid-cell');
+            td.style.textAlign = 'center';
+            return;
+        }
+    }
+
+    if (value !== null && value !== undefined && value !== '') {
+        const numValue = parseFloat(value);
+        td.innerHTML = '£' + numValue.toFixed(2);
+        td.style.fontWeight = '600';
+        td.style.color = '#0d6efd';
+
+        // Only apply best price highlighting to supplier columns
+        if (prop && prop.startsWith('supplier_') && prop.includes('_price')) {
+            const rowData = instance.getSourceDataAtRow(row);
+            if (isBestPrice(rowData, prop, numValue)) {
+                td.classList.add('best-price-cell');
+            }
+        }
+    } else {
+        td.innerHTML = '-';
+        td.style.color = '#adb5bd';
+    }
+
+    if (cellProperties.className && cellProperties.className.includes('supplier-col-group')) {
+        td.classList.add('supplier-col-group');
+    }
+}
+
+function isBestPrice(rowData, currentProp, currentValue) {
+    if (!currentValue) return false;
+
+    let lowestPrice = currentValue;
+    let hasOtherPrices = false;
+
+    supplierColumns.forEach(col => {
+        const noBid = rowData[`supplier_${col.id}_no_bid`];
+        if (noBid) return;
+
+        const price = parseFloat(rowData[`supplier_${col.id}_price`]);
+        if (price && price > 0) {
+            hasOtherPrices = true;
+            if (price < lowestPrice) {
+                lowestPrice = price;
+            }
+        }
+    });
+
+    return hasOtherPrices && currentValue === lowestPrice;
+}
+
+function buildColumns() {
+    const baseColumns = [
+        { data: 'selected', type: 'checkbox', width: 40, className: 'htCenter htMiddle' },
+        { data: 'line_number', type: 'numeric', width: 70, readOnly: true, className: 'htCenter' },
+        { data: 'part_number', type: 'text', width: 180, readOnly: false },
+        { data: 'base_part_number', type: 'text', width: 180, readOnly: false },
+        { data: 'quantity', type: 'numeric', width: 80, className: 'htCenter' }
+    ];
+
+    const supplierCols = [];
+    supplierColumns.forEach((supplier, index) => {
+        const isLastSupplier = index === supplierColumns.length - 1;
+        const bgClass = index % 2 === 0 ? 'supplier-group-even' : 'supplier-group-odd';
+        supplierCols.push(
+            {
+                data: `supplier_${supplier.id}_qty`,
+                type: 'numeric',
+                width: 70,
+                className: `htCenter ${bgClass}`,
+                renderer: supplierColumnRenderer
+            },
+            {
+                data: `supplier_${supplier.id}_price`,
+                type: 'numeric',
+                width: 100,
+                renderer: supplierColumnRenderer,
+                className: 'htRight'
+            },
+            {
+                data: `supplier_${supplier.id}_lead`,
+                type: 'numeric',
+                width: 70,
+                className: 'htCenter',
+                renderer: supplierColumnRenderer
+            },
+            {
+                data: `supplier_${supplier.id}_no_bid`,
+                type: 'text',
+                width: 60,
+                className: isLastSupplier ? 'htCenter supplier-col-group' : 'htCenter supplier-col-group',
+                renderer: supplierColumnRenderer
+            }
+        );
+    });
+
+    const endColumns = [
+        { data: 'chosen_cost', type: 'numeric', width: 120, readOnly: true, renderer: currencyRenderer },
+        { data: 'chosen_supplier_name', type: 'text', width: 180, readOnly: true },
+        { data: 'notes', type: 'text', width: 250, readOnly: false }
+    ];
+
+    return [...baseColumns, ...supplierCols, ...endColumns];
+}
+
+function buildNestedHeaders() {
+    const topHeaders = [
+        { label: '', colspan: 5 }
+    ];
+
+    supplierColumns.forEach(supplier => {
+        const quoteInfo = supplier.quoteRef ? ` (${supplier.quoteRef})` : '';
+        topHeaders.push({
+            label: `<strong>${supplier.supplierName}</strong>${quoteInfo}`,
+            colspan: 4
+        });
+    });
+
+    topHeaders.push({ label: '<strong>Chosen</strong>', colspan: 3 });
+
+    const bottomHeaders = [
+        '<input type="checkbox" id="partsListSelectAll">',
+        'Line #',
+        'Part Number',
+        'Base Part',
+        'Qty'
+    ];
+
+    supplierColumns.forEach(supplier => {
+        bottomHeaders.push('Qty', 'Price', 'Lead', 'No Bid');
+    });
+
+    bottomHeaders.push('Cost', 'Supplier', 'Notes');
+
+    return [topHeaders, bottomHeaders];
+}
+
+function addSupplierColumn(supplierName, supplierId, quoteId = null, quoteRef = null, quoteDate = null, currencyCode = null, currencySymbol = null) {
+    const id = quoteId || `temp_${Date.now()}`;
+
+    supplierColumns.push({
+        id: id,
+        supplierId: supplierId,
+        supplierName: supplierName,
+        quoteId: quoteId,
+        quoteRef: quoteRef,
+        quoteDate: quoteDate,
+        currencyCode: currencyCode || 'GBP',
+        currencySymbol: currencySymbol || '£'
+    });
+
+    allPartsData.forEach(row => {
+        row[`supplier_${id}_qty`] = row.quantity || null;
+        row[`supplier_${id}_price`] = null;
+        row[`supplier_${id}_lead`] = null;
+        row[`supplier_${id}_no_bid`] = false;
+        row[`supplier_${id}_quote_requested`] = false;
+    });
+
+    partsListHot.updateSettings({
+        columns: buildColumns(),
+        nestedHeaders: buildNestedHeaders()
+    });
+
+    updateStats();
+    showPartsListAlert(`Added quote columns for ${supplierName}`, 'success');
+}
+
+function removeSupplierColumn(columnIndex) {
+    if (confirm('Remove this supplier\'s quote columns?')) {
+        supplierColumns.splice(columnIndex, 1);
+
+        partsListHot.updateSettings({
+            columns: buildColumns(),
+            nestedHeaders: buildNestedHeaders()
+        });
+
+        updateStats();
+        showPartsListAlert('Supplier columns removed', 'info');
+    }
+}
+
+function updateStats() {
+    let costed = 0;
+    let missing = 0;
+
+    allPartsData.forEach(row => {
+        if (row.chosen_cost && row.chosen_cost > 0) {
+            costed++;
+        } else {
+            missing++;
+        }
+    });
+
+    document.getElementById('costedPartsCount').innerHTML = `<i class="bi bi-check-circle"></i> Costed: ${costed}`;
+    document.getElementById('missingCostCount').innerHTML = `<i class="bi bi-exclamation-circle"></i> Missing: ${missing}`;
+    document.getElementById('supplierQuotesCount').innerHTML = `<i class="bi bi-people"></i> Suppliers: ${supplierColumns.length}`;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    showPartsListSpinner();
+
+    const linesData = {{ lines|tojson|safe }};
+
+    allPartsData = linesData.map(line => ({
+        id: line.id,
+        line_number: line.line_number,
+        selected: false,
+        part_number: line.customer_part_number || '',
+        base_part_number: line.base_part_number || '',
+        quantity: line.quantity || 1,
+        chosen_cost: line.chosen_cost || null,
+        chosen_supplier_name: line.chosen_supplier_name || '',
+        notes: line.customer_notes || ''
+    }));
+
+    filteredData = [...allPartsData];
+
+    loadExistingSupplierQuotes().then(() => {
+        const container = document.getElementById('partsListHandsontableGrid');
+
+        partsListHot = new Handsontable(container, {
+            data: filteredData,
+            nestedHeaders: buildNestedHeaders(),
+            columns: buildColumns(),
+            rowHeaders: true,
+            height: 600,
+            licenseKey: 'non-commercial-and-evaluation',
+            stretchH: 'all',
+            manualColumnResize: true,
+            manualRowResize: false,
+            contextMenu: {
+                items: {
+                    'remove_col': {
+                        name: 'Remove Supplier Columns',
+                        disabled: function() {
+                            const selected = this.getSelected();
+                            if (!selected) return true;
+                            const col = selected[0][1];
+                            const colMeta = this.getCellMeta(0, col);
+                            return !colMeta.prop || !colMeta.prop.startsWith('supplier_');
+                        },
+                        callback: function(key, selection) {
+                            const col = selection[0].start.col;
+                            const colMeta = this.getCellMeta(0, col);
+                            if (colMeta.prop && colMeta.prop.startsWith('supplier_')) {
+                                const match = colMeta.prop.match(/supplier_([^_]+)/);
+                                if (match) {
+                                    const supplierId = match[1];
+                                    const supplierIndex = supplierColumns.findIndex(s => s.id === supplierId);
+                                    if (supplierIndex !== -1) {
+                                        removeSupplierColumn(supplierIndex);
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    'sep1': '---------',
+                    'row_above': {},
+                    'row_below': {},
+                    'remove_row': {}
+                }
+            },
+            filters: true,
+            dropdownMenu: true,
+            renderAllRows: false,
+            viewportRowRenderingOffset: 100,
+            afterChange: function(changes, source) {
+                if (source === 'edit') {
+                    console.log('Data changed:', changes);
+                    updateStats();
+
+                    changes.forEach(([row, prop, oldValue, newValue]) => {
+                        if (prop && prop.includes('_no_bid') && newValue) {
+                            const priceProp = prop.replace('_no_bid', '_price');
+                            this.setDataAtRowProp(row, priceProp, null);
+                        }
+                        if (prop && prop.includes('_price') && newValue) {
+                            const noBidProp = prop.replace('_price', '_no_bid');
+                            this.setDataAtRowProp(row, noBidProp, false);
+                        }
+                    });
+                }
+            }
+        });
+
+        hidePartsListSpinner();
+        updateStats();
+    });
+
+    document.addEventListener('click', function(e) {
+        if (e.target && e.target.id === 'partsListSelectAll') {
+            const checked = e.target.checked;
+            const data = partsListHot.getData();
+            data.forEach((row, index) => {
+                partsListHot.setDataAtCell(index, 0, checked);
+            });
+        }
+    });
+
+    document.getElementById('addPartsListRowBtn').addEventListener('click', function() {
+        const currentRowCount = partsListHot.countRows();
+        const newRow = {
+            id: null,
+            line_number: currentRowCount + 1,
+            selected: false,
+            part_number: '',
+            base_part_number: '',
+            quantity: 1,
+            chosen_cost: null,
+            chosen_supplier_name: '',
+            notes: ''
+        };
+
+        supplierColumns.forEach(supplier => {
+            newRow[`supplier_${supplier.id}_qty`] = 1;
+            newRow[`supplier_${supplier.id}_price`] = null;
+            newRow[`supplier_${supplier.id}_lead`] = null;
+            newRow[`supplier_${supplier.id}_no_bid`] = false;
+        });
+
+        allPartsData.push(newRow);
+        filteredData.push(newRow);
+        partsListHot.loadData(filteredData);
+        showPartsListAlert('New row added', 'success');
+        updateStats();
+    });
+
+    document.getElementById('deletePartsListRowsBtn').addEventListener('click', function() {
+        const data = partsListHot.getSourceData();
+        const selectedIndices = [];
+
+        data.forEach((row, index) => {
+            if (row.selected) {
+                selectedIndices.push(index);
+            }
+        });
+
+        if (selectedIndices.length === 0) {
+            showPartsListAlert('Please select rows to delete', 'warning');
+            return;
+        }
+
+        if (!confirm(`Delete ${selectedIndices.length} selected row(s)?`)) {
+            return;
+        }
+
+        selectedIndices.reverse().forEach(index => {
+            allPartsData.splice(index, 1);
+            filteredData.splice(index, 1);
+        });
+
+        partsListHot.loadData(filteredData);
+        showPartsListAlert(`Deleted ${selectedIndices.length} row(s)`, 'success');
+        updateStats();
+    });
+
+    document.getElementById('addSupplierColumnBtn').addEventListener('click', function() {
+        const modal = new bootstrap.Modal(document.getElementById('addSupplierModal'));
+
+        if (!$('#supplierSearchSelect').hasClass('select2-hidden-accessible')) {
+            $('#supplierSearchSelect').select2({
+                ajax: {
+                    url: '/ils/suppliers/search',
+                    dataType: 'json',
+                    delay: 250,
+                    data: function(params) {
+                        return { q: params.term || '', limit: 20 };
+                    },
+                    processResults: function(data) {
+                        return {
+                            results: data.suppliers.map(function(item) {
+                                return {
+                                    id: item.id.toString(),
+                                    text: item.name,
+                                    currency_id: item.currency_id
+                                };
+                            })
+                        };
+                    },
+                    cache: true
+                },
+                placeholder: 'Type to search suppliers...',
+                minimumInputLength: 2,
+                allowClear: true,
+                dropdownParent: $('#addSupplierModal')
+            });
+        }
+
+        modal.show();
+    });
+
+    document.getElementById('confirmAddSupplierBtn').addEventListener('click', function() {
+        const supplierId = $('#supplierSearchSelect').val();
+        const supplierName = $('#supplierSearchSelect').select2('data')[0]?.text;
+        const quoteRef = document.getElementById('quoteReference').value.trim();
+        const quoteDate = document.getElementById('quoteDate').value;
+
+        if (!supplierId || !supplierName) {
+            alert('Please select a supplier');
+            return;
+        }
+
+        if (supplierColumns.find(s => s.supplierId == supplierId)) {
+            alert('This supplier already has quote columns');
+            return;
+        }
+
+        showPartsListSpinner();
+
+        fetch(`/parts_list/parts-lists/${LIST_ID}/supplier-quotes/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                supplier_id: supplierId,
+                quote_reference: quoteRef || null,
+                quote_date: quoteDate || null
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            hidePartsListSpinner();
+            if (data.success) {
+                // Fetch currency info for this quote
+                fetch(`/parts_list/parts-lists/${LIST_ID}/supplier-quotes/${data.quote_id}`)
+                    .then(resp => resp.json())
+                    .then(quoteData => {
+                        const currencyCode = quoteData.quote?.currency_code || 'GBP';
+                        const currencySymbol = quoteData.quote?.symbol || '£';
+
+                        addSupplierColumn(supplierName, supplierId, data.quote_id, quoteRef, quoteDate, currencyCode, currencySymbol);
+
+                        bootstrap.Modal.getInstance(document.getElementById('addSupplierModal')).hide();
+                        $('#supplierSearchSelect').val(null).trigger('change');
+                        document.getElementById('quoteReference').value = '';
+                        document.getElementById('quoteDate').value = '';
+                    });
+            } else {
+                showPartsListAlert('Error creating supplier quote: ' + data.message, 'danger');
+            }
+        })
+        .catch(error => {
+            hidePartsListSpinner();
+            console.error('Error:', error);
+            showPartsListAlert('Error creating supplier quote', 'danger');
+        });
+    });
+
+    document.getElementById('loadQuotesBtn').addEventListener('click', function() {
+        loadSystemQuotes();
+    });
+
+    document.getElementById('viewSuppliersBtn').addEventListener('click', function() {
+        viewSupplierQuotes();
+    });
+
+    document.getElementById('exportPartsListBtn').addEventListener('click', function() {
+        const exportPlugin = partsListHot.getPlugin('exportFile');
+        exportPlugin.downloadFile('csv', {
+            filename: 'parts_list_export_' + new Date().toISOString().split('T')[0],
+            columnHeaders: true,
+            rowHeaders: true
+        });
+        showPartsListAlert('Exporting to CSV...', 'info');
+    });
+
+    document.getElementById('saveAllBtn').addEventListener('click', function() {
+        saveAllChanges();
+    });
+});
+
+async function loadExistingSupplierQuotes() {
+    try {
+        const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/supplier-quotes`);
+        const data = await response.json();
+
+        if (data.success && data.quotes && data.quotes.length > 0) {
+            for (const quote of data.quotes) {
+                supplierColumns.push({
+                    id: quote.id,
+                    supplierId: quote.supplier_id,
+                    supplierName: quote.supplier_name,
+                    quoteId: quote.id,
+                    quoteRef: quote.quote_reference,
+                    quoteDate: quote.quote_date,
+                    quoteRequestSent: quote.quote_request_sent || false,
+                    currencyCode: quote.currency_code || 'GBP',
+                    currencySymbol: quote.symbol || '£'
+                });
+
+                allPartsData.forEach(row => {
+                    row[`supplier_${quote.id}_qty`] = row.quantity || null;
+                    row[`supplier_${quote.id}_price`] = null;
+                    row[`supplier_${quote.id}_lead`] = null;
+                    row[`supplier_${quote.id}_no_bid`] = false;
+                    row[`supplier_${quote.id}_quote_requested`] = false;
+                });
+            }
+
+            for (const quote of data.quotes) {
+                await loadQuoteLines(quote.id);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading supplier quotes:', error);
+    }
+}
+
+async function loadQuoteLines(quoteId) {
+    try {
+        const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/supplier-quotes/${quoteId}`);
+        const data = await response.json();
+
+        console.log(`Loading quote ${quoteId}, got ${data.lines?.length || 0} lines`);
+
+        if (data.success && data.lines) {
+            const requestedLines = data.lines.filter(l => l.quote_requested === 1 || l.quote_requested === true);
+            console.log(`Quote ${quoteId}: ${requestedLines.length} lines with quote_requested flag`);
+
+            data.lines.forEach(line => {
+                if (line.parts_list_line_id) {
+                    const rowIndex = allPartsData.findIndex(r => r.id === line.parts_list_line_id);
+                    if (rowIndex !== -1 && line.id) {
+                        allPartsData[rowIndex][`supplier_${quoteId}_qty`] = line.quantity_quoted;
+                        allPartsData[rowIndex][`supplier_${quoteId}_price`] = line.unit_price;
+                        allPartsData[rowIndex][`supplier_${quoteId}_lead`] = line.lead_time_days;
+                        allPartsData[rowIndex][`supplier_${quoteId}_no_bid`] = line.is_no_bid || false;
+                        allPartsData[rowIndex][`supplier_${quoteId}_quote_requested`] = line.quote_requested === 1;
+
+                        if (line.quote_requested === 1) {
+                            console.log(`✓ Set quote_requested for line ${line.parts_list_line_id}, supplier ${quoteId}`);
+                        }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error loading quote lines:', error);
+    }
+}
+
+function loadSystemQuotes() {
+    showPartsListSpinner();
+
+    const partsToAnalyze = allPartsData.map(row => ({
+        part_number: row.part_number,
+        quantity: row.quantity,
+        line_id: row.id
+    }));
+
+    fetch('/parts_list/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parts: partsToAnalyze })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success || !data.results) {
+            showPartsListAlert('Error loading quotes', 'danger');
+            hidePartsListSpinner();
+            return;
+        }
+
+        processSystemQuotes(data.results);
+        hidePartsListSpinner();
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showPartsListAlert('Error loading quotes', 'danger');
+        hidePartsListSpinner();
+    });
+}
+
+function processSystemQuotes(results) {
+    let updatedCount = 0;
+
+    results.forEach(result => {
+        if (result.vq_details && result.vq_details.length > 0) {
+            result.vq_details.forEach(vq => {
+                if (!vq.supplier_id || !vq.vendor_price) return;
+
+                const supplierCol = supplierColumns.find(s => s.supplierId == vq.supplier_id);
+                if (supplierCol) {
+                    const rowIndex = allPartsData.findIndex(r => r.id === result.line_id);
+                    if (rowIndex !== -1) {
+                        allPartsData[rowIndex][`supplier_${supplierCol.id}_qty`] = result.quantity;
+                        allPartsData[rowIndex][`supplier_${supplierCol.id}_price`] = vq.vendor_price;
+                        allPartsData[rowIndex][`supplier_${supplierCol.id}_lead`] = vq.lead_days;
+                        updatedCount++;
+                    }
+                }
+            });
+        }
+
+        if (result.po_details && result.po_details.length > 0) {
+            const mostRecent = result.po_details[0];
+            if (mostRecent.supplier_id && mostRecent.price) {
+                const supplierCol = supplierColumns.find(s => s.supplierId == mostRecent.supplier_id);
+                if (supplierCol) {
+                    const rowIndex = allPartsData.findIndex(r => r.id === result.line_id);
+                    if (rowIndex !== -1 && !allPartsData[rowIndex][`supplier_${supplierCol.id}_price`]) {
+                        allPartsData[rowIndex][`supplier_${supplierCol.id}_qty`] = result.quantity;
+                        allPartsData[rowIndex][`supplier_${supplierCol.id}_price`] = mostRecent.price;
+                        updatedCount++;
+                    }
+                }
+            }
+        }
+    });
+
+    partsListHot.loadData(allPartsData);
+    if (updatedCount > 0) {
+        showPartsListAlert(`Updated ${updatedCount} quote entries from system data`, 'success');
+    } else {
+        showPartsListAlert('No matching supplier columns found. Add supplier columns first.', 'info');
+    }
+}
+
+function viewSupplierQuotes() {
+    const modal = new bootstrap.Modal(document.getElementById('viewSuppliersModal'));
+    const listDiv = document.getElementById('supplierQuotesList');
+
+    if (supplierColumns.length === 0) {
+        listDiv.innerHTML = '<p class="text-muted">No supplier quotes added yet.</p>';
+    } else {
+        let html = '<div class="list-group">';
+        supplierColumns.forEach(supplier => {
+            const dateInfo = supplier.quoteDate ? ` - ${supplier.quoteDate}` : '';
+            const refInfo = supplier.quoteRef ? ` (${supplier.quoteRef})` : '';
+
+            let priceCount = 0;
+            let noBidCount = 0;
+            allPartsData.forEach(row => {
+                if (row[`supplier_${supplier.id}_price`]) priceCount++;
+                if (row[`supplier_${supplier.id}_no_bid`]) noBidCount++;
+            });
+
+            html += `
+                <div class="list-group-item">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="mb-1">${supplier.supplierName}</h6>
+                            <small class="text-muted">
+                                ${refInfo}${dateInfo}<br>
+                                ${priceCount} prices, ${noBidCount} no-bids
+                            </small>
+                        </div>
+                        <button class="btn btn-sm btn-outline-danger remove-supplier-btn"
+                                data-supplier-index="${supplierColumns.indexOf(supplier)}">
+                            Remove
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        listDiv.innerHTML = html;
+
+        listDiv.querySelectorAll('.remove-supplier-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const index = parseInt(this.dataset.supplierIndex);
+                modal.hide();
+                removeSupplierColumn(index);
+            });
+        });
+    }
+
+    modal.show();
+}
+
+function saveAllChanges() {
+    showPartsListSpinner();
+
+    const currentData = partsListHot.getSourceData();
+    let savePromises = [];
+
+    // Save supplier quote lines
+    supplierColumns.forEach(supplier => {
+        const lines = currentData.map(row => ({
+            parts_list_line_id: row.id,
+            quantity_quoted: row[`supplier_${supplier.id}_qty`],
+            unit_price: row[`supplier_${supplier.id}_price`],
+            lead_time_days: row[`supplier_${supplier.id}_lead`],
+            is_no_bid: row[`supplier_${supplier.id}_no_bid`] || false
+        })).filter(line => line.parts_list_line_id);
+
+        if (supplier.quoteId && lines.length > 0) {
+            const promise = fetch(`/parts_list/parts-lists/${LIST_ID}/supplier-quotes/${supplier.quoteId}/lines/save`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lines })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    console.error(`Failed to save quote for ${supplier.supplierName}:`, data.message);
+                    return { error: true, supplier: supplier.supplierName };
+                }
+                return { error: false, supplier: supplier.supplierName };
+            })
+            .catch(error => {
+                console.error(`Error saving quote for ${supplier.supplierName}:`, error);
+                return { error: true, supplier: supplier.supplierName };
+            });
+
+            savePromises.push(promise);
+        }
+    });
+
+    // Save line updates (quantities, part numbers, notes)
+    currentData.forEach(row => {
+        if (row.id) {
+            const promise = fetch(`/parts_list/${LIST_ID}/lines/${row.id}/update`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    quantity: row.quantity,
+                    customer_part_number: row.part_number,
+                    base_part_number: row.base_part_number,
+                    customer_notes: row.notes
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    return { error: true, type: 'line_update' };
+                }
+                return { error: false, type: 'line_update' };
+            })
+            .catch(error => {
+                return { error: true, type: 'line_update' };
+            });
+
+            savePromises.push(promise);
+        } else {
+            // New row - needs to be added via the add_lines endpoint
+            const promise = fetch(`/parts_list/parts-lists/${LIST_ID}/lines/add`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    lines: [{
+                        customer_part_number: row.part_number,
+                        base_part_number: row.base_part_number,
+                        quantity: row.quantity
+                    }]
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    return { error: true, type: 'add_line' };
+                }
+                return { error: false, type: 'add_line' };
+            })
+            .catch(error => {
+                return { error: true, type: 'add_line' };
+            });
+
+            savePromises.push(promise);
+        }
+    });
+
+    Promise.all(savePromises).then(results => {
+        hidePartsListSpinner();
+
+        const errors = results.filter(r => r.error);
+        if (errors.length > 0) {
+            const errorSuppliers = errors.filter(e => e.supplier).map(e => e.supplier);
+            const msg = errorSuppliers.length > 0
+                ? `Saved with errors for: ${errorSuppliers.join(', ')}`
+                : 'Saved with some errors. Check console.';
+            showPartsListAlert(msg, 'warning');
+        } else {
+            showPartsListAlert('All changes saved successfully! Reloading...', 'success');
+            // Reload the page to get fresh data with proper IDs for newly added rows
+            setTimeout(() => location.reload(), 1500);
+        }
+    });
+}
+
+// Custom renderer for supplier columns
+function supplierColumnRenderer(instance, td, row, col, prop, value, cellProperties) {
+    const rowData = instance.getSourceDataAtRow(row);
+
+    // Check if quote was requested for this supplier column
+    const quoteRequestedProp = prop.replace(/_no_bid|_price|_qty|_lead/, '_quote_requested');
+    const isQuoteRequested = rowData[quoteRequestedProp];
+
+    // Handle No Bid checkbox column
+    if (prop && prop.includes('_no_bid')) {
+        Handsontable.dom.empty(td);
+        const checked = !!value;
+        td.textContent = checked ? '✓' : '';
+        td.style.textAlign = 'center';
+        td.style.cursor = 'pointer';
+        td.style.fontWeight = 'bold';
+
+        td.onclick = function (e) {
+            e.stopPropagation();
+            const current = !!instance.getDataAtCell(row, col);
+            instance.setDataAtCell(row, col, !current);
+        };
+
+        // Apply subtle background for quote-requested
+        if (isQuoteRequested) {
+            td.style.setProperty('background-color', '#fff9e6', 'important');
+        }
+
+        if (cellProperties.className && cellProperties.className.includes('supplier-col-group')) {
+            td.classList.add('supplier-col-group');
+        }
+
+        return td;
+    }
+
+    // Handle price columns
+    if (prop && prop.includes('_price')) {
+        const noBidProp = prop.replace('_price', '_no_bid');
+        const isNoBid = rowData[noBidProp];
+
+        if (isNoBid) {
+            td.innerHTML = 'No Bid';
+            td.classList.add('no-bid-cell');
+            td.style.textAlign = 'center';
+
+            // Apply subtle background for quote-requested even on no-bid
+            if (isQuoteRequested) {
+                td.style.setProperty('background-color', '#fff9e6', 'important');
+            }
+
+            return td;
+        }
+
+        Handsontable.renderers.NumericRenderer.apply(this, arguments);
+
+        if (value !== null && value !== undefined && value !== '') {
+            const numValue = parseFloat(value);
+
+            // Get currency symbol for this supplier
+            const supplierIdMatch = prop.match(/supplier_([^_]+)_/);
+            let currencySymbol = '£'; // Default to GBP
+
+            if (supplierIdMatch) {
+                const supplierId = supplierIdMatch[1];
+                const supplier = supplierColumns.find(s => s.id == supplierId);
+                if (supplier && supplier.currencySymbol) {
+                    currencySymbol = supplier.currencySymbol;
+                }
+            }
+
+            td.innerHTML = currencySymbol + numValue.toFixed(2);
+            td.style.fontWeight = '600';
+            td.style.color = '#0d6efd';
+
+            if (isBestPrice(rowData, prop, numValue)) {
+                td.classList.add('best-price-cell');
+            }
+        } else {
+            td.innerHTML = '-';
+            td.style.color = '#adb5bd';
+        }
+
+        // Apply subtle background for quote-requested
+        if (isQuoteRequested) {
+            td.style.setProperty('background-color', '#fff9e6', 'important');
+        }
+    }
+    // Handle other numeric columns (qty, lead time)
+    else {
+        Handsontable.renderers.NumericRenderer.apply(this, arguments);
+
+        // Apply subtle background for quote-requested
+        if (isQuoteRequested) {
+            td.style.setProperty('background-color', '#fff9e6', 'important');
+        }
+    }
+
+    if (cellProperties.className && cellProperties.className.includes('supplier-col-group')) {
+        td.classList.add('supplier-col-group');
+    }
+
+    return td;
+}
+</script>
+{% endblock %}

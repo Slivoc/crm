@@ -1,0 +1,528 @@
+<!-- templates/part_number_imports.html -->
+{% extends 'base.html' %}
+
+{% block title %}Part Number Imports{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Part Number Imports</h1>
+
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">Upload Part Number File</h5>
+        </div>
+        <div class="card-body">
+            <form id="uploadForm" class="mb-0">
+                <div class="form-group">
+                    <label for="file">Select Excel File</label>
+                    <input type="file" class="form-control-file" id="file" name="file" accept=".xls,.xlsx" required>
+                    <small class="form-text text-muted">Only Excel files (.xls, .xlsx) are supported.</small>
+                </div>
+                <button type="submit" class="btn btn-primary">Upload</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header bg-secondary text-white">
+            <h5 class="mb-0">Uploaded Files</h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Filename</th>
+                            <th>Upload Date</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for file in files %}
+                        <tr>
+                            <td>{{ file.filename }}</td>
+                            <td>{{ file.upload_date }}</td>
+                            <td>
+                                {% if file.import_status %}
+                                <span class="badge badge-success">Imported</span>
+                                {% else %}
+                                <span class="badge badge-warning">Pending</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group" role="group">
+                                    <a href="{{ url_for('handson.part_number_mapping', file_id=file.id) }}" class="btn btn-sm btn-primary">Map & Import</a>
+                                    <button class="btn btn-sm btn-danger delete-file" data-id="{{ file.id }}">Delete</button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="text-center py-3">No files uploaded yet.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle file upload
+    document.getElementById('uploadForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const formData = new FormData();
+        const fileInput = document.getElementById('file');
+
+        if (fileInput.files.length === 0) {
+            alert('Please select a file to upload.');
+            return;
+        }
+
+        formData.append('file', fileInput.files[0]);
+
+        fetch('{{ url_for("imports.upload_file") }}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.location.reload();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred during upload.');
+        });
+    });
+
+    // Handle file deletion
+    document.querySelectorAll('.delete-file').forEach(button => {
+        button.addEventListener('click', function() {
+            if (confirm('Are you sure you want to delete this file?')) {
+                const fileId = this.getAttribute('data-id');
+
+                fetch(`/imports/files/${fileId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        window.location.reload();
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred during deletion.');
+                });
+            }
+        });
+    });
+});
+</script>
+{% endblock %}
+
+<!-- templates/part_number_mapping.html -->
+{% extends 'base.html' %}
+
+{% block title %}Part Number Mapping{% endblock %}
+
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+<style>
+    .hot-container {
+        overflow: hidden;
+        margin-top: 20px;
+        height: 400px;
+    }
+    .mapping-section {
+        margin-top: 20px;
+        padding: 15px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        background-color: #f9f9f9;
+    }
+    .field-mapping {
+        margin-bottom: 15px;
+    }
+    .results-panel {
+        margin-top: 20px;
+        display: none;
+    }
+    .import-progress {
+        margin-top: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <h2>Part Number Import Mapping</h2>
+
+    <div class="row">
+        <div class="col-md-9">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">File Preview</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div id="hot-container" class="hot-container"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Column Mapping</h5>
+                </div>
+                <div class="card-body">
+                    <div id="saved-mappings-section">
+                        <div class="form-group">
+                            <label for="saved-mappings">Load Saved Mapping</label>
+                            <select class="form-control" id="saved-mappings">
+                                <option value="">-- Select a mapping --</option>
+                                {% for mapping in saved_mappings %}
+                                <option value="{{ mapping.id }}">{{ mapping.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <hr>
+                    </div>
+
+                    <div id="mapping-container">
+                        <div class="field-mapping">
+                            <label>Part Number <span class="text-danger">*</span></label>
+                            <select class="form-control mapping-field" data-field="part_numbers.part_number">
+                                <option value="">-- Select Column --</option>
+                                {% for col in columns %}
+                                <option value="{{ loop.index0 }}">{{ col }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="field-mapping">
+                            <label>System Part Number <span class="text-danger">*</span></label>
+                            <select class="form-control mapping-field" data-field="part_numbers.system_part_number">
+                                <option value="">-- Select Column --</option>
+                                {% for col in columns %}
+                                <option value="{{ loop.index0 }}">{{ col }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="field-mapping">
+                            <label>Description</label>
+                            <select class="form-control mapping-field" data-field="part_numbers.description">
+                                <option value="">-- Select Column --</option>
+                                {% for col in columns %}
+                                <option value="{{ loop.index0 }}">{{ col }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="field-mapping">
+                            <label>Manufacturer</label>
+                            <select class="form-control mapping-field" data-field="part_numbers.manufacturer">
+                                <option value="">-- Select Column --</option>
+                                {% for col in columns %}
+                                <option value="{{ loop.index0 }}">{{ col }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="field-mapping">
+                            <label>Category</label>
+                            <select class="form-control mapping-field" data-field="part_numbers.category">
+                                <option value="">-- Select Column --</option>
+                                {% for col in columns %}
+                                <option value="{{ loop.index0 }}">{{ col }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="form-group mt-4">
+                            <label for="mapping-name">Save Mapping As</label>
+                            <input type="text" class="form-control" id="mapping-name" placeholder="Enter a name for this mapping">
+                        </div>
+
+                        <button type="button" class="btn btn-secondary btn-block" id="save-mapping-btn">Save Mapping</button>
+                        <button type="button" class="btn btn-primary btn-block mt-3" id="process-btn">Process Import</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mt-3 results-panel" id="results-panel">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">Import Results</h5>
+                </div>
+                <div class="card-body">
+                    <div class="import-progress">
+                        <div class="progress">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        <small class="text-muted text-center d-block mt-1" id="progress-status">Starting import...</small>
+                    </div>
+
+                    <div id="results-container" class="mt-3" style="display: none;">
+                        <table class="table table-sm">
+                            <tbody>
+                                <tr>
+                                    <th>Processed:</th>
+                                    <td id="result-processed">0</td>
+                                </tr>
+                                <tr>
+                                    <th>Created:</th>
+                                    <td id="result-created">0</td>
+                                </tr>
+                                <tr>
+                                    <th>Updated:</th>
+                                    <td id="result-updated">0</td>
+                                </tr>
+                                <tr>
+                                    <th>Skipped:</th>
+                                    <td id="result-skipped">0</td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div id="errors-container" class="mt-3" style="display: none;">
+                            <h6 class="text-danger">Errors:</h6>
+                            <ul class="list-unstyled" id="error-list"></ul>
+                        </div>
+
+                        <div class="mt-3">
+                            <a href="{{ url_for('imports.list_part_number_imports') }}" class="btn btn-primary btn-sm">Back to Import List</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // File data from server
+    const fileData = {{ file_data|tojson }};
+    const fileId = {{ file_id }};
+
+    // Initialize Handsontable
+    const container = document.getElementById('hot-container');
+    const hot = new Handsontable(container, {
+        data: fileData,
+        rowHeaders: true,
+        colHeaders: {{ columns|tojson }},
+        stretchH: 'all',
+        readOnly: true,
+        licenseKey: 'non-commercial-and-evaluation'
+    });
+
+    // Load saved mapping
+    document.getElementById('saved-mappings').addEventListener('change', function() {
+        const mappingId = this.value;
+        if (!mappingId) return;
+
+        fetch(`/handson/load_import_mapping/${mappingId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Clear all current selections
+                    document.querySelectorAll('.mapping-field').forEach(select => {
+                        select.value = '';
+                    });
+
+                    // Apply the loaded mapping
+                    const mapping = data.mapping.mapping;
+                    for (const col in mapping) {
+                        const field = mapping[col];
+                        const select = document.querySelector(`.mapping-field[data-field="${field}"]`);
+                        if (select) {
+                            select.value = col;
+                        }
+                    }
+                } else {
+                    alert('Error loading mapping: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while loading the mapping.');
+            });
+    });
+
+    // Save mapping
+    document.getElementById('save-mapping-btn').addEventListener('click', function() {
+        const mappingName = document.getElementById('mapping-name').value.trim();
+        if (!mappingName) {
+            alert('Please enter a name for this mapping.');
+            return;
+        }
+
+        const mapping = getMapping();
+        if (Object.keys(mapping).length === 0) {
+            alert('Please map at least one column before saving.');
+            return;
+        }
+
+        fetch('/handson/save_import_mapping', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: mappingName,
+                import_type: 'part_numbers',
+                mapping: mapping
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Mapping saved successfully!');
+                // Reload page to show the new mapping in the dropdown
+                window.location.reload();
+            } else {
+                alert('Error saving mapping: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while saving the mapping.');
+        });
+    });
+
+    // Process import
+    document.getElementById('process-btn').addEventListener('click', function() {
+        const mapping = getMapping();
+        if (!validateMapping(mapping)) {
+            return;
+        }
+
+        // Show results panel and progress indicators
+        document.getElementById('results-panel').style.display = 'block';
+        document.getElementById('results-container').style.display = 'none';
+        document.querySelector('.progress-bar').style.width = '0%';
+        document.getElementById('progress-status').textContent = 'Starting import...';
+
+        // Disable the process button
+        this.disabled = true;
+
+        // Start the import process
+        startImport(mapping);
+    });
+
+    // Get current mapping
+    function getMapping() {
+        const mapping = {};
+        document.querySelectorAll('.mapping-field').forEach(select => {
+            const field = select.getAttribute('data-field');
+            const value = select.value;
+            if (value) {
+                mapping[value] = field;
+            }
+        });
+        return mapping;
+    }
+
+    // Validate mapping
+    function validateMapping(mapping) {
+        // Check if either part_number or system_part_number is mapped
+        const hasPart = Object.values(mapping).includes('part_numbers.part_number');
+        const hasSystemPart = Object.values(mapping).includes('part_numbers.system_part_number');
+
+        if (!hasPart && !hasSystemPart) {
+            alert('You must map at least one of: Part Number or System Part Number');
+            return false;
+        }
+
+        return true;
+    }
+
+    // Start import process
+    function startImport(mapping) {
+        fetch('/handson/import/part_numbers', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                mapping: mapping,
+                file_id: fileId
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateProgress(100, 'Import completed successfully');
+                showResults(data.results);
+            } else {
+                updateProgress(100, 'Import failed: ' + data.message);
+                document.getElementById('process-btn').disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateProgress(100, 'An error occurred during import');
+            document.getElementById('process-btn').disabled = false;
+        });
+
+        // Simulate progress while waiting
+        let progress = 0;
+        const interval = setInterval(() => {
+            progress += 5;
+            if (progress < 90) {
+                updateProgress(progress, 'Processing...');
+            } else {
+                clearInterval(interval);
+            }
+        }, 500);
+    }
+
+    // Update progress bar
+    function updateProgress(percent, status) {
+        document.querySelector('.progress-bar').style.width = percent + '%';
+        document.getElementById('progress-status').textContent = status;
+    }
+
+    // Show import results
+    function showResults(results) {
+        document.getElementById('results-container').style.display = 'block';
+        document.getElementById('result-processed').textContent = results.processed;
+        document.getElementById('result-created').textContent = results.created;
+        document.getElementById('result-updated').textContent = results.updated;
+        document.getElementById('result-skipped').textContent = results.skipped;
+
+        // Show errors if any
+        if (results.errors && results.errors.length > 0) {
+            const errorList = document.getElementById('error-list');
+            errorList.innerHTML = '';
+
+            results.errors.forEach(error => {
+                const li = document.createElement('li');
+                li.className = 'text-danger';
+                li.textContent = error;
+                errorList.appendChild(li);
+            });
+
+            document.getElementById('errors-container').style.display = 'block';
+        } else {
+            document.getElementById('errors-container').style.display = 'none';
+        }
+    }
+});

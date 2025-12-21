@@ -1,0 +1,1983 @@
+{% extends "layouts/customer_discovery.html" %}
+
+{% block customer_discovery_content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+
+<div class="container-fluid mt-3">
+    <div class="row">
+<!-- Industry Sectors Column - Restyled -->
+<div class="col-md-4">
+    <div class="card shadow border-0">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center">
+                <strong>Industry Sectors</strong>
+                <small class="text-muted d-flex align-items-center ms-3">
+                    <span class="me-3" style="color: #5ebc67; font-weight: 600;">— Customer count</span>
+                    <span class="me-3" style="color: #ff6b6b; font-weight: 600;">— Sales Volume</span>
+                </small>
+                <button class="btn btn-sm btn-outline-secondary d-flex align-items-center ms-2"
+                        id="toggleWatched"
+                        onclick="toggleWatchedFilter()">
+                    <i class="bi bi-star"></i>
+                </button>
+            </div>
+            <div class="d-flex align-items-center">
+                <span class="badge bg-primary me-2">{{ tag_data|length }}</span>
+                <button class="btn btn-sm btn-primary" onclick="TagModal.show()">
+                    <i class="bi bi-plus-circle"></i> New Tag
+                </button>
+            </div>
+        </div>
+        <div class="list-group list-group-flush">
+            {% for tag in tag_data %}
+                <button class="list-group-item list-group-item-action p-3"
+                        onclick="loadTagDetails({{ tag.id }}, '{{ tag.tag }}')"
+                        data-countries="{{ tag.countries }}">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div class="d-flex align-items-center">
+                            <span class="fw-medium text-dark">{{ tag.tag }}</span>
+                            <span class="watch-btn ms-2"
+                                  onclick="event.stopPropagation(); toggleWatch({{ tag.id }})"
+                                  data-tag-id="{{ tag.id }}"
+                                  style="cursor: pointer;">
+                                <i class="bi bi-star watch-icon" data-tag-id="{{ tag.id }}"></i>
+                            </span>
+                        </div>
+                        <div>
+                            <span class="badge bg-info me-2">{{ tag.customer_count }}</span>
+                            {% if tag.sales_last_year > 0 %}
+                                <span class="badge bg-sales">€{{ "{:,.0f}".format(tag.sales_last_year) }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <!-- Progress bars with updated styling -->
+                    <div class="progress mt-2" style="height: 4px; border-radius: 4px; overflow: hidden;">
+                        <div class="progress-bar"
+                             style="width: {{ (tag.customer_count / tag_data[0].customer_count * 100)|round }}%; background-color: #5ebc67;">
+                        </div>
+                    </div>
+                    {% if tag.sales_last_year > 0 %}
+                        <div class="progress sales-bar mt-1" style="height: 4px; border-radius: 4px; overflow: hidden;">
+                            <div class="progress-bar"
+                                 style="width: {{ (tag.sales_last_year / tag_data[0].sales_last_year * 100)|round }}%; background-color: #ff6b6b;">
+                            </div>
+                        </div>
+                    {% endif %}
+                </button>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+
+        <!-- Market Intelligence and Charts Column -->
+        <div class="col-md-8">
+
+<!-- Tag Details Card -->
+<div class="card shadow border-0 mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Tag Details</strong>
+        <button class="btn btn-sm btn-outline-primary" id="editTagBtn">
+            <i class="bi bi-pencil"></i> Edit
+        </button>
+    </div>
+    <div class="card-body">
+        <div id="tagViewMode">
+            <h5 id="tagNameDisplay" class="mb-2">Select a tag</h5>
+            <p id="tagDescriptionDisplay" class="text-muted mb-0">No description available</p>
+        </div>
+        <div id="tagEditMode" style="display: none;">
+            <form id="tagEditForm" class="needs-validation" novalidate>
+                <div class="mb-3">
+                    <label for="tagName" class="form-label">Tag Name</label>
+                    <input type="text" class="form-control" id="tagName" required>
+                </div>
+                <div class="mb-3">
+                    <label for="tagDescription" class="form-label">Description</label>
+                    <textarea class="form-control" id="tagDescription" rows="3"></textarea>
+                </div>
+                <div class="d-flex justify-content-end gap-2">
+                    <button type="button" class="btn btn-secondary" id="cancelEditBtn">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<div class="card shadow border-0 mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Market Intelligence</strong>
+        <div>
+            <button id="refreshMarketIntelligenceBtn" class="btn btn-sm btn-outline-secondary"
+                    style="display: none;" onclick="loadMarketIntelligence(currentTagId)">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </div>
+    </div>
+    <div class="card-body" id="aiInsights">
+        <div class="text-center">
+            <p class="text-muted">Select an industry sector to get started</p>
+        </div>
+    </div>
+</div>
+
+ <!-- Replace the existing row with this updated version -->
+<div class="row">
+    <div class="col-md-4 mb-3">
+        <div class="card shadow border-0 h-100">
+            <div class="card-header">
+                <strong>Geographic Distribution</strong>
+            </div>
+            <div class="card-body" style="height: 300px">
+                <div id="chartPlaceholder" class="text-center p-4">
+                    <p class="text-muted">Select an industry sector to view distribution</p>
+                </div>
+                <canvas id="countryChart" style="display: none"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-3">
+        <div class="card shadow border-0 h-100">
+            <div class="card-header">
+                <strong>Top Parts Distribution</strong>
+            </div>
+            <div class="card-body" style="height: 300px">
+                <canvas id="partsChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+<div class="col-md-4 mb-3">
+    <div class="card shadow border-0 h-100">
+        <div class="card-header">
+            <strong>Part Categories</strong>
+        </div>
+        <div class="card-body" style="height: 300px">
+            <div id="categoriesChartPlaceholder" class="text-center p-4">
+                <p class="text-muted">Select an industry sector to view categories</p>
+            </div>
+            <canvas id="categoriesChart" style="display: none"></canvas>
+        </div>
+    </div>
+</div>
+            <!-- Current Customers Table -->
+<!-- Add this right before the table -->
+<div class="d-flex align-items-center gap-2>
+    <small class="text-muted">Customer Status Legend:</small>
+    <div class="d-flex gap-3 align-items-center">
+        <span class="badge rounded-pill bg-danger">Target</span>
+        <span class="badge rounded-pill bg-warning">Lead Identified</span>
+        <span class="badge rounded-pill bg-info">Quoted</span>
+        <span class="badge rounded-pill bg-success">Active Customer</span>
+    </div>
+</div>
+                <div class="col-12">
+<div class="card shadow border-0 mt-3">
+        <div class="card-header">
+            <div class="d-flex justify-content-between align-items-center">
+
+        <strong>Current Customers</strong>
+        <div class="d-flex gap-3">
+            <select class="form-select form-select-sm" id="continentFilter">
+                <option value="">All Continents</option>
+            </select>
+            <select class="form-select form-select-sm" id="countryFilter" disabled>
+                <option value="">All Countries</option>
+            </select>
+        </div>
+               <button type="button" class="btn btn-outline-primary btn-sm" onclick="copyReport()">
+            <i class="bi bi-clipboard"></i> Copy Report
+        </button>
+    </div>
+</div>
+                        <div class="card-body table-container p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Status</th>
+                                            <th>Country</th>
+                                            <th>Estimated Revenue</th>
+                                            <th>Assigned To</th>
+                                            <th>Latest Activity</th>
+                                            <th>Latest Comment</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="customersTableBody">
+                                        <tr>
+                                            <td colspan="5" class="text-center">
+                                                <div class="placeholder-glow">
+                                                    <span class="placeholder col-12"></span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<style>
+.ai-insight { border-left: 4px solid #4a90e2; padding-left: 1rem; margin: 0.5rem 0; }
+.ai-recommendation { border-left: 4px solid #50c878; background: #f8fff8; padding: 1rem; margin-top: 1rem; }
+.ai-number { font-weight: 600; color: #4a4a4a; }
+#aiInsights { line-height: 1.6; }
+#aiInsights strong { color: #2563eb; }
+.country-link { color: #2563eb; text-decoration: none; }
+.country-link:hover { text-decoration: underline; }
+.card { box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+
+.badge.bg-sales {
+    background-color: #ff6b6b !important;
+}
+.progress-bar.bg-sales {
+    background-color: #ff6b6b !important;
+}
+.progress.sales-bar {
+    direction: rtl;  /* This makes the progress bar fill from right to left */
+}
+/* Subtle watched tag styling */
+.watch-btn {
+    font-size: 1rem; /* Smaller star */
+    color: #bbb; /* Light grey for unwatched */
+    cursor: pointer;
+    transition: color 0.2s ease-in-out;
+}
+
+.watch-btn.active {
+    color: #f5c518; /* Softer golden yellow for watched */
+}
+
+/* Optional: Subtle left border on watched */
+.list-group-item.watched {
+    border-left: 4px solid #3b7e43; /* Subtle blue indicator */
+}
+
+.list-group-item.watched {
+    background-color: rgba(94, 188, 103, 0.08); /* Light blue */
+}
+
+
+
+#toggleWatched {
+    font-size: 0.9rem; /* Smaller text */
+    padding: 4px 8px; /* Reduce padding */
+    border-radius: 5px; /* Slightly rounded */
+    transition: background 0.2s, color 0.2s;
+}
+
+#toggleWatched.active {
+    background-color: #e9ecef; /* Subtle gray background when active */
+    color: #333; /* Darker text */
+    border-color: #adb5bd; /* Lighter border */
+}
+
+</style>
+
+<script>
+
+let countryChartInstance = null;
+let partsChartInstance = null;
+let currentTagId = null;
+let allCustomers = [];
+let filteredCustomers = [];
+let continentMapping = {};
+let currentTagName = null;
+let currentTagDescription = null;
+let categoriesChartInstance = null;
+
+// Load the continent mapping first
+fetch('/customers/api/continents-mapping')
+    .then(response => response.json())
+    .then(data => {
+        continentMapping = data;
+    });
+
+async function loadTagDetails(tagId, tagName) {
+    try {
+        // Set current tag details
+        currentTagId = tagId;
+        currentTagName = tagName;
+
+        // Update tag details view
+        document.getElementById('tagNameDisplay').textContent = tagName;
+        document.getElementById('tagName').value = tagName;
+
+        // Fetch tag description
+        try {
+            const response = await fetch(`/customers/api/tags/${tagId}/details`);
+            const data = await response.json();
+            currentTagDescription = data.description || '';
+            document.getElementById('tagDescriptionDisplay').textContent = currentTagDescription || 'No description available';
+            document.getElementById('tagDescription').value = currentTagDescription || '';
+        } catch (error) {
+            console.error('Error fetching tag details:', error);
+        }
+
+        // Clear existing charts
+        if (countryChartInstance) countryChartInstance.destroy();
+        if (partsChartInstance) partsChartInstance.destroy();
+        if (categoriesChartInstance) categoriesChartInstance.destroy();
+
+        // Show loading states
+        document.getElementById('chartPlaceholder').style.display = 'block';
+        document.getElementById('countryChart').style.display = 'none';
+        document.getElementById('categoriesChartPlaceholder').style.display = 'block';
+        document.getElementById('categoriesChart').style.display = 'none';
+
+        // Set market intelligence placeholder with button to load
+        document.getElementById('aiInsights').innerHTML = `
+            <div class="text-center my-4">
+                <p class="mb-3">Click below to get market intelligence for ${tagName}</p>
+                <button id="loadMarketIntelligenceBtn" class="btn btn-primary" onclick="loadMarketIntelligence(${tagId})">
+                    <i class="bi bi-graph-up me-2"></i>Get Market Intelligence
+                </button>
+            </div>
+        `;
+
+        // Start loading customers right away
+        loadCustomers(tagId);
+
+        // Load geography and parts data first
+        try {
+            // Load countries data
+            const chartDataResponse = await fetch(`/customers/api/tags/${tagId}/countries`);
+            const chartData = await chartDataResponse.json();
+
+            document.getElementById('chartPlaceholder').style.display = 'none';
+            document.getElementById('countryChart').style.display = 'block';
+
+            countryChartInstance = ChartUtils.createChart(
+  document.getElementById('countryChart'),
+  {
+    type: 'bar',
+    data: {
+      labels: chartData.labels,
+      datasets: [{
+        label: `${tagName} Distribution`,
+        data: chartData.values
+      }]
+    }
+  }
+);
+        } catch (error) {
+            console.error('Error loading geography chart:', error);
+            document.getElementById('chartPlaceholder').style.display = 'block';
+            document.getElementById('chartPlaceholder').innerHTML = `
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Unable to load geographic distribution data
+                </div>
+            `;
+        }
+
+        try {
+            // Load parts data
+            const partsDataResponse = await fetch(`/customers/api/tags/${tagId}/parts`);
+            const partsData = await partsDataResponse.json();
+
+            partsChartInstance = ChartUtils.createChart(
+    document.getElementById('partsChart'),
+    {
+        type: 'bar',
+        data: {
+            labels: partsData.labels,
+            datasets: [{
+                label: 'Parts Ordered',
+                data: partsData.values
+                // No need to specify backgroundColor - ChartUtils will handle it
+            }]
+        },
+        options: {
+            // You can keep specific overrides if needed
+            plugins: {
+                legend: { display: false } // 'position: false' isn't valid - use display: false instead
+            }
+        }
+    }
+);
+        } catch (error) {
+            console.error('Error loading parts chart:', error);
+            document.getElementById('partsChart').style.display = 'none';
+            const partsChartContainer = document.getElementById('partsChart').parentElement;
+            partsChartContainer.innerHTML = `
+                <div class="alert alert-warning h-100 d-flex align-items-center justify-content-center">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Unable to load parts distribution data
+                </div>
+            `;
+        }
+
+        // Try to load categories chart separately
+        try {
+            const categoriesDataResponse = await fetch(`/customers/api/tags/${tagId}/categories`);
+            if (!categoriesDataResponse.ok) {
+                throw new Error(`API returned ${categoriesDataResponse.status}`);
+            }
+
+            const categoriesData = await categoriesDataResponse.json();
+
+            document.getElementById('categoriesChartPlaceholder').style.display = 'none';
+            document.getElementById('categoriesChart').style.display = 'block';
+
+            // If chartUtils is defined, use it for the chart configuration
+            let backgroundColor, chartOptions;
+
+            if (typeof chartUtils !== 'undefined' && chartUtils.getColorPalette) {
+                backgroundColor = chartUtils.getColorPalette(categoriesData.labels.length);
+                chartOptions = chartUtils.getPieChartOptions ?
+                    chartUtils.getPieChartOptions() :
+                    {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'right', labels: { boxWidth: 12, font: { size: 10 } } }
+                        }
+                    };
+            } else {
+                // Default colors if chartUtils is not available
+                backgroundColor = [
+                    'rgba(255, 99, 132, 0.7)',
+                    'rgba(54, 162, 235, 0.7)',
+                    'rgba(255, 206, 86, 0.7)',
+                    'rgba(75, 192, 192, 0.7)',
+                    'rgba(153, 102, 255, 0.7)',
+                    'rgba(255, 159, 64, 0.7)'
+                ];
+                chartOptions = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 10 } } }
+                    }
+                };
+            }
+
+            categoriesChartInstance = ChartUtils.createChart(
+    document.getElementById('categoriesChart'),
+    {
+        type: 'pie',
+        data: {
+            labels: categoriesData.labels,
+            datasets: [{
+                label: 'Part Categories',
+                data: categoriesData.values
+            }]
+        }
+        // You don't need to specify backgroundColor or options here
+        // as ChartUtils.createChart will apply your standardized styling
+    }
+);
+        } catch (error) {
+            console.error('Error loading categories chart:', error);
+            document.getElementById('categoriesChartPlaceholder').style.display = 'block';
+            document.getElementById('categoriesChart').style.display = 'none';
+            document.getElementById('categoriesChartPlaceholder').innerHTML = `
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Unable to load part categories data
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error in loadTagDetails:', error);
+    }
+}
+
+// New function to load market intelligence on demand
+async function loadMarketIntelligence(tagId) {
+    try {
+        // Update the button to show loading state
+        const button = document.getElementById('loadMarketIntelligenceBtn');
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Loading...';
+        }
+
+        // Show loading state in the insights area
+        document.getElementById('aiInsights').innerHTML = `
+            <div class="placeholder-glow">
+                <p class="placeholder col-12"></p>
+                <p class="placeholder col-10"></p>
+                <p class="placeholder col-8"></p>
+            </div>
+        `;
+
+        // Fetch the market intelligence data
+        const insightsResponse = await fetch(`/customers/api/tags/${tagId}/suggestions`);
+        const data = await insightsResponse.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to load suggestions');
+        }
+
+        const aiInsights = document.getElementById('aiInsights');
+
+        // Store tag ID in window object for context
+        window.currentTagId = tagId;
+
+        try {
+            console.log("Rendering markdown content...");
+            const htmlContent = marked.parse(data.analysis || '');
+            aiInsights.innerHTML = htmlContent;
+
+            // Wait for content to render then process company sections
+            setTimeout(() => {
+                console.log("Starting to extract companies...");
+                const companiesFound = extractCompaniesAfterGrowthOpportunities();
+
+                // If no companies found, use suggestions array as fallback
+                if (companiesFound === 0 && data.suggestions && data.suggestions.length > 0) {
+                    console.log("No companies found in content. Adding suggestions directly:", data.suggestions);
+
+                    const suggestionsSection = document.createElement('div');
+                    suggestionsSection.className = 'mt-4 border-top pt-3';
+                    suggestionsSection.innerHTML = '<h5>Suggested Companies</h5>';
+
+                    data.suggestions.forEach(company => {
+                        console.log("Adding suggestion:", company.company_name);
+                        const companyRow = document.createElement('div');
+                        companyRow.className = 'mb-3 p-2 border-start border-primary ps-3';
+                        companyRow.innerHTML = `
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>${company.company_name}</strong>
+                                    <div class="text-muted small">
+                                        ${company.country || ''}
+                                        ${company.estimated_revenue ? '| Revenue: €' + company.estimated_revenue : ''}
+                                        ${company.product_focus ? '| Focus: ' + company.product_focus : ''}
+                                    </div>
+                                </div>
+                                <button class="btn btn-success btn-sm">
+                                    <i class="bi bi-plus-circle"></i> Add
+                                </button>
+                            </div>
+                        `;
+
+                        // Add click handler for the button
+                        const btn = companyRow.querySelector('.btn');
+                        btn.addEventListener('click', function() {
+                            // Add tag ID to the company data
+                            const companyData = {...company, tagId: tagId};
+                            console.log("Fallback button clicked with data:", companyData);
+                            openCustomerModal(companyData);
+                        });
+
+                        suggestionsSection.appendChild(companyRow);
+                    });
+
+                    aiInsights.appendChild(suggestionsSection);
+                }
+            }, 800);
+        } catch (parseError) {
+            console.error('Markdown parsing error:', parseError);
+            aiInsights.innerHTML = data.analysis || 'No analysis available.';
+        }
+    } catch (error) {
+        console.error('Error loading suggestions:', error);
+        document.getElementById('aiInsights').innerHTML = `
+            <div class="alert alert-danger">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                Error loading suggestions: ${error.message}
+            </div>
+        `;
+    }
+}
+
+// Update the company extraction function to clean up company names
+function extractCompaniesAfterGrowthOpportunities() {
+    console.log("Extracting companies based on observed format...");
+    const aiInsights = document.getElementById('aiInsights');
+    if (!aiInsights) return 0;
+
+    // Find the Growth Opportunities section
+    const headers = aiInsights.querySelectorAll('h2');
+    let opportunitiesSection = null;
+    for (const header of headers) {
+        if (header.textContent.includes('Growth Opportunities')) {
+            opportunitiesSection = header;
+            console.log("Found Growth Opportunities section");
+            break;
+        }
+    }
+
+    if (!opportunitiesSection) {
+        console.log("Growth Opportunities section not found");
+        return 0;
+    }
+
+    // Process paragraphs after the Growth Opportunities heading
+    let currentElement = opportunitiesSection.nextElementSibling;
+    let companiesAdded = 0;
+
+    while (currentElement) {
+        // Check if this is a paragraph and looks like a company listing
+        if (currentElement.tagName === 'P' &&
+            currentElement.textContent.includes('Website:') &&
+            currentElement.textContent.includes('Country:')) {
+
+            // Get the first line before "Website:" as the company name
+            const text = currentElement.textContent;
+            const websiteIndex = text.indexOf('Website:');
+
+            if (websiteIndex > 0) {
+                // The company name is the text before "Website:" - clean up any "Company Name:" prefix
+                let companyName = text.substring(0, websiteIndex).trim();
+                if (companyName.startsWith('Company Name:')) {
+                    companyName = companyName.substring('Company Name:'.length).trim();
+                }
+
+                console.log(`Found company: ${companyName}`);
+
+                // Extract other details
+                const companyDetails = {
+                    company_name: companyName,
+                    website: extractValue(text, 'Website:'),
+                    country: extractValue(text, 'Country:'),
+                    estimated_revenue: parseRevenueValue(extractValue(text, 'Annual Revenue:')),
+                    product_focus: extractValue(text, 'Main Focus:'),
+                    tagId: window.currentTagId || null
+                };
+
+                console.log("Extracted company details:", companyDetails);
+
+                // Skip if button already exists
+                if (currentElement.querySelector('.btn-success')) {
+                    currentElement = currentElement.nextElementSibling;
+                    continue;
+                }
+
+                // Create add button
+                const addButton = createAddButton(companyDetails);
+
+                // Find insertion point - ideally at the beginning of the paragraph
+                if (currentElement.firstChild) {
+                    currentElement.insertBefore(addButton, currentElement.firstChild);
+                } else {
+                    currentElement.appendChild(addButton);
+                }
+
+                companiesAdded++;
+                console.log(`Added button for ${companyName}`);
+            }
+        }
+
+        // Move to next element
+        currentElement = currentElement.nextElementSibling;
+
+        // Stop if we reach another heading or after processing 20 elements
+        if (currentElement && currentElement.tagName.match(/^H[1-6]$/) || companiesAdded >= 20) {
+            break;
+        }
+    }
+
+    console.log(`Added buttons to ${companiesAdded} companies`);
+    return companiesAdded;
+}
+
+// Add this improved function to find and process companies in the AI output
+function addCompanyButtons() {
+    console.log("Adding company buttons...");
+    const aiInsights = document.getElementById('aiInsights');
+    if (!aiInsights) return 0;
+
+    // First approach: Look specifically for the Growth Opportunities section
+    const headers = aiInsights.querySelectorAll('h2');
+    let opportunitiesSection = null;
+
+    for (const header of headers) {
+        if (header.textContent.includes('Growth Opportunities')) {
+            opportunitiesSection = header;
+            console.log("Found Growth Opportunities section");
+            break;
+        }
+    }
+
+    let companiesAdded = 0;
+
+    // If we found the opportunities section, process everything after it
+    if (opportunitiesSection) {
+        console.log("Examining content after Growth Opportunities section");
+
+        // Debug the content structure
+        let currentElement = opportunitiesSection.nextElementSibling;
+        let counter = 0;
+        while (currentElement && counter < 20) { // Limit to 20 to avoid infinite loop
+            console.log(`Element ${counter}: ${currentElement.tagName}`,
+                        currentElement.textContent.substring(0, 50) + "...");
+            currentElement = currentElement.nextElementSibling;
+            counter++;
+        }
+
+        // Reset to start processing
+        currentElement = opportunitiesSection.nextElementSibling;
+
+        // Look for any paragraph with "Company Name:" text
+        const companyPattern = /Company Name:/i;
+
+        while (currentElement) {
+            const elementText = currentElement.textContent || '';
+
+            if (companyPattern.test(elementText)) {
+                console.log("Found company mention in:", elementText.substring(0, 100) + "...");
+
+                // Skip if already has button
+                if (currentElement.querySelector('.btn-success')) {
+                    currentElement = currentElement.nextElementSibling;
+                    continue;
+                }
+
+                // Extract company details using a more flexible approach
+                const companyDetails = extractCompanyDetails(currentElement);
+                if (companyDetails.company_name) {
+                    // Create and add button
+                    const addButton = createAddButton(companyDetails);
+
+                    // Try to find the best place to insert
+                    let inserted = false;
+
+                    // Find a good insertion point - after Company Name text ideally
+                    const strongElements = currentElement.querySelectorAll('strong');
+                    for (const strong of strongElements) {
+                        if (strong.textContent.includes('Company Name:')) {
+                            strong.insertAdjacentElement('afterend', addButton);
+                            inserted = true;
+                            companiesAdded++;
+                            console.log(`Added button for ${companyDetails.company_name}`);
+                            break;
+                        }
+                    }
+
+                    // Fallback: insert at beginning
+                    if (!inserted) {
+                        currentElement.prepend(addButton);
+                        companiesAdded++;
+                        console.log(`Added button for ${companyDetails.company_name} (fallback method)`);
+                    }
+                }
+            }
+
+            currentElement = currentElement.nextElementSibling;
+        }
+
+        console.log(`Added buttons to ${companiesAdded} companies`);
+    }
+
+    // If no companies found with first approach, try a broader search
+    if (companiesAdded === 0) {
+        console.log("No companies found in structured section, trying broader search");
+
+        // Try to find any paragraph in the entire content that might be a company listing
+        const allParagraphs = aiInsights.querySelectorAll('p');
+
+        allParagraphs.forEach(paragraph => {
+            const text = paragraph.textContent || '';
+            if (text.includes('Company Name:') && !paragraph.querySelector('.btn-success')) {
+                console.log("Found potential company paragraph:", text.substring(0, 100) + "...");
+
+                // Extract company details
+                const companyDetails = extractCompanyDetails(paragraph);
+                if (companyDetails.company_name) {
+                    // Create button
+                    const addButton = createAddButton(companyDetails);
+
+                    // Find insertion point
+                    let inserted = false;
+                    const boldElements = paragraph.querySelectorAll('strong, b');
+                    for (const bold of boldElements) {
+                        if (bold.textContent.includes('Company Name:')) {
+                            bold.insertAdjacentElement('afterend', addButton);
+                            inserted = true;
+                            companiesAdded++;
+                            console.log(`Added button for ${companyDetails.company_name}`);
+                            break;
+                        }
+                    }
+
+                    // Fallback
+                    if (!inserted) {
+                        paragraph.prepend(addButton);
+                        companiesAdded++;
+                        console.log(`Added button for ${companyDetails.company_name} (fallback)`);
+                    }
+                }
+            }
+        });
+
+        console.log(`Added buttons to ${companiesAdded} companies (broad search)`);
+    }
+
+    // If we still found no companies, check for raw text that might contain company listings
+    if (companiesAdded === 0) {
+        console.log("Trying text-based company extraction as last resort");
+
+        // Get all text content
+        const fullText = aiInsights.textContent;
+
+        // Use regex to find company patterns
+        const companyRegex = /Company Name:\s*([^\n]+)(?:\n|\r\n?)/g;
+        let match;
+        const companies = [];
+
+        while ((match = companyRegex.exec(fullText)) !== null) {
+            companies.push(match[1].trim());
+        }
+
+        console.log(`Found ${companies.length} companies in raw text`);
+
+        if (companies.length > 0) {
+            // Create a new section to hold these companies
+            const newSection = document.createElement('div');
+            newSection.className = 'mt-4 border-top pt-3';
+            newSection.innerHTML = '<h5>Extracted Companies</h5>';
+
+            companies.forEach(companyName => {
+                // Create a simple company entry
+                const companyRow = document.createElement('div');
+                companyRow.className = 'mb-3 p-2 border-start border-primary ps-3';
+
+                const companyDetails = {
+                    company_name: companyName,
+                    tagId: window.currentTagId || null
+                };
+
+                const addButton = createAddButton(companyDetails);
+
+                companyRow.innerHTML = `<strong>${companyName}</strong>`;
+                companyRow.appendChild(addButton);
+                newSection.appendChild(companyRow);
+                companiesAdded++;
+            });
+
+            // Add the new section to the content
+            aiInsights.appendChild(newSection);
+            console.log(`Added ${companiesAdded} companies via text extraction`);
+        }
+    }
+
+    return companiesAdded;
+}
+
+// Helper function to extract company details from an element
+function extractCompanyDetails(element) {
+    const text = element.textContent || '';
+    const companyDetails = {
+        company_name: '',
+        website: '',
+        country: '',
+        estimated_revenue: 0,
+        product_focus: '',
+        tagId: window.currentTagId || null
+    };
+
+    // Extract company name
+    const nameMatch = text.match(/Company Name:\s*([^\n]+)(?:\n|$)/);
+    if (nameMatch && nameMatch[1]) {
+        companyDetails.company_name = nameMatch[1].trim();
+    }
+
+    // Extract website - first try to get from link
+    const link = element.querySelector('a');
+    if (link) {
+        companyDetails.website = link.href;
+    }
+
+    // Extract other fields from text
+    const countryMatch = text.match(/Country:\s*([^\n]+)(?:\n|$)/);
+    if (countryMatch && countryMatch[1]) {
+        companyDetails.country = countryMatch[1].trim();
+    }
+
+    const revenueMatch = text.match(/Annual Revenue:\s*([^\n]+)(?:\n|$)/);
+    if (revenueMatch && revenueMatch[1]) {
+        companyDetails.estimated_revenue = parseRevenueValue(revenueMatch[1].trim());
+    }
+
+    const focusMatch = text.match(/Main Focus:\s*([^\n]+)(?:\n|$)/);
+    if (focusMatch && focusMatch[1]) {
+        companyDetails.product_focus = focusMatch[1].trim();
+    }
+
+    // Clean up values (remove citation references)
+    Object.keys(companyDetails).forEach(key => {
+        if (typeof companyDetails[key] === 'string') {
+            companyDetails[key] = companyDetails[key].replace(/\[\d+\]\.?$/, '').trim();
+        }
+    });
+
+    console.log("Extracted company details:", companyDetails);
+    return companyDetails;
+}
+
+
+// Helper to extract text after a label
+function extractText(text, label) {
+    if (!text.includes(label)) return '';
+
+    const parts = text.split(label);
+    if (parts.length < 2) return '';
+
+    // Get text after label until next label or end
+    const rawValue = parts[1].split(/Company Name:|Website:|Country:|Annual Revenue:|Main Focus:/)[0];
+    return rawValue.trim();
+}
+
+// Helper to parse revenue values
+function parseRevenueValue(text) {
+    if (!text) return 0;
+
+    // Remove currency symbols, spaces, commas
+    let cleaned = text.replace(/[€$,\s]/g, '');
+
+    // Handle million/billion abbreviations
+    if (cleaned.includes('M')) {
+        cleaned = cleaned.replace('M', '');
+        cleaned = parseFloat(cleaned) * 1000000;
+    } else if (cleaned.includes('B')) {
+        cleaned = cleaned.replace('B', '');
+        cleaned = parseFloat(cleaned) * 1000000000;
+    }
+
+    return isNaN(cleaned) ? 0 : parseInt(cleaned);
+}
+// Add this function to your JavaScript
+// Modify the createCompanyButton function to use this adapter
+function createCompanyButton(companyDetails) {
+    // Create the Add button
+    const addButton = document.createElement('button');
+    addButton.className = 'btn btn-success btn-sm ms-2';
+    addButton.innerHTML = '<i class="bi bi-plus-circle"></i> Add';
+
+    // Add click handler that uses the adapter
+    addButton.addEventListener('click', function(e) {
+        e.stopPropagation();
+        const adaptedData = adaptCompanyData(companyDetails);
+        console.log("Opening modal with adapted data:", adaptedData);
+        openCustomerModal(adaptedData);
+    });
+
+    return addButton;
+}
+// Use this function inside your company processing code
+function processCompanySections() {
+    console.log("Processing company sections...");
+
+    // Get the entire content
+    const aiInsights = document.getElementById('aiInsights');
+    if (!aiInsights) {
+        console.log("aiInsights element not found");
+        return 0;
+    }
+
+    const fullContent = aiInsights.innerHTML;
+
+    // Use regex to find all company sections
+    const companyPattern = /<strong>Company Name:[^<]*<\/strong>/g;
+    const companyMatches = fullContent.match(companyPattern);
+
+    if (!companyMatches) {
+        console.log("No company sections found with pattern");
+        return 0;
+    }
+
+    const companiesFound = companyMatches.length;
+    console.log(`Found ${companiesFound} companies using regex pattern`);
+
+    // For each match, create a button and insert it
+    companyMatches.forEach(match => {
+        // Extract company name
+        const nameMatch = match.match(/<strong>Company Name:\s*([^<]+)<\/strong>/);
+        if (!nameMatch) return;
+
+        const companyName = nameMatch[1].trim();
+        console.log(`Processing company: ${companyName}`);
+
+        // Find the paragraph containing this company
+        const paragraphs = aiInsights.querySelectorAll('p');
+        let targetParagraph = null;
+
+        for (const p of paragraphs) {
+            if (p.innerHTML.includes(match)) {
+                targetParagraph = p;
+                break;
+            }
+        }
+
+        if (!targetParagraph) {
+            console.log(`Could not find paragraph for company: ${companyName}`);
+            return;
+        }
+
+        // Check if button already exists
+        if (targetParagraph.querySelector('.btn-success')) {
+            console.log(`Button already exists for ${companyName}`);
+            return;
+        }
+
+        // Extract company details from paragraph text
+        const paragraphText = targetParagraph.textContent;
+        const companyDetails = {
+            company_name: companyName,
+            country: extractSimple(paragraphText, 'Country:'),
+            estimated_revenue: parseRevenue(extractSimple(paragraphText, 'Annual Revenue:')),
+            product_focus: extractSimple(paragraphText, 'Main Focus:'),
+            tagId: window.currentTagId || null,
+            website: ''
+        };
+
+        // Try to get website URL from link
+        const linkElement = targetParagraph.querySelector('a');
+        if (linkElement) {
+            companyDetails.website = linkElement.href;
+        }
+
+        console.log('Extracted company details:', companyDetails);
+
+        // Create button with our helper function
+        const addButton = createCompanyButton(companyDetails);
+
+        // Find the strong element to insert after
+        const strongElement = targetParagraph.querySelector('strong');
+        if (strongElement) {
+            strongElement.insertAdjacentElement('afterend', addButton);
+        } else {
+            // Fallback to beginning of paragraph
+            targetParagraph.prepend(addButton);
+        }
+    });
+
+    return companiesFound;
+}
+
+// Update the extractValue function to handle "Company Name:" prefix
+function extractValue(text, label) {
+    const labelIndex = text.indexOf(label);
+    if (labelIndex === -1) return '';
+
+    // Get text after the label
+    const afterLabel = text.substring(labelIndex + label.length);
+
+    // Find the end of this value (next label or end of string)
+    const nextLabelIndex = Math.min(
+        ...[
+            afterLabel.indexOf('Website:'),
+            afterLabel.indexOf('Country:'),
+            afterLabel.indexOf('Annual Revenue:'),
+            afterLabel.indexOf('Main Focus:')
+        ].filter(i => i !== -1)
+    );
+
+    const valueText = nextLabelIndex === Infinity ?
+                      afterLabel :
+                      afterLabel.substring(0, nextLabelIndex);
+
+    // Clean up the value - remove "Company Name:" prefix if present
+    let cleanValue = valueText.trim();
+    if (label === 'Company Name:' && cleanValue.startsWith('Company Name:')) {
+        cleanValue = cleanValue.substring('Company Name:'.length).trim();
+    }
+
+    return cleanValue;
+}
+
+// Function to create the Add button
+function createAddButton(companyDetails) {
+    const addButton = document.createElement('button');
+    addButton.className = 'btn btn-success btn-sm me-2';
+    addButton.innerHTML = '<i class="bi bi-plus-circle"></i> Add';
+
+    // Define the data adapter
+    const adaptedData = {
+        name: companyDetails.company_name,
+        description: `${companyDetails.company_name} is a company based in ${companyDetails.country || 'Europe'} ${companyDetails.product_focus ? 'focusing on ' + companyDetails.product_focus : ''}`.trim(),
+        revenue: companyDetails.estimated_revenue || 0,
+        country: companyDetails.country && companyDetails.country.length > 2
+            ? companyDetails.country.substring(0, 2).toUpperCase()
+            : companyDetails.country || '',
+        tagId: companyDetails.tagId
+    };
+
+    // Add click handler using the correctly formatted data
+    addButton.addEventListener('click', function(e) {
+        e.stopPropagation();
+        console.log("Opening modal with data:", adaptedData);
+        openCustomerModal(adaptedData);
+    });
+
+    return addButton;
+}
+
+function extractSimple(text, label) {
+    const parts = text.split(label);
+    if (parts.length < 2) return '';
+
+    // Get the text after the label, up to the next label
+    const afterLabel = parts[1].split(/Company Name:|Website:|Country:|Annual Revenue:|Main Focus:/)[0];
+    return afterLabel.trim();
+}
+
+function adaptCompanyData(originalData) {
+    // Create a new object with the expected field structure
+    return {
+        name: originalData.company_name || originalData.name || '',
+        description: originalData.description ||
+            `${originalData.company_name || ''} is a company based in ${originalData.country || ''} focusing on ${originalData.product_focus || ''}`.trim(),
+        revenue: originalData.estimated_revenue || 0,
+        country: typeof originalData.country === 'string' && originalData.country.length > 2
+            ? originalData.country.substring(0, 2).toUpperCase()
+            : originalData.country || '',
+        tagId: originalData.tagId || null
+    };
+}
+// Helper to parse revenue values
+function parseRevenue(revenueStr) {
+    if (!revenueStr) return 0;
+    // Remove currency symbols, commas, etc
+    const cleanedStr = revenueStr.replace(/[€,$,\s,]/g, '');
+
+    // Check for "M" or "B" suffix
+    if (cleanedStr.includes('M')) {
+        return parseFloat(cleanedStr.replace('M', '')) * 1000000;
+    } else if (cleanedStr.includes('B')) {
+        return parseFloat(cleanedStr.replace('B', '')) * 1000000000;
+    }
+
+    return isNaN(cleanedStr) ? 0 : Number(cleanedStr);
+}
+
+// Add to your existing script
+let watchedTags = new Set();
+
+// Load watched tags on page load
+async function loadWatchedTags() {
+    try {
+        const response = await fetch('/api/watched-industry-tags/current');
+        const data = await response.json();
+        watchedTags = new Set(data.map(tag => tag.id));
+        updateWatchIcons();
+    } catch (error) {
+        console.error('Error loading watched tags:', error);
+    }
+}
+
+function updateWatchIcons() {
+    document.querySelectorAll('.list-group-item').forEach(item => {
+        const tagId = parseInt(item.getAttribute('onclick').match(/\d+/)[0]); // Extract tag ID
+        const watchIcon = item.querySelector('.watch-icon');
+
+        if (watchedTags.has(tagId)) {
+            watchIcon.classList.remove('bi-star');
+            watchIcon.classList.add('bi-star-fill');
+            item.classList.add('watched'); // Add background or border effect
+        } else {
+            watchIcon.classList.remove('bi-star-fill');
+            watchIcon.classList.add('bi-star');
+            item.classList.remove('watched');
+        }
+    });
+}
+
+
+async function toggleWatch(tagId) {
+    try {
+        const isWatched = watchedTags.has(tagId);
+        const method = isWatched ? 'DELETE' : 'POST';
+
+        const response = await fetch('/api/watched-industry-tags', {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                tag_id: tagId
+            })
+        });
+
+        if (response.ok) {
+            if (isWatched) {
+                watchedTags.delete(tagId);
+            } else {
+                watchedTags.add(tagId);
+            }
+            updateWatchIcons();
+        }
+    } catch (error) {
+        console.error('Error toggling watch status:', error);
+    }
+}
+let showOnlyWatched = false;
+
+function toggleWatchedFilter() {
+    showOnlyWatched = !showOnlyWatched;
+    const btn = document.getElementById('toggleWatched');
+    const icon = btn.querySelector('i');
+
+    // Toggle between empty star and filled star
+    icon.classList.toggle('bi-star', !showOnlyWatched);
+    icon.classList.toggle('bi-star-fill', showOnlyWatched);
+
+    updateTagVisibility();
+}
+
+
+function updateTagVisibility() {
+    document.querySelectorAll('.list-group-item').forEach(item => {
+        const tagId = parseInt(item.getAttribute('onclick').match(/\d+/)[0]); // Extract tag ID
+        if (showOnlyWatched && !watchedTags.has(tagId)) {
+            item.style.display = 'none';
+        } else {
+            item.style.display = '';
+        }
+    });
+}
+// Ensure filtering applies when watched tags load
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadWatchedTags();
+    updateTagVisibility();
+});
+
+// Add these helper functions
+function getActivityIcon(activityType) {
+    switch(activityType) {
+        case 'email': return 'bi-envelope';
+        case 'rfq': return 'bi-file-text';
+        case 'order': return 'bi-bag';
+        default: return 'bi-clock';
+    }
+}
+
+function getStatusName(statusId) {
+    const statuses = {
+        1: 'Target',
+        2: 'Lead Identified',
+        3: 'Quoted',
+        4: 'Active Customer'
+    };
+    return statuses[statusId] || 'Unknown';
+}
+
+
+function loadCustomers(tagId) {
+    const tbody = document.getElementById('customersTableBody');
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="9" class="text-center">
+                <div class="placeholder-glow">
+                    <span class="placeholder col-12"></span>
+                </div>
+            </td>
+        </tr>
+    `;
+
+    fetch(`/customers/api/tags/${tagId}/customers`)
+        .then(response => response.json())
+        .then(data => {
+            allCustomers = data.customers;
+            updateFilterOptions();
+            filterCustomers();
+        })
+        .catch(error => {
+            console.error('Error loading customers:', error);
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="9" class="text-center text-danger">
+                        Failed to load customers data. Error: ${error.message}
+                    </td>
+                </tr>
+            `;
+        });
+}
+
+function updateCustomerTable(customers) {
+    const tbody = document.getElementById('customersTableBody');
+
+    tbody.innerHTML = customers.map(customer => {
+        // Determine if this is a prospect (no ID) or existing customer
+        const isProspect = !customer.id;
+
+        const name = customer?.name || 'Unnamed Customer';
+        const statusId = customer?.status_id || 1;
+        const revenue = customer?.estimated_revenue || 0;
+        const assignedName = customer?.assigned_salesperson_name;
+        const latestActivity = customer?.latest_activity || '';
+        const activityType = customer?.activity_type || '';
+        const updateText = customer?.update_text || '';
+        const updateDate = customer?.update_date || '';
+        const updateSalesperson = customer?.update_salesperson_name || '';
+
+        return `
+            <tr>
+                <td>
+                    <a href="/customers/${customer.id}/edit"
+                       target="_blank"
+                       class="fw-bold text-dark text-decoration-none">
+                        ${name}
+                    </a>
+                </td>
+                <td>
+                    <span class="badge rounded-pill ${getStatusClass(statusId)}">
+                        ${getStatusName(statusId)}
+                    </span>
+                </td>
+                <td>${customer?.country || 'N/A'}</td>
+                <td>$${revenue.toLocaleString()}</td>
+                <td>
+                    ${assignedName
+                        ? `<span class="text-body">${assignedName}</span>`
+                        : `<span class="text-muted">Unassigned</span>`}
+                </td>
+                <td>
+                    ${latestActivity
+                        ? `<div class="d-flex align-items-center">
+                            <i class="bi ${getActivityIcon(activityType)} me-2"></i>
+                            <small class="text-muted">${latestActivity.split('T')[0]}</small>
+                           </div>`
+                        : `<span class="text-muted">No activity</span>`}
+                </td>
+                <td>
+                    ${updateText
+                        ? `<div class="d-flex flex-column">
+                            <div class="mb-1">${updateText}</div>
+                            <div class="border-top pt-1 mt-1">
+                                <small class="text-muted">
+                                    <i class="bi bi-person"></i> ${updateSalesperson} •
+                                    <span>${updateDate.split('T')[0]}</span>
+                                </small>
+                            </div>
+                           </div>`
+                        : ''}
+                </td>
+                <td>
+                    ${isProspect ?
+                        `<button type="button" class="btn btn-success btn-sm"
+                                onclick="openCustomerModal({
+                                    name: '${name}',
+                                    description: '${customer.description || ''}',
+                                    revenue: ${revenue},
+                                    country: '${customer.country}',
+                                    tagId: currentTagId,
+                                    productFocus: '${customer.product_focus || ''}'
+                                })">
+                            <i class="bi bi-plus-circle"></i> Add
+                        </button>` :
+                        `<button type="button" class="btn btn-info btn-sm"
+                                onclick="customerPreview.show(${customer.id})">
+                            <i class="bi bi-info-circle"></i> Info
+                        </button>`
+                    }
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function getStatusClass(statusId) {
+    const classes = {
+        1: 'bg-danger',
+        2: 'bg-warning',
+        3: 'bg-info',
+        4: 'bg-success'
+    };
+    return classes[statusId] || 'bg-secondary';
+}
+
+function getStatusName(statusId) {
+    const statuses = {
+        1: 'Target',
+        2: 'Lead Identified',
+        3: 'Quoted',
+        4: 'Active Customer'
+    };
+    return statuses[statusId] || 'Unknown';
+}
+
+function getActivityIcon(activityType) {
+    const icons = {
+        'email': 'bi-envelope',
+        'rfq': 'bi-file-text',
+        'order': 'bi-bag'
+    };
+    return icons[activityType] || 'bi-clock';
+}
+
+
+function updateFilterOptions() {
+    const continentSelect = document.getElementById('continentFilter');
+    const countrySelect = document.getElementById('countryFilter');
+
+    // Get available continents (where we have customers)
+    const availableContinents = Object.keys(continentMapping).filter(continent =>
+        allCustomers.some(customer =>
+            continentMapping[continent].includes(customer.country)
+        )
+    );
+
+    // Update continent dropdown
+    continentSelect.innerHTML = '<option value="">All Continents</option>' +
+        availableContinents.map(c => `<option value="${c}">${c}</option>`).join('');
+
+    // Reset country dropdown
+    countrySelect.innerHTML = '<option value="">All Countries</option>';
+}
+
+
+
+function filterCustomers() {
+    const continentFilter = document.getElementById('continentFilter').value;
+    const countryFilter = document.getElementById('countryFilter').value;
+
+    filteredCustomers = allCustomers.filter(customer => {
+        const customerContinent = Object.keys(continentMapping).find(continent =>
+            continentMapping[continent].includes(customer.country)
+        );
+        const matchContinent = !continentFilter || customerContinent === continentFilter;
+        const matchCountry = !countryFilter || customer.country === countryFilter;
+        return matchContinent && matchCountry;
+    });
+
+    updateCustomerTable(filteredCustomers);
+}
+
+function onContinentChange() {
+    const continentSelect = document.getElementById('continentFilter');
+    const countrySelect = document.getElementById('countryFilter');
+    const selectedContinent = continentSelect.value;
+
+    // Enable/disable country select based on continent selection
+    countrySelect.disabled = !selectedContinent;
+
+    if (!selectedContinent) {
+        countrySelect.innerHTML = '<option value="">All Countries</option>';
+        filterCustomers();
+        return;
+    }
+
+    // Get countries in this continent that we have customers for
+    const countriesInContinent = continentMapping[selectedContinent];
+    const availableCountries = allCustomers
+        .map(c => c.country)
+        .filter(country => countriesInContinent.includes(country))
+        .filter((value, index, self) => self.indexOf(value) === index); // unique values
+
+    countrySelect.innerHTML = '<option value="">All Countries</option>' +
+        availableCountries.map(country =>
+            `<option value="${country}">${country}</option>`
+        ).join('');
+
+    filterCustomers();
+}
+document.getElementById('continentFilter').addEventListener('change', onContinentChange);
+document.getElementById('countryFilter').addEventListener('change', filterCustomers);
+// Tag editing functionality
+document.getElementById('editTagBtn').addEventListener('click', () => {
+    document.getElementById('tagViewMode').style.display = 'none';
+    document.getElementById('tagEditMode').style.display = 'block';
+});
+
+document.getElementById('cancelEditBtn').addEventListener('click', () => {
+    document.getElementById('tagEditMode').style.display = 'none';
+    document.getElementById('tagViewMode').style.display = 'block';
+
+    // Reset form values
+    document.getElementById('tagName').value = currentTagName;
+    document.getElementById('tagDescription').value = currentTagDescription || '';
+});
+
+document.getElementById('tagEditForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const newName = document.getElementById('tagName').value;
+    const newDescription = document.getElementById('tagDescription').value;
+
+    try {
+        const response = await fetch(`/customers/api/tags/${currentTagId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                name: newName,
+                description: newDescription
+            })
+        });
+
+        if (response.ok) {
+            // Update current values
+            currentTagName = newName;
+            currentTagDescription = newDescription;
+
+            // Update display
+            document.getElementById('tagNameDisplay').textContent = newName;
+            document.getElementById('tagDescriptionDisplay').textContent = newDescription || 'No description available';
+
+            // Switch back to view mode
+            document.getElementById('tagEditMode').style.display = 'none';
+            document.getElementById('tagViewMode').style.display = 'block';
+
+            // Update the tag name in the list
+            const tagButton = document.querySelector(`[onclick*="${currentTagId}"]`);
+            if (tagButton) {
+                const tagSpan = tagButton.querySelector('span');
+                if (tagSpan) tagSpan.textContent = newName;
+            }
+        } else {
+            alert('Failed to update tag details');
+        }
+    } catch (error) {
+        console.error('Error updating tag:', error);
+        alert('Failed to update tag details');
+    }
+});
+
+
+async function sendFeedback(feedback) {
+    if (!currentTagId) {
+        console.error('No tag selected');
+        alert('Please select an industry tag first');
+        return;
+    }
+
+    const submitButtons = document.querySelectorAll('button');
+    submitButtons.forEach(btn => btn.disabled = true);
+
+    try {
+        // Get existing company names to exclude
+        const existingCompanies = Array.from(document.querySelectorAll('#customersTableBody tr'))
+            .map(tr => tr.querySelector('td')?.textContent?.trim())
+            .filter(Boolean);
+
+        const response = await fetch(`/customers/api/tags/${currentTagId}/suggestions/refine`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                feedback: feedback,
+                excluded_companies: existingCompanies
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            // Convert suggestions to table rows and append to existing table
+            const tbody = document.getElementById('customersTableBody');
+
+            data.suggestions.forEach(suggestion => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${suggestion.company_name}</td>
+                    <td>
+                        <span class="badge rounded-pill bg-danger">Lead</span>
+                    </td>
+                    <td>${suggestion.country}</td>
+                    <td>€${suggestion.estimated_revenue ? suggestion.estimated_revenue.toLocaleString() : '0'}</td>
+                    <td>
+                        <span class="text-muted">Unassigned</span>
+                    </td>
+                    <td>
+                        <span class="text-muted">No activity</span>
+                    </td>
+                    <td>${suggestion.description || ''}</td>
+                    <td>
+                        <button type="button" class="btn btn-success btn-sm"
+                                onclick='openCustomerModal({
+                                    name: "${suggestion.company_name}",
+                                    description: "${suggestion.description || ''}",
+                                    revenue: ${suggestion.estimated_revenue || 0},
+                                    country: "${suggestion.country}",
+                                    tagId: ${currentTagId},
+                                    productFocus: "${suggestion.product_focus || ''}"
+                                })'>
+                            <i class="bi bi-plus-circle"></i> Add
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // Update the AI insights section with the new analysis
+            if (data.analysis) {
+                const aiInsights = document.getElementById('aiInsights');
+                // Process the markdown with citations
+                // Remove tables from AI response before parsing Markdown
+let markdownText = data.analysis
+    .replace(/\n\|.*\|\n/g, "") // Remove table headers
+    .replace(/\n\|[-:]+\|/g, "") // Remove table separators
+    .replace(/\n\|.*\|/g, ""); // Remove table rows
+
+let htmlContent = marked.parse(markdownText);
+
+
+                // Add citation links and style references
+                htmlContent = htmlContent.replace(
+                    /\[(\d+)\]/g,
+                    '<a href="#ref-$1" class="ai-citation">[$1]</a>'
+                );
+
+                aiInsights.innerHTML = htmlContent;
+            }
+        } else {
+            throw new Error(data.error || 'Failed to get refined suggestions');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Sorry, there was an error getting more suggestions. Please try again.');
+    } finally {
+        submitButtons.forEach(btn => btn.disabled = false);
+    }
+}
+
+async function refineSuggestions(type) {
+    const feedbackMap = {
+        'smaller': 'Show me smaller companies in this industry',
+        'larger': 'Show me larger companies in this industry',
+        'more-western': 'Focus on companies in Western Europe',
+        'more-eastern': 'Focus on companies in Eastern Europe'
+    };
+
+    const feedback = feedbackMap[type];
+    await sendFeedback(feedback);
+}
+
+async function sendCustomFeedback() {
+    const input = document.getElementById('customFeedback');
+    const feedback = input.value.trim();
+    if (feedback) {
+        await sendFeedback(feedback);
+        input.value = '';
+    }
+}
+
+function renderNarrativeSuggestions(suggestions) {
+    const suggestionsContainer = document.getElementById("aiInsights");
+
+    let html = '<div id="suggestionsList" class="mt-3">';
+    let currentRegion = null;
+
+    suggestions.forEach(suggestion => {
+        // Group companies by country/region
+        if (suggestion.country !== currentRegion) {
+            html += `<h5 class="mt-3">${suggestion.country}</h5>`;
+            currentRegion = suggestion.country;
+        }
+
+        html += `
+            <p>
+                <strong>${suggestion.company_name}</strong> -
+                ${suggestion.website ? `<a href="${suggestion.website}" target="_blank">${suggestion.website}</a>` : "No website available"} |
+                ${suggestion.estimated_revenue ? `€${suggestion.estimated_revenue.toLocaleString()}` : "Revenue unknown"} |
+                ${suggestion.product_focus || "No focus specified"}
+                <button type="button" class="btn btn-success btn-sm ms-2" onclick='openCustomerModal(${JSON.stringify(suggestion)})'>
+                    <i class="bi bi-plus-circle"></i> Add
+                </button>
+            </p>
+        `;
+    });
+
+    html += '</div>';
+
+    // Insert into page
+    suggestionsContainer.insertAdjacentHTML('beforeend', html);
+}
+function copyReport() {
+    // Get tag name for the report title
+    const tagTitle = currentTagName || 'Industry Sector';
+
+    // Get all customer rows
+    const customers = Array.from(document.querySelectorAll('#customersTableBody tr')).map(row => {
+    const cells = row.querySelectorAll('td');
+    if (cells.length < 5) return null;
+
+    // Get just the comment text without the updater info
+    const commentDiv = cells[6]?.querySelector('.mb-1');
+    const updateInfo = cells[6]?.querySelector('small');
+
+    return {
+        name: cells[0].textContent.trim(),
+        status: cells[1].querySelector('.badge')?.textContent.trim() || 'Unknown',
+        country: cells[2].textContent.trim(),
+        revenue: cells[3].textContent.trim(),
+        assignedTo: cells[4].textContent.trim(),
+        activity: {
+            type: cells[5].querySelector('.bi')?.classList.contains('bi-envelope') ? 'Email' :
+                   cells[5].querySelector('.bi')?.classList.contains('bi-file-text') ? 'RFQ' :
+                   cells[5].querySelector('.bi')?.classList.contains('bi-bag') ? 'Order' : 'None',
+            date: cells[5].querySelector('small')?.textContent.trim() || 'No date'
+        },
+        comment: commentDiv ? commentDiv.textContent.trim() : '',
+        updateInfo: updateInfo ? updateInfo.textContent.trim() : ''
+    };
+}).filter(Boolean);
+
+    if (customers.length === 0) {
+        alert('No customer data available to copy');
+        return;
+    }
+
+    // Create HTML table with better styling
+    const htmlContent = `
+        <div style="font-family: system-ui, -apple-system, sans-serif; max-width: 1200px; margin: 0 auto;">
+            <h2 style="color: #333; margin-bottom: 16px;">${tagTitle} - Customer Report</h2>
+            <p style="color: #666; margin-bottom: 24px;">Generated on ${new Date().toLocaleDateString()} by Industry Analytics Tool</p>
+
+            <table style="border-collapse: collapse; width: 100%; margin-bottom: 30px;">
+                <thead>
+                    <tr style="background-color: #f8f9fa;">
+                        <th style="border: 1px solid #dee2e6; padding: 12px 8px; text-align: left; color: #495057;">Customer</th>
+                        <th style="border: 1px solid #dee2e6; padding: 12px 8px; text-align: center; color: #495057;">Status</th>
+                        <th style="border: 1px solid #dee2e6; padding: 12px 8px; text-align: left; color: #495057;">Country</th>
+                        <th style="border: 1px solid #dee2e6; padding: 12px 8px; text-align: right; color: #495057;">Revenue</th>
+                        <th style="border: 1px solid #dee2e6; padding: 12px 8px; text-align: left; color: #495057;">Assigned To</th>
+                        <th style="border: 1px solid #dee2e6; padding: 12px 8px; text-align: left; color: #495057;">Latest Activity</th>
+                        <th style="border: 1px solid #dee2e6; padding: 12px 8px; text-align: left; color: #495057;">Latest Comment</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${customers.map(customer => `
+                        <tr>
+                            <td style="border: 1px solid #dee2e6; padding: 10px 8px; font-weight: 500;">${customer.name}</td>
+                            <td style="border: 1px solid #dee2e6; padding: 10px 8px; text-align: center;">
+                                <span style="display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; background-color: ${getStatusColor(customer.status)}; color: white;">
+                                    ${customer.status}
+                                </span>
+                            </td>
+                            <td style="border: 1px solid #dee2e6; padding: 10px 8px;">${customer.country}</td>
+                            <td style="border: 1px solid #dee2e6; padding: 10px 8px; text-align: right; font-family: monospace;">${customer.revenue}</td>
+                            <td style="border: 1px solid #dee2e6; padding: 10px 8px;">${customer.assignedTo}</td>
+                            <td style="border: 1px solid #dee2e6; padding: 10px 8px;">
+                                ${customer.activity.type !== 'None' ?
+                                    `<div style="font-weight: 500;">${customer.activity.type}</div>
+                                    <div style="color: #6c757d; font-size: 0.875em;">${customer.activity.date}</div>` :
+                                    '<span style="color: #6c757d;">No activity</span>'}
+                            </td>
+<td style="border: 1px solid #dee2e6; padding: 10px 8px;">
+    ${customer.comment}
+    ${customer.comment ? '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #dee2e6; color: #666; font-size: 0.9em;">— ' + customer.updateInfo + '</div>' : ''}
+</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+
+            <div style="color: #6c757d; font-size: 0.875em; text-align: center; margin-top: 20px;">
+                This report contains ${customers.length} customer${customers.length !== 1 ? 's' : ''} in the ${tagTitle} sector
+            </div>
+        </div>
+    `;
+
+    // Create plain text version as fallback
+    const plainText = `${tagTitle} - Customer Report - ${new Date().toLocaleDateString()}\n\n` +
+        customers.map(customer =>
+            `${customer.name}\n` +
+            `Status: ${customer.status}\n` +
+            `Country: ${customer.country}\n` +
+            `Revenue: ${customer.revenue}\n` +
+            `Assigned To: ${customer.assignedTo}\n` +
+            `Latest Activity: ${customer.activity.type !== 'None' ?
+                `${customer.activity.type} (${customer.activity.date})` :
+                'No activity'}\n` +
+            `Latest Comment: ${customer.comment || 'None'}\n`
+        ).join('\n\n');
+
+    // Try modern clipboard API with better fallbacks
+    try {
+        // For browsers that support ClipboardItem
+        if (window.ClipboardItem) {
+            const htmlBlob = new Blob([htmlContent], {type: 'text/html'});
+            const textBlob = new Blob([plainText], {type: 'text/plain'});
+
+            const clipboardItem = new ClipboardItem({
+                'text/html': htmlBlob,
+                'text/plain': textBlob
+            });
+
+            navigator.clipboard.write([clipboardItem])
+                .then(() => showCopySuccessMessage('HTML'))
+                .catch(err => {
+                    console.warn('HTML clipboard write failed, falling back to text', err);
+                    copyTextFallback();
+                });
+        } else {
+            copyTextFallback();
+        }
+    } catch (err) {
+        console.warn('Modern clipboard API failed', err);
+        copyTextFallback();
+    }
+
+    // Fallback function for text-only copy
+    function copyTextFallback() {
+        navigator.clipboard.writeText(plainText)
+            .then(() => showCopySuccessMessage('text'))
+            .catch(err => {
+                console.error('Clipboard operations failed', err);
+                alert('Could not copy report. Please try again or manually select and copy the data.');
+            });
+    }
+
+    // Helper function to show success message
+    function showCopySuccessMessage(format) {
+        // Check if we have a toast function available
+        if (typeof showToast === 'function') {
+            showToast(`Report copied as ${format}! You can now paste it into your email.`);
+        } else {
+            // Create a simple toast if not available
+            const toast = document.createElement('div');
+            toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#28a745;color:white;padding:12px 20px;border-radius:4px;box-shadow:0 2px 10px rgba(0,0,0,0.2);z-index:9999;';
+            toast.textContent = `Report copied as ${format}! You can now paste it into your email.`;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transition = 'opacity 0.5s ease';
+                setTimeout(() => toast.remove(), 500);
+            }, 3000);
+        }
+    }
+
+    // Helper function to get status color
+    function getStatusColor(status) {
+        const statusColors = {
+            'Lead': '#dc3545',
+            'Prospect': '#fd7e14',
+            'Opportunity': '#17a2b8',
+            'Customer': '#28a745'
+        };
+        return statusColors[status] || '#6c757d';
+    }
+}
+
+    document.addEventListener('DOMContentLoaded', function() {
+        TagModal.init(function(newTag) {
+            // You can handle the success callback here
+            // For example, reload the page or update the tag list
+            location.reload();
+        });
+       });
+
+
+</script>
+<style>
+.progress-bar.bg-danger {
+    margin-left: -100%;
+    opacity: 0.7;
+}
+.market-intelligence-btn {
+    transition: all 0.3s ease;
+}
+
+.market-intelligence-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Animation for the refresh button */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.refreshing .bi-arrow-clockwise {
+    animation: spin 1s linear infinite;
+}
+
+/* Make the card body min-height to avoid layout shifts */
+#aiInsights {
+    min-height: 150px;
+}
+
+/* Style the market intelligence loading placeholder */
+.market-intel-placeholder {
+    height: 16px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+    animation: placeholderPulse 1.5s ease-in-out infinite;
+    background: linear-gradient(90deg, #f0f0f0 0%, #e0e0e0 50%, #f0f0f0 100%);
+    background-size: 200% 100%;
+}
+
+@keyframes placeholderPulse {
+    0% { background-position: 0% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.badge.bg-sales {
+    background-color: rgba(255, 107, 107, 0.15) !important;
+    color: #d23b3b !important;
+    border: 1px solid rgba(255, 107, 107, 0.3) !important;
+}
+
+.badge.bg-info {
+    background-color: rgba(94, 188, 103, 0.15) !important;
+    color: #3b7e43 !important;
+    border: 1px solid rgba(94, 188, 103, 0.3) !important;
+}
+
+/* List group item styling */
+.list-group-item-action {
+    border-left: 3px solid transparent;
+    transition: all 0.2s ease;
+    margin-bottom: 2px;
+}
+
+.list-group-item-action:hover {
+    border-left-color: rgba(94, 188, 103, 0.5);
+    background-color: rgba(94, 188, 103, 0.04);
+    transform: translateX(2px);
+}
+
+/* Watched tags styling */
+.list-group-item.watched {
+    border-left: 3px solid #5ebc67;
+    background-color: rgba(94, 188, 103, 0.08);
+}
+
+/* Watch button styling */
+.watch-btn {
+    color: #bbb;
+    transition: color 0.2s ease-in-out, transform 0.2s ease;
+}
+
+.watch-btn:hover {
+    transform: scale(1.2);
+}
+
+.watch-btn.active {
+    color: #f5c518;
+}
+
+/* Toggle watched button styling */
+#toggleWatched {
+    font-size: 0.9rem;
+    padding: 4px 8px;
+    border-radius: 5px;
+    transition: all 0.2s;
+}
+
+#toggleWatched.active {
+    background-color: rgba(94, 188, 103, 0.1);
+    color: #3b7e43;
+    border-color: rgba(94, 188, 103, 0.3);
+}
+
+/* Progress bar animation */
+.progress-bar {
+    transition: width 0.6s ease;
+}
+
+/* Give some space between items */
+.list-group-flush .list-group-item + .list-group-item {
+    border-top: 1px solid rgba(0, 0, 0, 0.03);
+}
+</style>
+<script src="/static/js/modal-debugger.js"></script>
+{% endblock %}

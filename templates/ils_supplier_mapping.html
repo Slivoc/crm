@@ -1,0 +1,536 @@
+{% extends "base.html" %}
+
+{% block title %}ILS Supplier Mapping{% endblock %}
+
+{% block extra_css %}
+<style>
+.mapping-table-container {
+    max-height: 600px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+}
+
+.mapping-table {
+    font-size: 0.9rem;
+    margin-bottom: 0;
+}
+
+.mapping-table thead {
+    position: sticky;
+    top: 0;
+    background: #f8f9fa;
+    z-index: 10;
+}
+
+.mapping-table thead th {
+    border-bottom: 2px solid #dee2e6;
+    font-weight: 600;
+    padding: 0.75rem;
+}
+
+.mapping-table tbody tr {
+    border-bottom: 1px solid #f1f3f5;
+}
+
+.mapping-table tbody td {
+    padding: 0.75rem;
+    vertical-align: middle;
+}
+
+.supplier-select {
+    min-width: 250px;
+}
+
+.mapped-badge {
+    background: #d1e7dd;
+    color: #0f5132;
+    padding: 0.35rem 0.75rem;
+    border-radius: 0.25rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.unmapped-badge {
+    background: #fff3cd;
+    color: #856404;
+    padding: 0.35rem 0.75rem;
+    border-radius: 0.25rem;
+    font-weight: 600;
+}
+
+.filter-section {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 0.375rem;
+    margin-bottom: 1.5rem;
+}
+
+.stats-bar {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.stat-item {
+    background: white;
+    padding: 0.75rem 1rem;
+    border-radius: 0.375rem;
+    border: 1px solid #dee2e6;
+    flex: 1;
+    min-width: 150px;
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #0d6efd;
+}
+
+.stat-label {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-top: 0.25rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Page Header -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                <i class="bi bi-link-45deg me-2"></i>
+                ILS Supplier Mapping
+            </h5>
+        </div>
+        <div class="card-body">
+            <p class="mb-0 text-muted">
+                Map ILS company names to your internal suppliers. This allows the system to identify which ILS suppliers are your preferred vendors.
+            </p>
+        </div>
+    </div>
+
+    <!-- Stats Bar -->
+    <div class="stats-bar mb-4">
+        <div class="stat-item">
+            <div class="stat-value text-primary" id="stat-total-suppliers">0</div>
+            <div class="stat-label">Total ILS Companies</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value text-success" id="stat-mapped">0</div>
+            <div class="stat-label">Mapped</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value text-warning" id="stat-unmapped">0</div>
+            <div class="stat-label">Unmapped</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value text-info" id="stat-records">0</div>
+            <div class="stat-label">Total ILS Records</div>
+        </div>
+    </div>
+
+    <!-- Filter Section -->
+    <div class="filter-section">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-6">
+                <label class="form-label">
+                    <i class="bi bi-search me-1"></i>
+                    Search ILS Company
+                </label>
+                <input type="text" id="search-input" class="form-control" placeholder="Search by company name or CAGE code...">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Status Filter</label>
+                <select id="status-filter" class="form-select">
+                    <option value="all">All Suppliers</option>
+                    <option value="unmapped" selected>Unmapped Only</option>
+                    <option value="mapped">Mapped Only</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <button id="refresh-btn" class="btn btn-primary w-100">
+                    <i class="bi bi-arrow-clockwise me-1"></i>
+                    Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mappings Table -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                <i class="bi bi-table me-2"></i>
+                Supplier Mappings
+            </h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="mapping-table-container">
+                <table class="table table-hover mapping-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 40%;">ILS Company Name</th>
+                            <th style="width: 15%;">CAGE Code</th>
+                            <th style="width: 10%;">Records</th>
+                            <th style="width: 25%;">Map to Supplier</th>
+                            <th style="width: 10%;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mappings-tbody">
+                        <tr>
+                            <td colspan="5" class="text-center text-muted">
+                                <div class="py-4">
+                                    <i class="bi bi-hourglass-split" style="font-size: 2rem;"></i>
+                                    <p class="mb-0 mt-2">Loading mappings...</p>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  let allMappings = [];
+  const AUTO_MAP_ON_PICK = true; // set false if you want manual Map click
+
+  // ------- API LOADERS -------
+  loadMappings();
+
+  function loadMappings() {
+    fetch('/ils/suppliers/mappings')
+      .then(r => r.json())
+      .then(data => {
+        if (!data.success) throw new Error(data.error || 'Failed to load mappings');
+        allMappings = data.suppliers || [];
+        updateStats();
+        renderMappings();
+      })
+      .catch(err => {
+        console.error('Error loading mappings:', err);
+        document.getElementById('mappings-tbody').innerHTML = `
+          <tr>
+            <td colspan="5" class="text-center text-danger py-4">
+              Error loading mappings: ${escapeHtml(err.message)}
+            </td>
+          </tr>`;
+      });
+  }
+
+  function searchSuppliers(query, limit = 10) {
+    return fetch(`/ils/suppliers/search?q=${encodeURIComponent(query)}&limit=${limit}`)
+      .then(r => r.json())
+      .then(data => {
+        const raw = data.success ? (data.suppliers || []) : [];
+        // Normalize possible shapes into { id, name, similarity_score }
+        return raw.map(s => ({
+          id: s.id ?? s.supplier_id ?? s.supplierId ?? s.value ?? null,
+          name: s.name ?? s.supplier_name ?? s.display_name ?? s.label ?? String(s || ''),
+          similarity_score: s.similarity_score ?? s.score ?? null
+        })).filter(s => s.id && s.name);
+      })
+      .catch(() => []);
+  }
+
+  function mapSupplier(mappingId, supplierId) {
+    return fetch('/ils/suppliers/map', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mapping_id: mappingId, supplier_id: supplierId })
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (!data.success) throw new Error(data.error || 'Map failed');
+        const m = allMappings.find(x => x.id === mappingId);
+        if (m) m.supplier_id = supplierId ?? null;
+        updateStats();
+        renderMappings();
+        showToast(`Supplier ${supplierId ? 'mapped' : 'unmapped'} successfully`);
+      });
+  }
+
+  // ------- RENDERING -------
+  function updateStats() {
+    const mapped = allMappings.filter(m => m.supplier_id !== null).length;
+    const unmapped = allMappings.filter(m => m.supplier_id === null).length;
+    const totalRecords = allMappings.reduce((sum, m) => sum + (m.result_count || 0), 0);
+
+    document.getElementById('stat-total-suppliers').textContent = allMappings.length;
+    document.getElementById('stat-mapped').textContent = mapped;
+    document.getElementById('stat-unmapped').textContent = unmapped;
+    document.getElementById('stat-records').textContent = totalRecords;
+  }
+
+  function renderMappings() {
+    const tbody = document.getElementById('mappings-tbody');
+    const searchTerm = document.getElementById('search-input').value.toLowerCase();
+    const statusFilter = document.getElementById('status-filter').value;
+
+    let filtered = allMappings.filter(m => {
+      const matchesSearch =
+        !searchTerm ||
+        (m.ils_company_name || '').toLowerCase().includes(searchTerm) ||
+        (m.ils_cage_code || '').toLowerCase().includes(searchTerm);
+
+      let matchesStatus = true;
+      if (statusFilter === 'mapped') matchesStatus = m.supplier_id !== null;
+      if (statusFilter === 'unmapped') matchesStatus = m.supplier_id === null;
+
+      return matchesSearch && matchesStatus;
+    });
+
+    filtered.sort((a, b) => (b.result_count || 0) - (a.result_count || 0));
+
+    if (filtered.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" class="text-center text-muted py-4">
+            <i class="bi bi-inbox" style="font-size: 2rem;"></i>
+            <p class="mb-0 mt-2">No mappings found</p>
+          </td>
+        </tr>`;
+      return;
+    }
+
+    tbody.innerHTML = filtered.map(m => {
+      const isMapped = m.supplier_id !== null;
+      const statusBadge = isMapped
+        ? '<span class="mapped-badge"><i class="bi bi-check-circle-fill"></i>Mapped</span>'
+        : '<span class="unmapped-badge">Unmapped</span>';
+
+      return `
+        <tr data-mapping-id="${m.id}">
+          <td>
+            <strong>${escapeHtml(m.ils_company_name || '')}</strong>
+            ${isMapped ? statusBadge : ''}
+          </td>
+          <td><code>${escapeHtml(m.ils_cage_code || '-')}</code></td>
+          <td><span class="badge bg-info">${m.result_count || 0}</span></td>
+          <td>
+            <div class="position-relative" style="max-width: 420px;">
+              <input
+                type="text"
+                class="form-control form-control-sm supplier-autocomplete"
+                placeholder="${isMapped ? 'Mapped: ID ' + m.supplier_id : 'Type to search suppliers...'}"
+                data-mapping-id="${m.id}"
+                ${isMapped ? 'disabled' : ''}
+                autocomplete="off"
+              />
+              <div class="autocomplete-menu d-none"></div>
+            </div>
+          </td>
+          <td>
+            ${
+              isMapped
+                ? `<button class="btn btn-sm btn-outline-secondary unmap-btn" data-mapping-id="${m.id}">
+                     <i class="bi bi-x-circle"></i> Unmap
+                   </button>`
+                : `<button class="btn btn-sm btn-primary map-btn" data-mapping-id="${m.id}" disabled>
+                     <i class="bi bi-link-45deg"></i> Map
+                   </button>`
+            }
+          </td>
+        </tr>`;
+    }).join('');
+
+    wireRowHandlers();
+  }
+
+  // ------- INTERACTION -------
+  function wireRowHandlers() {
+    const debounceMap = new Map();
+
+    document.querySelectorAll('.supplier-autocomplete').forEach(input => {
+      const mappingId = Number(input.dataset.mappingId);
+      const row = input.closest('tr');
+      const menu = row.querySelector('.autocomplete-menu');
+      const mapBtn = row.querySelector('.map-btn');
+
+      let currentSelection = null; // { id, name }
+      let items = [];
+      let highlightedIndex = -1;
+
+      function updateMapBtn() {
+        if (mapBtn) mapBtn.disabled = !currentSelection;
+      }
+
+      function clearMenu() {
+        items = [];
+        highlightedIndex = -1;
+        menu.innerHTML = '';
+        menu.classList.add('d-none');
+      }
+
+      function openMenu() {
+        menu.classList.remove('d-none');
+        menu.style.position = 'absolute';
+        menu.style.top = '100%';
+        menu.style.left = '0';
+        menu.style.right = '0';
+        menu.style.zIndex = '1000';
+        menu.style.background = '#fff';
+        menu.style.border = '1px solid #dee2e6';
+        menu.style.borderRadius = '0.375rem';
+        menu.style.maxHeight = '220px';
+        menu.style.overflowY = 'auto';
+        menu.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+      }
+
+      function renderMenu() {
+        if (!items.length) {
+          clearMenu();
+          return;
+        }
+        openMenu();
+        menu.innerHTML = items.map((s, idx) => {
+          const active = idx === highlightedIndex ? 'bg-light' : '';
+          const score = s.similarity_score != null ? ` <small class="text-muted">(score ${s.similarity_score})</small>` : '';
+          return `<div class="px-2 py-1 autocomplete-item ${active}" data-idx="${idx}" style="cursor:pointer;border-bottom:1px solid #f1f3f5;">
+                    ${escapeHtml(s.name)}${score}
+                  </div>`;
+        }).join('');
+
+        // Attach once per render
+        menu.querySelectorAll('.autocomplete-item').forEach(el => {
+          el.addEventListener('mousedown', e => e.preventDefault()); // prevent input blur before click
+          el.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const idx = Number(el.dataset.idx);
+            if (items[idx]) pickItem(items[idx]);
+          });
+        });
+      }
+
+      function pickItem(supplier) {
+        currentSelection = { id: supplier.id, name: supplier.name };
+        input.value = supplier.name;
+        input.dataset.selectedId = supplier.id;
+        updateMapBtn();
+        clearMenu();
+
+        if (AUTO_MAP_ON_PICK) {
+          mapSupplier(mappingId, supplier.id).catch(err => {
+            console.error(err);
+            alert('Error mapping supplier: ' + (err.message || 'unknown'));
+          });
+        }
+      }
+
+      function doSearch(q) {
+        if (!q || q.length < 2) { clearMenu(); return; }
+        searchSuppliers(q, 10).then(list => {
+          items = list;
+          highlightedIndex = list.length ? 0 : -1;
+          renderMenu();
+        });
+      }
+
+      input.addEventListener('input', () => {
+        currentSelection = null;
+        updateMapBtn();
+
+        const q = input.value.trim();
+        clearTimeout(debounceMap.get(input));
+        const t = setTimeout(() => doSearch(q), 250);
+        debounceMap.set(input, t);
+      });
+
+      input.addEventListener('keydown', e => {
+        if (!items.length || menu.classList.contains('d-none')) return;
+
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          highlightedIndex = (highlightedIndex + 1) % items.length;
+          renderMenu();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          highlightedIndex = (highlightedIndex - 1 + items.length) % items.length;
+          renderMenu();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          if (highlightedIndex >= 0 && items[highlightedIndex]) {
+            pickItem(items[highlightedIndex]);
+          }
+        } else if (e.key === 'Escape') {
+          clearMenu();
+        }
+      });
+
+      // Close menu on outside click
+      const outsideClick = (evt) => {
+        if (!row.contains(evt.target)) clearMenu();
+      };
+      document.addEventListener('click', outsideClick, { capture: true });
+
+      // Map click (manual)
+      if (mapBtn) {
+        mapBtn.addEventListener('click', () => {
+          const selectedId = input.dataset.selectedId || (currentSelection && currentSelection.id);
+          if (!selectedId) {
+            alert('Please pick a supplier from suggestions');
+            return;
+          }
+          mapSupplier(mappingId, Number(selectedId)).catch(err => {
+            console.error(err);
+            alert('Error mapping supplier: ' + (err.message || 'unknown'));
+          });
+        });
+      }
+
+      // Unmap click (if present)
+      const unmapBtn = row.querySelector('.unmap-btn');
+      if (unmapBtn) {
+        unmapBtn.addEventListener('click', () => {
+          if (confirm('Remove this supplier mapping?')) {
+            mapSupplier(mappingId, null).catch(err => {
+              console.error(err);
+              alert('Error unmapping supplier: ' + (err.message || 'unknown'));
+            });
+          }
+        });
+      }
+    });
+  }
+
+  // ------- FILTER/REFRESH -------
+  document.getElementById('search-input').addEventListener('input', renderMappings);
+  document.getElementById('status-filter').addEventListener('change', renderMappings);
+  document.getElementById('refresh-btn').addEventListener('click', loadMappings);
+
+  // ------- HELPERS -------
+  function escapeHtml(text) {
+    if (text == null) return '';
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    return String(text).replace(/[&<>"']/g, m => map[m]);
+  }
+
+  function showToast(message) {
+    const wrap = document.createElement('div');
+    wrap.className = 'position-fixed bottom-0 end-0 p-3';
+    wrap.style.zIndex = '9999';
+    wrap.innerHTML = `
+      <div class="toast show" role="alert">
+        <div class="toast-header bg-success text-white">
+          <i class="bi bi-check-circle-fill me-2"></i>
+          <strong class="me-auto">Success</strong>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+        </div>
+        <div class="toast-body">${escapeHtml(message)}</div>
+      </div>`;
+    document.body.appendChild(wrap);
+    setTimeout(() => wrap.remove(), 3000);
+  }
+});
+</script>
+
+
+{% endblock %}

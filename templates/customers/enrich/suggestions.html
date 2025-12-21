@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-4">AI Tag Suggestions</h1>
+    
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Suggested Tag</th>
+                            <th>Frequency</th>
+                            <th>Example Companies</th>
+                            <th>First Suggested</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for suggestion in suggestions %}
+                        <tr>
+                            <td>{{ suggestion.suggested_tag }}</td>
+                            <td>{{ suggestion.frequency }}</td>
+                            <td>{{ suggestion.companies }}</td>
+                            <td>{{ suggestion.first_suggested }}</td>
+                            <td>
+                                <button class="btn btn-sm btn-primary approve-tag" 
+                                        data-tag="{{ suggestion.suggested_tag }}">
+                                    Approve
+                                </button>
+                                <button class="btn btn-sm btn-danger reject-tag"
+                                        data-tag="{{ suggestion.suggested_tag }}">
+                                    Reject
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+
+document.querySelectorAll('.approve-tag').forEach(button => {
+    button.addEventListener('click', async function() {
+        const tag = this.dataset.tag;
+        if (confirm(`Are you sure you want to approve the tag "${tag}"?`)) {
+            try {
+                const response = await fetch('/customers/enrich/suggestions/approve', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ tag: tag })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    alert(data.message);
+                    // Remove the row from the table
+                    this.closest('tr').remove();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            } catch (error) {
+                alert('Error approving tag: ' + error.message);
+            }
+        }
+    });
+});
+
+document.querySelectorAll('.reject-tag').forEach(button => {
+    button.addEventListener('click', async function() {
+        const tag = this.dataset.tag;
+        if (confirm(`Are you sure you want to reject the tag "${tag}"?`)) {
+            try {
+                const response = await fetch('/customers/enrich/suggestions/reject', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ tag: tag })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    alert(data.message);
+                    // Remove the row from the table
+                    this.closest('tr').remove();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            } catch (error) {
+                alert('Error rejecting tag: ' + error.message);
+            }
+        }
+    });
+});
+
+</script>
+{% endblock %}

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}Bulk Email History{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="card mb-4">
+                <div class="card-header pb-0 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6>Bulk Email History</h6>
+                        <p class="text-sm mb-0">View history of bulk email campaigns</p>
+                    </div>
+                    <div>
+                        <a href="{{ url_for('emails.bulk_email_sender') }}" class="btn btn-sm btn-primary">
+                            <i class="fas fa-paper-plane me-1"></i> New Bulk Email
+                        </a>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Email Type</th>
+                                    <th>Recipients</th>
+                                    <th>Status</th>
+                                    <th>Success Rate</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% if batches %}
+                                    {% for batch in batches %}
+                                    <tr>
+                                        <td>
+                                            <div>{{ batch.created_at }}</div>
+                                            <div class="text-xs text-muted">Batch ID: {{ batch.batch_id[:8] }}</div>
+                                        </td>
+                                        <td>
+                                            {% if batch.is_custom %}
+                                                <span class="badge bg-info">Custom Email</span>
+                                                <div class="text-sm mt-1">{{ batch.custom_subject }}</div>
+                                            {% else %}
+                                                <span class="badge bg-primary">Template</span>
+                                                <div class="text-sm mt-1">{{ batch.template_name }}</div>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div><strong>{{ batch.contact_count }}</strong> contacts</div>
+                                        </td>
+                                        <td>
+                                            {% if batch.status == 'completed' %}
+                                                <span class="badge bg-success">Completed</span>
+                                            {% elif batch.status == 'processing' %}
+                                                <span class="badge bg-warning">Processing</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">{{ batch.status }}</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if batch.contact_count > 0 %}
+                                                {% set success_rate = (batch.success_count / batch.contact_count) * 100 %}
+                                                <div class="d-flex align-items-center">
+                                                    <span class="me-2">{{ success_rate|round }}%</span>
+                                                    <div class="progress" style="width: 100px; height: 6px;">
+                                                        <div class="progress-bar bg-success" 
+                                                             role="progressbar" 
+                                                             style="width: {{ success_rate }}%;" 
+                                                             aria-valuenow="{{ success_rate }}" 
+                                                             aria-valuemin="0" 
+                                                             aria-valuemax="100"></div>
+                                                    </div>
+                                                </div>
+                                                <div class="text-xs text-muted mt-1">
+                                                    {{ batch.success_count }} of {{ batch.contact_count }} successful
+                                                </div>
+                                            {% else %}
+                                                <span class="text-muted">N/A</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <a href="{{ url_for('emails.bulk_email_batch_details', batch_id=batch.batch_id) }}" 
+                                               class="btn btn-sm btn-outline-primary">
+                                                <i class="fas fa-eye me-1"></i> View Details
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                {% else %}
+                                    <tr>
+                                        <td colspan="6" class="text-center py-4">
+                                            <div class="text-muted">No bulk email batches found</div>
+                                            <div class="mt-2">
+                                                <a href="{{ url_for('emails.bulk_email_sender') }}" class="btn btn-sm btn-primary">
+                                                    <i class="fas fa-paper-plane me-1"></i> Send Bulk Emails
+                                                </a>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Pagination -->
+                    {% if total_pages > 1 %}
+                    <div class="d-flex justify-content-center mt-4">
+                        <nav aria-label="Page navigation">
+                            <ul class="pagination">
+                                <li class="page-item {% if page == 1 %}disabled{% endif %}">
+                                    <a class="page-link" href="{{ url_for('emails.bulk_email_history', page=page-1) }}" tabindex="-1">
+                                        <i class="fas fa-chevron-left"></i>
+                                        <span class="sr-only">Previous</span>
+                                    </a>
+                                </li>
+                                
+                                {% for i in range(1, total_pages + 1) %}
+                                    {% if i == page %}
+                                        <li class="page-item active">
+                                            <a class="page-link" href="#">{{ i }}</a>
+                                        </li>
+                                    {% elif i == 1 or i == total_pages or (i >= page - 2 and i <= page + 2) %}
+                                        <li class="page-item">
+                                            <a class="page-link" href="{{ url_for('emails.bulk_email_history', page=i) }}">{{ i }}</a>
+                                        </li>
+                                    {% elif i == page - 3 or i == page + 3 %}
+                                        <li class="page-item disabled">
+                                            <a class="page-link" href="#">...</a>
+                                        </li>
+                                    {% endif %}
+                                {% endfor %}
+                                
+                                <li class="page-item {% if page == total_pages %}disabled{% endif %}">
+                                    <a class="page-link" href="{{ url_for('emails.bulk_email_history', page=page+1) }}">
+                                        <i class="fas fa-chevron-right"></i>
+                                        <span class="sr-only">Next</span>
+                                    </a>
+                                </li>
+                            </ul>
+                        </nav>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

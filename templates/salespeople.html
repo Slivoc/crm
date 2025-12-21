@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="section">
+    <div class="button-container">
+        <h1>Salespeople</h1>
+        <a href="{{ url_for('salespeople.create_salesperson') }}" class="button">Add Salesperson</a>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for salesperson in salespeople %}
+            <tr>
+                <td>{{ salesperson.id }}</td>
+                <td>{{ salesperson.name }}</td>
+                <td>
+                    <a href="{{ url_for('salespeople.edit_salesperson', salesperson_id=salesperson.id) }}" class="button button-small">Edit</a>
+                    <form action="{{ url_for('salespeople.delete_salesperson_route', salesperson_id=salesperson.id) }}" method="post" style="display:inline;">
+                        <button type="submit" class="button button-small">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card shadow p-3 border-0">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>RFQ: {{ rfq.customer_ref }}</strong>
+    </div>
+    <div class="card-body p-2">
+        <div class="table-responsive">
+            <div id="part-numbers-table"></div>
+        </div>
+    </div>
+    <br>
+    <!-- Save Changes Button -->
+    <button id="save-btn" class="btn btn-primary">Save Changes</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+
+<script>
+const rfq_lines = {{ rfq_lines | tojson | safe }};
+document.addEventListener("DOMContentLoaded", function() {
+    const container = document.getElementById('part-numbers-table');
+
+    // Get the raw data
+    const rfq_lines = {{ rfq_lines | tojson | safe }};
+
+    // Remove duplicates and sort by line number
+    const uniqueLines = Array.from(new Set(rfq_lines.map(JSON.stringify)))
+        .map(JSON.parse)
+        .sort((a, b) => parseFloat(a[0]) - parseFloat(b[0])); // Sort by line number (first element)
+
+    // Create empty rows
+    const emptyRows = Array.from({ length: 10 }, () => ['', '', '', '', '']);
+
+    // Initialize Handsontable
+    const hot = new Handsontable(container, {
+        licenseKey: 'non-commercial-and-evaluation',
+        data: uniqueLines.concat(emptyRows),
+        colHeaders: ['Line Number', 'Manufacturer', 'Part Number', 'Quantity', 'Customer Part Number'],
+        columns: [
+            {
+                data: 0,  // line number
+                type: 'numeric',
+                width: 80,
+                numericFormat: {
+                    pattern: '0.00',
+                    culture: 'en-US'
+                }
+            },
+            {
+                data: 1,  // manufacturer
+                type: 'text',
+                width: 200,
+                source: async function(query, process) {
+                    const response = await fetch('/api/get_all_manufacturers');
+                    const data = await response.json();
+                    const manufacturers = data.map(m => m.name);
+                    process(manufacturers);
+                }
+            },
+            { data: 2, type: 'text', width: 200 },    // Part Number column
+            { data: 3, type: 'numeric', width: 100 }, // Quantity column
+            { data: 4, type: 'text', width: 200 }     // Customer Part Number column
+        ],
+        rowHeaders: true,
+        contextMenu: true,
+        stretchH: 'all',
+        height: 'auto',
+        manualColumnResize: true,
+        manualRowResize: true,
+        minRows: uniqueLines.length + 10,  // Start with existing lines + 10 empty rows
+        afterPaste: function(data, coords) {
+            const numRowsToAdd = data.length - (hot.countRows() - coords[0].row);
+
+            // If more rows are needed, add them dynamically
+            if (numRowsToAdd > 0) {
+                hot.alter('insert_row', hot.countRows(), numRowsToAdd);
+            }
+        }
+
+});
+    document.getElementById('save-btn').addEventListener('click', function() {
+        const data = hot.getData();  // Get the data from the table
+
+        // Send the data to the server
+        fetch('{{ url_for("rfqs.view_and_edit_rfq", rfq_id=rfq.id) }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ part_numbers_data: data })
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                alert('Data saved successfully!');
+            } else {
+                alert('Error saving data.');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while saving.');
+        });
+    });
+     console.log('Data after init:', hot.getData());
+});
+</script>
+{% endblock %}

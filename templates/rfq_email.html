@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block breadcrumbs %}
+<nav class="breadcrumb">
+    <ul>
+        <li><a href="{{ url_for('index') }}">Home</a><span class="divider">/</span></li>
+        <li><a href="{{ url_for('rfqs.rfqs') }}">RFQs</a><span class="divider">/</span></li>
+        <li><a href="{{ url_for('rfqs.edit_rfq', rfq_id=rfq.id) }}">Edit RFQ #{{ rfq.id }}</a><span class="divider">/</span></li>
+        <li>Email</li>
+    </ul>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="section">
+    <h1>Email Content for RFQ #{{ rfq.id }}</h1>
+    <div class="email-content">
+        {% if rfq.email %}
+            <iframe srcdoc="{{ rfq.email | safe }}" style="width: 100%; height: 600px; border: 1px solid #ddd;"></iframe>
+        {% else %}
+            <p>No email content available for this RFQ.</p>
+        {% endif %}
+    </div>
+    <a href="{{ url_for('rfqs.edit_rfq', rfq_id=rfq.id) }}" class="button">Back to RFQ</a>
+</div>
+{% endblock %}

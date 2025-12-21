@@ -1,0 +1,195 @@
+<!-- Bulk Apply Margin Modal - Simplified -->
+<div class="modal fade" id="bulkMarginModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-percent me-2"></i>Bulk Apply Margin
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Input Step -->
+                <div id="margin-input-step">
+                    <div class="mb-3">
+                        <label class="form-label">Margin Percentage</label>
+                        <div class="input-group">
+                            <input type="number" class="form-control" id="bulk-margin-input"
+                                   step="0.1" min="0" max="99" value="32" placeholder="e.g. 20">
+                            <span class="input-group-text">%</span>
+                        </div>
+                        <small class="form-text text-muted">
+                            This is profit margin, not markup. E.g., 20% margin means cost/(1-0.2) = price
+                        </small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Apply to:</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="bulk-margin-scope"
+                                   id="apply-to-all" value="all" checked>
+                            <label class="form-check-label" for="apply-to-all">
+                                All lines with costs (excluding no-bid and quoted)
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="bulk-margin-scope"
+                                   id="apply-to-empty" value="empty">
+                            <label class="form-check-label" for="apply-to-empty">
+                                Only lines without existing margins (margin = 0)
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="bulk-margin-scope"
+                                   id="apply-to-created" value="created">
+                            <label class="form-check-label" for="apply-to-created">
+                                Only "Created" status lines (not quoted or no-bid)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Applying Step -->
+                <div id="margin-applying-step" style="display: none;" class="text-center py-4">
+                    <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;"></div>
+                    <h5>Applying changes...</h5>
+                    <p class="text-muted">Please wait while we update your quotes.</p>
+                </div>
+
+                <!-- Success Step -->
+                <div id="margin-success-step" style="display: none;" class="text-center py-4">
+                    <i class="bi bi-check-circle text-success" style="font-size: 4rem;"></i>
+                    <h5 class="mt-3">Changes Applied Successfully!</h5>
+                    <p class="text-muted" id="success-message"></p>
+                    <button type="button" class="btn btn-primary mt-3" id="reload-after-apply-btn">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Reload Page
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer" id="margin-modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" id="apply-margin-btn">
+                    <i class="bi bi-check-circle me-1"></i>Apply Margin
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Keep Email Quote Modal as-is -->
+<!-- ... -->
+
+<!-- Email Quote Modal -->
+<div class="modal fade" id="emailQuoteModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-envelope me-2"></i>Email Quote Preview
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row mb-3">
+                    <div class="col-md-8">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Subject:</label>
+                            <div id="emailQuoteSubject"></div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Include Columns:</label>
+                        <div class="border rounded p-2 bg-light" style="max-height: 200px; overflow-y: auto;">
+                            <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-line" value="line" checked>
+                                <label class="form-check-label" for="col-line">Line #</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-requested-pn" value="requested_pn">
+                                <label class="form-check-label" for="col-requested-pn">Requested P/N</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-quoted-pn" value="quoted_pn" checked>
+                                <label class="form-check-label" for="col-quoted-pn">Quoted P/N</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-requested-qty" value="requested_qty">
+                                <label class="form-check-label" for="col-requested-qty">Requested Qty</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-qty" value="qty" checked>
+                                <label class="form-check-label" for="col-qty">Quoted Qty</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-unit-price" value="unit_price" checked>
+                                <label class="form-check-label" for="col-unit-price">Unit Price</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-line-total" value="line_total">
+                                <label class="form-check-label" for="col-line-total">Line Total</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-lead-days" value="lead_days" checked>
+                                <label class="form-check-label" for="col-lead-days">Lead Time (days)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-condition" value="condition">
+                                <label class="form-check-label" for="col-condition">Condition</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-certs" value="certs">
+                                <label class="form-check-label" for="col-certs">Certs</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-notes" value="notes">
+                                <label class="form-check-label" for="col-notes">Notes</label>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-2 w-100" id="refreshPreviewBtn">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh Preview
+                        </button>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Body:</label>
+                    <div id="emailQuoteBody" class="border rounded p-3 bg-light" style="overflow-x: auto;"></div>
+                </div>
+                <div class="alert alert-info small mb-0">
+                    This text is for pasting into your email body. Recipients are not filled in automatically.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="copyEmailQuoteBtn">
+                    <i class="bi bi-clipboard me-1"></i>Copy Table
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Purchasing Instructions Modal -->
+<div class="modal fade" id="purchasingModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-cart me-2"></i>Purchasing Instructions
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info small mb-3">
+                    <i class="bi bi-info-circle me-2"></i>
+                    This table shows sourcing details for internal purchasing. Only includes lines with chosen suppliers.
+                </div>
+                <div id="purchasingInstructionsBody" class="border rounded p-3 bg-light" style="overflow-x: auto;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="copyPurchasingBtn">
+                    <i class="bi bi-clipboard me-1"></i>Copy Table
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

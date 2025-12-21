@@ -1,0 +1,1627 @@
+{% extends "base.html" %}
+
+{% block title %}Bulk Email Sender{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="card mb-4">
+                <div class="card-header pb-0">
+                    <h6>Bulk Email Sender</h6>
+                    <p class="text-sm">Send emails to multiple contacts at once</p>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="card">
+                                <div class="card-header pb-0">
+                                    <h6>Contact Selection</h6>
+                                </div>
+                                <div class="card-body">
+                                    <!-- Filter Section -->
+                                    <div class="mb-3">
+                                        <label class="form-label">Filter by Customer</label>
+                                        <select class="form-select" id="customerFilter">
+                                            <option value="all">All Customers</option>
+                                            {% for customer in customers %}
+                                            <option value="{{ customer.id }}">{{ customer.name }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Search Contacts</label>
+                                        <input type="text" class="form-control" id="contactSearch" placeholder="Search by name or email">
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-primary mb-3" id="searchButton">
+                                        <i class="fas fa-search me-1"></i> Search
+                                    </button>
+
+                                    <!-- Contact List -->
+                                    <div class="contact-list-container" style="height: 400px; overflow-y: auto;">
+                                        <div class="list-group" id="contactsList">
+                                            <!-- Contacts will be loaded here -->
+                                            <div class="text-center p-3 text-muted">
+                                                Use the search to find contacts
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="mt-3">
+                                        <div class="d-flex justify-content-between">
+                                            <span><strong id="selectedCount">0</strong> contacts selected</span>
+                                            <button type="button" class="btn btn-sm btn-outline-danger" id="clearSelection">
+                                                Clear Selection
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- NEW SECTION: Selected Contacts Panel -->
+                        <div class="col-md-4 mb-4">
+    <div class="card">
+        <div class="card-header pb-0 d-flex justify-content-between align-items-center">
+            <h6>Selected Contacts</h6>
+            <span class="badge bg-primary" id="inlineSelectedCount">0</span>
+        </div>
+        <div class="card-body">
+            <div class="selected-contacts-panel" style="height: 300px; overflow-y: auto;">
+                <div id="inlineSelectedContacts" class="list-group">
+                    <!-- Selected contacts will be shown here -->
+                    <div class="text-center p-3 text-muted" id="noContactsMessage">
+                        No contacts selected yet
+                    </div>
+                </div>
+            </div>
+            <div class="mt-3 text-end">
+                <button type="button" class="btn btn-sm btn-outline-primary" id="expandSelectionButton" data-bs-toggle="modal" data-bs-target="#selectedContactsModal">
+                    <i class="fas fa-expand-alt me-1"></i> View Details
+                </button>
+            </div>
+
+            <!-- Contact Lists Section -->
+            <div class="mt-4 contact-lists-section">
+                <hr>
+                <h6>Contact Lists</h6>
+                <div class="d-flex my-3">
+                    <div class="flex-grow-1 me-2">
+                        <select class="form-select form-select-sm" id="contactListSelect">
+                            <option value="">-- Select a List --</option>
+                            <!-- List options will be populated here -->
+                        </select>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="loadListButton">
+                            <i class="fas fa-file-import me-1"></i> Load
+                        </button>
+                    </div>
+                </div>
+
+                <div class="input-group input-group-sm mb-3">
+                    <input type="text" class="form-control" placeholder="New list name" id="newListName">
+                    <button class="btn btn-outline-success" type="button" id="saveAsListButton">
+                        <i class="fas fa-save me-1"></i> Save Selection
+                    </button>
+                </div>
+
+                <div class="d-flex justify-content-end">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="manageListsButton" data-bs-toggle="modal" data-bs-target="#manageListsModal">
+                        <i class="fas fa-cog me-1"></i> Manage Lists
+                    </button>
+                </div>
+            </div>
+        </div>
+        </div>
+                            </div>
+
+                                                       <div class="col-md-12 col-lg-4 mt-4 mt-lg-0">
+                            <div class="card">
+                                <div class="card-header pb-0">
+                                    <h6>Email Content</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="customEmailToggle">
+                                            <label class="form-check-label" for="customEmailToggle">Create Custom Email</label>
+                                        </div>
+                                    </div>
+
+                                    <!-- Template Selection (shown when custom email is OFF) -->
+                                    <div id="templateSection">
+                                        <div class="mb-3">
+                                            <label class="form-label">Select Email Template</label>
+                                            <select class="form-select" id="templateSelect">
+                                                <option value="">-- Select Template --</option>
+                                                {% for template in templates %}
+                                                <option value="{{ template.id }}">{{ template.name }}</option>
+                                                {% endfor %}
+                                            </select>
+                                        </div>
+                                        <div class="mb-3" id="templateDescription" style="display: none;">
+                                            <div class="alert alert-info" id="templateDescriptionText"></div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Custom Email (shown when custom email is ON) -->
+                                    <div id="customEmailSection" style="display: none;">
+                                        <div class="mb-3">
+                                            <label class="form-label">Subject</label>
+                                            <input type="text" class="form-control" id="customSubject" placeholder="Email subject">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Email Body</label>
+                                            <textarea class="form-control" id="customBody" rows="10" placeholder="Enter your email content here..."></textarea>
+                                        </div>
+
+                                        <!-- Replace your current placeholders HTML with this -->
+<div class="card mt-3">
+    <div class="card-body">
+        <h6 class="card-title">Available Placeholders</h6>
+        {% raw %}
+        <div class="placeholder-container">
+            <div class="row">
+                <div class="col-md-6 mb-2">
+                    <a href="#" class="placeholder-link">{{contact_name}}</a>
+                    <small class="text-muted d-block">Full name of the contact</small>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <a href="#" class="placeholder-link">{{contact_first_name}}</a>
+                    <small class="text-muted d-block">First name of the contact</small>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <a href="#" class="placeholder-link">{{contact_title}}</a>
+                    <small class="text-muted d-block">Job title of the contact</small>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <a href="#" class="placeholder-link">{{company_name}}</a>
+                    <small class="text-muted d-block">Name of the customer/company</small>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <a href="#" class="placeholder-link">{{sender_name}}</a>
+                    <small class="text-muted d-block">Your name</small>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <a href="#" class="placeholder-link">{{sender_title}}</a>
+                    <small class="text-muted d-block">Your job title</small>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <a href="#" class="placeholder-link">{{today_date}}</a>
+                    <small class="text-muted d-block">Current date</small>
+                </div>
+            </div>
+            {% endraw %}
+        </div>
+    </div>
+</div>
+                                        <!-- Save as Template -->
+                                        <div class="card mt-3">
+                                            <div class="card-body">
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="saveTemplateToggle">
+                                                    <label class="form-check-label" for="saveTemplateToggle">Save as new template</label>
+                                                </div>
+
+                                                <div id="saveTemplateFields" style="display: none;" class="mt-3">
+                                                    <div class="mb-3">
+                                                        <label for="templateName" class="form-label">Template Name</label>
+                                                        <input type="text" class="form-control" id="templateName" placeholder="Enter a name for this template">
+                                                    </div>
+                                                    <div class="mb-3">
+                                                        <label for="templateDescription" class="form-label">Description</label>
+                                                        <textarea class="form-control" id="templateDescription" rows="2" placeholder="Enter a description for this template"></textarea>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Preview Section -->
+                                    <div class="mb-3 mt-4">
+                                        <button type="button" class="btn btn-sm btn-info" id="previewButton">
+                                            <i class="fas fa-eye me-1"></i> Preview Email
+                                        </button>
+                                    </div>
+
+                                    <!-- Send Button -->
+                                    <div class="d-flex justify-content-end mt-4">
+                                        <button type="button" class="btn btn-primary" id="sendButton" disabled>
+                                            <i class="fas fa-paper-plane me-1"></i> Send Emails
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Selected Contacts Modal -->
+    <div class="modal fade" id="selectedContactsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Selected Contacts</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="table-responsive">
+                        <table class="table align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Email</th>
+                                    <th>Job Title</th>
+                                    <th>Company</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="selectedContactsTable">
+                                <!-- Selected contacts will be shown here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Email Preview Modal -->
+    <div class="modal fade" id="previewModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Email Preview</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Subject:</strong></label>
+                        <div class="p-2 border rounded" id="previewSubject"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label"><strong>Body:</strong></label>
+                        <div class="p-2 border rounded" id="previewBody" style="min-height: 300px;"></div>
+                    </div>
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-1"></i> This is a preview using the first selected contact's information.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Modal -->
+    <div class="modal fade" id="resultsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Email Sending Results</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3" id="resultsSummary"></div>
+                    <div class="table-responsive">
+                        <table class="table align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Contact</th>
+                                    <th>Status</th>
+                                    <th>Message</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultsTable">
+                                <!-- Results will be shown here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<!-- Manage Lists Modal -->
+<div class="modal fade" id="manageListsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Manage Contact Lists</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="listsContainer">
+                    <!-- Lists will be loaded here -->
+                    <div class="text-center p-3">
+                        <div class="spinner-border spinner-border-sm" role="status"></div> Loading...
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+    <!-- Template Save Success Modal -->
+    <div class="modal fade" id="templateSavedModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Template Saved</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-success mb-0">
+                        <i class="fas fa-check-circle me-2"></i> Your template has been saved successfully!
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <a href="/templates" class="btn btn-primary">View All Templates</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // State management - make it globally accessible
+    window.state = {
+        contacts: [],
+        selectedContacts: {},
+        isCustomEmail: false
+    };
+
+    // DOM elements
+    const customerFilter = document.getElementById('customerFilter');
+    const contactSearch = document.getElementById('contactSearch');
+    const searchButton = document.getElementById('searchButton');
+    const contactsList = document.getElementById('contactsList');
+    const selectedCount = document.getElementById('selectedCount');
+    const inlineSelectedCount = document.getElementById('inlineSelectedCount');
+    const inlineSelectedContacts = document.getElementById('inlineSelectedContacts');
+    const noContactsMessage = document.getElementById('noContactsMessage');
+    const clearSelectionButton = document.getElementById('clearSelection');
+    const customEmailToggle = document.getElementById('customEmailToggle');
+    const templateSection = document.getElementById('templateSection');
+    const customEmailSection = document.getElementById('customEmailSection');
+    const templateSelect = document.getElementById('templateSelect');
+    const templateDescription = document.getElementById('templateDescription');
+    const templateDescriptionText = document.getElementById('templateDescriptionText');
+    const customSubject = document.getElementById('customSubject');
+    const customBody = document.getElementById('customBody');
+    const previewButton = document.getElementById('previewButton');
+    const sendButton = document.getElementById('sendButton');
+    const selectedContactsTable = document.getElementById('selectedContactsTable');
+
+    // Initialize Bootstrap modals
+    const previewModal = new bootstrap.Modal(document.getElementById('previewModal'));
+    const selectedContactsModal = new bootstrap.Modal(document.getElementById('selectedContactsModal'));
+    const resultsModal = new bootstrap.Modal(document.getElementById('resultsModal'));
+
+    // Contact Lists elements
+    const contactListSelect = document.getElementById('contactListSelect');
+    const newListName = document.getElementById('newListName');
+    const saveAsListButton = document.getElementById('saveAsListButton');
+    const loadListButton = document.getElementById('loadListButton');
+    const manageListsButton = document.getElementById('manageListsButton');
+    const listsContainer = document.getElementById('listsContainer');
+    const manageListsModal = new bootstrap.Modal(document.getElementById('manageListsModal'));
+
+    // Setup placeholders functionality
+    setupPlaceholders();
+
+    // Event listeners
+    searchButton.addEventListener('click', searchContacts);
+    contactSearch.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            searchContacts();
+        }
+    });
+    clearSelectionButton.addEventListener('click', clearSelection);
+    customEmailToggle.addEventListener('change', toggleEmailMode);
+    templateSelect.addEventListener('change', handleTemplateChange);
+    previewButton.addEventListener('click', previewEmail);
+    sendButton.addEventListener('click', sendEmails);
+
+    // Template save toggle
+    const saveTemplateToggle = document.getElementById('saveTemplateToggle');
+    const saveTemplateFields = document.getElementById('saveTemplateFields');
+
+    // Toggle save template fields visibility
+    saveTemplateToggle.addEventListener('change', function() {
+        saveTemplateFields.style.display = this.checked ? 'block' : 'none';
+    });
+
+    // Save template functionality
+    const templateSavedModal = new bootstrap.Modal(document.getElementById('templateSavedModal'));
+
+    // Add event listeners for template handling
+    document.getElementById('templateName').addEventListener('input', validateTemplateForm);
+    document.getElementById('templateDescription').addEventListener('input', validateTemplateForm);
+
+    // Event listeners for contact list functions
+    saveAsListButton.addEventListener('click', saveAsNewList);
+    loadListButton.addEventListener('click', loadContactsFromList);
+    manageListsButton.addEventListener('click', initManageLists);
+
+    // Initialize listeners for input fields
+    customSubject.addEventListener('input', updateSelectedCount);
+    customBody.addEventListener('input', updateSelectedCount);
+
+    // Show selected contacts modal
+    document.getElementById('selectedCount').parentElement.addEventListener('click', function() {
+        updateSelectedContactsTable();
+        selectedContactsModal.show();
+    });
+
+    // Initial updates
+    updateInlineSelectedContacts();
+    loadContactLists();
+
+    // FIXED FUNCTIONS
+
+    // Improved placeholder setup
+    function setupPlaceholders() {
+        // Find all placeholder links with class 'placeholder-link'
+        const placeholders = document.querySelectorAll('.placeholder-link');
+        console.log('Found placeholders:', placeholders.length);
+
+        // Add click event to each placeholder
+        placeholders.forEach(placeholder => {
+            placeholder.addEventListener('click', function(event) {
+                // Prevent default link behavior
+                event.preventDefault();
+
+                const placeholderText = this.textContent.trim();
+                console.log('Placeholder clicked:', placeholderText);
+
+                // Get the subject and body fields
+                const subjectField = document.getElementById('customSubject');
+                const bodyField = document.getElementById('customBody');
+
+                // Determine which field to insert into
+                let targetField;
+
+                // Check if subject field is active
+                if (document.activeElement === subjectField) {
+                    targetField = subjectField;
+                    console.log('Target: Subject field');
+                } else {
+                    // Default to body field
+                    targetField = bodyField;
+                    console.log('Target: Body field (default)');
+                }
+
+                // Focus the target field
+                targetField.focus();
+
+                // Get cursor position
+                const cursorPos = targetField.selectionStart || 0;
+                console.log('Cursor position:', cursorPos);
+
+                // Insert the placeholder at cursor position
+                const textBefore = targetField.value.substring(0, cursorPos);
+                const textAfter = targetField.value.substring(cursorPos);
+
+                // Set the new value
+                targetField.value = textBefore + placeholderText + textAfter;
+                console.log('New value set:', targetField.value);
+
+                // Move cursor after the inserted placeholder
+                const newPosition = cursorPos + placeholderText.length;
+
+                // Use setTimeout to ensure field has focus before setting selection
+                setTimeout(() => {
+                    targetField.focus();
+                    targetField.setSelectionRange(newPosition, newPosition);
+
+                    // Trigger input event to update validation
+                    const inputEvent = new Event('input', { bubbles: true });
+                    targetField.dispatchEvent(inputEvent);
+                }, 10);
+            });
+        });
+    }
+
+    // Fixed contact list loading
+    function loadContactLists() {
+        fetch('/customers/api/contact_lists')
+            .then(response => response.json())
+            .then(data => {
+                // Make sure lists is an array
+                const lists = Array.isArray(data) ? data : (data.lists || []);
+
+                // Clear existing options except the placeholder
+                while (contactListSelect.options.length > 1) {
+                    contactListSelect.remove(1);
+                }
+
+                // Add each list as an option
+                lists.forEach(list => {
+                    const option = document.createElement('option');
+                    option.value = list.id;
+                    option.textContent = list.name;
+                    contactListSelect.appendChild(option);
+                });
+            })
+            .catch(error => {
+                console.error('Error loading contact lists:', error);
+            });
+    }
+
+    // Fixed initialize manage lists
+    function initManageLists() {
+    // Show loading state
+    listsContainer.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm" role="status"></div> Loading...</div>';
+
+    fetch('/customers/api/contact_lists')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to fetch contact lists');
+            }
+            return response.json();
+        })
+        .then(lists => {
+            if (!lists || lists.length === 0) {
+                listsContainer.innerHTML = '<div class="alert alert-info">You haven\'t created any contact lists yet.</div>';
+                return;
+            }
+
+            let html = '<div class="list-group">';
+            lists.forEach(list => {
+                html += `
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>${list.name}</strong>
+                            <div class="text-muted small">${list.contact_count || 0} contacts</div>
+                        </div>
+                        <div>
+                            <button class="btn btn-sm btn-outline-primary view-list-btn me-2" data-id="${list.id}">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger delete-list-btn" data-id="${list.id}">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+
+            listsContainer.innerHTML = html;
+
+            // Add event listeners to buttons
+            document.querySelectorAll('.delete-list-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    deleteContactList(this.dataset.id);
+                });
+            });
+
+            document.querySelectorAll('.view-list-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    viewContactList(this.dataset.id);
+                });
+            });
+        })
+        .catch(error => {
+            console.error('Error loading contact lists:', error);
+            listsContainer.innerHTML = '<div class="alert alert-danger">Error loading contact lists. Please try again.</div>';
+        });
+}
+// Add this new function to view list details
+function viewContactList(listId) {
+    // Create modal for viewing list contacts
+    if (!document.getElementById('viewListModal')) {
+        const modalHtml = `
+            <div class="modal fade" id="viewListModal" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="viewListTitle">Contact List</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="viewListContent">
+                                <div class="text-center p-3">
+                                    <div class="spinner-border spinner-border-sm" role="status"></div> Loading...
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-primary" id="selectAllFromListBtn">Select All Contacts</button>
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Add modal to document
+        const modalContainer = document.createElement('div');
+        modalContainer.innerHTML = modalHtml;
+        document.body.appendChild(modalContainer);
+
+        // Initialize the modal
+        window.viewListModal = new bootstrap.Modal(document.getElementById('viewListModal'));
+    }
+
+    // Show the modal
+    window.viewListModal.show();
+
+    // Get list details
+    fetch(`/customers/api/contact_lists/${listId}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to fetch contact list');
+            }
+            return response.json();
+        })
+        .then(list => {
+            const viewListTitle = document.getElementById('viewListTitle');
+            const viewListContent = document.getElementById('viewListContent');
+            const selectAllBtn = document.getElementById('selectAllFromListBtn');
+
+            // Update title
+            viewListTitle.textContent = `Contact List: ${list.name}`;
+
+            // Add event listener to select all button
+            selectAllBtn.onclick = function() {
+                // Add all contacts to selection
+                let addedCount = 0;
+                list.contacts.forEach(contact => {
+                    if (!window.state.selectedContacts[contact.id]) {
+                        window.state.selectedContacts[contact.id] = contact;
+                        addedCount++;
+                    }
+                });
+
+                if (addedCount > 0) {
+                    // Update UI
+                    renderContactsList();
+                    updateSelectedCount();
+                    updateInlineSelectedContacts();
+                    if (typeof updateSelectedContactsTable === 'function') {
+                        updateSelectedContactsTable();
+                    }
+
+                    // Close modal and show confirmation
+                    window.viewListModal.hide();
+                    alert(`Added ${addedCount} contacts to your selection.`);
+                } else {
+                    alert('All contacts from this list are already selected.');
+                }
+            };
+
+            // Show list contents
+            if (!list.contacts || list.contacts.length === 0) {
+                viewListContent.innerHTML = '<div class="alert alert-info">This list does not contain any contacts.</div>';
+                return;
+            }
+
+            // Build table of contacts
+            let html = `
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Title</th>
+                                <th>Company</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            list.contacts.forEach(contact => {
+                const isSelected = window.state.selectedContacts[contact.id] !== undefined;
+                html += `
+                    <tr>
+                        <td>${contact.name || ''}</td>
+                        <td>${contact.email || ''}</td>
+                        <td>${contact.title || ''}</td>
+                        <td>${contact.customer_name || ''}</td>
+                        <td>
+                            <button class="btn btn-sm ${isSelected ? 'btn-success disabled' : 'btn-primary'} select-contact-btn"
+                                    data-id="${contact.id}" ${isSelected ? 'disabled' : ''}>
+                                ${isSelected ? '<i class="fas fa-check"></i> Selected' : 'Select'}
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            viewListContent.innerHTML = html;
+
+            // Add event listeners to select buttons
+            document.querySelectorAll('.select-contact-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    const contactId = this.dataset.id;
+
+                    // Get contact details
+                    fetch(`/customers/api/contacts/${contactId}`)
+                        .then(response => response.json())
+                        .then(contact => {
+                            if (contact && !window.state.selectedContacts[contact.id]) {
+                                window.state.selectedContacts[contact.id] = contact;
+
+                                // Update UI
+                                this.classList.remove('btn-primary');
+                                this.classList.add('btn-success', 'disabled');
+                                this.innerHTML = '<i class="fas fa-check"></i> Selected';
+                                this.disabled = true;
+
+                                // Update selected counts
+                                updateSelectedCount();
+                                updateInlineSelectedContacts();
+                                if (typeof updateSelectedContactsTable === 'function') {
+                                    updateSelectedContactsTable();
+                                }
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error fetching contact:', error);
+                            alert('Error adding contact to selection.');
+                        });
+                });
+            });
+        })
+        .catch(error => {
+            console.error('Error viewing contact list:', error);
+            document.getElementById('viewListContent').innerHTML =
+                '<div class="alert alert-danger">Error loading contact list details. Please try again.</div>';
+        });
+}
+    // Fixed save contact list function
+    function saveAsNewList() {
+        const name = newListName.value.trim();
+        if (!name) {
+            alert('Please enter a name for the list');
+            return;
+        }
+
+        const contactIds = Object.keys(window.state.selectedContacts);
+        if (contactIds.length === 0) {
+            alert('Please select at least one contact to save as a list');
+            return;
+        }
+
+        // Use the first contact's ID for the list
+        const contactId = contactIds[0];
+
+        fetch('/customers/api/contact_lists', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                contact_id: contactId,
+                name: name
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Contact list saved successfully!');
+                newListName.value = '';
+                loadContactLists();
+            } else {
+                alert('Error saving contact list: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error saving contact list:', error);
+            alert('Error saving contact list. Please try again.');
+        });
+    }
+
+    // Fixed function to load contacts from list
+function loadContactsFromList() {
+    const listId = contactListSelect.value;
+    if (!listId) {
+        alert('Please select a list to load');
+        return;
+    }
+
+    // Show loading indicator
+    contactsList.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm" role="status"></div> Loading...</div>';
+
+    // First get the contact list details
+    fetch(`/customers/api/contact_lists/${listId}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to fetch contact list');
+            }
+            return response.json();
+        })
+        .then(list => {
+            if (!list || !list.contact_id) {
+                alert('The selected list does not have any contacts');
+                renderContactsList(); // Reset the contacts list view
+                return;
+            }
+
+            // Now get the contact details with the new API endpoint
+            return fetch(`/customers/api/contacts/${list.contact_id}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch contact');
+                    }
+                    return response.json();
+                })
+                .then(contact => {
+                    if (!contact) {
+                        alert('Could not find the contact in this list');
+                        renderContactsList(); // Reset the contacts list view
+                        return;
+                    }
+
+                    // Add the contact to selection if not already added
+                    if (!window.state.selectedContacts[contact.id]) {
+                        window.state.selectedContacts[contact.id] = contact;
+                        renderContactsList();
+                        updateSelectedCount();
+                        updateInlineSelectedContacts();
+
+                        // Make sure updateSelectedContactsTable is defined (added in previous fix)
+                        if (typeof updateSelectedContactsTable === 'function') {
+                            updateSelectedContactsTable();
+                        } else {
+                            console.warn('updateSelectedContactsTable function is not defined');
+                        }
+                    }
+                });
+        })
+        .catch(error => {
+            console.error('Error loading contact from list:', error);
+            alert('Error loading contact from list. Please try again.');
+            renderContactsList(); // Reset the contacts list view
+        });
+}
+
+    // Delete contact list function
+    function deleteContactList(listId) {
+    if (!confirm('Are you sure you want to delete this list? This action cannot be undone.')) {
+        return;
+    }
+
+    fetch(`/customers/api/contact_lists/${listId}`, {
+        method: 'DELETE'
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Failed to delete contact list');
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            // Refresh lists
+            initManageLists();
+            loadContactLists();
+            alert('Contact list deleted successfully.');
+        } else {
+            alert('Error deleting contact list: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error deleting contact list:', error);
+        alert('Error deleting contact list. Please try again.');
+    });
+}
+
+    // ORIGINAL FUNCTIONS (kept for reference)
+
+    function updateSelectedCount() {
+        const count = Object.keys(window.state.selectedContacts).length;
+        selectedCount.textContent = count;
+        inlineSelectedCount.textContent = count;
+
+        // Update send button state
+        if (count > 0 &&
+            ((window.state.isCustomEmail && customSubject.value && customBody.value) ||
+             (!window.state.isCustomEmail && templateSelect.value))) {
+            sendButton.disabled = false;
+        } else {
+            sendButton.disabled = true;
+        }
+    }
+
+    function toggleEmailMode() {
+        window.state.isCustomEmail = customEmailToggle.checked;
+
+        if (window.state.isCustomEmail) {
+            templateSection.style.display = 'none';
+            customEmailSection.style.display = 'block';
+        } else {
+            templateSection.style.display = 'block';
+            customEmailSection.style.display = 'none';
+        }
+
+        updateSelectedCount(); // Re-check if send button should be enabled
+    }
+
+    function handleTemplateChange() {
+        const selectedTemplate = templateSelect.value;
+
+        if (selectedTemplate) {
+            // You could fetch template details from backend here
+            templateDescription.style.display = 'block';
+            templateDescriptionText.textContent = "Template selected";
+        } else {
+            templateDescription.style.display = 'none';
+        }
+
+        updateSelectedCount(); // Re-check if send button should be enabled
+    }
+
+    function searchContacts() {
+        const searchTerm = contactSearch.value.trim();
+        const customerId = customerFilter.value;
+
+        // Show loading state
+        contactsList.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm" role="status"></div> Loading...</div>';
+
+        // API call to search contacts
+        fetch(`/bulk_emails/api/contacts/search?term=${encodeURIComponent(searchTerm)}&customer_id=${customerId}`)
+            .then(response => response.json())
+            .then(data => {
+                window.state.contacts = data;
+                renderContactsList();
+            })
+            .catch(error => {
+                console.error('Error fetching contacts:', error);
+                contactsList.innerHTML = '<div class="alert alert-danger">Error loading contacts. Please try again.</div>';
+            });
+    }
+
+    function renderContactsList() {
+        if (window.state.contacts.length === 0) {
+            contactsList.innerHTML = '<div class="text-center p-3 text-muted">No contacts found</div>';
+            return;
+        }
+
+        let html = '';
+        window.state.contacts.forEach(contact => {
+            const isSelected = window.state.selectedContacts[contact.id] !== undefined;
+            html += `
+                <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center ${isSelected ? 'active' : ''}"
+                     data-id="${contact.id}">
+                    <div>
+                        <div><strong>${contact.name}</strong></div>
+                        <div class="text-muted small">${contact.email}</div>
+                        <div class="text-muted small">${contact.customer_name || ''}</div>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input contact-checkbox" type="checkbox" ${isSelected ? 'checked' : ''}
+                               data-id="${contact.id}">
+                    </div>
+                </div>
+            `;
+        });
+
+        contactsList.innerHTML = html;
+
+        // Add event listeners to checkboxes
+        document.querySelectorAll('.contact-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                toggleContactSelection(this.dataset.id);
+            });
+        });
+
+        // Add event listeners to list items
+        document.querySelectorAll('.list-group-item').forEach(item => {
+            item.addEventListener('click', function(e) {
+                // Don't trigger if checkbox was clicked directly
+                if (e.target.classList.contains('form-check-input')) return;
+
+                const checkbox = this.querySelector('.contact-checkbox');
+                checkbox.checked = !checkbox.checked;
+                toggleContactSelection(checkbox.dataset.id);
+            });
+        });
+    }
+
+    function updateInlineSelectedContacts() {
+        const contacts = Object.values(window.state.selectedContacts);
+
+        if (contacts.length === 0) {
+            inlineSelectedContacts.innerHTML = '';
+            noContactsMessage.style.display = 'block';
+            return;
+        }
+
+        noContactsMessage.style.display = 'none';
+
+        let html = '';
+        contacts.forEach(contact => {
+            html += `
+                <div class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <div><strong>${contact.name}</strong></div>
+                        <div class="text-muted small">${contact.email}</div>
+                    </div>
+                    <button class="btn btn-sm btn-outline-danger inline-remove-btn" data-id="${contact.id}">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `;
+        });
+
+        inlineSelectedContacts.innerHTML = html;
+
+        // Add event listeners to remove buttons
+        document.querySelectorAll('.inline-remove-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                removeContact(this.dataset.id);
+            });
+        });
+    }
+
+    function toggleContactSelection(contactId) {
+        const contact = window.state.contacts.find(c => c.id == contactId);
+        if (!contact) return;
+
+        if (window.state.selectedContacts[contactId]) {
+            delete window.state.selectedContacts[contactId];
+        } else {
+            window.state.selectedContacts[contactId] = contact;
+        }
+
+        renderContactsList();
+        updateSelectedCount();
+        updateSelectedContactsTable();
+        updateInlineSelectedContacts(); // Update the inline selected contacts
+    }
+function removeContact(contactId) {
+        if (window.state.selectedContacts[contactId]) {
+            delete window.state.selectedContacts[contactId];
+            renderContactsList();
+            updateSelectedCount();
+            updateSelectedContactsTable();
+            updateInlineSelectedContacts(); // Update the inline selected contacts
+        }
+    }
+
+    function previewEmail() {
+        const contactIds = Object.keys(window.state.selectedContacts);
+        if (contactIds.length === 0) {
+            alert('Please select at least one contact');
+            return;
+        }
+
+        // Get first selected contact for preview
+        const firstContact = window.state.selectedContacts[contactIds[0]];
+
+        // Prepare request data
+        const requestData = {
+            contact_id: firstContact.id,
+            customer_id: firstContact.customer_id
+        };
+
+        if (window.state.isCustomEmail) {
+            // Custom email preview
+            requestData.is_custom = true;
+            requestData.custom_subject = customSubject.value;
+            requestData.custom_body = customBody.value;
+        } else {
+            // Template email preview
+            requestData.template_id = templateSelect.value;
+        }
+
+        // Show loading state in preview button
+        previewButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Generating...';
+        previewButton.disabled = true;
+
+        // Call preview API
+        fetch('/api/preview-email', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Reset button state
+            previewButton.innerHTML = '<i class="fas fa-eye me-1"></i> Preview Email';
+            previewButton.disabled = false;
+
+            if (data.success) {
+                document.getElementById('previewSubject').textContent = data.data.subject;
+                document.getElementById('previewBody').innerHTML = data.data.body;
+                previewModal.show();
+            } else {
+                alert('Error generating preview: ' + data.error);
+            }
+        })
+        .catch(error => {
+            // Reset button state
+            previewButton.innerHTML = '<i class="fas fa-eye me-1"></i> Preview Email';
+            previewButton.disabled = false;
+
+            console.error('Error generating preview:', error);
+            alert('Error generating preview. Please try again.');
+        });
+    }
+
+    function sendEmails() {
+        const contactIds = Object.keys(window.state.selectedContacts);
+        if (contactIds.length === 0) {
+            alert('Please select at least one contact');
+            return;
+        }
+
+        // Check if we should save as template
+        const saveAsTemplate = document.getElementById('saveTemplateToggle').checked;
+        if (saveAsTemplate && window.state.isCustomEmail) {
+            // Validate template fields
+            const templateName = document.getElementById('templateName').value.trim();
+            const templateDescription = document.getElementById('templateDescription').value.trim();
+
+            if (!templateName) {
+                alert('Please enter a name for the template');
+                return;
+            }
+
+            // Save template first
+            saveEmailTemplate(templateName, templateDescription, customSubject.value, customBody.value)
+                .then(success => {
+                    if (success) {
+                        // Continue with sending emails
+                        proceedWithSendingEmails(contactIds);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error saving template:', error);
+                    // Ask user if they want to continue without saving the template
+                    if (confirm('There was an error saving the template. Do you want to continue sending emails without saving the template?')) {
+                        proceedWithSendingEmails(contactIds);
+                    }
+                });
+        } else {
+            // No template to save, proceed directly
+            proceedWithSendingEmails(contactIds);
+        }
+    }
+
+    function proceedWithSendingEmails(contactIds) {
+        // Disable send button to prevent duplicate submissions
+        sendButton.disabled = true;
+        sendButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Sending...';
+
+        // Prepare request data
+        const requestData = {
+            contact_ids: contactIds,
+            is_custom: window.state.isCustomEmail
+        };
+
+        if (window.state.isCustomEmail) {
+            requestData.custom_subject = customSubject.value;
+            requestData.custom_body = customBody.value;
+        } else {
+            requestData.template_id = templateSelect.value;
+        }
+
+        // Call bulk send API
+        fetch('/bulk_emails/api/send', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Re-enable send button
+            sendButton.disabled = false;
+            sendButton.innerHTML = '<i class="fas fa-paper-plane me-1"></i> Send Emails';
+
+            // Show results
+            if (data.success) {
+                // Update results table
+                document.getElementById('resultsSummary').innerHTML = `
+                    <div class="alert alert-info">
+                        ${data.message}
+                    </div>
+                `;
+
+                let html = '';
+                data.results.forEach(result => {
+                    html += `
+                        <tr>
+                            <td>${result.contact_name || `Contact #${result.contact_id}`}</td>
+                            <td>
+                                <span class="badge bg-${result.success ? 'success' : 'danger'}">
+                                    ${result.success ? 'Success' : 'Failed'}
+                                </span>
+                            </td>
+                            <td>${result.message}</td>
+                        </tr>
+                    `;
+                });
+
+                document.getElementById('resultsTable').innerHTML = html;
+                resultsModal.show();
+
+                // Clear selection if all emails were sent successfully
+                if (!data.results.some(r => !r.success)) {
+                    clearSelection();
+                }
+            } else {
+                alert('Error sending emails: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error sending emails:', error);
+            alert('Error sending emails. Please try again.');
+
+            // Re-enable send button
+            sendButton.disabled = false;
+            sendButton.innerHTML = '<i class="fas fa-paper-plane me-1"></i> Send Emails';
+        });
+    }
+
+    function saveEmailTemplate(name, description, subject, body) {
+        return new Promise((resolve, reject) => {
+            // Prepare template data
+            const templateData = {
+                name: name,
+                description: description || '',
+                subject: subject,
+                body: body
+            };
+
+            // Call API to save template
+            fetch('/customers/api/templates', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(templateData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Show success modal
+                    templateSavedModal.show();
+
+                    // Clear template form
+                    document.getElementById('saveTemplateToggle').checked = false;
+                    document.getElementById('saveTemplateFields').style.display = 'none';
+                    document.getElementById('templateName').value = '';
+                    document.getElementById('templateDescription').value = '';
+
+                    // Add new template to dropdown
+                    const option = document.createElement('option');
+                    option.value = data.template_id;
+                    option.textContent = name;
+                    templateSelect.appendChild(option);
+
+                    resolve(true);
+                } else {
+                    alert('Error saving template: ' + (data.error || 'Unknown error'));
+                    resolve(false);
+                }
+            })
+            .catch(error => {
+                console.error('Error saving template:', error);
+                reject(error);
+            });
+        });
+    }
+
+    function validateTemplateForm() {
+        // Optional validation logic for template form
+        const templateName = document.getElementById('templateName').value.trim();
+        // Add any validation feedback here if needed
+    }
+
+    // Contact Lists Management
+   function loadContactLists() {
+    fetch('/customers/api/contact_lists')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to fetch contact lists');
+            }
+            return response.json();
+        })
+        .then(lists => {
+            // Clear existing options except the placeholder
+            while (contactListSelect.options.length > 1) {
+                contactListSelect.remove(1);
+            }
+
+            // Add each list as an option
+            if (lists && lists.length > 0) {
+                lists.forEach(list => {
+                    const option = document.createElement('option');
+                    option.value = list.id;
+                    option.textContent = `${list.name} (${list.contact_count || 0} contacts)`;
+                    contactListSelect.appendChild(option);
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error loading contact lists:', error);
+        });
+}
+
+    function initManageLists() {
+        fetch('/customers/api/contact_lists')
+            .then(response => response.json())
+            .then(data => {
+                // Make sure lists is an array
+                const lists = Array.isArray(data) ? data : (data.lists || []);
+
+                if (lists.length === 0) {
+                    listsContainer.innerHTML = '<div class="alert alert-info">You haven\'t created any contact lists yet.</div>';
+                    return;
+                }
+
+                let html = '<div class="list-group">';
+                lists.forEach(list => {
+                    html += `
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>${list.name}</strong>
+                                <div class="text-muted small">Contacts: ${list.contact_count || 0}</div>
+                            </div>
+                            <button class="btn btn-sm btn-outline-danger delete-list-btn" data-id="${list.id}">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+
+                listsContainer.innerHTML = html;
+
+                // Add event listeners to delete buttons
+                document.querySelectorAll('.delete-list-btn').forEach(button => {
+                    button.addEventListener('click', function() {
+                        deleteContactList(this.dataset.id);
+                    });
+                });
+            })
+            .catch(error => {
+                console.error('Error loading contact lists:', error);
+                listsContainer.innerHTML = '<div class="alert alert-danger">Error loading contact lists. Please try again.</div>';
+            });
+    }
+
+    function saveAsNewList() {
+    const name = newListName.value.trim();
+    if (!name) {
+        alert('Please enter a name for the list');
+        return;
+    }
+
+    const contactIds = Object.keys(window.state.selectedContacts);
+    if (contactIds.length === 0) {
+        alert('Please select at least one contact to save as a list');
+        return;
+    }
+
+    // Show loading state
+    saveAsListButton.disabled = true;
+    saveAsListButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Saving...';
+
+    // Send request to create new list with all selected contacts
+    fetch('/customers/api/contact_lists', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            name: name,
+            contact_ids: contactIds
+        })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            // Show success message
+            alert(`Contact list "${name}" with ${contactIds.length} contacts saved successfully!`);
+
+            // Reset input field
+            newListName.value = '';
+
+            // Refresh lists dropdown
+            loadContactLists();
+        } else {
+            alert('Error saving contact list: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error saving contact list:', error);
+        alert('Error saving contact list. Please try again.');
+    })
+    .finally(() => {
+        // Reset button state
+        saveAsListButton.disabled = false;
+        saveAsListButton.innerHTML = '<i class="fas fa-save me-1"></i> Save Selection';
+    });
+}
+
+    function loadContactsFromList() {
+    const listId = contactListSelect.value;
+    if (!listId) {
+        alert('Please select a list to load');
+        return;
+    }
+
+    // Show loading indicator
+    loadListButton.disabled = true;
+    loadListButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Loading...';
+
+    // Get the list with all its contacts
+    fetch(`/customers/api/contact_lists/${listId}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to fetch contact list');
+            }
+            return response.json();
+        })
+        .then(list => {
+            if (!list || !list.contacts || list.contacts.length === 0) {
+                alert('The selected list does not have any contacts');
+                return;
+            }
+
+            // Add all contacts from the list to selection
+            let addedCount = 0;
+            list.contacts.forEach(contact => {
+                if (!window.state.selectedContacts[contact.id]) {
+                    window.state.selectedContacts[contact.id] = contact;
+                    addedCount++;
+                }
+            });
+
+            if (addedCount > 0) {
+                // Update UI
+                renderContactsList();
+                updateSelectedCount();
+                updateInlineSelectedContacts();
+
+                // Make sure updateSelectedContactsTable is defined
+                if (typeof updateSelectedContactsTable === 'function') {
+                    updateSelectedContactsTable();
+                }
+
+                alert(`Added ${addedCount} contacts from "${list.name}" to your selection.`);
+            } else {
+                alert('All contacts from this list are already selected.');
+            }
+        })
+        .catch(error => {
+            console.error('Error loading contact list:', error);
+            alert('Error loading contact list. Please try again.');
+        })
+        .finally(() => {
+            // Reset button state
+            loadListButton.disabled = false;
+            loadListButton.innerHTML = '<i class="fas fa-file-import me-1"></i> Load';
+        });
+}
+
+    function deleteContactList(listId) {
+        if (!confirm('Are you sure you want to delete this list?')) {
+            return;
+        }
+
+        fetch(`/customers/api/contact_lists/${listId}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Refresh the lists
+                initManageLists();
+                loadContactLists();
+            } else {
+                alert('Error deleting contact list: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error deleting contact list:', error);
+            alert('Error deleting contact list. Please try again.');
+        });
+    }
+function clearSelection() {
+    window.state.selectedContacts = {};
+    renderContactsList();
+    updateSelectedCount();
+    updateInlineSelectedContacts();
+    updateSelectedContactsTable(); // Make sure this function exists
+}
+
+// Add this function definition
+function updateSelectedContactsTable() {
+    const contacts = Object.values(window.state.selectedContacts);
+    let html = '';
+
+    if (contacts.length === 0) {
+        html = '<tr><td colspan="5" class="text-center text-muted">No contacts selected</td></tr>';
+    } else {
+        contacts.forEach(contact => {
+            html += `
+                <tr>
+                    <td>${contact.name || ''}</td>
+                    <td>${contact.email || ''}</td>
+                    <td>${contact.title || ''}</td>
+                    <td>${contact.customer_name || ''}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-danger remove-contact-btn" data-id="${contact.id}">
+                            <i class="fas fa-times"></i> Remove
+                        </button>
+                    </td>
+                </tr>
+            `;
+        });
+    }
+
+    selectedContactsTable.innerHTML = html;
+
+    // Add event listeners to remove buttons
+    document.querySelectorAll('.remove-contact-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            removeContact(this.dataset.id);
+        });
+    });
+}
+
+});
+</script>
+<style>
+.placeholder-link {
+    color: #0d6efd;
+    text-decoration: none;
+    padding: 2px 4px;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+}
+
+.placeholder-link:hover {
+    background-color: #e9ecef;
+    text-decoration: underline;
+}
+
+.placeholder-link:active {
+    background-color: #dee2e6;
+}
+</style>
+{% endblock %}

@@ -1,0 +1,374 @@
+{# templates/stock_movement_mapping.html #}
+{% extends 'base.html' %}
+
+{% block title %}Map Stock Movement Data{% endblock %}
+
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+<style>
+    .hot-container {
+        height: 500px;
+        overflow: hidden;
+        margin-bottom: 20px;
+    }
+    .mapping-field {
+        margin-bottom: 15px;
+    }
+    .mapping-label {
+        font-weight: bold;
+    }
+    .required-field::after {
+        content: " *";
+        color: red;
+    }
+    .results-panel {
+        display: none;
+        margin-top: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">File Preview</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div id="hot-container" class="hot-container"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Column Mapping</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">Map columns from your file to stock movement data fields. Fields marked with * are required.</p>
+                    
+                    <div class="form-group">
+                        <label for="saved-mapping">Load Saved Mapping</label>
+                        <select class="form-control" id="saved-mapping">
+                            <option value="">-- Select a saved mapping --</option>
+                            {% for mapping in saved_mappings %}
+                            <option value="{{ mapping.id }}">{{ mapping.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <hr>
+                    
+                    <div class="custom-control custom-checkbox mb-3">
+                        <input type="checkbox" class="custom-control-input" id="clear-existing">
+                        <label class="custom-control-label" for="clear-existing">Clear existing imported movements</label>
+                        <small class="form-text text-muted">This will remove previously imported movements before adding new ones.</small>
+                    </div>
+                    
+                    <div id="mapping-container">
+                        {% for field in mapping_fields %}
+                        <div class="mapping-field">
+                            <label for="field-{{ loop.index }}" class="mapping-label {% if field.required %}required-field{% endif %}">{{ field.label }}</label>
+                            <select class="form-control field-select" id="field-{{ loop.index }}" data-field="{{ field.field }}">
+                                <option value="">-- Select Column --</option>
+                                {% for idx, col in enumerate(columns) %}
+                                <option value="{{ idx }}">{{ col }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    
+                    <div class="form-group mt-4">
+                        <label for="mapping-name">Save This Mapping As</label>
+                        <input type="text" class="form-control" id="mapping-name" placeholder="Enter a name to save this mapping">
+                    </div>
+                    
+                    <div class="mt-3">
+                        <button type="button" class="btn btn-secondary" id="save-mapping-btn">Save Mapping</button>
+                        <button type="button" class="btn btn-primary" id="import-btn">Import Data</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card mt-3 results-panel" id="results-panel">
+                <div class="card-header bg-success text-white">
+                    <h5 class="card-title mb-0">Import Results</h5>
+                </div>
+                <div class="card-body">
+                    <div class="progress mb-3">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%"></div>
+                    </div>
+                    <p id="status-message">Processing...</p>
+                    
+                    <div id="results-container" style="display: none;">
+                        <table class="table table-sm">
+                            <tr>
+                                <th>Processed:</th>
+                                <td id="result-processed">0</td>
+                            </tr>
+                            <tr>
+                                <th>Created:</th>
+                                <td id="result-created">0</td>
+                            </tr>
+                            <tr>
+                                <th>Skipped:</th>
+                                <td id="result-skipped">0</td>
+                            </tr>
+                            <tr>
+                                <th>Cleared:</th>
+                                <td id="result-cleared">0</td>
+                            </tr>
+                        </table>
+                        
+                        <div id="errors-container" class="mt-3" style="display: none;">
+                            <h6 class="text-danger">Errors:</h6>
+                            <ul id="error-list" class="text-danger small"></ul>
+                        </div>
+                        
+                        <div class="mt-3">
+                            <a href="{{ url_for('stock_movements.import_stock_movements_page') }}" class="btn btn-primary">Back to Import List</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const fileData = {{ file_data|tojson }};
+    const fileId = {{ file_id }};
+    const columns = {{ columns|tojson }};
+    
+// Replace your current Handsontable initialization with this code:
+const container = document.getElementById('hot-container');
+const hot = new Handsontable(container, {
+    data: fileData,
+    rowHeaders: true,
+    colHeaders: columns,
+    stretchH: 'all',
+    readOnly: true,
+    preventOverflow: 'horizontal',
+    autoColumnSize: true,
+    licenseKey: 'non-commercial-and-evaluation',
+    wordWrap: false,
+    width: '100%',
+    height: 400,
+    manualColumnResize: true,
+    // Add this crucial property to define how to access data
+    columns: columns.map(column => ({
+        data: column,  // This tells Handsontable to use the column name as the key
+        title: column
+    }))
+});
+
+// Debug log
+console.log('Columns in Handsontable:', columns);
+console.log('First row of data:', fileData[0]);
+
+    // Load saved mapping
+    document.getElementById('saved-mapping').addEventListener('change', function() {
+        const mappingId = this.value;
+        if (!mappingId) return;
+        
+        fetch(`/handson/load_import_mapping/${mappingId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Clear all current selections
+                    document.querySelectorAll('.field-select').forEach(select => {
+                        select.value = '';
+                    });
+                    
+                    // Apply the loaded mapping
+                    const mapping = JSON.parse(data.mapping.mapping);
+                    for (const col in mapping) {
+                        const field = mapping[col];
+                        const select = document.querySelector(`.field-select[data-field="${field}"]`);
+                        if (select) {
+                            select.value = col;
+                        }
+                    }
+                } else {
+                    alert('Error loading mapping: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while loading the mapping');
+            });
+    });
+    
+    // Save mapping
+    document.getElementById('save-mapping-btn').addEventListener('click', function() {
+        const mappingName = document.getElementById('mapping-name').value.trim();
+        if (!mappingName) {
+            alert('Please enter a name for this mapping');
+            return;
+        }
+        
+        const mapping = getMapping();
+        if (Object.keys(mapping).length === 0) {
+            alert('Please map at least one column before saving');
+            return;
+        }
+        
+        fetch('/handson/save_import_mapping', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: mappingName,
+                import_type: 'stock_movements',
+                mapping: JSON.stringify(mapping)
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Mapping saved successfully!');
+                // Reload page to update the dropdown
+                window.location.reload();
+            } else {
+                alert('Error saving mapping: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while saving the mapping');
+        });
+    });
+    
+    // Process import
+    document.getElementById('import-btn').addEventListener('click', function() {
+        const mapping = getMapping();
+        if (!validateMapping(mapping)) {
+            return;
+        }
+        
+        // Show results panel
+        const resultsPanel = document.getElementById('results-panel');
+        resultsPanel.style.display = 'block';
+        document.getElementById('results-container').style.display = 'none';
+        document.getElementById('status-message').textContent = 'Processing...';
+        document.querySelector('.progress-bar').style.width = '0%';
+        
+        // Disable the import button
+        this.disabled = true;
+        
+        const clearExisting = document.getElementById('clear-existing').checked;
+        
+        // Start the import
+        fetch('{{ url_for("stock_movements.process_stock_movement_import") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                mapping: mapping,
+                file_id: fileId,
+                clear_existing: clearExisting
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Enable the import button
+            document.getElementById('import-btn').disabled = false;
+            
+            // Update progress bar
+            document.querySelector('.progress-bar').style.width = '100%';
+            
+            if (data.success) {
+                document.getElementById('status-message').textContent = 'Import completed successfully';
+                displayResults(data.results);
+            } else {
+                document.getElementById('status-message').textContent = 'Import failed: ' + data.message;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('import-btn').disabled = false;
+            document.getElementById('status-message').textContent = 'An error occurred during import';
+            document.querySelector('.progress-bar').style.width = '100%';
+        });
+    });
+    
+    // Get current mapping
+    function getMapping() {
+        const mapping = {};
+        document.querySelectorAll('.field-select').forEach(select => {
+            const field = select.getAttribute('data-field');
+            const columnIndex = select.value;
+            if (columnIndex) {
+                mapping[columnIndex] = field;
+            }
+        });
+        return mapping;
+    }
+    
+    // Validate the mapping
+    function validateMapping(mapping) {
+        // Check required fields
+        const requiredFields = [
+            'part_numbers.system_part_number',
+            'stock_movements.movement_type',
+            'stock_movements.quantity'
+        ];
+        
+        const mappedFields = Object.values(mapping);
+        
+        // Either system part number or part number must be mapped
+        if (!mappedFields.includes('part_numbers.system_part_number') && 
+            !mappedFields.includes('part_numbers.part_number')) {
+            alert('You must map either System Part Number or Part Number');
+            return false;
+        }
+        
+        for (const field of requiredFields) {
+            if (field !== 'part_numbers.system_part_number' && !mappedFields.includes(field)) {
+                const fieldName = field.split('.')[1];
+                alert(`Required field is not mapped: ${fieldName}`);
+                return false;
+            }
+        }
+        
+        return true;
+    }
+    
+    // Display import results
+    function displayResults(results) {
+        document.getElementById('results-container').style.display = 'block';
+        document.getElementById('result-processed').textContent = results.processed;
+        document.getElementById('result-created').textContent = results.created;
+        document.getElementById('result-skipped').textContent = results.skipped;
+        document.getElementById('result-cleared').textContent = results.cleared || 0;
+        
+        if (results.errors && results.errors.length > 0) {
+            const errorList = document.getElementById('error-list');
+            errorList.innerHTML = '';
+            
+            results.errors.forEach(error => {
+                const li = document.createElement('li');
+                li.textContent = error;
+                errorList.appendChild(li);
+            });
+            
+            document.getElementById('errors-container').style.display = 'block';
+        } else {
+            document.getElementById('errors-container').style.display = 'none';
+        }
+    }
+});
+</script>
+{% endblock %}

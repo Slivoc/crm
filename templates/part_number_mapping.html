@@ -1,0 +1,396 @@
+{% extends 'base.html' %}
+
+{% block title %}Part Number Mapping{% endblock %}
+
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+<style>
+    .hot-container {
+        height: 400px;
+        overflow: hidden;
+        margin-bottom: 20px;
+    }
+    .field-mapping {
+        margin-bottom: 15px;
+    }
+    .mapping-label {
+        font-weight: bold;
+    }
+    .required-field::after {
+        content: " *";
+        color: red;
+    }
+    .results-panel {
+        display: none;
+        margin-top: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12 mb-3">
+            <h2>Part Number Import Mapping</h2>
+            <p class="text-muted">Map your spreadsheet columns to part number fields</p>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">File Preview</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div id="hot-container" class="hot-container"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Column Mapping</h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-group mb-3">
+                        <label for="saved-mappings">Load Saved Mapping</label>
+                        <select class="form-select" id="saved-mappings">
+                            <option value="">-- Select a mapping --</option>
+                            {% for mapping in saved_mappings %}
+                            <option value="{{ mapping.id }}">{{ mapping.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <hr>
+                    
+                    <p class="text-info mb-3">
+                        <i class="bi bi-info-circle"></i> 
+                        You must map either Part Number or System Part Number (or both).
+                    </p>
+                    
+                    <div id="mapping-container">
+                        {% for field in mapping_fields %}
+                        <div class="field-mapping">
+                            <label for="field-{{ loop.index }}" class="mapping-label {% if field.required %}required-field{% endif %}">
+                                {{ field.label }}
+                            </label>
+                            <select class="form-select field-select" id="field-{{ loop.index }}" data-field="{{ field.field }}">
+    <option value="">-- Select Column --</option>
+    {% for col in columns %}
+    <option value="{{ loop.index0 }}">{{ col }}</option>
+    {% endfor %}
+</select>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    
+                    <div class="form-group mt-4">
+                        <label for="mapping-name">Save Mapping As</label>
+                        <input type="text" class="form-control" id="mapping-name" placeholder="Enter a name for this mapping">
+                    </div>
+                    
+                    <div class="d-grid gap-2 mt-3">
+                        <button class="btn btn-secondary" id="save-mapping-btn">Save Mapping</button>
+                        <button class="btn btn-primary" id="process-btn">Process Import</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card mt-3 results-panel" id="results-panel">
+                <div class="card-header bg-success text-white">
+                    <h5 class="card-title mb-0">Import Results</h5>
+                </div>
+                <div class="card-body">
+                    <div class="progress mb-3">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <p id="status-message">Processing...</p>
+                    
+                    <div id="results-container" style="display: none;">
+                        <table class="table table-sm">
+                            <tbody>
+                                <tr>
+                                    <th>Processed:</th>
+                                    <td id="result-processed">0</td>
+                                </tr>
+                                <tr>
+                                    <th>Created:</th>
+                                    <td id="result-created">0</td>
+                                </tr>
+                                <tr>
+                                    <th>Updated:</th>
+                                    <td id="result-updated">0</td>
+                                </tr>
+                                <tr>
+                                    <th>Skipped:</th>
+                                    <td id="result-skipped">0</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        
+                        <div id="errors-container" class="mt-3" style="display: none;">
+                            <h6 class="text-danger">Errors:</h6>
+                            <ul id="error-list" class="text-danger"></ul>
+                        </div>
+                        
+                        <div class="mt-3">
+                            <a href="{{ url_for('imports.list_files') }}" class="btn btn-primary">Back to Import List</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize data from the server
+    const fileData = {{ file_data|tojson }};
+    const fileId = {{ file_id }};
+    const columns = {{ columns|tojson }};
+    
+    // Debug: Log actual data from file
+    console.log('File data first row:', fileData.length > 0 ? fileData[0] : 'No data');
+    console.log('Columns from file:', columns);
+    
+    // Initialize Handsontable for file preview
+    const container = document.getElementById('hot-container');
+    const hot = new Handsontable(container, {
+        data: fileData,
+        rowHeaders: true,
+        colHeaders: columns,
+        stretchH: 'all',
+        readOnly: true,
+        licenseKey: 'non-commercial-and-evaluation'
+    });
+    
+    // Attempt auto-mapping by column name
+    function attemptAutoMapping() {
+        const commonMappings = {
+            'part number': 'part_numbers.part_number',
+            'part#': 'part_numbers.part_number',
+            'part no': 'part_numbers.part_number',
+            'partno': 'part_numbers.part_number',
+            'part_number': 'part_numbers.part_number',
+            'system part number': 'part_numbers.system_part_number',
+            'system part#': 'part_numbers.system_part_number',
+            'mfg part': 'part_numbers.system_part_number',
+            'oem part': 'part_numbers.system_part_number',
+            'description': 'part_numbers.description',
+            'desc': 'part_numbers.description',
+            'part description': 'part_numbers.description',
+            'manufacturer': 'part_numbers.manufacturer',
+            'mfg': 'part_numbers.manufacturer',
+            'oem': 'part_numbers.manufacturer',
+            'vendor': 'part_numbers.manufacturer',
+            'category': 'part_numbers.category',
+            'part type': 'part_numbers.category',
+            'family': 'part_numbers.category'
+        };
+        
+        // Check each column and try to auto-map
+        columns.forEach((col, idx) => {
+            const lowerCol = col.toLowerCase().trim();
+            if (commonMappings[lowerCol]) {
+                const field = commonMappings[lowerCol];
+                const select = document.querySelector(`.field-select[data-field="${field}"]`);
+                if (select) {
+                    select.value = idx;
+                }
+            }
+        });
+    }
+    
+    // Try auto-mapping on page load
+    attemptAutoMapping();
+    
+    // Load saved mapping
+    document.getElementById('saved-mappings').addEventListener('change', function() {
+        const mappingId = this.value;
+        if (!mappingId) return;
+        
+        fetch(`/handson/load_import_mapping/${mappingId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Clear all current selections
+                    document.querySelectorAll('.field-select').forEach(select => {
+                        select.value = '';
+                    });
+                    
+                    // Apply the loaded mapping
+                    const mapping = data.mapping.mapping;
+                    for (const col in mapping) {
+                        const field = mapping[col];
+                        const select = document.querySelector(`.field-select[data-field="${field}"]`);
+                        if (select) {
+                            select.value = col;
+                        }
+                    }
+                } else {
+                    alert('Error loading mapping: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while loading the mapping.');
+            });
+    });
+    
+    // Save mapping
+    document.getElementById('save-mapping-btn').addEventListener('click', function() {
+        const mappingName = document.getElementById('mapping-name').value.trim();
+        if (!mappingName) {
+            alert('Please enter a name for this mapping.');
+            return;
+        }
+        
+        const mapping = getMapping();
+        if (Object.keys(mapping).length === 0) {
+            alert('Please map at least one column before saving.');
+            return;
+        }
+        
+        fetch('/handson/save_import_mapping', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: mappingName,
+                import_type: 'part_numbers',
+                mapping: mapping
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Mapping saved successfully!');
+                // Reload page to show the new mapping in the dropdown
+                window.location.reload();
+            } else {
+                alert('Error saving mapping: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while saving the mapping.');
+        });
+    });
+    
+    // Process import
+    document.getElementById('process-btn').addEventListener('click', function() {
+        const mapping = getMapping();
+        if (!validateMapping(mapping)) {
+            return;
+        }
+        
+        // Show results panel and progress indicators
+        document.getElementById('results-panel').style.display = 'block';
+        document.getElementById('results-container').style.display = 'none';
+        document.querySelector('.progress-bar').style.width = '0%';
+        document.getElementById('status-message').textContent = 'Processing part numbers...';
+        
+        // Disable the process button
+        this.disabled = true;
+        
+        // Start the import process
+        fetch('/handson/import/part_numbers', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                mapping: mapping,
+                file_id: fileId
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateProgress(100, 'Import completed successfully');
+                showResults(data.results);
+            } else {
+                updateProgress(100, 'Import failed: ' + data.message);
+                document.getElementById('process-btn').disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateProgress(100, 'An error occurred during import');
+            document.getElementById('process-btn').disabled = false;
+        });
+    });
+    
+    // Get current mapping
+    function getMapping() {
+        const mapping = {};
+        document.querySelectorAll('.field-select').forEach(select => {
+            const field = select.getAttribute('data-field');
+            const value = select.value;
+            if (value) {
+                mapping[value] = field;
+            }
+        });
+        return mapping;
+    }
+    
+    // Validate mapping
+    function validateMapping(mapping) {
+        const mappedFields = Object.values(mapping);
+        
+        // At least one of part_number or system_part_number must be mapped
+        if (!mappedFields.includes('part_numbers.part_number') && 
+            !mappedFields.includes('part_numbers.system_part_number')) {
+            alert('You must map either Part Number or System Part Number (or both)');
+            return false;
+        }
+        
+        return true;
+    }
+    
+    // Update progress bar
+    function updateProgress(percent, status) {
+        document.querySelector('.progress-bar').style.width = percent + '%';
+        document.querySelector('.progress-bar').setAttribute('aria-valuenow', percent);
+        document.getElementById('status-message').textContent = status;
+    }
+    
+    // Show import results
+    function showResults(results) {
+        document.getElementById('results-container').style.display = 'block';
+        document.getElementById('result-processed').textContent = results.processed;
+        document.getElementById('result-created').textContent = results.created;
+        document.getElementById('result-updated').textContent = results.updated;
+        document.getElementById('result-skipped').textContent = results.skipped;
+        
+        // Show errors if any
+        if (results.errors && results.errors.length > 0) {
+            const errorList = document.getElementById('error-list');
+            errorList.innerHTML = '';
+            
+            results.errors.forEach(error => {
+                const li = document.createElement('li');
+                li.textContent = error;
+                errorList.appendChild(li);
+            });
+            
+            document.getElementById('errors-container').style.display = 'block';
+        } else {
+            document.getElementById('errors-container').style.display = 'none';
+        }
+        
+        document.getElementById('process-btn').disabled = false;
+    }
+});
+</script>
+{% endblock %}

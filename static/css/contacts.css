@@ -1,0 +1,90 @@
+/*
+ * Contacts Tab Styling
+ * Custom styles for the customer contacts tab
+ */
+
+/* Contact avatar styling */
+.avatar-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 500;
+  font-size: 0.875rem;
+}
+
+/* Improve table appearance */
+.table {
+  margin-bottom: 0;
+}
+
+.table th {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #495057;
+}
+
+.table td {
+  vertical-align: middle;
+  padding: 0.75rem 1rem;
+}
+
+/* Brand color adjustments */
+.bg-primary {
+  background-color: #5ebc67 !important;
+}
+
+/* Fix for badge styling */
+.badge.bg-primary {
+  background-color: #5ebc67 !important;
+  color: white !important;
+}
+
+/* Modify suggested contacts table */
+#suggestedContactsContainer .table th {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+#suggestedContactsContainer .table td {
+  font-size: 0.875rem;
+  vertical-align: middle;
+}
+
+/* Better table hover */
+.table-hover tbody tr:hover {
+  background-color: rgba(94, 188, 103, 0.05);
+}
+
+/* Style for the add contact form collapse toggle */
+.btn-outline-secondary {
+  color: #6c757d;
+  border-color: #ced4da;
+}
+
+.btn-outline-secondary:hover {
+  background-color: #f8f9fa;
+  color: #495057;
+}
+
+/* Form element spacing */
+.form-label {
+  margin-bottom: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.card {
+  margin-bottom: 1.5rem;
+  border: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
+  padding: 0.75rem 1rem;
+}

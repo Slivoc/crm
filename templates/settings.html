@@ -1,0 +1,271 @@
+<!-- templates/settings.html -->
+
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-lg-10 col-xl-8 mx-auto">
+            <h2 class="mb-4">Settings</h2>
+
+            <form method="post" action="{{ url_for('settings.settings') }}">
+                <!-- Base Currency Selection -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Base Currency</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="base-currency" class="form-label">Select your base currency for all conversions:</label>
+                            <select class="form-select" id="base-currency" name="base_currency">
+                                {% for currency in exchange_rates %}
+                                <option value="{{ currency.currency_code }}" {% if base_currency == currency.currency_code %}selected{% endif %}>
+                                    {{ currency.currency_code }} ({{ currency.symbol }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">All exchange rates will be calculated relative to this currency.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Exchange Rate Mode Selection -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Exchange Rate Mode</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" id="mode-live" name="conversion_mode" value="live" {% if conversion_mode == 'live' %}checked{% endif %}>
+                            <label class="form-check-label" for="mode-live">
+                                <strong>Live</strong> - Automatic updates from external API
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" id="mode-manual" name="conversion_mode" value="manual" {% if conversion_mode == 'manual' %}checked{% endif %}>
+                            <label class="form-check-label" for="mode-manual">
+                                <strong>Manual</strong> - Set rates below
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Exchange Rates Info -->
+                <div class="card mb-4" id="live-info-section" {% if conversion_mode != 'live' %}style="display: none;"{% endif %}>
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0">Live Exchange Rates</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info mb-3" role="alert">
+                            <span class="status-indicator me-2">●</span>
+                            Using live exchange rates from external API.
+                            <br><small>Base currency: <strong id="base-currency-display">{{ base_currency }}</strong></small>
+                        </div>
+                        <div id="api-status" class="mb-3">
+                            <span id="last-update" class="text-muted"></span>
+                        </div>
+                        <button type="button" id="refresh-rates" class="btn btn-outline-primary">
+                            <span id="refresh-spinner" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" style="display: none;"></span>
+                            Refresh Rates
+                        </button>
+                        <!-- Error message container -->
+                        <div id="api-error" class="alert alert-danger mt-3" role="alert" style="display: none;"></div>
+                        <!-- Success message container -->
+                        <div id="api-success" class="alert alert-success mt-3" role="alert" style="display: none;"></div>
+                    </div>
+                </div>
+
+                <!-- Manual Exchange Rates Table -->
+                <div class="card mb-4" id="manual-rates-section">
+                    <div class="card-header">
+                        <h5 class="mb-0">Exchange Rates</h5>
+                    </div>
+                    <div class="card-body" style="{% if conversion_mode != 'manual' %}opacity: 0.5;{% endif %}">
+                        <p class="text-muted mb-3">
+                            <small>Exchange rates relative to <strong id="base-currency-label">{{ base_currency }}</strong>.
+                            For example, if 1 {{ base_currency }} = 1.27 USD, enter 1.27 for USD.</small>
+                        </p>
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Currency</th>
+                                        <th>Symbol</th>
+                                        <th>Rate (1 <span class="base-currency-span">{{ base_currency }}</span> = X)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for rate in exchange_rates %}
+                                    <tr>
+                                        <td><strong>{{ rate.currency_code }}</strong></td>
+                                        <td>{{ rate.symbol }}</td>
+                                        <td>
+                                            <input type="number"
+                                                   step="0.0001"
+                                                   class="form-control"
+                                                   name="exchange_rate_{{ rate.currency_code }}"
+                                                   value="{{ rate.exchange_rate_to_eur }}"
+                                                   required
+                                                   {% if conversion_mode != 'manual' %}disabled{% endif %}>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-lg">Save Settings</button>
+            </form>
+
+            {% if current_user.is_authenticated and current_user.can(Permission.ADMIN) %}
+            <div class="mt-4">
+                <a href="{{ url_for('admin.users') }}" class="btn btn-outline-secondary">User Management</a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<style>
+    .status-indicator {
+        color: #198754;
+        font-size: 1.2em;
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+        0% { opacity: 0.5; }
+        50% { opacity: 1; }
+        100% { opacity: 0.5; }
+    }
+</style>
+
+<script>
+    // Toggle rates sections based on selected mode
+    document.addEventListener('DOMContentLoaded', function() {
+        const liveRadio = document.getElementById('mode-live');
+        const manualRadio = document.getElementById('mode-manual');
+        const baseCurrencySelect = document.getElementById('base-currency');
+        const manualRatesSection = document.getElementById('manual-rates-section');
+        const liveInfoSection = document.getElementById('live-info-section');
+        const rateInputs = document.querySelectorAll('input[name^="exchange_rate_"]');
+        const refreshButton = document.getElementById('refresh-rates');
+        const refreshSpinner = document.getElementById('refresh-spinner');
+        const lastUpdateSpan = document.getElementById('last-update');
+        const apiError = document.getElementById('api-error');
+        const apiSuccess = document.getElementById('api-success');
+
+        // Update base currency display when changed
+        baseCurrencySelect.addEventListener('change', function() {
+            const selectedCurrency = this.value;
+            document.getElementById('base-currency-display').textContent = selectedCurrency;
+            document.getElementById('base-currency-label').textContent = selectedCurrency;
+            document.querySelectorAll('.base-currency-span').forEach(span => {
+                span.textContent = selectedCurrency;
+            });
+        });
+
+        function updateRatesSections() {
+            if (manualRadio.checked) {
+                manualRatesSection.querySelector('.card-body').style.opacity = '1';
+                liveInfoSection.style.display = 'none';
+                rateInputs.forEach(input => input.disabled = false);
+            } else {
+                manualRatesSection.querySelector('.card-body').style.opacity = '0.5';
+                liveInfoSection.style.display = 'block';
+                rateInputs.forEach(input => input.disabled = true);
+                fetchLiveRates();
+            }
+        }
+
+        function showError(message) {
+            apiError.textContent = message;
+            apiError.style.display = 'block';
+            apiSuccess.style.display = 'none';
+            console.error('API Error:', message);
+        }
+
+        function showSuccess(message) {
+            apiSuccess.textContent = message;
+            apiSuccess.style.display = 'block';
+            apiError.style.display = 'none';
+            setTimeout(() => {
+                apiSuccess.style.display = 'none';
+            }, 5000);
+        }
+
+        function hideMessages() {
+            apiError.style.display = 'none';
+            apiSuccess.style.display = 'none';
+        }
+
+        function fetchLiveRates() {
+            hideMessages();
+            refreshSpinner.style.display = 'inline-block';
+            refreshButton.disabled = true;
+
+            console.log('Fetching live rates from /api/currencies...');
+
+            fetch('/api/currencies')
+                .then(response => {
+                    console.log('Response status:', response.status);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Received data:', data);
+
+                    if (!data || data.length === 0) {
+                        showError('No currency data received from API');
+                        lastUpdateSpan.textContent = 'No data available';
+                        return;
+                    }
+
+                    // Update the last refreshed time
+                    if (data[0].last_updated) {
+                        const updateTime = new Date(data[0].last_updated).toLocaleString();
+                        lastUpdateSpan.textContent = `Last updated: ${updateTime}`;
+                    } else {
+                        lastUpdateSpan.textContent = 'Last updated: Just now';
+                    }
+
+                    // Update the input fields with live values
+                    let updatedCount = 0;
+                    data.forEach(currency => {
+                        const input = document.querySelector(`input[name="exchange_rate_${currency.currency_code}"]`);
+                        if (input) {
+                            input.value = currency.exchange_rate_to_eur;
+                            updatedCount++;
+                        }
+                    });
+
+                    console.log(`Updated ${updatedCount} currency rates`);
+                    showSuccess(`Successfully refreshed ${updatedCount} exchange rates`);
+                })
+                .catch(error => {
+                    console.error('Error fetching live rates:', error);
+                    showError(`Failed to fetch live rates: ${error.message}`);
+                    lastUpdateSpan.textContent = 'Failed to fetch live rates';
+                })
+                .finally(() => {
+                    refreshSpinner.style.display = 'none';
+                    refreshButton.disabled = false;
+                });
+        }
+
+        liveRadio.addEventListener('change', updateRatesSections);
+        manualRadio.addEventListener('change', updateRatesSections);
+
+        if (refreshButton) {
+            refreshButton.addEventListener('click', fetchLiveRates);
+        }
+
+        // Initialize the UI based on current selection
+        updateRatesSections();
+    });
+</script>
+{% endblock %}

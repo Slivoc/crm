@@ -1,0 +1,38 @@
+{# Parts Results Table Component #}
+{# This template should be included in pages that need to display parts lookup results #}
+{# Required: parts data must be loaded via JavaScript into allResults variable #}
+
+<!-- Sticky header wrapper (will be populated by JS) -->
+<div id="sticky-header-wrapper" style="display: none; position: sticky; top: 0; z-index: 100; background: #f8f9fa; border-bottom: 2px solid #dee2e6; overflow: hidden;"></div>
+
+<div class="parts-table-container">
+    <table class="table table-hover parts-table mb-0">
+        <thead>
+            <tr>
+                <th style="width: 60px; min-width: 60px;">#</th>
+                <th style="width: 200px; min-width: 200px;">Part Number</th>
+                <th style="width: 110px; min-width: 110px;">Alternatives</th>
+                <th style="width: 80px; min-width: 80px;">Qty</th>
+                <!-- PURCHASING SECTION -->
+                <th style="width: 120px; min-width: 120px; background: #e7f1ff; border-left: 3px solid #0d6efd;">Stock</th>
+                <th style="width: 150px; min-width: 150px; background: #e7f1ff;">Avg Stock Cost</th>
+                <th style="width: 100px; min-width: 100px; background: #e7f1ff;">VQs</th>
+                <th style="width: 170px; min-width: 170px; background: #e7f1ff;">Latest VQ Price</th>
+                <th style="width: 100px; min-width: 100px; background: #e7f1ff;">POs</th>
+                <th style="width: 150px; min-width: 150px; background: #e7f1ff;">PL Quotes</th>
+                <th style="width: 120px; min-width: 120px; background: #e7f1ff;">ILS</th>
+                <th style="width: 100px; min-width: 100px; background: #e7f1ff;">BOMs</th>
+                <th style="width: 150px; min-width: 150px; background: #e7f1ff; border-right: 3px solid #0d6efd;">Guide Price</th>
+                <!-- SALES SECTION -->
+                <th style="width: 100px; min-width: 100px; background: #d1f4e0; border-left: 3px solid #198754;">CQs</th>
+                <th style="width: 100px; min-width: 100px; background: #d1f4e0;">SOs</th>
+                <th style="width: 150px; min-width: 150px; background: #d1f4e0;">Avg Sale Price</th>
+                <th style="width: 140px; min-width: 140px; background: #d1f4e0; border-right: 3px solid #198754;">Last Sale</th>
+            </tr>
+        </thead>
+        <tbody id="parts-table-body">
+            <!-- Will be populated by JavaScript -->
+        </tbody>
+    </table>
+</div>
+

@@ -1,0 +1,502 @@
+{% extends "base.html" %}
+{% block breadcrumbs %}{{ super() }}{% endblock %}
+{% block content %}
+<!-- Required Scripts -->
+<script>
+var groupedLinesData = {{ grouped_lines | tojson | safe }};
+var maxLineNumber = {{ max_line_number | default(0) | tojson | safe }};
+</script>
+<script src="{{ url_for('static', filename='scripts.js') }}"></script>
+
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-md-12">
+            <!-- Filters Card -->
+            <div class="card mb-4 shadow p-3 border-0">
+                <div class="card-header">
+                    <strong>RFQ Filters</strong>
+                </div>
+                <div class="card-body">
+                    <form method="GET" action="{{ url_for('rfqs.rfqs') }}" class="row g-3 align-items-center">
+                        <input type="hidden" id="active-tab" value="">
+                        <div class="col-md-3">
+                            <label class="form-label" for="filter_rfq_id">RFQ ID</label>
+                            <div class="input-group">
+                                <input type="text" id="filter_rfq_id" name="filter_rfq_id" class="form-control" placeholder="Enter RFQ ID">
+                                <button type="button" id="open-rfq-button" class="btn btn-primary">Open RFQ</button>
+                            </div>
+                        </div>
+
+                        <div class="col-md-3">
+                            <label class="form-label" for="filter_customer">Customer</label>
+                            <select id="filter_customer" name="filter_customer" class="form-select">
+                                <option value="">All Customers</option>
+                                {% for customer in customers %}
+                                    <option value="{{ customer.id }}">{{ customer.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="col-md-3">
+                            <label class="form-label" for="filter_salesperson">Salesperson</label>
+                            <select id="filter_salesperson" name="filter_salesperson" class="form-select">
+                                <option value="">All Salespeople</option>
+                                {% for salesperson in salespeople %}
+                                    <option value="{{ salesperson.id }}">{{ salesperson.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="col-md-3">
+                            <label class="form-label" for="part-number-filter">Part Number</label>
+                            <div class="input-group">
+                                <input type="hidden" id="active-tab-status" name="active_tab_status" value="">
+                                <input type="text" id="part-number-filter" name="part_number" class="form-control" placeholder="Search by Part Number" value="{{ request.args.get('part_number', '') }}">
+                                <button type="submit" class="btn btn-primary">Apply Filters</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Bulk Actions Card -->
+            <div class="card mb-4 shadow p-3 border-0">
+                <div class="card-header">
+                    <strong>Bulk Actions</strong>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-auto">
+                            <div class="input-group">
+                                <label class="input-group-text" for="bulk-supplier">Apply to all:</label>
+                                <select id="bulk-supplier" class="form-select">
+                                    <option value="">Select Supplier</option>
+                                    {% for supplier in suppliers %}
+                                        <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <button id="send-to-all" class="btn btn-primary">Send all</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RFQ Lines Card -->
+            <div class="card shadow p-3 border-0">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong>{% if rfq %}RFQ #{{ rfq.id }} Lines{% else %}All RFQ Lines{% endif %}</strong>
+                </div>
+                <div class="card-body">
+                    <!-- Status Tabs -->
+                    <ul class="nav nav-tabs mb-3" role="tablist">
+                        {% for status in statuses %}
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link tab-button" data-bs-toggle="tab" data-tab="{{ status.status }}" role="tab">
+                                    {{ status.status }} ({{ grouped_lines[status.status]|length }})
+                                </button>
+                            </li>
+                        {% endfor %}
+                    </ul>
+
+                    <!-- Tab Content -->
+                    <div class="tab-content">
+                        {% for status in statuses %}
+                        <div id="{{ status.status|replace(' ', '-') }}" class="tab-pane fade" role="tabpanel">
+                            <div class="table-responsive">
+                                <table class="table table-striped table-hover">
+                                    <thead>
+                                        <tr>
+                                            {% if not rfq %}<th>RFQ ID</th>{% endif %}
+                                            <th>Customer</th>
+                                            <th>Line Number</th>
+                                            <th>Part Number</th>
+                                            <th>Quantity</th>
+                                            <th>Manufacturer</th>
+                                            <th>Sent to Suppliers</th>
+                                            <th>Send to Supplier</th>
+                                            <th>Cost Currency</th>
+                                            <th>Cost</th>
+                                            <th>Supplier Lead Time</th>
+                                            <th>Internal Notes</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for line in grouped_lines[status.status] %}
+                                        <tr class="rfq-line" data-part-number="{{ line.part_number }}" data-line-id="{{ line.id }}" data-rfq-id="{{ line.rfq_id }}">
+                                            {% if not rfq %}<td>{{ line.rfq_id }}</td>{% endif %}
+                                            <td>{{ line.customer_name }}</td>
+                                            <td>{{ line.line_number }}</td>
+                                            <td>{{ line.part_number }}</td>
+                                            <td>{{ line.quantity }}</td>
+                                            <td>{{ line.manufacturer }}</td>
+                                            <td class="sent-suppliers">
+                                                {% if line.sent_suppliers %}
+                                                    {{ line.sent_suppliers.split(',') | join(', ') }}
+                                                {% else %}
+                                                    Not sent
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                <div class="input-group">
+                                                    <select class="form-select supplier-select" id="supplier-{{ line.id }}">
+                                                        <option value="">Select Supplier</option>
+                                                        {% for supplier in suppliers %}
+                                                            <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                                                        {% endfor %}
+                                                    </select>
+                                                    <button class="btn btn-secondary send-button">Send</button>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <select class="form-select currency-select">
+                                                    <option value="EUR">EUR</option>
+                                                    <option value="USD">USD</option>
+                                                    <option value="GBP">GBP</option>
+                                                </select>
+                                            </td>
+                                            <td><input type="number" class="form-control cost-input" step="0.01"></td>
+                                            <td><input type="number" class="form-control lead-time-input"></td>
+                                            <td><input type="text" class="form-control notes-input"></td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Requisition Modal -->
+<div class="modal fade" id="requisitionPopup" tabindex="-1" aria-labelledby="requisitionModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="requisitionModalLabel">Requisition Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="requisitionDetails"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button id="emailRequisition" class="btn btn-primary">Email Requisition</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Initialize all Bootstrap tooltips
+var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+    return new bootstrap.Tooltip(tooltipTriggerEl)
+})
+
+// Initialize all Bootstrap popovers
+var popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'))
+var popoverList = popoverTriggerList.map(function (popoverTriggerEl) {
+    return new bootstrap.Popover(popoverTriggerEl)
+})
+
+var rfqId = {{ rfq.id | default('null') | tojson | safe }};
+
+
+    document.addEventListener('DOMContentLoaded', function() {
+    console.log("JavaScript is running");
+    console.log("Grouped Lines Data keys:", Object.keys(groupedLinesData));
+
+    // Properly query elements with null checks
+    const partNumberFilter = document.getElementById('part-number-filter');
+    const sendToAllButton = document.getElementById('send-to-all');
+    const bulkSupplierSelect = document.getElementById('bulk-supplier');
+    const requisitionPopup = document.getElementById('requisitionPopup');
+    const activeTabStatus = document.getElementById('active-tab-status');
+    const emailRequisitionButton = document.getElementById('emailRequisition');
+
+    // Log element findings
+    console.log("Part Number Filter:", partNumberFilter);
+    console.log("Send To All Button:", sendToAllButton);
+    console.log("Bulk Supplier Select:", bulkSupplierSelect);
+    console.log("Requisition Popup:", requisitionPopup);
+    console.log("Active Tab Status:", activeTabStatus);
+    console.log("Email Requisition Button:", emailRequisitionButton);
+
+    // Initialize Bootstrap Modal
+    const requisitionModal = new bootstrap.Modal(requisitionPopup, {
+        keyboard: false
+    });
+
+    // Prevent default form submissions
+    document.querySelectorAll('form').forEach(form => {
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+        });
+    });
+
+    // Tab functionality
+    document.querySelectorAll('.tab-button').forEach(function(button) {
+        button.addEventListener('click', function(event) {
+            event.preventDefault();
+            const statusName = this.getAttribute('data-tab');
+            openTab(statusName);
+        });
+    });
+
+    // Open first tab by default
+    const firstTabButton = document.querySelector('.tab-button');
+    if (firstTabButton) {
+        firstTabButton.click();
+    }
+
+    // Filter functionality
+    if (partNumberFilter) {
+        partNumberFilter.addEventListener('input', filterLines);
+    }
+
+    // Send to all functionality
+    if (sendToAllButton) {
+        sendToAllButton.addEventListener('click', function(event) {
+            event.preventDefault();
+            createTopLevelRequisitionAndSendToAll();
+        });
+    }
+
+    // Setup line event listeners
+    setupLineEventListeners();
+
+    // Function definitions
+    function openTab(statusName) {
+        console.log("Opening tab:", statusName);
+        const normalizedStatusName = statusName.replace(/\s+/g, '-');
+
+        // Hide all tab content
+        document.querySelectorAll('.tab-pane').forEach(tab => {
+            tab.classList.remove('show', 'active');
+        });
+
+        // Remove active class from all tab buttons
+        document.querySelectorAll('.tab-button').forEach(btn => {
+            btn.classList.remove('active');
+        });
+
+        // Show selected tab
+        const selectedTab = document.getElementById(normalizedStatusName);
+        if (selectedTab) {
+            selectedTab.classList.add('show', 'active');
+        }
+
+        // Activate selected button
+        const selectedButton = document.querySelector(`.tab-button[data-tab="${statusName}"]`);
+        if (selectedButton) {
+            selectedButton.classList.add('active');
+        }
+
+        // Update active tab status
+        if (activeTabStatus) {
+            activeTabStatus.value = statusName;
+        }
+    }
+
+    function filterLines() {
+        const filter = partNumberFilter.value.toUpperCase();
+        const activeTabStatusValue = activeTabStatus ? activeTabStatus.value : '';
+        const normalizedStatusName = activeTabStatusValue.replace(/\s+/g, '-');
+
+        console.log("Filtering with:", filter, "in tab:", normalizedStatusName);
+
+        const lines = document.querySelectorAll(`#${normalizedStatusName} .rfq-line`);
+        lines.forEach(line => {
+            const partNumber = line.getAttribute('data-part-number').toUpperCase();
+            line.style.display = partNumber.includes(filter) ? "" : "none";
+        });
+    }
+
+    function setupLineEventListeners() {
+        console.log("Setting up line event listeners");
+        const rfqLines = document.querySelectorAll('.rfq-line');
+        console.log("Found RFQ lines:", rfqLines.length);
+
+        rfqLines.forEach(line => {
+            const lineId = line.getAttribute('data-line-id');
+
+            const supplierSelect = line.querySelector('.supplier-select');
+            const sendButton = line.querySelector('.send-button');
+            const currencySelect = line.querySelector('.currency-select');
+            const costInput = line.querySelector('.cost-input');
+            const leadTimeInput = line.querySelector('.lead-time-input');
+            const notesInput = line.querySelector('.notes-input');
+
+            if (supplierSelect) {
+                supplierSelect.addEventListener('change', function() {
+                    sendToSupplier(lineId, this.value);
+                });
+            }
+
+            if (sendButton) {
+                sendButton.addEventListener('click', function() {
+                    const supplierId = supplierSelect ? supplierSelect.value : null;
+                    if (supplierId) {
+                        sendToSupplier(lineId, supplierId);
+                    }
+                });
+            }
+
+            if (currencySelect) {
+                currencySelect.addEventListener('change', function() {
+                    updateLineField(lineId, 'cost_currency', this.value);
+                });
+            }
+
+            if (costInput) {
+                costInput.addEventListener('change', function() {
+                    updateLineField(lineId, 'cost', this.value);
+                });
+            }
+
+            if (leadTimeInput) {
+                leadTimeInput.addEventListener('change', function() {
+                    updateLineField(lineId, 'supplier_lead_time', this.value);
+                });
+            }
+
+            if (notesInput) {
+                notesInput.addEventListener('change', function() {
+                    updateLineField(lineId, 'note', this.value);
+                });
+            }
+        });
+    }
+
+    // Rest of your existing functions (sendToSupplier, updateLineField, etc.)
+    // remain the same but with proper error handling
+
+    function sendToSupplier(lineId, supplierId) {
+        if (!supplierId) {
+            alert("Please select a supplier");
+            return;
+        }
+
+        fetch('/rfqs/generate_single_requisition', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ line_id: lineId, supplier_id: supplierId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Requisition generated for ' + data.supplier_name);
+                refreshTable();
+            } else {
+                alert('Error generating requisition: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while generating the requisition');
+        });
+    }
+
+    function updateLineField(lineId, field, value) {
+        if (!lineId || !field) {
+            console.error('Missing required parameters for updateLineField');
+            return;
+        }
+
+        fetch('/update_rfq_line_field', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ line_id: lineId, field_name: field, field_value: value })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                console.error('Error updating field:', data.error);
+                alert('Error updating field: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while updating the field');
+        });
+    }
+
+    function refreshTable() {
+        fetch(window.location.href)
+            .then(response => response.text())
+            .then(html => {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const newContainer = doc.getElementById('rfq-container');
+
+                if (newContainer) {
+                    document.getElementById('rfq-container').innerHTML = newContainer.innerHTML;
+                    setupLineEventListeners();
+                } else {
+                    console.error('Could not find rfq-container in response');
+                }
+            })
+            .catch(error => {
+                console.error('Error refreshing table:', error);
+                alert('Error refreshing table');
+            });
+    }
+});
+
+    function emailRequisition() {
+        console.log("emailRequisition called");
+        console.log("window.requisitionData:", JSON.stringify(window.requisitionData, null, 2));
+        console.log("window.topLevelRequisitionId:", window.topLevelRequisitionId);
+
+        if (window.requisitionData && window.topLevelRequisitionId) {
+            sendRequisitionEmail(window.requisitionData, window.topLevelRequisitionId);
+        } else {
+            console.error('Requisition data or top-level RFQ ID not available');
+            alert('Error: Requisition data or top-level RFQ ID not available');
+        }
+    }
+
+    function sendRequisitionEmail(data, topLevelRequisitionId) {
+    console.log("sendRequisitionEmail called with data:", JSON.stringify(data, null, 2));
+    console.log("topLevelRequisitionId:", topLevelRequisitionId);
+
+    const usedTopLevelRequisitionId = topLevelRequisitionId || 'Unknown';
+
+    const subject = `Requisition for RFQ #${usedTopLevelRequisitionId} for ${data.supplier_name}`;
+
+    // Format the part numbers and quantities
+    const partNumberQuantityList = data.part_number_quantities.map(([part, qtys]) =>
+        `  ${part}: ${qtys.join(', ')}`
+    ).join('\n');
+
+    const body = `
+Hello ${data.contact_name},
+
+Please find the requisition details below:
+
+Requisition Number: ${usedTopLevelRequisitionId}
+
+Part Numbers and Quantities (price break points):
+${partNumberQuantityList}
+
+Please provide your best pricing for each quantity point listed above.
+
+Best regards,
+The Sourcing Team
+    `;
+
+    console.log("Email subject:", subject);
+    console.log("Email body:", body);
+
+    window.location.href = `mailto:${data.contact_email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+</script>
+
+{% endblock %}
+
+

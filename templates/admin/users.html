@@ -1,0 +1,65 @@
+<!-- templates/admin/users.html -->
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h1>User Management</h1>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Username</th>
+                <th>User Type</th>
+                <th>Permissions</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for user in users %}
+            <tr>
+                <td>{{ user.username }}</td>
+                <td>{{ user.user_type }}</td>
+                <td>
+                    {% set perms = user.permissions if user.permissions is not none else 0 %}
+                    {% if perms|bit_and(Permission.READ) %}READ{% endif %}
+                    {% if perms|bit_and(Permission.WRITE) %}, WRITE{% endif %}
+                    {% if perms|bit_and(Permission.ADMIN) %}, ADMIN{% endif %}
+                    {% if not perms %}
+                        Default permissions for {{ user.user_type }}
+                    {% endif %}
+                </td>
+                <td>
+                    <form action="{{ url_for('admin.update_permissions', user_id=user.id) }}" method="POST" class="d-inline">
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="read{{ user.id }}" name="read"
+                                   {% if perms|bit_and(Permission.READ) %}checked{% endif %}>
+                            <label class="form-check-label" for="read{{ user.id }}">Read</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="write{{ user.id }}" name="write"
+                                   {% if perms|bit_and(Permission.WRITE) %}checked{% endif %}>
+                            <label class="form-check-label" for="write{{ user.id }}">Write</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="admin{{ user.id }}" name="admin"
+                                   {% if perms|bit_and(Permission.ADMIN) %}checked{% endif %}>
+                            <label class="form-check-label" for="admin{{ user.id }}">Admin</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+    <input type="checkbox" class="form-check-input" id="viewCustomers{{ user.id }}" name="view_customers"
+           {% if perms|bit_and(Permission.VIEW_CUSTOMERS) %}checked{% endif %}>
+    <label class="form-check-label" for="viewCustomers{{ user.id }}">View Others' Customers</label>
+</div>
+<div class="form-check form-check-inline">
+    <input type="checkbox" class="form-check-input" id="editCustomers{{ user.id }}" name="edit_customers"
+           {% if perms|bit_and(Permission.EDIT_CUSTOMERS) %}checked{% endif %}>
+    <label class="form-check-label" for="editCustomers{{ user.id }}">Edit Others' Customers</label>
+</div>
+                        <button type="submit" class="btn btn-primary btn-sm">Update</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

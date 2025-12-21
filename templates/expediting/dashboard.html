@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+
+    <h2 class="fw-bold mb-1">Expediting Dashboard</h2>
+    <p class="text-muted">See which orders are in danger of not being fulfilled</p>
+    <br>
+
+    <!-- Status Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card bg-success text-white">
+                <div class="card-body">
+                    <h5 class="card-title">Stock Shortage <i class="fas fa-exclamation-circle text-warning"></i></h5>
+                    <p class="card-text display-4">{{ status_counts['Stock Shortage'] }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-success text-white" style="opacity: 0.9;">
+                <div class="card-body">
+                    <h5 class="card-title">PO After Ship Date <i class="fas fa-clock text-warning"></i></h5>
+                    <p class="card-text display-4">{{ status_counts['PO After Ship Date'] }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-success text-white" style="opacity: 0.8;">
+                <div class="card-body">
+                    <h5 class="card-title">Tight Timeline <i class="fas fa-hourglass-half text-light"></i></h5>
+                    <p class="card-text display-4">{{ status_counts['Tight Timeline'] }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-success text-white" style="opacity: 0.7;">
+                <div class="card-body">
+                    <h5 class="card-title">Due Soon <i class="fas fa-calendar-alt text-light"></i></h5>
+                    <p class="card-text display-4">{{ status_counts['Due Soon'] }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Card -->
+    <div class="card mb-4">
+        <div class="card-header bg-light">
+            <h5 class="mb-0">Filter Options</h5>
+        </div>
+        <div class="card-body">
+            <form method="GET" action="{{ url_for('expediting.expedite_dashboard') }}" class="row g-3">
+                <div class="col-md-4">
+                    <label for="days" class="form-label">Days to Delivery:</label>
+                    <input type="number" id="days" name="days" class="form-control" value="{{ days }}" min="1" max="90">
+                    <div class="form-text">Show orders due within this many days</div>
+                </div>
+                <div class="col-md-4">
+                    <label for="customer_id" class="form-label">Customer:</label>
+                    <select id="customer_id" name="customer_id" class="form-select">
+                        <option value="">All Customers</option>
+                        {% for customer in customers %}
+                            <option value="{{ customer.id }}" {% if customer_id == customer.id|string %}selected{% endif %}>
+                                {{ customer.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label for="threshold" class="form-label">Tight Timeline Threshold (days):</label>
+                    <input type="number" id="threshold" name="threshold" class="form-control" value="{{ threshold }}" min="1" max="30">
+                    <div class="form-text">Days between PO delivery and ship date to be considered "tight"</div>
+                </div>
+                <div class="col-12">
+                    <button type="submit" class="btn btn-success">Apply Filters</button>
+                    <a href="{{ url_for('expediting.expedite_dashboard') }}" class="btn btn-secondary">Reset Filters</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Expedite Orders Table -->
+    <div class="card">
+        <div class="card-header bg-light">
+            <h5 class="mb-0">Orders Requiring Attention</h5>
+        </div>
+        <div class="card-body table-container p-0">
+            {% if expedite_orders %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead class="table-success">
+                            <tr>
+                                <th>Status</th>
+                                <th>Sales Order</th>
+                                <th>Customer</th>
+                                <th>Part Number</th>
+                                <th>Ship Date</th>
+                                <th>Current Stock</th>
+                                <th>Required Qty</th>
+                                <th>PO Delivery</th>
+                                <th>Supplier</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for order in expedite_orders %}
+                                <tr class="{% if order.expedite_reason == 'Stock Shortage' %}border-start border-5 border-success{% elif order.expedite_reason == 'PO After Ship Date' %}border-start border-4 border-success{% elif order.expedite_reason == 'Tight Timeline' %}border-start border-3 border-success{% elif order.expedite_reason == 'Due Soon' %}border-start border-2 border-success{% endif %}">
+                                    <td>
+                                        {% if order.expedite_reason == 'Stock Shortage' %}
+                                            <span class="badge bg-success">
+                                                <i class="fas fa-exclamation-circle text-warning me-1"></i> Stock Shortage
+                                            </span>
+                                        {% elif order.expedite_reason == 'PO After Ship Date' %}
+                                            <span class="badge bg-success" style="opacity: 0.9;">
+                                                <i class="fas fa-clock text-warning me-1"></i> PO After Ship Date
+                                            </span>
+                                        {% elif order.expedite_reason == 'Tight Timeline' %}
+                                            <span class="badge bg-success" style="opacity: 0.8;">
+                                                <i class="fas fa-hourglass-half me-1"></i> Tight Timeline
+                                            </span>
+                                        {% elif order.expedite_reason == 'Due Soon' %}
+                                            <span class="badge bg-success" style="opacity: 0.7;">
+                                                <i class="fas fa-calendar-alt me-1"></i> Due Soon
+                                            </span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="{{ url_for('expediting.expedite_details', sales_order_id=order.sales_order_id) }}" class="text-success">
+                                            {{ order.sales_order_ref }} ({{ order.line_number }})
+                                        </a>
+                                    </td>
+                                    <td>{{ order.customer_name }}</td>
+                                    <td>
+                                        <a href="{{ url_for('parts.view_part_number', base_part_number=order.base_part_number) }}" class="text-success">
+                                            {{ order.base_part_number }}
+                                        </a>
+                                    </td>
+                                    <td>{{ order.ship_date }}</td>
+                                    <td class="{% if order.current_stock is not none and order.current_stock < order.quantity %}fw-bold{% endif %}">
+                                        {% if order.current_stock is not none and order.current_stock < order.quantity %}
+                                            <span class="text-success">{{ order.current_stock|default(0) }}</span>
+                                            <i class="fas fa-exclamation-triangle text-warning ms-1"></i>
+                                        {% else %}
+                                            {{ order.current_stock|default(0) }}
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ order.quantity }}</td>
+                                    <td>
+                                        {% if order.po_delivery_date %}
+                                            {{ order.po_delivery_date }}
+                                            {% if order.ship_date and order.po_delivery_date > order.ship_date %}
+                                                <i class="fas fa-exclamation-triangle text-warning ms-1"></i>
+                                            {% endif %}
+                                        {% else %}
+                                            <span class="text-muted">Not scheduled</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if order.supplier_name %}
+                                            {{ order.supplier_name }}
+                                        {% else %}
+                                            <span class="text-muted">No PO</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="btn-group">
+                                            <a href="{{ url_for('sales_orders.edit_sales_order', sales_order_id=order.sales_order_id) }}" class="btn btn-sm btn-outline-success">
+                                                <i class="fas fa-edit"></i> SO
+                                            </a>
+                                            {% if order.purchase_order_id %}
+                                                <a href="{{ url_for('purchase_orders.edit_purchase_order', purchase_order_id=order.purchase_order_id) }}" class="btn btn-sm btn-outline-success">
+                                                    <i class="fas fa-truck"></i> PO
+                                                </a>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i> No orders require expediting at this time!
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

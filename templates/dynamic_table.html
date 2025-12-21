@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if error_message %}
+<div class="alert alert-danger">
+    {{ error_message }}
+</div>
+{% endif %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script type="module">
+    import ChartUtils from '/static/js/chart-utils.js';
+
+    document.addEventListener("DOMContentLoaded", function() {
+        let currentSqlQuery = '';
+        const queryForm = document.getElementById('query-form');
+        const saveForm = document.getElementById('save-form');
+        let currentColumns = [];
+        let currentRows = [];
+
+        function updateSqlQueryDisplay(query) {
+            const sqlQueryInput = document.getElementById('save_sql_query');
+            const debugDisplay = document.getElementById('current-sql-query');
+
+            if (sqlQueryInput) {
+                sqlQueryInput.value = query;
+            }
+            if (debugDisplay) {
+                debugDisplay.textContent = query || 'No SQL query set';
+            }
+        }
+
+        function updateChartFromDropdowns() {
+            if (!currentRows.length) return;
+
+            const labelCol1 = document.getElementById('label_column_1').value;
+            const labelCol2 = document.getElementById('label_column_2').value;
+            const valueCol1 = document.getElementById('value_column_1').value;
+            const valueCol2 = document.getElementById('value_column_2').value;
+            const chartType = document.getElementById('chart_type').value;
+
+            const labels = labelCol2
+                ? currentRows.map(row => `${row[labelCol1]} - ${row[labelCol2]}`)
+                : currentRows.map(row => String(row[labelCol1]));
+
+            const datasets = [];
+
+            // First dataset
+            datasets.push({
+                label: valueCol1,
+                data: currentRows.map(row => parseFloat(row[valueCol1]) || 0)
+            });
+
+            // Optional second dataset
+            if (valueCol2 && valueCol2 !== '') {
+                datasets.push({
+                    label: valueCol2,
+                    data: currentRows.map(row => parseFloat(row[valueCol2]) || 0)
+                });
+            }
+
+            const canvas = document.getElementById('dynamicChart');
+            ChartUtils.createChart(canvas, {
+                type: chartType,
+                data: {
+                    labels: labels,
+                    datasets: datasets
+                }
+            });
+        }
+
+        function handleQuerySubmit(e) {
+            e.preventDefault();
+
+            document.querySelector('#result-container').innerHTML = 'Loading...';
+
+            fetch("/dynamic/dynamic_query", {
+                method: "POST",
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json'
+                },
+                body: new FormData(this)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    currentSqlQuery = data.sql_query;
+                    currentColumns = data.columns;
+                    currentRows = data.rows;
+
+                    updateSqlQueryDisplay(currentSqlQuery);
+                    updateTable(data.columns, data.rows);
+                    document.querySelector('.customize-section').style.display = 'block';
+                    updateColumnDropdowns(data.columns);
+                    updateChartFromDropdowns();
+                } else {
+                    throw new Error(data.error || "Unknown error occurred");
+                }
+            })
+            .catch(error => {
+                console.error("Error:", error);
+                document.querySelector('#result-container').innerHTML =
+                    `<div class="alert alert-danger">Error: ${error.message}</div>`;
+            });
+        }
+
+        function handleSaveSubmit(e) {
+            e.preventDefault();
+
+            const formData = new FormData(this);
+            const labelCol1 = formData.get('label_column_1');
+            const valueCol1 = formData.get('value_column_1');
+            const queryName = formData.get('query_name');
+
+            if (!labelCol1 || !valueCol1 || !queryName || !currentSqlQuery) {
+                alert('Please fill in all required fields');
+                return;
+            }
+
+            fetch("/dynamic/dynamic_query", {
+                method: "POST",
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Chart saved successfully!');
+                    window.location.href = '/dynamic/dashboard';
+                } else {
+                    alert('Error saving chart: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error saving chart: ' + error.message);
+            });
+        }
+
+       function updateTable(columns, rows) {
+    if (!columns.length || !rows.length) {
+        throw new Error("No data returned from query");
+    }
+
+    const tableHTML = `
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped">
+                <thead class="table-light">
+                    <tr>${columns.map(col => `<th>${col}</th>`).join('')}</tr>
+                </thead>
+                <tbody>
+                    ${rows.map(row => `
+                        <tr>${columns.map(col => {
+                            if (col === 'customer_id' && row[col] !== null) {
+    return `<td><a href="/customers/${row[col]}/edit">${row[col]}</a></td>`;
+} else {
+    return `<td>${row[col]}</td>`;
+}
+
+                        }).join('')}</tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    document.querySelector('#result-container').innerHTML = tableHTML;
+}
+
+
+        function updateColumnDropdowns(columns) {
+            const labelSelect1 = document.getElementById('label_column_1');
+            const labelSelect2 = document.getElementById('label_column_2');
+            const valueSelect1 = document.getElementById('value_column_1');
+            const valueSelect2 = document.getElementById('value_column_2');
+
+            [labelSelect1, labelSelect2, valueSelect1, valueSelect2].forEach(select => {
+                select.innerHTML = '';
+            });
+
+            labelSelect2.add(new Option('None', ''));
+            valueSelect2.add(new Option('None', ''));
+
+            columns.forEach(col => {
+                labelSelect1.add(new Option(col, col));
+                labelSelect2.add(new Option(col, col));
+                valueSelect1.add(new Option(col, col));
+                valueSelect2.add(new Option(col, col));
+            });
+        }
+
+        // Event listeners
+        queryForm.addEventListener("submit", handleQuerySubmit);
+        saveForm.addEventListener("submit", handleSaveSubmit);
+
+        ['label_column_1', 'label_column_2', 'value_column_1',
+         'value_column_2', 'chart_type'].forEach(id => {
+            document.getElementById(id).addEventListener('change', updateChartFromDropdowns);
+        });
+    });
+
+
+</script>
+<div class="container-fluid mt-4">
+    <div class="card mb-4 shadow-sm border-0">
+        <div class="card-header">
+            <strong>Dynamic Database Query</strong>
+        </div>
+        <div class="card-body">
+            <!-- Query Input Field Form -->
+            <form action="/dynamic/dynamic_query" method="POST" class="mb-3" id="query-form">
+                <div class="mb-3">
+                    <label for="query" class="form-label">Enter or modify your query:</label>
+                    <input type="text" id="query" name="query" class="form-control" value="{{ request.form.query }}"
+                           placeholder="e.g., Show me all customers who requested Amphenol parts" required>
+                </div>
+                <button type="submit" name="run_query" id="run_query" class="btn btn-primary">Run Query</button>
+            </form>
+
+            <!-- Results container -->
+            <div id="result-container"></div>
+
+            <!-- Customize section -->
+            <div class="customize-section" style="display: none;">
+                <div class="mb-3 mt-5" style="height: 400px;">
+                    <h5>Dynamic Chart</h5>
+                    <canvas id="dynamicChart"></canvas>
+                </div>
+
+
+
+                <!-- Customize form -->
+                <form action="/dynamic/dynamic_query" method="POST" class="mt-4" id="save-form">
+                    <input type="hidden" name="sql_query" id="save_sql_query">
+                    <input type="hidden" name="save_chart" value="1">
+
+                    <div class="mb-3">
+                        <label for="chart_type" class="form-label">Select Chart Type:</label>
+                        <select id="chart_type" name="chart_type" class="form-select" required>
+                            <option value="bar">Bar Chart</option>
+                            <option value="line">Line Chart</option>
+                            <option value="pie">Pie Chart</option>
+                            <option value="scatter">Scatter Plot</option>
+                        </select>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="label_column_1" class="form-label">Primary Label Column (Required):</label>
+                                <select id="label_column_1" name="label_column_1" class="form-select" required>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="label_column_2" class="form-label">Secondary Label Column (Optional):</label>
+                                <select id="label_column_2" name="label_column_2" class="form-select">
+                                    <option value="">None</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="value_column_1" class="form-label">Primary Value Column (Required):</label>
+                                <select id="value_column_1" name="value_column_1" class="form-select" required>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="value_column_2" class="form-label">Secondary Value Column (Optional):</label>
+                                <select id="value_column_2" name="value_column_2" class="form-select">
+                                    <option value="">None</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                <!-- Debug display -->
+                <div class="mb-3 mt-4 border rounded p-3">
+                    <small class="text-muted d-block mb-2">Current SQL Query:</small>
+                    <pre id="current-sql-query" style="white-space: pre-wrap; font-size: 0.8em; background-color: #f8f9fa; padding: 10px; border-radius: 4px; margin-bottom: 0;"></pre>
+                </div>
+                    <div class="mb-3">
+                        <label for="query_name" class="form-label">Query Name:</label>
+                        <input type="text" id="query_name" name="query_name" class="form-control"
+                               placeholder="Enter a name for this query" required>
+                    </div>
+
+                    <button type="submit" class="btn btn-success">Save Chart and Query</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+{% endblock %}

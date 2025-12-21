@@ -1,0 +1,2153 @@
+<!-- dashboard -->
+
+{% extends "base.html" %}
+
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12 d-flex justify-content-between align-items-center">
+            <div>
+                <h2 class="fw-bold mb-1">Dashboard</h2>
+                <p class="text-muted">Monitor and analyze your business metrics</p>
+            </div>
+            <button type="button" class="btn btn-primary" onclick="addNewPanel()">
+                <i class="bi bi-plus-lg me-1"></i> Add Panel
+            </button>
+        </div>
+    </div>
+</div>
+<!-- Modify your dashboard cards to use the new color classes -->
+<div class="row mb-4 mt-2">
+    <div class="col-md-3">
+        <div class="card metric-card international shadow-sm border-0">
+            <div class="card-body p-4">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <h6 class="text-muted fw-semibold">International Sales</h6>
+                    <span class="badge-primary p-2 rounded">
+                        <i class="bi bi-globe2"></i>
+                    </span>
+                </div>
+                <h2 class="card-title fw-bold mb-3">{{ '{:.1f}%'.format(international_sales_pct) if international_sales_pct else '0%' }}</h2>
+                <div class="progress mb-2" style="height: 8px; border-radius: 4px; background: rgba(255,255,255,0.3);">
+                    <div class="progress-bar" role="progressbar"
+                         style="width: {{ international_sales_pct }}%; border-radius: 4px; background: rgba(255,255,255,0.7);"
+                         aria-valuenow="{{ international_sales_pct }}"
+                         aria-valuemin="0"
+                         aria-valuemax="100">
+                    </div>
+                </div>
+                <small class="text-muted mt-2 d-block">
+                    <span class="fw-semibold">{{ '{:,.2f}'.format(international_sales) }} €</span> of {{ '{:,.2f}'.format(total_sales) }} €
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card metric-card monthly shadow-sm border-0">
+            <div class="card-body p-4">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <h6 class="text-muted fw-semibold">Monthly Sales</h6>
+                    <span class="badge-info p-2 rounded">
+                        <i class="bi bi-calendar-month"></i>
+                    </span>
+                </div>
+                <h2 class="card-title fw-bold mb-2">{{ '{:,.2f}'.format(monthly_sales) }} €</h2>
+                <div class="d-flex align-items-center">
+                    <span class="badge {{ 'bg-success' if monthly_growth > 0 else 'bg-danger' }} me-2">
+                        <i class="bi {{ 'bi-arrow-up' if monthly_growth > 0 else 'bi-arrow-down' }}"></i>
+                        {{ '{:.1f}%'.format(monthly_growth|abs) }}
+                    </span>
+                    <small class="text-muted">vs last year</small>
+                </div>
+                <small class="text-muted mt-2 d-block">
+                    Last Year: <span class="fw-semibold">{{ '{:,.2f}'.format(monthly_sales_prev) }} €</span>
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card metric-card yearly shadow-sm border-0">
+            <div class="card-body p-4">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <h6 class="text-muted fw-semibold">Yearly Sales</h6>
+                    <span class="badge-warning p-2 rounded">
+                        <i class="bi bi-graph-up"></i>
+                    </span>
+                </div>
+                <h2 class="card-title fw-bold mb-2">{{ '{:,.2f}'.format(yearly_sales) }} €</h2>
+                <div class="d-flex align-items-center">
+                    <span class="badge {{ 'bg-success' if yearly_growth > 0 else 'bg-danger' }} me-2">
+                        <i class="bi {{ 'bi-arrow-up' if yearly_growth > 0 else 'bi-arrow-down' }}"></i>
+                        {{ '{:.1f}%'.format(yearly_growth|abs) }}
+                    </span>
+                    <small class="text-muted">vs last year</small>
+                </div>
+                <small class="text-muted mt-2 d-block">
+                    Last Year: <span class="fw-semibold">{{ '{:,.2f}'.format(yearly_sales_prev) }} €</span>
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card metric-card customers shadow-sm border-0">
+            <div class="card-body p-4">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <h6 class="text-muted fw-semibold">New Customers</h6>
+                    <span class="badge-success p-2 rounded">
+                        <i class="bi bi-people"></i>
+                    </span>
+                </div>
+                <h2 class="card-title fw-bold mb-2">{{ new_customer_count }}</h2>
+                <div class="d-flex align-items-center mb-2">
+                    <i class="bi bi-cash-coin me-2"></i>
+                    <span class="fw-semibold">{{ '{:,.2f}'.format(new_customer_sales) }} €</span>
+                </div>
+                <small class="text-muted">
+                    Revenue from new customers this year
+                </small>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Dashboard Grid -->
+<div class="row row-cols-1 row-cols-md-2 g-4">
+    {% for panel in panels %}
+<div class="col">
+    <div class="card shadow border-0 mb-3" id="panel-{{ panel.panel_order }}" data-query-id="{{ panel.query_id }}">
+<!-- Panel header with format option -->
+<div class="card-header d-flex justify-content-between align-items-center">
+    <div class="small px-3 pt-2 pb-0">
+        <strong class="h5 mb-0 fw-bold">{{ panel.panel_title }}</strong>
+    </div>
+    <div class="btn-group">
+        <button class="btn btn-secondary dropdown-toggle" data-bs-toggle="dropdown">
+            <i class="fas fa-cog"></i>
+        </button>
+        <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#" onclick="editPanel({{ panel.id }})">Edit</a></li>
+            <li><a class="dropdown-item" href="#" onclick="openEnhancedPanelEditor({{ panel.id }})">Format</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item text-danger" href="#" onclick="deletePanel({{ panel.id }})">Delete</a></li>
+        </ul>
+    </div>
+</div>
+<div class="card-body table-container p-0" style="height: 400px; overflow-y: auto;">
+    <div class="panel-content" style="height: 100%;">
+        <!-- Content will be dynamically loaded -->
+    </div>
+</div>
+    </div>
+</div>
+    {% endfor %}
+</div>
+
+<!-- Add/Edit Panel Modal -->
+<div class="modal fade" id="addPanelModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Configure Dashboard Panel</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="panelForm">
+                    <div class="mb-3">
+                        <label for="panelTitle" class="form-label">Panel Title</label>
+                        <input type="text" class="form-control" id="panelTitle" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="querySelect" class="form-label">Select Query</label>
+                        <select class="form-select" id="querySelect" required>
+                            <option value="">Choose a saved query...</option>
+                            {% for query in saved_queries %}
+                            <option value="{{ query.id }}"
+                                    data-chart-type="{{ query.chart_type }}"
+                                    data-label1="{{ query.label_column_1 }}"
+                                    data-label2="{{ query.label_column_2 }}"
+                                    data-value1="{{ query.value_column_1 }}"
+                                    data-value2="{{ query.value_column_2 }}">
+                                {{ query.query_name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="displayType" class="form-label">Display Type</label>
+                        <select class="form-select" id="displayType" required>
+                            <option value="table">Table</option>
+                            <option value="chart">Chart (As saved)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="panelOrder" class="form-label">Panel Position (1-4)</label>
+                        <input type="number" class="form-control" id="panelOrder" min="1" max="4" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" onclick="savePanel()">Save Panel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<script type="module">
+import ChartUtils from '/static/js/chart-utils.js';
+console.log("ChartUtils loaded:", ChartUtils);
+// Define global functions
+window.openEnhancedPanelEditor = function(panelId) {
+    // Find the panel's query_id
+    const panelElement = document.querySelector(`#panel-${panelId}`);
+    if (!panelElement) {
+        console.error('Panel element not found');
+        return;
+    }
+
+    const queryId = panelElement.getAttribute('data-query-id');
+    if (!queryId) {
+        console.error('Query ID not found for panel');
+        return;
+    }
+
+    // First, fetch both the panel and its data
+    Promise.all([
+        fetch(`/dashboard/panels/${panelId}`).then(res => res.json()),
+        fetch(`/dashboard/panel-data/${queryId}`).then(res => res.json())
+    ])
+    .then(([panel, panelData]) => {
+        // Parse existing configuration
+        const columnMappings = panel.column_mappings ? JSON.parse(panel.column_mappings) : {};
+        const formattingRules = panel.formatting_rules ? JSON.parse(panel.formatting_rules) : {};
+        const headerStyles = panel.header_styles ? JSON.parse(panel.header_styles) : {};
+        const summaryCalculation = panel.summary_calculation ? JSON.parse(panel.summary_calculation) : {};
+        const columnStyles = panel.column_styles ? JSON.parse(panel.column_styles) : {};
+
+        // Create modal with multiple tabs for different configuration aspects
+        const modal = document.createElement('div');
+        modal.className = 'modal panel-editor-modal';
+        modal.style.display = 'block';
+        modal.style.backgroundColor = 'rgba(0,0,0,0.4)';
+        modal.innerHTML = `
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Format Panel: ${panel.panel_title}</h5>
+                        <button type="button" class="btn-close modal-close"></button>
+                    </div>
+
+                    <div class="modal-body">
+                        <ul class="nav nav-tabs" id="formatterTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="general-tab" data-bs-toggle="tab"
+                                        data-bs-target="#general" type="button" role="tab"
+                                        aria-controls="general" aria-selected="true">General</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="columns-tab" data-bs-toggle="tab"
+                                        data-bs-target="#columns" type="button" role="tab"
+                                        aria-controls="columns" aria-selected="false">Column Headers</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="formatting-tab" data-bs-toggle="tab"
+                                        data-bs-target="#formatting" type="button" role="tab"
+                                        aria-controls="formatting" aria-selected="false">Data Formatting</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="styles-tab" data-bs-toggle="tab"
+                                        data-bs-target="#styles" type="button" role="tab"
+                                        aria-controls="styles" aria-selected="false">Styling</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="summary-tab" data-bs-toggle="tab"
+                                        data-bs-target="#summary" type="button" role="tab"
+                                        aria-controls="summary" aria-selected="false">Summary</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="column-styling-tab" data-bs-toggle="tab"
+                                        data-bs-target="#column-styling" type="button" role="tab"
+                                        aria-controls="column-styling" aria-selected="false">Column Styling</button>
+                            </li>
+                        </ul>
+
+                        <form id="enhance-panel-form" class="mt-3">
+                            <input type="hidden" id="enhance-panel-id" value="${panelId}">
+                            <input type="hidden" id="enhance-query-id" value="${queryId}">
+
+                            <div class="tab-content" id="formatterTabsContent">
+                                <!-- General Tab -->
+                                <div class="tab-pane fade show active" id="general" role="tabpanel" aria-labelledby="general-tab">
+                                    <div class="mb-3">
+                                        <label for="panel-height" class="form-label">Panel Height</label>
+                                        <input type="text" class="form-control" id="panel-height" name="panel_height"
+                                               value="${panel.panel_height || '400px'}" placeholder="400px">
+                                        <div class="form-text">Set panel height (e.g., 400px, 50vh)</div>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label for="panel-width" class="form-label">Panel Width</label>
+                                        <input type="text" class="form-control" id="panel-width" name="panel_width"
+                                               value="${panel.panel_width || '100%'}" placeholder="100%">
+                                        <div class="form-text">Set panel width (e.g., 100%, 500px)</div>
+                                    </div>
+                                </div>
+
+                                <!-- Column Headers Tab -->
+                                <div class="tab-pane fade" id="columns" role="tabpanel" aria-labelledby="columns-tab">
+                                    <p class="mb-3">Customize column display names</p>
+                                    <div class="column-mappings">
+                                        ${panelData.columns.map(col => `
+                                            <div class="mb-3">
+                                                <label for="col-map-${col}" class="form-label">${col}</label>
+                                                <input type="text" class="form-control"
+                                                       id="col-map-${col}"
+                                                       name="column_mappings[${col}]"
+                                                       value="${columnMappings[col] || col}">
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+
+                                <!-- Data Formatting Tab -->
+                                <div class="tab-pane fade" id="formatting" role="tabpanel" aria-labelledby="formatting-tab">
+                                    <p class="mb-3">Set formatting rules for numeric columns</p>
+                                    ${panelData.columns.map(col => `
+                                        <div class="mb-4 pb-3 border-bottom">
+                                            <label class="form-label fw-bold">${col}</label>
+                                            <select class="form-select mb-2 format-type-select"
+                                                    id="format-${col}"
+                                                    name="formatting_type_${col}"
+                                                    data-column="${col}">
+                                                <option value="none" ${!formattingRules[col] ? 'selected' : ''}>None</option>
+                                                <option value="currency" ${formattingRules[col]?.type === 'currency' ? 'selected' : ''}>Currency</option>
+                                                <option value="percentage" ${formattingRules[col]?.type === 'percentage' ? 'selected' : ''}>Percentage</option>
+                                                <option value="date" ${formattingRules[col]?.type === 'date' ? 'selected' : ''}>Date</option>
+                                            </select>
+
+                                            <div class="format-options" id="format-options-${col}" style="display: ${formattingRules[col] ? 'block' : 'none'}">
+                                                <!-- Currency Options -->
+                                                <div class="format-option currency-options row" style="display: ${formattingRules[col]?.type === 'currency' ? 'flex' : 'none'}">
+                                                    <div class="col-md-6">
+                                                        <label for="currency-symbol-${col}" class="form-label">Symbol</label>
+                                                        <input type="text" class="form-control"
+                                                               id="currency-symbol-${col}"
+                                                               name="currency_symbol_${col}"
+                                                               value="${formattingRules[col]?.symbol || '€'}"
+                                                               placeholder="€">
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label for="currency-decimals-${col}" class="form-label">Decimal Places</label>
+                                                        <input type="number" class="form-control"
+                                                               id="currency-decimals-${col}"
+                                                               name="currency_decimals_${col}"
+                                                               value="${formattingRules[col]?.decimals || 2}"
+                                                               min="0" max="10">
+                                                    </div>
+                                                </div>
+
+                                                <!-- Percentage Options -->
+                                                <div class="format-option percentage-options row" style="display: ${formattingRules[col]?.type === 'percentage' ? 'flex' : 'none'}">
+                                                    <div class="col-md-6">
+                                                        <label for="percentage-decimals-${col}" class="form-label">Decimal Places</label>
+                                                        <input type="number" class="form-control"
+                                                               id="percentage-decimals-${col}"
+                                                               name="percentage_decimals_${col}"
+                                                               value="${formattingRules[col]?.decimals || 1}"
+                                                               min="0" max="10">
+                                                    </div>
+                                                </div>
+
+                                                <!-- Date Options -->
+                                                <div class="format-option date-options row" style="display: ${formattingRules[col]?.type === 'date' ? 'flex' : 'none'}">
+                                                    <div class="col-md-6">
+                                                        <label for="date-format-${col}" class="form-label">Format</label>
+                                                        <select class="form-select" id="date-format-${col}" name="date_format_${col}">
+                                                            <option value="%Y-%m-%d" ${formattingRules[col]?.format === '%Y-%m-%d' ? 'selected' : ''}>2023-01-31</option>
+                                                            <option value="%m/%d/%Y" ${formattingRules[col]?.format === '%m/%d/%Y' ? 'selected' : ''}>01/31/2023</option>
+                                                            <option value="%d-%b-%Y" ${formattingRules[col]?.format === '%d-%b-%Y' ? 'selected' : ''}>31-Jan-2023</option>
+                                                            <option value="%B %d, %Y" ${formattingRules[col]?.format === '%B %d, %Y' ? 'selected' : ''}>January 31, 2023</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+
+                                <!-- Styling Tab -->
+                                <div class="tab-pane fade" id="styles" role="tabpanel" aria-labelledby="styles-tab">
+                                    <div class="row mb-3">
+                                        <div class="col-md-6">
+                                            <label for="background-color" class="form-label">Background Color</label>
+                                            <input type="color" class="form-control form-control-color"
+                                                   id="background-color" name="background_color"
+                                                   value="${panel.background_color || '#ffffff'}">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="text-color" class="form-label">Text Color</label>
+                                            <input type="color" class="form-control form-control-color"
+                                                   id="text-color" name="text_color"
+                                                   value="${panel.text_color || '#000000'}">
+                                        </div>
+                                    </div>
+
+                                    <h6 class="mt-4">Header Styles</h6>
+                                    <div class="row">
+                                        <div class="col-md-4">
+                                            <label for="header-bg-color" class="form-label">Header Background</label>
+                                            <input type="color" class="form-control form-control-color"
+                                                   id="header-bg-color" name="header_bg_color"
+                                                   value="${headerStyles.backgroundColor || '#f8f9fa'}">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="header-text-color" class="form-label">Header Text Color</label>
+                                            <input type="color" class="form-control form-control-color"
+                                                   id="header-text-color" name="header_text_color"
+                                                   value="${headerStyles.color || '#000000'}">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label for="header-font-weight" class="form-label">Header Font Weight</label>
+                                            <select class="form-select" id="header-font-weight" name="header_font_weight">
+                                                <option value="normal" ${headerStyles.fontWeight === 'normal' ? 'selected' : ''}>Normal</option>
+                                                <option value="bold" ${headerStyles.fontWeight === 'bold' ? 'selected' : ''}>Bold</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Summary Calculations Tab -->
+                                <div class="tab-pane fade" id="summary" role="tabpanel" aria-labelledby="summary-tab">
+                                    <p class="mb-3">Add summary calculations to numeric columns</p>
+                                    <div class="row">
+                                        ${panelData.columns.map(col => `
+                                            <div class="col-md-4 mb-3">
+                                                <label for="summary-${col}" class="form-label">${col}</label>
+                                                <select class="form-select" id="summary-${col}" name="summary_calculation[${col}]">
+                                                    <option value="none" ${!summaryCalculation[col] ? 'selected' : ''}>None</option>
+                                                    <option value="sum" ${summaryCalculation[col] === 'sum' ? 'selected' : ''}>Sum</option>
+                                                    <option value="avg" ${summaryCalculation[col] === 'avg' ? 'selected' : ''}>Average</option>
+                                                    <option value="min" ${summaryCalculation[col] === 'min' ? 'selected' : ''}>Minimum</option>
+                                                    <option value="max" ${summaryCalculation[col] === 'max' ? 'selected' : ''}>Maximum</option>
+                                                    <option value="count" ${summaryCalculation[col] === 'count' ? 'selected' : ''}>Count</option>
+                                                </select>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+
+                                <!-- Column Styling Tab -->
+                                <div class="tab-pane fade" id="column-styling" role="tabpanel" aria-labelledby="column-styling-tab">
+                                    <p class="mb-3">Apply styling to specific columns</p>
+                                    ${panelData.columns.map(col => `
+                                        <div class="mb-4 pb-3 border-bottom">
+                                            <label class="form-label fw-bold">${col}</label>
+                                            <div class="row mb-3">
+                                                <div class="col-md-6">
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" id="col-bold-${col}"
+                                                               name="column_styles[${col}][bold]" ${(columnStyles[col]?.bold) ? 'checked' : ''}>
+                                                        <label class="form-check-label" for="col-bold-${col}">Bold</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" id="col-italic-${col}"
+                                                               name="column_styles[${col}][italic]" ${(columnStyles[col]?.italic) ? 'checked' : ''}>
+                                                        <label class="form-check-label" for="col-italic-${col}">Italic</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label for="col-text-color-${col}" class="form-label">Text Color</label>
+                                                    <input type="color" class="form-control form-control-color"
+                                                           id="col-text-color-${col}" name="column_styles[${col}][color]"
+                                                           value="${(columnStyles[col]?.color) || '#000000'}">
+                                                </div>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label for="col-css-class-${col}" class="form-label">CSS Class</label>
+                                                <input type="text" class="form-control" id="col-css-class-${col}"
+                                                       name="column_styles[${col}][cssClass]"
+                                                       value="${(columnStyles[col]?.cssClass) || ''}">
+                                                <div class="form-text">Add custom CSS classes separated by spaces (e.g., "fw-bold text-danger")</div>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                                <button type="submit" class="btn btn-primary">Save Formatting</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Initialize Bootstrap tabs
+        const tabs = modal.querySelectorAll('button[data-bs-toggle="tab"]');
+        tabs.forEach(tab => {
+            tab.addEventListener('click', function(e) {
+                e.preventDefault();
+
+                // Get tab target
+                const targetId = this.getAttribute('data-bs-target').substring(1);
+                const targetPane = document.getElementById(targetId);
+
+                // Hide all tab panes and deactivate tabs
+                document.querySelectorAll('.tab-pane').forEach(pane => {
+                    pane.classList.remove('show', 'active');
+                });
+                document.querySelectorAll('.nav-link').forEach(link => {
+                    link.classList.remove('active');
+                });
+
+                // Show selected tab and activate tab button
+                targetPane.classList.add('show', 'active');
+                this.classList.add('active');
+            });
+        });
+
+        // Setup formatting type selectors
+        modal.querySelectorAll('.format-type-select').forEach(select => {
+            select.addEventListener('change', function() {
+                const column = this.dataset.column;
+                const optionsContainer = document.getElementById(`format-options-${column}`);
+
+                // Show/hide options container based on selection
+                if (this.value === 'none') {
+                    optionsContainer.style.display = 'none';
+                } else {
+                    optionsContainer.style.display = 'block';
+
+                    // Show/hide specific option sets
+                    optionsContainer.querySelectorAll('.format-option').forEach(option => {
+                        option.style.display = 'none';
+                    });
+
+                    const activeOption = optionsContainer.querySelector(`.${this.value}-options`);
+                    if (activeOption) {
+                        activeOption.style.display = 'flex';
+                    }
+                }
+            });
+        });
+
+        // Close button
+        modal.querySelectorAll('.modal-close').forEach(button => {
+            button.addEventListener('click', function() {
+                document.body.removeChild(modal);
+            });
+        });
+
+        // Form submission
+        modal.querySelector('form').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            // Collect basic form data
+            const formData = new FormData(this);
+            const data = {};
+
+            // Process basic fields
+            ['panel_height', 'panel_width', 'background_color', 'text_color'].forEach(field => {
+                data[field] = formData.get(field);
+            });
+
+            // Process column mappings
+            const columnMappings = {};
+            panelData.columns.forEach(col => {
+                const mappingName = `column_mappings[${col}]`;
+                const mappingValue = formData.get(mappingName);
+                if (mappingValue && mappingValue !== col) {
+                    columnMappings[col] = mappingValue;
+                }
+            });
+            data.column_mappings = JSON.stringify(columnMappings);
+
+            // Process formatting rules
+            const formattingRules = {};
+            panelData.columns.forEach(col => {
+                const formatType = formData.get(`formatting_type_${col}`);
+
+                if (formatType && formatType !== 'none') {
+                    const rule = {
+                        type: formatType
+                    };
+
+                    // Add specific format options
+                    if (formatType === 'currency') {
+                        rule.symbol = formData.get(`currency_symbol_${col}`) || '€';
+                        rule.decimals = parseInt(formData.get(`currency_decimals_${col}`) || '2', 10);
+                    } else if (formatType === 'percentage') {
+                        rule.decimals = parseInt(formData.get(`percentage_decimals_${col}`) || '1', 10);
+                    } else if (formatType === 'date') {
+    rule.format = formData.get(`date_format_${col}`) || '%Y-%m-%d';
+                    }
+
+                    formattingRules[col] = rule;
+                }
+            });
+            data.formatting_rules = JSON.stringify(formattingRules);
+
+            // Process header styles
+            const headerStyles = {
+                backgroundColor: formData.get('header_bg_color') || '#f8f9fa',
+                color: formData.get('header_text_color') || '#000000',
+                fontWeight: formData.get('header_font_weight') || 'normal'
+            };
+            data.header_styles = JSON.stringify(headerStyles);
+
+            // Process summary calculations
+            const summaryCalculation = {};
+            panelData.columns.forEach(col => {
+                const summaryName = `summary_calculation[${col}]`;
+                const summaryType = formData.get(summaryName);
+                if (summaryType && summaryType !== 'none') {
+                    summaryCalculation[col] = summaryType;
+                }
+            });
+            data.summary_calculation = JSON.stringify(summaryCalculation);
+
+            // Process column styles
+            const columnStyles = {};
+            panelData.columns.forEach(col => {
+                const styles = {};
+                const bold = formData.get(`column_styles[${col}][bold]`) === 'on';
+                const italic = formData.get(`column_styles[${col}][italic]`) === 'on';
+                const color = formData.get(`column_styles[${col}][color]`);
+                const cssClass = formData.get(`column_styles[${col}][cssClass]`);
+
+                if (bold || italic || color || cssClass) {
+                    if (bold) styles.bold = true;
+                    if (italic) styles.italic = true;
+                    if (color) styles.color = color;
+                    if (cssClass) styles.cssClass = cssClass;
+                    columnStyles[col] = styles;
+                }
+            });
+
+            if (Object.keys(columnStyles).length > 0) {
+                data.column_styles = JSON.stringify(columnStyles);
+            }
+
+            // Update panel
+            window.updatePanel(panelId, data)
+                .then(() => {
+                    document.body.removeChild(modal);
+                    alert('Panel formatting saved successfully!');
+                    // Refresh the panel to show new formatting
+                    window.location.reload();
+                })
+                .catch(error => {
+                    alert('Failed to update panel: ' + error.message);
+                });
+        });
+    })
+    .catch(error => {
+        console.error("Error loading panel data:", error);
+        alert('Failed to load panel configuration');
+    });
+};
+
+window.renderPanelContent = function(panelElement, panel, data) {
+    // Clear any existing content in the panel
+    const contentElement = panelElement.querySelector('.panel-content');
+    if (!contentElement) return;
+
+    // Apply custom panel styles if provided
+    if (panel.background_color) {
+        contentElement.style.backgroundColor = panel.background_color;
+    }
+
+    if (panel.text_color) {
+        contentElement.style.color = panel.text_color;
+    }
+
+    // Parse JSON fields from panel configuration
+    const columnMappings = window.parseJsonSafely(panel.column_mappings, {});
+    const formattingRules = window.parseJsonSafely(panel.formatting_rules, {});
+    const headerStyles = window.parseJsonSafely(panel.header_styles, {});
+    const summaryCalculation = window.parseJsonSafely(panel.summary_calculation, {});
+    const columnStyles = window.parseJsonSafely(panel.column_styles, {});
+
+    // Render based on display type
+    if (panel.display_type === 'table') {
+        // For table display type
+        window.renderTableContent(contentElement, data, columnMappings, formattingRules, headerStyles, summaryCalculation, columnStyles);
+    }
+    else if (panel.display_type === 'chart') {
+        // For 'chart' display type, use the chart type from the data
+        // First check if data.chartType exists
+        if (data.chartType) {
+            console.log(`Using chart type from data: ${data.chartType}`);
+            window.renderChartContent(contentElement, data.chartType, data, columnMappings, formattingRules);
+        }
+        // Then check if it's in the config
+        else if (data.config && data.config.chartType) {
+            console.log(`Using chart type from config: ${data.config.chartType}`);
+            window.renderChartContent(contentElement, data.config.chartType, data, columnMappings, formattingRules);
+        }
+        // Finally check for query that might have it
+        else if (data.query && data.query.chart_type) {
+            console.log(`Using chart type from query: ${data.query.chart_type}`);
+            window.renderChartContent(contentElement, data.query.chart_type, data, columnMappings, formattingRules);
+        }
+        else {
+            // Fallback to bar chart if no chart type specified
+            console.log("No chart type found, defaulting to bar chart");
+            window.renderChartContent(contentElement, 'bar', data, columnMappings, formattingRules);
+        }
+    }
+    else if (['bar', 'line', 'pie', 'doughnut'].includes(panel.display_type)) {
+        // For specific chart types defined in the panel
+        window.renderChartContent(contentElement, panel.display_type, data, columnMappings, formattingRules);
+    }
+    else if (panel.display_type === 'kpi') {
+        window.renderKpiContent(contentElement, data, formattingRules);
+    }
+    else {
+        // Fallback to table if unknown display type
+        console.warn(`Unknown display type: ${panel.display_type}, falling back to table`);
+        window.renderTableContent(contentElement, data, columnMappings, formattingRules, headerStyles, summaryCalculation, columnStyles);
+    }
+};
+
+// Safely parse JSON with fallback
+window.parseJsonSafely = function(jsonString, fallback) {
+    if (!jsonString) return fallback;
+
+    try {
+        return JSON.parse(jsonString);
+    } catch (e) {
+        console.error('Error parsing JSON:', e);
+        return fallback;
+    }
+};
+
+// Function to update a panel via API
+window.updatePanel = function(panelId, data) {
+    return fetch(`/dashboard/panels/${panelId}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Failed to update panel');
+        }
+        return response.json();
+    });
+};
+
+window.renderTableContent = function(container, data, columnMappings, formattingRules, headerStyles, summaryCalculation, columnStyles) {
+    if (!data.rows || !data.rows.length) {
+        container.innerHTML = '<div class="alert alert-info m-3">No data available</div>';
+        return;
+    }
+
+    // Create table element
+    const tableContainer = document.createElement('div');
+    tableContainer.className = 'table-responsive';
+
+    const table = document.createElement('table');
+    table.className = 'table table-sm table-hover';
+
+    // Create table header with custom column names
+    const thead = document.createElement('thead');
+    thead.className = 'table-light';
+
+    // Apply custom header styles if provided
+    if (headerStyles) {
+        Object.entries(headerStyles).forEach(([property, value]) => {
+            thead.style[property] = value;
+        });
+    }
+
+    const headerRow = document.createElement('tr');
+
+    // Map original column names to display names using columnMappings
+    data.columns.forEach(column => {
+        const th = document.createElement('th');
+        th.textContent = columnMappings[column] || column;
+        headerRow.appendChild(th);
+    });
+
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    // Create table body with formatted data
+    const tbody = document.createElement('tbody');
+
+    // Helper function to check if a string is a valid URL
+    const isValidURL = (str) => {
+        try {
+            const url = new URL(str);
+            return url.protocol === 'http:' || url.protocol === 'https:';
+        } catch (_) {
+            return false;
+        }
+    };
+
+    // Helper function to check if a URL is an image URL
+    const isImageURL = (url) => {
+        if (!url || typeof url !== 'string') return false;
+        return url.match(/\.(jpeg|jpg|gif|png|svg|webp)(\?.*)?$/i) !== null;
+    };
+
+    data.rows.forEach(row => {
+        const tr = document.createElement('tr');
+
+        data.columns.forEach(column => {
+            const td = document.createElement('td');
+            let cellContent = row[column];
+
+            // Apply column styles if defined
+            if (columnStyles && columnStyles[column]) {
+                const styles = columnStyles[column];
+                if (styles.bold) td.style.fontWeight = 'bold';
+                if (styles.italic) td.style.fontStyle = 'italic';
+                if (styles.color) td.style.color = styles.color;
+                if (styles.cssClass) td.className += ' ' + styles.cssClass;
+            }
+
+            // Apply formatting if defined for this column
+            if (formattingRules[column]) {
+                const rule = formattingRules[column];
+
+                switch (rule.type) {
+                    case 'currency':
+                        // Apply currency formatting
+                        if (cellContent !== null && !isNaN(parseFloat(cellContent))) {
+                            const value = parseFloat(cellContent);
+                            const decimals = rule.decimals || 2;
+                            const symbol = rule.symbol || '€';
+
+                            cellContent = symbol + value.toLocaleString(undefined, {
+                                minimumFractionDigits: decimals,
+                                maximumFractionDigits: decimals
+                            });
+                        }
+                        break;
+
+                    case 'percentage':
+                        // Apply percentage formatting
+                        if (cellContent !== null && !isNaN(parseFloat(cellContent))) {
+                            const value = parseFloat(cellContent);
+                            const decimals = rule.decimals || 1;
+
+                            cellContent = value.toLocaleString(undefined, {
+                                minimumFractionDigits: decimals,
+                                maximumFractionDigits: decimals
+                            }) + '%';
+                        }
+                        break;
+
+                    case 'date':
+                        // Apply date formatting
+                        if (cellContent) {
+                            try {
+                                const date = new Date(cellContent);
+                                if (date instanceof Date && !isNaN(date)) {
+                                    if (rule.format === '%Y-%m-%d') {
+                                        cellContent = date.toISOString().split('T')[0];
+                                    } else if (rule.format === '%m/%d/%Y') {
+                                        cellContent = (date.getMonth() + 1) + '/' + date.getDate() + '/' + date.getFullYear();
+                                    } else if (rule.format === '%d-%b-%Y') {
+                                        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                                        cellContent = date.getDate() + '-' + months[date.getMonth()] + '-' + date.getFullYear();
+                                    } else if (rule.format === '%B %d, %Y') {
+                                        cellContent = date.toLocaleDateString('en-US', {
+                                            year: 'numeric',
+                                            month: 'long',
+                                            day: 'numeric'
+                                        });
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('Error formatting date:', e);
+                            }
+                        }
+                        break;
+
+                    case 'image':
+                        // Validation for image URLs
+                        if (cellContent && isValidURL(cellContent) && isImageURL(cellContent)) {
+                            // Handled in the cell rendering section
+                        }
+                        break;
+                }
+            }
+
+            // Handle special case for customer_id links
+            if (column === 'customer_id' && cellContent !== null) {
+                td.innerHTML = `<a href="/customers/${cellContent}/edit">${cellContent}</a>`;
+            }
+            // Handle logo or image URLs
+            else if (
+                cellContent !== null &&
+                typeof cellContent === 'string' &&
+                (
+                    column.toLowerCase().includes('logo') ||
+                    column.toLowerCase().includes('image') ||
+                    column.toLowerCase().includes('icon') ||
+                    (formattingRules[column] && formattingRules[column].type === 'image') ||
+                    (isValidURL(cellContent) && isImageURL(cellContent))
+                )
+            ) {
+                // Create image element for the logo
+                const img = document.createElement('img');
+                img.src = cellContent;
+                img.alt = 'Logo';
+
+                // Use formatting rules if available, otherwise default values
+                const maxHeight = formattingRules[column]?.maxHeight || 40;
+                const maxWidth = formattingRules[column]?.maxWidth || 100;
+
+                img.style.maxHeight = `${maxHeight}px`;
+                img.style.maxWidth = `${maxWidth}px`;
+                img.style.objectFit = 'contain';
+
+                // Add tooltip with the URL for reference
+                img.title = cellContent;
+
+                td.appendChild(img);
+            } else {
+                td.textContent = cellContent !== null ? cellContent : '';
+            }
+
+            tr.appendChild(td);
+        });
+
+        tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+
+    // Add summary row if configured
+    if (Object.keys(summaryCalculation).length > 0 && data.summary) {
+        const summaryRow = document.createElement('tr');
+        summaryRow.className = 'table-active fw-bold';
+
+        // First cell is "Total"
+        let firstColumnCreated = false;
+
+        data.columns.forEach(column => {
+            const td = document.createElement('td');
+
+            if (!firstColumnCreated) {
+                td.textContent = 'Total';
+                firstColumnCreated = true;
+            } else if (summaryCalculation[column] && data.summary[column] !== undefined) {
+                // Format summary values
+                let summaryValue = data.summary[column];
+
+                // Apply same formatting as column data
+                if (formattingRules[column]) {
+                    const rule = formattingRules[column];
+
+                    if (rule.type === 'currency') {
+                        const decimals = rule.decimals || 2;
+                        const symbol = rule.symbol || '€';
+
+                        td.textContent = symbol + summaryValue.toLocaleString(undefined, {
+                            minimumFractionDigits: decimals,
+                            maximumFractionDigits: decimals
+                        });
+                    } else if (rule.type === 'percentage') {
+                        const decimals = rule.decimals || 1;
+
+                        td.textContent = summaryValue.toLocaleString(undefined, {
+                            minimumFractionDigits: decimals,
+                            maximumFractionDigits: decimals
+                        }) + '%';
+                    } else {
+                        td.textContent = summaryValue;
+                    }
+                } else {
+                    td.textContent = summaryValue;
+                }
+            }
+
+            summaryRow.appendChild(td);
+        });
+
+        // Add the summary row to a tfoot element for proper semantics
+        const tfoot = document.createElement('tfoot');
+        tfoot.appendChild(summaryRow);
+        table.appendChild(tfoot);
+    }
+
+    // Append the table to the container
+    tableContainer.appendChild(table);
+    container.appendChild(tableContainer);
+};
+
+// Replace the existing getChartColors function with this one
+window.getChartColors = function(chartType, index, isBackground) {
+    // First try to use the ChartUtils colors if available
+    if (window.ChartUtils && window.ChartUtils.colors) {
+        // For pie/doughnut charts, return all colors from the palette
+        if (chartType === 'pie' || chartType === 'doughnut') {
+            return isBackground
+                ? window.ChartUtils.colors.palette
+                : Array(window.ChartUtils.colors.palette.length).fill('white'); // White borders
+        }
+
+        // For other chart types, return appropriate colors based on index
+        if (isBackground) {
+            if (index === 0) {
+                // For the first dataset (primary)
+                if (chartType === 'line') {
+                    // For line charts, use a more transparent background for the first dataset
+                    return 'rgba(94, 188, 103, 0.2)';
+                } else {
+                    // For bar charts, use solid color
+                    return window.ChartUtils.colors.single.primary;
+                }
+            } else if (index === 1) {
+                // Second dataset - use pastel blue
+                return chartType === 'line'
+                    ? 'rgba(121, 194, 255, 0.2)'
+                    : window.ChartUtils.colors.single.secondary;
+            } else if (index === 2) {
+                // Third dataset - use pastel lavender
+                return chartType === 'line'
+                    ? 'rgba(177, 156, 217, 0.2)'
+                    : window.ChartUtils.colors.single.accent;
+            } else {
+                // Additional datasets - use the pastel palette
+                const paletteIndex = (index - 3) % window.ChartUtils.colors.palette.length;
+                return chartType === 'line'
+                    ? window.ChartUtils.colors.transparentPalette[paletteIndex]
+                    : window.ChartUtils.colors.palette[paletteIndex];
+            }
+        } else {
+            // Border colors - use solid colors
+            if (index === 0) {
+                return window.ChartUtils.colors.single.primary;
+            } else if (index === 1) {
+                return window.ChartUtils.colors.single.secondary;
+            } else if (index === 2) {
+                return window.ChartUtils.colors.single.accent;
+            } else {
+                const paletteIndex = (index - 3) % window.ChartUtils.colors.palette.length;
+                return window.ChartUtils.colors.palette[paletteIndex];
+            }
+        }
+    }
+
+    // Fallback to the pastel colors if ChartUtils is not available
+    const colorSets = [
+        { bg: 'rgba(94, 188, 103, 0.6)', border: 'rgb(94, 188, 103)' },       // Pastel Green
+        { bg: 'rgba(121, 194, 255, 0.6)', border: 'rgb(121, 194, 255)' },     // Pastel Blue
+        { bg: 'rgba(177, 156, 217, 0.6)', border: 'rgb(177, 156, 217)' },     // Pastel Lavender
+        { bg: 'rgba(255, 185, 157, 0.6)', border: 'rgb(255, 185, 157)' },     // Pastel Peach
+        { bg: 'rgba(134, 216, 201, 0.6)', border: 'rgb(134, 216, 201)' },     // Pastel Mint
+        { bg: 'rgba(255, 223, 130, 0.6)', border: 'rgb(255, 223, 130)' },     // Pastel Yellow
+        { bg: 'rgba(237, 174, 192, 0.6)', border: 'rgb(237, 174, 192)' },     // Pastel Pink
+        { bg: 'rgba(160, 207, 182, 0.6)', border: 'rgb(160, 207, 182)' }      // Pastel Sage
+    ];
+
+    // For pie/doughnut charts, return all colors
+    if (chartType === 'pie' || chartType === 'doughnut') {
+        return isBackground
+            ? colorSets.map(set => set.bg)
+            : colorSets.map(set => set.border);
+    }
+
+    // For other chart types, return a single color based on index
+    const colorSet = colorSets[index % colorSets.length];
+    return isBackground ? colorSet.bg : colorSet.border;
+};
+// Replace the renderChartContent function with this simplified version
+// that directly applies pastel colors without relying on complex ChartUtils interactions
+
+window.renderChartContent = function(container, chartType, data, columnMappings, formattingRules) {
+    console.log("Rendering chart with type:", chartType);
+
+    if (!data.rows || !data.rows.length) {
+        container.innerHTML = '<div class="alert alert-info m-3">No data available</div>';
+        return;
+    }
+
+    // Clear existing content
+    container.innerHTML = '';
+
+    // Create canvas for chart
+    const canvas = document.createElement('canvas');
+    canvas.id = `chart-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`; // Generate unique ID
+    canvas.style.height = '100%';
+    container.appendChild(canvas);
+
+    // Determine chart configuration
+    let chartConfig = {
+        // If chartType is 'chart', try to use the data.chartType value instead
+        type: (chartType === 'chart' && data.chartType) ? data.chartType : (chartType || 'bar'),
+        labelColumn: data.config?.labelColumn1,
+        valueColumn: data.config?.valueColumn1,
+        labelColumn2: data.config?.labelColumn2,
+        valueColumn2: data.config?.valueColumn2
+    };
+
+    console.log("Chart configuration:", chartConfig);
+
+    // If data.config is not available, try to find required columns
+    if (!data.config || !chartConfig.labelColumn || !chartConfig.valueColumn) {
+        console.log("No valid chart configuration found, attempting to automatically determine columns");
+
+        // Find a suitable label column (first string column)
+        const columns = data.columns || [];
+
+        // Try to find date or string column for labels
+        const possibleLabelColumns = columns.filter(col => {
+            const firstValue = data.rows[0][col];
+            return typeof firstValue === 'string' ||
+                   (firstValue instanceof Date) ||
+                   col.toLowerCase().includes('date') ||
+                   col.toLowerCase().includes('name') ||
+                   col.toLowerCase().includes('label');
+        });
+
+        // Try to find numeric columns for values
+        const possibleValueColumns = columns.filter(col => {
+            const firstValue = data.rows[0][col];
+            return typeof firstValue === 'number' ||
+                   !isNaN(parseFloat(firstValue)) ||
+                   col.toLowerCase().includes('value') ||
+                   col.toLowerCase().includes('amount') ||
+                   col.toLowerCase().includes('count') ||
+                   col.toLowerCase().includes('total');
+        });
+
+        if (possibleLabelColumns.length > 0 && possibleValueColumns.length > 0) {
+            chartConfig.labelColumn = possibleLabelColumns[0];
+            chartConfig.valueColumn = possibleValueColumns[0];
+
+            // If we have a second value column, use it too
+            if (possibleValueColumns.length > 1) {
+                chartConfig.valueColumn2 = possibleValueColumns[1];
+            }
+
+            console.log("Auto-detected chart configuration:", chartConfig);
+        } else {
+            // If we can't determine proper columns, just use the first column as label and second as value
+            if (columns.length >= 2) {
+                chartConfig.labelColumn = columns[0];
+                chartConfig.valueColumn = columns[1];
+                console.log("Using default columns for chart:", chartConfig);
+            } else {
+                console.error("Cannot create chart: insufficient data columns");
+                container.innerHTML = '<div class="alert alert-danger m-3">Cannot create chart: invalid data structure</div>';
+                return;
+            }
+        }
+    }
+
+    // Prepare labels
+    let labels;
+    if (chartConfig.labelColumn2 && data.rows[0][chartConfig.labelColumn2]) {
+        // Handle composite labels (combining two columns)
+        labels = data.rows.map(row => `${row[chartConfig.labelColumn]} - ${row[chartConfig.labelColumn2]}`);
+    } else {
+        // Single column labels
+        labels = data.rows.map(row => String(row[chartConfig.labelColumn] || ''));
+    }
+
+    // PASTEL COLOR PALETTE - Directly defined here for simplicity and reliability
+    const pastelColors = {
+        green: { solid: 'rgb(94, 188, 103)', transparent: 'rgba(94, 188, 103, 0.7)', light: 'rgba(94, 188, 103, 0.2)' },
+        blue: { solid: 'rgb(121, 194, 255)', transparent: 'rgba(121, 194, 255, 0.7)', light: 'rgba(121, 194, 255, 0.2)' },
+        lavender: { solid: 'rgb(177, 156, 217)', transparent: 'rgba(177, 156, 217, 0.7)', light: 'rgba(177, 156, 217, 0.2)' },
+        peach: { solid: 'rgb(255, 185, 157)', transparent: 'rgba(255, 185, 157, 0.7)', light: 'rgba(255, 185, 157, 0.2)' },
+        mint: { solid: 'rgb(134, 216, 201)', transparent: 'rgba(134, 216, 201, 0.7)', light: 'rgba(134, 216, 201, 0.2)' },
+        yellow: { solid: 'rgb(255, 223, 130)', transparent: 'rgba(255, 223, 130, 0.7)', light: 'rgba(255, 223, 130, 0.2)' },
+        pink: { solid: 'rgb(237, 174, 192)', transparent: 'rgba(237, 174, 192, 0.7)', light: 'rgba(237, 174, 192, 0.2)' },
+        sage: { solid: 'rgb(160, 207, 182)', transparent: 'rgba(160, 207, 182, 0.7)', light: 'rgba(160, 207, 182, 0.2)' }
+    };
+
+    // Arrays of solid colors for pie charts
+    const solidColors = [
+        pastelColors.green.solid,
+        pastelColors.blue.solid,
+        pastelColors.lavender.solid,
+        pastelColors.peach.solid,
+        pastelColors.mint.solid,
+        pastelColors.yellow.solid,
+        pastelColors.pink.solid,
+        pastelColors.sage.solid
+    ];
+
+    // Create datasets with direct pastel color references
+    const datasets = [];
+
+    // Primary dataset
+    datasets.push({
+        label: columnMappings[chartConfig.valueColumn] || chartConfig.valueColumn,
+        data: data.rows.map(row => parseFloat(row[chartConfig.valueColumn]) || 0),
+        backgroundColor: chartConfig.type === 'pie' || chartConfig.type === 'doughnut'
+            ? solidColors // For pie/doughnut, use array of solid colors
+            : (chartConfig.type === 'bar'
+                ? pastelColors.green.transparent  // For bars, use semi-transparent
+                : pastelColors.green.light),      // For lines, use light fill
+        borderColor: chartConfig.type === 'pie' || chartConfig.type === 'doughnut'
+            ? 'white' // White borders for pie segments
+            : pastelColors.green.solid,
+        borderWidth: chartConfig.type === 'bar' ? 0 : 2,
+        borderRadius: chartConfig.type === 'bar' ? 6 : 0,
+        tension: 0.4,
+        fill: chartConfig.type === 'line'
+    });
+
+    // Add second dataset if configured and data exists
+    if (chartConfig.valueColumn2 && data.rows[0][chartConfig.valueColumn2]) {
+        datasets.push({
+            label: columnMappings[chartConfig.valueColumn2] || chartConfig.valueColumn2,
+            data: data.rows.map(row => parseFloat(row[chartConfig.valueColumn2]) || 0),
+            backgroundColor: chartConfig.type === 'bar'
+                ? pastelColors.blue.transparent  // Blue bar with opacity
+                : pastelColors.blue.light,       // Light fill for line
+            borderColor: pastelColors.blue.solid,
+            borderWidth: chartConfig.type === 'bar' ? 0 : 2,
+            tension: 0.4,
+            fill: chartConfig.type === 'line'
+        });
+    }
+
+    // Create gradient for line charts if using Canvas API directly (not ChartUtils)
+    const ctx = canvas.getContext('2d');
+
+    if (chartConfig.type === 'line') {
+        datasets.forEach((dataset, i) => {
+            // Create gradient for line charts
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+
+            if (i === 0) {
+                // Green gradient for first dataset
+                gradient.addColorStop(0, 'rgba(94, 188, 103, 0.3)');
+                gradient.addColorStop(1, 'rgba(94, 188, 103, 0.05)');
+            } else if (i === 1) {
+                // Blue gradient for second dataset
+                gradient.addColorStop(0, 'rgba(121, 194, 255, 0.3)');
+                gradient.addColorStop(1, 'rgba(121, 194, 255, 0.05)');
+            }
+
+            dataset.backgroundColor = gradient;
+        });
+    }
+
+    // Prepare tooltip callbacks for formatting
+    const tooltipCallbacks = {};
+
+    // Add tooltip formatting for value columns
+    if (formattingRules[chartConfig.valueColumn]) {
+        tooltipCallbacks.label = function(context) {
+            const value = context.raw;
+            const label = context.dataset.label || '';
+            const rule = formattingRules[chartConfig.valueColumn];
+
+            if (rule.type === 'currency') {
+                const symbol = rule.symbol || '€';
+                const decimals = rule.decimals || 2;
+                return label + ': ' + symbol + value.toLocaleString(undefined, {
+                    minimumFractionDigits: decimals,
+                    maximumFractionDigits: decimals
+                });
+            } else if (rule.type === 'percentage') {
+                const decimals = rule.decimals || 1;
+                return label + ': ' + value.toLocaleString(undefined, {
+                    minimumFractionDigits: decimals,
+                    maximumFractionDigits: decimals
+                }) + '%';
+            }
+
+            return label + ': ' + value;
+        };
+    }
+
+    // Create chart with explicit options
+    try {
+        // Chart options with pastel-friendly styling
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        pointStyle: 'circle',
+                        padding: 15,
+                        font: {
+                            family: "'Inter', sans-serif",
+                            size: 11
+                        }
+                    }
+                },
+                tooltip: {
+                    callbacks: tooltipCallbacks,
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    titleColor: '#333',
+                    bodyColor: '#333',
+                    borderColor: 'rgba(94, 188, 103, 0.3)',
+                    borderWidth: 1,
+                    cornerRadius: 8,
+                    padding: 12,
+                    boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.1)',
+                    titleFont: {
+                        family: "'Outfit', sans-serif",
+                        size: 12,
+                        weight: 'bold'
+                    },
+                    bodyFont: {
+                        family: "'Inter', sans-serif",
+                        size: 11
+                    }
+                }
+            },
+            animation: {
+                duration: 1000,
+                easing: 'easeOutQuart'
+            },
+            scales: chartConfig.type === 'pie' || chartConfig.type === 'doughnut' ? undefined : {
+                x: {
+                    grid: {
+                        display: false, // Hide gridlines for cleaner look
+                        drawBorder: false
+                    },
+                    ticks: {
+                        color: '#6c757d',
+                        font: {
+                            family: "'Inter', sans-serif",
+                            size: 10
+                        },
+                        padding: 5
+                    }
+                },
+                y: {
+                    grid: {
+                        color: 'rgba(0, 0, 0, 0.03)', // Very subtle grid lines
+                        drawBorder: false
+                    },
+                    ticks: {
+                        color: '#6c757d',
+                        font: {
+                            family: "'Inter', sans-serif",
+                            size: 10
+                        },
+                        padding: 5,
+                        maxTicksLimit: 6
+                    }
+                }
+            },
+            elements: {
+                line: {
+                    tension: 0.4, // Smoother lines
+                },
+                point: {
+                    radius: 3,
+                    hoverRadius: 5
+                },
+                bar: {
+                    borderRadius: 6 // Rounded bars
+                }
+            }
+        };
+
+        // Create chart with Chart.js directly for simplicity
+        new Chart(ctx, {
+            type: chartConfig.type,
+            data: {
+                labels,
+                datasets
+            },
+            options: chartOptions
+        });
+
+    } catch (error) {
+        console.error("Error creating chart:", error);
+        container.innerHTML = `<div class="alert alert-danger m-3">Error creating chart: ${error.message}</div>`;
+    }
+};
+
+// Function to render KPI card
+window.renderKpiContent = function(container, data, formattingRules) {
+    if (!data.rows || !data.rows.length) {
+        container.innerHTML = '<div class="alert alert-info m-3">No data available</div>';
+        return;
+    }
+
+    // For KPI, we usually want the first row's value
+    const row = data.rows[0];
+    const labelColumn = data.config.labelColumn1;
+    const valueColumn = data.config.valueColumn1;
+
+    // Get the value and optional secondary value
+    const value = row[valueColumn];
+    const secondaryValue = data.config.valueColumn2 ? row[data.config.valueColumn2] : null;
+
+    // Format the primary value
+    let formattedValue = value;
+    let formattedSecondary = secondaryValue;
+
+    // Apply formatting if available
+    if (formattingRules[valueColumn]) {
+        const rule = formattingRules[valueColumn];
+
+        if (rule.type === 'currency' && value !== null) {
+            const symbol = rule.symbol || '€';
+            const decimals = rule.decimals || 2;
+            formattedValue = symbol + parseFloat(value).toLocaleString(undefined, {
+                minimumFractionDigits: decimals,
+                maximumFractionDigits: decimals
+            });
+        } else if (rule.type === 'percentage' && value !== null) {
+            const decimals = rule.decimals || 1;
+            formattedValue = parseFloat(value).toLocaleString(undefined, {
+                minimumFractionDigits: decimals,
+                maximumFractionDigits: decimals
+            }) + '%';
+        }
+    }
+
+    // Format secondary value if available
+    if (secondaryValue !== null && data.config.valueColumn2 && formattingRules[data.config.valueColumn2]) {
+        const rule = formattingRules[data.config.valueColumn2];
+
+        if (rule.type === 'currency') {
+            const symbol = rule.symbol || '€';
+            const decimals = rule.decimals || 2;
+            formattedSecondary = symbol + parseFloat(secondaryValue).toLocaleString(undefined, {
+                minimumFractionDigits: decimals,
+                maximumFractionDigits: decimals
+            });
+        } else if (rule.type === 'percentage') {
+            const decimals = rule.decimals || 1;
+            formattedSecondary = parseFloat(secondaryValue).toLocaleString(undefined, {
+                minimumFractionDigits: decimals,
+                maximumFractionDigits: decimals
+            }) + '%';
+        }
+    }
+
+    // Create KPI card
+    const kpiCard = document.createElement('div');
+    kpiCard.className = 'd-flex flex-column justify-content-center align-items-center h-100';
+
+    // Create KPI content
+    kpiCard.innerHTML = `
+        <div class="text-center p-4">
+            <h6 class="text-muted mb-3">${labelColumn}</h6>
+            <h1 class="display-4 fw-bold mb-2">${formattedValue}</h1>
+            ${secondaryValue !== null ? `<div class="fs-5 mb-2">${formattedSecondary}</div>` : ''}
+        </div>
+    `;
+
+    container.appendChild(kpiCard);
+};
+
+// Replace this function in your dashboard script
+window.getChartColors = function(chartType, index, isBackground) {
+    // First try to use the ChartUtils colors if available
+    if (window.ChartUtils && window.ChartUtils.colors) {
+        // For pie/doughnut charts, return all colors from the palette
+        if (chartType === 'pie' || chartType === 'doughnut') {
+            return isBackground
+                ? window.ChartUtils.colors.palette
+                : Array(window.ChartUtils.colors.palette.length).fill('white'); // White borders
+        }
+
+        // For other chart types, return appropriate colors based on index
+        if (isBackground) {
+            if (index === 0) {
+                // For the first dataset (primary)
+                if (chartType === 'line') {
+                    // For line charts, use a more transparent background for the first dataset
+                    return 'rgba(94, 188, 103, 0.2)';
+                } else {
+                    // For bar charts, use solid color
+                    return window.ChartUtils.colors.single.primary;
+                }
+            } else if (index === 1) {
+                // Second dataset - use pastel blue
+                return chartType === 'line'
+                    ? 'rgba(121, 194, 255, 0.2)'
+                    : window.ChartUtils.colors.single.secondary;
+            } else if (index === 2) {
+                // Third dataset - use pastel lavender
+                return chartType === 'line'
+                    ? 'rgba(177, 156, 217, 0.2)'
+                    : window.ChartUtils.colors.single.accent;
+            } else {
+                // Additional datasets - use the pastel palette
+                const paletteIndex = (index - 3) % window.ChartUtils.colors.palette.length;
+                return chartType === 'line'
+                    ? window.ChartUtils.colors.transparentPalette[paletteIndex]
+                    : window.ChartUtils.colors.palette[paletteIndex];
+            }
+        } else {
+            // Border colors - use solid colors
+            if (index === 0) {
+                return window.ChartUtils.colors.single.primary;
+            } else if (index === 1) {
+                return window.ChartUtils.colors.single.secondary;
+            } else if (index === 2) {
+                return window.ChartUtils.colors.single.accent;
+            } else {
+                const paletteIndex = (index - 3) % window.ChartUtils.colors.palette.length;
+                return window.ChartUtils.colors.palette[paletteIndex];
+            }
+        }
+    }
+
+    // Fallback to the pastel colors if ChartUtils is not available
+    const colorSets = [
+        { bg: 'rgba(94, 188, 103, 0.6)', border: 'rgb(94, 188, 103)' },       // Pastel Green
+        { bg: 'rgba(121, 194, 255, 0.6)', border: 'rgb(121, 194, 255)' },     // Pastel Blue
+        { bg: 'rgba(177, 156, 217, 0.6)', border: 'rgb(177, 156, 217)' },     // Pastel Lavender
+        { bg: 'rgba(255, 185, 157, 0.6)', border: 'rgb(255, 185, 157)' },     // Pastel Peach
+        { bg: 'rgba(134, 216, 201, 0.6)', border: 'rgb(134, 216, 201)' },     // Pastel Mint
+        { bg: 'rgba(255, 223, 130, 0.6)', border: 'rgb(255, 223, 130)' },     // Pastel Yellow
+        { bg: 'rgba(237, 174, 192, 0.6)', border: 'rgb(237, 174, 192)' },     // Pastel Pink
+        { bg: 'rgba(160, 207, 182, 0.6)', border: 'rgb(160, 207, 182)' }      // Pastel Sage
+    ];
+
+    // For pie/doughnut charts, return all colors
+    if (chartType === 'pie' || chartType === 'doughnut') {
+        return isBackground
+            ? colorSets.map(set => set.bg)
+            : colorSets.map(set => set.border);
+    }
+
+    // For other chart types, return a single color based on index
+    const colorSet = colorSets[index % colorSets.length];
+    return isBackground ? colorSet.bg : colorSet.border;
+};
+
+class DashboardManager {
+    constructor() {
+        this.initializeFormatting();
+        this.initializeDashboard();
+        this.setupQuerySelectListener();
+    }
+
+    initializeDashboard() {
+        this.loadPanels();
+        this.exposeGlobalFunctions();
+    }
+
+    setupQuerySelectListener() {
+        const querySelect = document.getElementById('querySelect');
+        if (querySelect) {
+            querySelect.addEventListener('change', (e) => {
+                const option = e.target.selectedOptions[0];
+                const displayType = document.getElementById('displayType');
+
+                if (option.dataset.chartType) {
+                    displayType.value = 'chart';
+                }
+            });
+        }
+    }
+
+    // Ensure proper initialization of formatting functions
+    initializeFormatting() {
+        // Ensure these helper functions are available globally
+        if (!window.renderPanelContent) {
+            window.renderPanelContent = function(panelElement, panel, data) {
+                // Clear any existing content in the panel
+                const contentElement = panelElement.querySelector('.panel-content');
+                if (!contentElement) return;
+
+                // Apply custom panel styles if provided
+                if (panel.background_color) {
+                    contentElement.style.backgroundColor = panel.background_color;
+                }
+
+                if (panel.text_color) {
+                    contentElement.style.color = panel.text_color;
+                }
+
+                // Parse JSON fields from panel configuration
+                const columnMappings = window.parseJsonSafely(panel.column_mappings, {});
+                const formattingRules = window.parseJsonSafely(panel.formatting_rules, {});
+                const headerStyles = window.parseJsonSafely(panel.header_styles, {});
+                const summaryCalculation = window.parseJsonSafely(panel.summary_calculation, {});
+                const columnStyles = window.parseJsonSafely(panel.column_styles, {});
+
+                // Render based on display type
+                switch (panel.display_type) {
+                    case 'table':
+                        window.renderTableContent(contentElement, data, columnMappings, formattingRules, headerStyles, summaryCalculation, columnStyles);
+                        break;
+
+                    case 'chart':
+                    case 'bar':
+                    case 'line':
+                    case 'pie':
+                    case 'doughnut':
+                        window.renderChartContent(contentElement, data.chartType || panel.display_type, data, columnMappings, formattingRules);
+                        break;
+
+                    case 'kpi':
+                        window.renderKpiContent(contentElement, data, formattingRules);
+                        break;
+
+                    default:
+                        // Fallback to table if unknown display type
+                        window.renderTableContent(contentElement, data, columnMappings, formattingRules, headerStyles, summaryCalculation, columnStyles);
+                }
+            };
+        }
+
+        if (!window.parseJsonSafely) {
+            window.parseJsonSafely = function(jsonString, fallback) {
+                if (!jsonString) return fallback;
+
+                try {
+                    return JSON.parse(jsonString);
+                } catch (e) {
+                    console.error('Error parsing JSON:', e);
+                    return fallback;
+                }
+            };
+        }
+    }
+
+    async loadPanels() {
+        try {
+            const response = await fetch('/dashboard/panels');
+            const panels = await response.json();
+
+            // Clean up any existing charts before loading new ones
+            if (window.ChartUtils) {
+                window.ChartUtils.destroyAllCharts();
+            }
+
+            // Process each panel with formatting information
+            for (const panel of panels) {
+                const panelElement = document.querySelector(`#panel-${panel.panel_order}`);
+                if (!panelElement) continue;
+
+                // Set the query ID as a data attribute on the panel element
+                panelElement.setAttribute('data-query-id', panel.query_id);
+
+                try {
+                    // Fetch the panel data with formatting applied
+                    const dataResponse = await fetch(`/dashboard/panel-data/${panel.query_id}/${panel.id}`);
+                    if (!dataResponse.ok) {
+                        throw new Error(`Failed to load data for panel ${panel.id}`);
+                    }
+
+                    const panelData = await dataResponse.json();
+
+                    // Use the enhanced renderPanelContent function that handles formatting
+                    window.renderPanelContent(panelElement, panel, panelData);
+                } catch (error) {
+                    console.error(`Error loading panel ${panel.id}:`, error);
+                    panelElement.querySelector('.panel-content').innerHTML = `
+                        <div class="alert alert-danger m-3">
+                            <strong>Error loading data</strong><br>
+                            ${error.message}
+                        </div>
+                    `;
+                }
+            }
+        } catch (error) {
+            console.error('Error loading panels:', error);
+        }
+    }
+
+    // Other methods remain unchanged...
+    createTable(rows, columns) {
+        if (!rows.length) return '<p>No data available</p>';
+
+        return `
+            <div class="table-responsive">
+                <table class="table table-sm table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            ${columns.map(col => `<th>${col}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows.map(row => `
+                            <tr>
+                                ${columns.map(col => `<td>${row[col]}</td>`).join('')}
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    cleanupPanelCharts(panelId) {
+        const panel = document.querySelector(`#panel-${panelId}`);
+        if (!panel) return;
+
+        const canvases = panel.querySelectorAll('canvas');
+        canvases.forEach(canvas => {
+            if (canvas.id && window.ChartUtils) {
+                for (const chartId in window.ChartUtils.chartInstances) {
+                    const chart = window.ChartUtils.chartInstances[chartId];
+                    if (chart.canvas === canvas) {
+                        chart.destroy();
+                        delete window.ChartUtils.chartInstances[chartId];
+                    }
+                }
+            }
+        });
+    }
+
+    createChart(canvas, data) {
+        const chartConfig = {
+            type: data.chartType || 'bar',
+            labelColumn: data.config.labelColumn1,
+            valueColumn: data.config.valueColumn1,
+            labelColumn2: data.config.labelColumn2,
+            valueColumn2: data.config.valueColumn2
+        };
+
+        const labels = chartConfig.labelColumn2
+            ? data.rows.map(row => `${row[chartConfig.labelColumn]} - ${row[chartConfig.labelColumn2]}`)
+            : data.rows.map(row => String(row[chartConfig.labelColumn]));
+
+        const datasets = [{
+            label: chartConfig.valueColumn,
+            data: data.rows.map(row => parseFloat(row[chartConfig.valueColumn]) || 0)
+        }];
+
+        if (chartConfig.valueColumn2) {
+            datasets.push({
+                label: chartConfig.valueColumn2,
+                data: data.rows.map(row => parseFloat(row[chartConfig.valueColumn2]) || 0)
+            });
+        }
+
+        canvas.style.height = '400px';
+
+        ChartUtils.createChart(canvas, {
+            type: chartConfig.type,
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'top' }
+                },
+                animation: {
+                    duration: 800,
+                    easing: 'easeOutQuart'
+                }
+            }
+        });
+    }
+
+    async savePanel(formData) {
+        const panelId = document.getElementById('panelForm').getAttribute('data-panel-id');
+        const url = panelId ? `/dashboard/panels/${panelId}` : '/dashboard/panels';
+        const method = panelId ? 'PUT' : 'POST';
+
+        try {
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formData)
+            });
+            const result = await response.json();
+
+            if (result.success) {
+                location.reload();
+            } else {
+                throw new Error(result.error);
+            }
+        } catch (error) {
+            console.error('Save error:', error);
+            alert('Error saving panel: ' + error.message);
+        }
+    }
+
+    exposeGlobalFunctions() {
+        window.savePanel = () => {
+            const formData = {
+                panel_title: document.getElementById('panelTitle').value,
+                query_id: document.getElementById('querySelect').value,
+                display_type: document.getElementById('displayType').value,
+                panel_order: document.getElementById('panelOrder').value
+            };
+            this.savePanel(formData);
+        };
+
+        window.deletePanel = async (panelId) => {
+            if (!confirm('Are you sure you want to delete this panel?')) return;
+
+            try {
+                const response = await fetch(`/dashboard/panels/${panelId}`, { method: 'DELETE' });
+                const result = await response.json();
+                if (result.success) location.reload();
+            } catch (error) {
+                console.error('Delete error:', error);
+            }
+        };
+
+        window.editPanel = async (panelId) => {
+            try {
+                const response = await fetch(`/dashboard/panels/${panelId}`);
+                const data = await response.json();
+
+                document.getElementById('panelTitle').value = data.panel_title;
+                document.getElementById('querySelect').value = data.query_id;
+                document.getElementById('displayType').value = data.display_type;
+                document.getElementById('panelOrder').value = data.panel_order;
+                document.getElementById('panelForm').setAttribute('data-panel-id', panelId);
+
+                document.querySelector('#addPanelModal .modal-title').textContent = 'Edit Dashboard Panel';
+                new bootstrap.Modal(document.getElementById('addPanelModal')).show();
+            } catch (error) {
+                console.error('Edit error:', error);
+            }
+        };
+
+        window.addNewPanel = () => {
+            document.getElementById('panelForm').reset();
+            document.getElementById('panelForm').removeAttribute('data-panel-id');
+            document.querySelector('#addPanelModal .modal-title').textContent = 'Add Dashboard Panel';
+            new bootstrap.Modal(document.getElementById('addPanelModal')).show();
+        };
+    }
+}
+// Initialize dashboard when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    new DashboardManager();
+});
+
+// Add a function to debug and check panel data
+window.debugPanelData = function(panelId) {
+    const panelElement = document.querySelector(`#panel-${panelId}`);
+    if (!panelElement) {
+        console.error('Panel element not found');
+        return;
+    }
+
+    const queryId = panelElement.getAttribute('data-query-id');
+    if (!queryId) {
+        console.error('Query ID not found for panel');
+        return;
+    }
+
+    fetch(`/dashboard/panels/${panelId}`)
+        .then(res => res.json())
+        .then(panel => {
+            console.group(`Panel ${panelId} Configuration`);
+            console.log('Panel:', panel);
+            console.log('Display Type:', panel.display_type);
+            console.groupEnd();
+
+            return fetch(`/dashboard/panel-data/${queryId}`);
+        })
+        .then(res => res.json())
+        .then(data => {
+            console.group(`Panel ${panelId} Data`);
+            console.log('Panel Data:', data);
+            console.log('Chart Type:', data.chartType);
+            console.log('Config:', data.config);
+            console.groupEnd();
+        })
+        .catch(error => console.error('Error fetching panel data:', error));
+};
+
+// Add diagnostic function to check all panels
+window.diagnoseAllPanels = function() {
+    document.querySelectorAll('[id^="panel-"]').forEach(panel => {
+        const panelId = panel.id.replace('panel-', '');
+        window.debugPanelData(panelId);
+    });
+};
+
+// Function to inspect the API response structure
+window.inspectPanelData = function(panelId) {
+    const panelElement = document.querySelector(`#panel-${panelId}`);
+    if (!panelElement) {
+        console.error('Panel element not found');
+        return;
+    }
+
+    const queryId = panelElement.getAttribute('data-query-id');
+    if (!queryId) {
+        console.error('Query ID not found for panel');
+        return;
+    }
+
+    // Fetch the raw panel data
+    fetch(`/dashboard/panel-data/${queryId}`)
+        .then(res => res.json())
+        .then(data => {
+            console.log(`Full panel data structure for panel ${panelId}:`, data);
+
+            // Look for chart type in various possible locations
+            console.log('Possible chart type locations:');
+            console.log('- data.chartType:', data.chartType);
+            console.log('- data.config?.chartType:', data.config?.chartType);
+            console.log('- data.query?.chart_type:', data.query?.chart_type);
+
+            // Check if saved_query information is available
+            if (data.saved_query) {
+                console.log('- data.saved_query.chart_type:', data.saved_query.chart_type);
+            }
+        })
+        .catch(error => console.error('Error inspecting panel data:', error));
+};
+
+// Console log to verify script loaded correctly
+console.log("Dashboard script loaded successfully");
+
+</script>
+<style>
+/* Additional styles to make cards pop */
+.hover-shadow {
+    transition: all 0.3s ease;
+}
+
+.hover-shadow:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 20px rgba(94, 188, 103, 0.15) !important;
+}
+
+.badge-primary, .badge-info, .badge-success, .badge-warning {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.badge i {
+    font-size: 0.9rem;
+}
+
+/* Card shadow */
+.card {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05) !important;
+    border-radius: 12px !important;
+}
+
+/* Progress bar animation */
+.progress-bar {
+    transition: width 1.5s ease-in-out;
+}
+
+/* Text styling */
+.card-title {
+    font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    letter-spacing: -0.02em;
+}
+
+.text-primary {
+    color: var(--primary) !important;
+}
+
+
+/* New CSS Variables for your color palette */
+:root {
+  /* Base brand color (already defined in your CSS) */
+  --primary: #5ebc67;
+  --primary-dark: #4a9651;
+  --primary-light: #e8f5e9;
+
+  /* New pastel accent colors */
+  --accent-blue: #79c2ff;
+  --accent-blue-light: #e5f3ff;
+  --accent-lavender: #b19cd9;
+  --accent-lavender-light: #f0ebff;
+  --accent-peach: #ffb99d;
+  --accent-peach-light: #fff0eb;
+  --accent-mint: #86d8c9;
+  --accent-mint-light: #e6f7f4;
+
+  /* New pastel gradient variables */
+  --gradient-primary: linear-gradient(135deg, #97d49e 0%, #5ebc67 100%);
+  --gradient-blue: linear-gradient(135deg, #99d5ff 0%, #79c2ff 100%);
+  --gradient-lavender: linear-gradient(135deg, #c4b4e5 0%, #b19cd9 100%);
+  --gradient-peach: linear-gradient(135deg, #ffc7b4 0%, #ffb99d 100%);
+}
+
+/* Colorful card styles for metric cards */
+.card.metric-card {
+  border: none !important;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1) !important;
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.card.metric-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* International Sales - Green (Primary) */
+.metric-card.international {
+  background: var(--gradient-primary);
+}
+
+.metric-card.international .card-body {
+  position: relative;
+}
+
+.metric-card.international .card-body::before {
+  content: '';
+  position: absolute;
+  top: -20px;
+  right: -20px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  z-index: 1;
+}
+
+/* Monthly Sales - Blue */
+.metric-card.monthly {
+  background: var(--gradient-blue);
+}
+
+/* Yearly Sales - Lavender */
+.metric-card.yearly {
+  background: var(--gradient-lavender);
+}
+
+/* New Customers - Peach */
+.metric-card.customers {
+  background: var(--gradient-peach);
+}
+
+/* Text color for metric cards - using dark text for better readability on pastel backgrounds */
+.metric-card .text-muted,
+.metric-card h2,
+.metric-card small,
+.metric-card .fw-semibold {
+  color: #444 !important;
+}
+
+/* Keep text white for the primary (green) card for better contrast */
+.metric-card.international .text-muted,
+.metric-card.international h2,
+.metric-card.international small,
+.metric-card.international .fw-semibold {
+  color: white !important;
+}
+
+.metric-card .badge {
+  background: rgba(255, 255, 255, 0.4);
+  color: #444;
+  border: none;
+}
+
+.metric-card.international .badge {
+  color: white;
+}
+
+.metric-card .badge.bg-success {
+  background: rgba(76, 175, 80, 0.3) !important;
+}
+
+.metric-card .badge.bg-danger {
+  background: rgba(244, 67, 54, 0.3) !important;
+}
+
+/* Icon badges for metric cards */
+.metric-card .badge-primary,
+.metric-card .badge-info,
+.metric-card .badge-warning,
+.metric-card .badge-success {
+  background: rgba(255, 255, 255, 0.2) !important;
+  color: white !important;
+}
+
+/* Panel card enhancements */
+.card.shadow {
+  transition: all 0.3s ease;
+  border-radius: 12px !important;
+}
+
+.card.shadow:hover {
+  box-shadow: 0 10px 30px rgba(94, 188, 103, 0.15) !important;
+}
+
+<!--/* Add colored left borders to panel cards for visual distinction */
+.card.shadow.border-0 {
+  border-left: 4px solid var(&#45;&#45;primary) !important;
+}-->
+
+/* Alternate panel colors for visual variety */
+.card.shadow.border-0:nth-child(2n) {
+  border-left: 4px solid var(--accent-blue) !important;
+}
+
+.card.shadow.border-0:nth-child(3n) {
+  border-left: 4px solid var(--accent-lavender) !important;
+}
+
+.card.shadow.border-0:nth-child(4n) {
+  border-left: 4px solid var(--accent-peach) !important;
+}
+
+/* Chart enhancements */
+canvas {
+  margin: 15px;
+}
+
+/* Improved table header styling */
+.table thead th {
+  background: #f5f9f5 !important;
+  color: #2c3e50 !important;
+  font-weight: 600 !important;
+  border-bottom: 2px solid var(--primary) !important;
+}
+
+/* Subtle row hover effect */
+.table tbody tr:hover {
+  background-color: var(--primary-light) !important;
+}
+
+/* Improved Add Panel button */
+.btn-primary {
+  background: var(--gradient-primary) !important;
+  border: none !important;
+  box-shadow: 0 4px 10px rgba(94, 188, 103, 0.2) !important;
+  transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 15px rgba(94, 188, 103, 0.3) !important;
+}
+
+/* Enhanced dashboard title */
+h2.fw-bold {
+  position: relative;
+  display: inline-block;
+}
+
+h2.fw-bold::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 0;
+  width: 40px;
+  height: 3px;
+  background: var(--primary);
+  border-radius: 3px;
+}
+</style>
+{% endblock %}

@@ -1,0 +1,162 @@
+<!-- templates/currencies.html -->
+
+{% extends "base.html" %}
+
+{% block content %}
+<div class="section">
+    <h2>Exchange Rates</h2>
+
+    <div id="mode-indicator" class="mode-indicator">
+        <div id="mode-badge" class="badge">
+            Manual Mode
+        </div>
+        <span id="last-update-text"></span>
+    </div>
+
+    <div class="currencies-table">
+        <table>
+            <thead>
+                <tr>
+                    <th>Currency</th>
+                    <th>Symbol</th>
+                    <th>Exchange Rate to EUR</th>
+                </tr>
+            </thead>
+            <tbody id="currencies-body">
+                <!-- Data will be loaded via JavaScript -->
+                <tr>
+                    <td colspan="3">Loading currency data...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="actions">
+        <button id="refresh-button" class="button">Refresh Rates</button>
+        <a href="{{ url_for('settings.settings') }}" class="button">Manage Settings</a>
+    </div>
+</div>
+
+<style>
+    .mode-indicator {
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+    }
+
+    .badge {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 16px;
+        font-size: 14px;
+        font-weight: bold;
+        margin-right: 10px;
+    }
+
+    .badge.live {
+        background-color: #4CAF50;
+        color: white;
+    }
+
+    .badge.manual {
+        background-color: #2196F3;
+        color: white;
+    }
+
+    #last-update-text {
+        font-size: 14px;
+        color: #666;
+    }
+
+    .currencies-table {
+        margin-bottom: 20px;
+    }
+
+    .actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    .live-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background-color: #4CAF50;
+        margin-right: 6px;
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+        0% { opacity: 0.5; }
+        50% { opacity: 1; }
+        100% { opacity: 0.5; }
+    }
+</style>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const currenciesBody = document.getElementById('currencies-body');
+        const modeBadge = document.getElementById('mode-badge');
+        const lastUpdateText = document.getElementById('last-update-text');
+        const refreshButton = document.getElementById('refresh-button');
+
+        function loadCurrencies() {
+            fetch('/api/currencies')
+                .then(response => response.json())
+                .then(data => {
+                    // Clear the table
+                    currenciesBody.innerHTML = '';
+
+                    // Determine if we're in live mode
+                    const isLive = data.length > 0 && data[0].is_live;
+
+                    // Update the mode badge
+                    if (isLive) {
+                        modeBadge.textContent = 'Live Mode';
+                        modeBadge.className = 'badge live';
+
+                        // Add live indicator and timestamp
+                        if (data[0].last_updated) {
+                            lastUpdateText.innerHTML = `<span class="live-indicator"></span> Last updated: ${data[0].last_updated}`;
+                        }
+                    } else {
+                        modeBadge.textContent = 'Manual Mode';
+                        modeBadge.className = 'badge manual';
+                        lastUpdateText.textContent = '';
+                    }
+
+                    // Add rows to the table
+                    data.forEach(currency => {
+                        const row = document.createElement('tr');
+
+                        const codeCell = document.createElement('td');
+                        codeCell.textContent = currency.currency_code;
+
+                        const symbolCell = document.createElement('td');
+                        symbolCell.textContent = currency.symbol;
+
+                        const rateCell = document.createElement('td');
+                        rateCell.textContent = currency.exchange_rate_to_eur.toFixed(4);
+
+                        row.appendChild(codeCell);
+                        row.appendChild(symbolCell);
+                        row.appendChild(rateCell);
+
+                        currenciesBody.appendChild(row);
+                    });
+                })
+                .catch(error => {
+                    console.error('Error loading currencies:', error);
+                    currenciesBody.innerHTML = '<tr><td colspan="3">Error loading currency data. Please try again.</td></tr>';
+                });
+        }
+
+        // Initial load
+        loadCurrencies();
+
+        // Refresh button
+        refreshButton.addEventListener('click', loadCurrencies);
+    });
+</script>
+{% endblock %}

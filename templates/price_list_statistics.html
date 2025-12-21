@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-12 mb-4">
+            <h1>Price List Statistics</h1>
+            <a href="{{ url_for('price_lists.get_all_price_lists') }}" class="btn btn-primary">Back to Price Lists</a>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Summary Cards -->
+        <div class="col-md-3 mb-4">
+            <div class="card text-center h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Total Price Lists</h5>
+                    <h2 class="card-text">{{ total_price_lists }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-4">
+            <div class="card text-center h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Active Price Lists</h5>
+                    <h2 class="card-text">{{ active_price_lists }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-4">
+            <div class="card text-center h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Total Items</h5>
+                    <h2 class="card-text">{{ total_items }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-4">
+            <div class="card text-center h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Expiring Soon</h5>
+                    <h2 class="card-text">{{ expiring_soon_count }}</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Top Parts -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">Top Parts by Price Breaks</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Part Number</th>
+                                    <th>Base Part Number</th>
+                                    <th>Supplier</th>
+                                    <th>Price Breaks</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for part in top_parts %}
+                                <tr>
+                                    <td>{{ part.part_number }}</td>
+                                    <td>{{ part.base_part_number }}</td>
+                                    <td>{{ part.supplier_name }}</td>
+                                    <td>{{ part.price_break_count }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Price Lists -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">Recently Added Price Lists</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Supplier</th>
+                                    <th>Valid From</th>
+                                    <th>Valid To</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for pl in recent_price_lists %}
+                                <tr>
+                                    <td>{{ pl.name_reference }}</td>
+                                    <td>{{ pl.supplier_name }}</td>
+                                    <td>{{ pl.valid_from or 'N/A' }}</td>
+                                    <td>{{ pl.valid_to or 'N/A' }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Price Stats -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">Price Statistics</h5>
+                </div>
+                <div class="card-body">
+                    <table class="table table-sm">
+                        <tbody>
+                            <tr>
+                                <th>Minimum Price:</th>
+                                <td>{{ price_stats.min_price }}</td>
+                            </tr>
+                            <tr>
+                                <th>Maximum Price:</th>
+                                <td>{{ price_stats.max_price }}</td>
+                            </tr>
+                            <tr>
+                                <th>Average Price:</th>
+                                <td>{{ price_stats.avg_price | round(2) }}</td>
+                            </tr>
+                            <tr>
+                                <th>Different Currencies:</th>
+                                <td>{{ price_stats.currency_count }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Suppliers -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">Price Lists by Supplier</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Supplier</th>
+                                    <th>Price Lists</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for supplier in price_lists_by_supplier %}
+                                <tr>
+                                    <td>{{ supplier.supplier_name }}</td>
+                                    <td>{{ supplier.price_list_count }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

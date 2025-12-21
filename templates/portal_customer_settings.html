@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Customer Portal Settings{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Customer Portal Settings</h2>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <p class="text-muted">
+                Manage customer-specific margin settings and pricing agreements. These settings override global defaults for specific customers.
+            </p>
+
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Customer</th>
+                            <th>Portal Users</th>
+                            <th>Quote Requests</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for customer in customers %}
+                        <tr>
+                            <td><strong>{{ customer.name }}</strong></td>
+                            <td>
+                                <span class="badge bg-info">{{ customer.user_count }} user{% if customer.user_count != 1 %}s{% endif %}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-secondary">{{ customer.request_count }} request{% if customer.request_count != 1 %}s{% endif %}</span>
+                            </td>
+                            <td>
+                                <a href="{{ url_for('portal_admin.view_customer_portal_settings', customer_id=customer.id) }}" 
+                                   class="btn btn-sm btn-primary">
+                                    <i class="fas fa-cog"></i> Manage Settings
+                                </a>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-4">
+                                No customers with portal access found
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

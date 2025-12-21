@@ -1,0 +1,163 @@
+<!-- templates/geo_deepdive_new.html -->
+{% extends "base.html" %}
+
+{% block title %}New Geographic Deep Dive{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2 class="fw-bold mb-1">New Geo Deep-Dive</h2>
+                <a href="{{ url_for('geo_deepdive.list_deepdives') }}" class="btn btn-secondary">
+                    <i class="fas fa-arrow-left"></i> Back
+                </a>
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('geo_deepdive.create_deepdive_route') }}">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="country">Country <span class="text-danger">*</span></label>
+                                    <select name="country" id="country" class="form-control" required>
+    <option value="">Select Country</option>
+    {% for country in countries %}
+    <option value="{{ country.code }}">{{ country.display_name }}</option>
+    {% endfor %}
+</select>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="tag_id">Focus Area <span class="text-danger">*</span></label>
+                                    <select name="tag_id" id="tag_id" class="form-control" required>
+                                        <option value="">Select Focus Area</option>
+                                        {% for tag in tags %}
+                                        <option value="{{ tag.id }}">{{ tag.description }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="title">Title (optional)</label>
+                            <input type="text" name="title" id="title" class="form-control"
+                                   placeholder="Will auto-generate based on country and focus area">
+                            <small class="form-text text-muted">Leave blank to auto-generate title</small>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label for="content">Content <span class="text-danger">*</span></label>
+                                <button type="button" id="generateAIContent" class="btn btn-info btn-sm">
+                                    <i class="fas fa-magic"></i> Generate with AI
+                                </button>
+                            </div>
+                            <textarea name="content" id="content" class="form-control"
+                                      rows="15" required placeholder="Enter your deep dive content here or use AI generation..."></textarea>
+                            <small class="form-text text-muted">You can use markdown formatting. AI generation requires country and focus area to be selected.</small>
+
+                            <!-- Loading indicator for AI generation -->
+                            <div id="aiGenerationLoading" class="mt-2" style="display: none;">
+                                <div class="d-flex align-items-center">
+                                    <div class="spinner-border spinner-border-sm mr-2" role="status">
+                                        <span class="sr-only">Loading...</span>
+                                    </div>
+                                    <span class="text-info">Generating content with AI... This may take 30-60 seconds.</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Create Deep Dive
+                            </button>
+                            <a href="{{ url_for('geo_deepdive.list_deepdives') }}" class="btn btn-secondary">Cancel</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const generateButton = document.getElementById('generateAIContent');
+    const countrySelect = document.getElementById('country');
+    const tagSelect = document.getElementById('tag_id');
+    const titleInput = document.getElementById('title');
+    const contentTextarea = document.getElementById('content');
+    const loadingIndicator = document.getElementById('aiGenerationLoading');
+
+    generateButton.addEventListener('click', function() {
+        const country = countrySelect.value;
+        const tagId = tagSelect.value;
+
+        if (!country || !tagId) {
+            alert('Please select both country and focus area before generating AI content.');
+            return;
+        }
+
+        // Show loading indicator
+        loadingIndicator.style.display = 'block';
+        generateButton.disabled = true;
+
+        // Make API call to generate content
+        fetch('/api/generate-deepdive-content', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                country: country,
+                tag_id: parseInt(tagId)
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update title if it's empty
+                if (!titleInput.value) {
+                    titleInput.value = data.title;
+                }
+
+                // Set the generated content
+                contentTextarea.value = data.content;
+
+                // Show success message
+                const successAlert = document.createElement('div');
+                successAlert.className = 'alert alert-success alert-dismissible fade show mt-2';
+                successAlert.innerHTML = `
+                    <strong>Success!</strong> AI content generated successfully. You can edit it before saving.
+                    <button type="button" class="close" data-dismiss="alert">
+                        <span>&times;</span>
+                    </button>
+                `;
+                contentTextarea.parentNode.appendChild(successAlert);
+
+                // Auto-dismiss after 5 seconds
+                setTimeout(() => {
+                    successAlert.remove();
+                }, 5000);
+            } else {
+                alert('Error generating content: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error generating content. Please try again.');
+        })
+        .finally(() => {
+            // Hide loading indicator and re-enable button
+            loadingIndicator.style.display = 'none';
+            generateButton.disabled = false;
+        });
+    });
+});
+</script>
+
+{% endblock %}

@@ -1,0 +1,1317 @@
+{% extends "base.html" %}
+
+{% block title %}Purchase Suggestions{% endblock %}
+
+{% block head %}
+{{ super() }}
+<!-- DataTables CSS -->
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
+<link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.bootstrap5.min.css">
+<style>
+    .dataTables_wrapper .dataTables_length,
+    .dataTables_wrapper .dataTables_filter {
+        margin-bottom: 1rem;
+    }
+
+    /* Wider modals */
+    .modal-xl-custom {
+        max-width: 90%;
+        width: 90%;
+    }
+
+    .modal-xxl {
+        max-width: 95%;
+        width: 95%;
+    }
+
+    /* Make DataTables buttons compact */
+    .dt-buttons {
+        display: inline-flex !important;
+        gap: 0.5rem;
+    }
+
+    .dt-button {
+        width: auto !important;
+        white-space: nowrap !important;
+    }
+
+    .sortable {
+        user-select: none;
+    }
+
+    .sort-indicator {
+        font-size: 0.8em;
+        margin-left: 5px;
+    }
+
+    /* Price difference styling */
+    .price-diff-positive {
+        color: #28a745;
+        font-weight: bold;
+    }
+
+    .price-diff-negative {
+        color: #dc3545;
+        font-weight: bold;
+    }
+
+    /* Priority Score badge styling */
+    .priority-score-high {
+        background-color: #dc3545 !important;
+        color: white !important;
+    }
+    .priority-score-medium {
+        background-color: #ffc107 !important;
+        color: #212529 !important;
+    }
+    .priority-score-low {
+        background-color: #6c757d !important;
+        color: white !important;
+    }
+
+    /* VQ Tooltip styles */
+    .vq-tooltip {
+        position: relative;
+        cursor: help;
+        display: inline-block;
+    }
+
+    .vq-tooltip-content {
+        visibility: hidden;
+        position: absolute;
+        z-index: 3050;
+        background-color: #2c3e50;
+        color: #fff;
+        text-align: left;
+        border-radius: 8px;
+        padding: 0;
+        bottom: 125%;
+        left: 50%;
+        transform: translateX(-50%);
+        min-width: 320px;
+        max-width: 400px;
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+        font-size: 0.875rem;
+        white-space: normal;
+    }
+
+    .vq-tooltip-content::after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        margin-left: -6px;
+        border-width: 6px;
+        border-style: solid;
+        border-color: #2c3e50 transparent transparent transparent;
+    }
+
+    .vq-tooltip:hover .vq-tooltip-content {
+        visibility: visible;
+        opacity: 1;
+    }
+
+    .vq-item {
+        padding: 12px 16px;
+        border-bottom: 1px solid #465a6f;
+    }
+
+    .vq-item:first-child {
+        border-radius: 8px 8px 0 0;
+    }
+
+    .vq-item:last-child {
+        border-bottom: none;
+        border-radius: 0 0 8px 8px;
+    }
+
+    .vq-item-header {
+        font-weight: bold;
+        margin-bottom: 8px;
+        font-size: 0.95rem;
+        color: #3498db;
+    }
+
+    .vq-item-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 4px;
+        line-height: 1.6;
+    }
+
+    .vq-item-row:last-child {
+        margin-bottom: 0;
+    }
+
+    .vq-item-label {
+        color: #95a5a6;
+        font-weight: 500;
+        min-width: 80px;
+    }
+
+    .vq-item-value {
+        color: #ecf0f1;
+        font-weight: 400;
+        text-align: right;
+        flex: 1;
+    }
+
+    .vq-best {
+        background-color: #27ae60;
+        color: white;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 0.7rem;
+        font-weight: bold;
+        margin-left: 8px;
+        vertical-align: middle;
+    }
+
+    /* Tooltip overflow fix */
+    table.dataTable,
+    table.dataTable > tbody,
+    table.dataTable > tbody > tr,
+    table.dataTable > tbody > tr > td {
+        overflow: visible !important;
+    }
+
+    .dataTables_scrollBody {
+        overflow: visible !important;
+    }
+
+    .table-responsive {
+        overflow: visible !important;
+    }
+
+    .vq-tooltip-content {
+        z-index: 2000 !important;
+    }
+
+    .main-content {
+        overflow: visible !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Page Header -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                Purchase Suggestions
+            </h5>
+        </div>
+        <div class="card-body">
+            <p class="mb-0 text-muted">Identify parts being sold that are low on stock - opportunities to replenish inventory based on usage patterns</p>
+        </div>
+    </div>
+
+    <!-- View Selector -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                <i class="bi bi-funnel me-2"></i>
+                View By
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="btn-group w-100" role="group">
+                        <a href="?view_by=part" class="btn btn-outline-primary {% if view_by == 'part' %}active{% endif %}">
+                            <i class="bi bi-box-seam"></i> Parts
+                        </a>
+                        <a href="?view_by=customer" class="btn btn-outline-primary {% if view_by == 'customer' %}active{% endif %}">
+                            <i class="bi bi-people"></i> Customers
+                        </a>
+                        <a href="?view_by=bom" class="btn btn-outline-primary {% if view_by == 'bom' %}active{% endif %}">
+                            <i class="bi bi-diagram-3"></i> BOMs
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Table -->
+    <div class="card allow-overflow">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                {% if view_by == 'part' %}
+                <i class="bi bi-box-seam me-2"></i>
+                Parts with Low Stock
+                {% elif view_by == 'customer' %}
+                <i class="bi bi-people me-2"></i>
+                Customers with Low-Stock Parts
+                {% elif view_by == 'bom' %}
+                <i class="bi bi-diagram-3 me-2"></i>
+                BOMs with Low-Stock Parts
+                {% endif %}
+            </h5>
+        </div>
+        <div class="card-body">
+            {% if error %}
+            <div class="alert alert-danger">
+                <i class="bi bi-exclamation-triangle"></i> Error: {{ error }}
+            </div>
+            {% endif %}
+
+            {% if view_by == 'part' %}
+            <div class="table-responsive">
+                <table class="table table-hover table-striped" id="parts-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Part Number</th>
+                            <th>System Part #</th>
+                            <th>Stock Level</th>
+                            <th>Avg Monthly Sales</th>
+                            <th>Reorder Point</th>
+                            <th>Sales Orders</th>
+                            <th>Customers</th>
+                            <th>Total Qty Sold</th>
+                            <th>Avg Sale Price</th>
+                            <th>Last Sale</th>
+                            <th>Priority Score</th>
+                            <th>VQ Available</th>
+                            <th>BOMs</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for part in data %}
+                        <tr>
+                            <td><strong>{{ part.part_number }}</strong></td>
+                            <td><small class="text-muted">{{ part.system_part_number or '-' }}</small></td>
+                            <td><span class="badge bg-secondary">{{ part.stock_quantity or 0 }}</span></td>
+                            <td><span class="badge bg-info">{{ "%.1f"|format(part.avg_monthly_sales or 0) }}</span></td>
+                            <td><span class="badge bg-warning">{{ "%.1f"|format(part.suggested_reorder_point or 0) }}</span></td>
+                            <td><span class="badge bg-info">{{ part.order_count }}</span></td>
+                            <td><span class="badge bg-secondary">{{ part.customer_count }}</span></td>
+                            <td><span class="badge bg-primary">{{ part.total_quantity_sold|round|int }}</span></td>
+                            <td>
+                                {% if part.avg_sale_price %}
+                                £{{ "%.2f"|format(part.avg_sale_price) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if part.last_sale_date %}
+                                <small>{{ part.last_sale_date[:10] }}</small>
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if part.purchase_priority_score is defined %}
+                                <span class="badge priority-score-{{ 'high' if part.purchase_priority_score > 35 else 'medium' if part.purchase_priority_score > 20 else 'low' }}">{{ part.purchase_priority_score|round(0) }}</span>
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if part.vq_available %}
+                                <div class="vq-tooltip">
+                                    <span class="text-success">
+                                        <i class="bi bi-check-circle"></i>
+                                        {% if part.vq_available.vendor_price_currency != 'GBP' %}
+                                            {{ part.vq_available.currency_symbol or part.vq_available.vendor_price_currency }}{{ "%.2f"|format(part.vq_available.vendor_price_original) }}
+                                            <small class="text-muted">(£{{ "%.2f"|format(part.vq_available.vendor_price_gbp) }})</small>
+                                        {% else %}
+                                            £{{ "%.2f"|format(part.vq_available.vendor_price_gbp) }}
+                                        {% endif %}
+                                    </span>
+
+                                    {% if part.all_vqs and part.all_vqs|length > 0 %}
+                                    <div class="vq-tooltip-content">
+                                        {% for vq in part.all_vqs[:3] %}
+                                        <div class="vq-item">
+                                            <div class="vq-item-header">
+                                                {{ vq.vq_number or 'VQ' }}
+                                                {% if loop.index == 1 %}<span class="vq-best">BEST</span>{% endif %}
+                                            </div>
+                                            <div class="vq-item-row">
+                                                <span class="vq-item-label">Supplier:</span>
+                                                <span class="vq-item-value">{{ vq.supplier_name or 'N/A' }}</span>
+                                            </div>
+                                            <div class="vq-item-row">
+                                                <span class="vq-item-label">Price:</span>
+                                                <span class="vq-item-value">
+                                                    {% if vq.vendor_price_currency != 'GBP' %}
+                                                        {{ vq.currency_symbol }}{{ "%.2f"|format(vq.vendor_price_original) }} (£{{ "%.2f"|format(vq.vendor_price_gbp) }})
+                                                    {% else %}
+                                                        £{{ "%.2f"|format(vq.vendor_price_gbp) }}
+                                                    {% endif %}
+                                                </span>
+                                            </div>
+                                            <div class="vq-item-row">
+                                                <span class="vq-item-label">Quantity:</span>
+                                                <span class="vq-item-value">{{ vq.quantity_quoted or 'N/A' }}</span>
+                                            </div>
+                                            <div class="vq-item-row">
+                                                <span class="vq-item-label">Lead Time:</span>
+                                                <span class="vq-item-value">{{ vq.lead_days or 'N/A' }} days</span>
+                                            </div>
+                                            <div class="vq-item-row">
+                                                <span class="vq-item-label">Date:</span>
+                                                <span class="vq-item-value">{{ vq.entry_date[:10] if vq.entry_date else 'N/A' }}</span>
+                                            </div>
+                                            {% if vq.expiration_date %}
+                                            <div class="vq-item-row">
+                                                <span class="vq-item-label">Expires:</span>
+                                                <span class="vq-item-value">{{ vq.expiration_date[:10] }}</span>
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                {% else %}
+                                <span class="text-muted">No VQ</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if part.bom_names %}
+                                <small class="text-muted">{{ part.bom_names }}</small>
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary view-details-btn"
+                                        data-part="{{ part.base_part_number }}">
+                                    <i class="bi bi-eye"></i> Details
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% elif view_by == 'customer' %}
+            <div class="table-responsive">
+                <table class="table table-hover table-striped" id="customers-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Customer Name</th>
+                            <th>Parts Not in Stock</th>
+                            <th>Parts with VQs</th>
+                            <th>Total Orders</th>
+                            <th>Total Quantity Sold</th>
+                            <th>Last Sale</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for customer in data %}
+                        <tr>
+                            <td><strong>{{ customer.customer_name }}</strong></td>
+                            <td><span class="badge bg-warning">{{ customer.parts_not_in_stock }}</span></td>
+                            <td>
+                                {% if customer.parts_with_vqs %}
+                                <span class="badge bg-success">{{ customer.parts_with_vqs }}</span>
+                                {% else %}
+                                <span class="badge bg-secondary">0</span>
+                                {% endif %}
+                            </td>
+                            <td><span class="badge bg-info">{{ customer.order_count }}</span></td>
+                            <td><span class="badge bg-primary">{{ customer.total_quantity|round|int }}</span></td>
+                            <td>
+                                {% if customer.last_sale_date %}
+                                <small>{{ customer.last_sale_date[:10] }}</small>
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary view-customer-btn"
+                                        data-customer-id="{{ customer.customer_id }}"
+                                        data-customer-name="{{ customer.customer_name }}">
+                                    <i class="bi bi-eye"></i> View Parts
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% elif view_by == 'bom' %}
+            <div class="table-responsive">
+                <table class="table table-hover table-striped" id="boms-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>BOM Name</th>
+                            <th>Description</th>
+                            <th>Total Parts in BOM</th>
+                            <th>Parts Not in Stock</th>
+                            <th>Parts with VQs</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for bom in data %}
+                        <tr>
+                            <td><strong>{{ bom.bom_name }}</strong></td>
+                            <td><small class="text-muted">{{ bom.description or '-' }}</small></td>
+                            <td><span class="badge bg-secondary">{{ bom.total_parts_in_bom }}</span></td>
+                            <td><span class="badge bg-warning">{{ bom.parts_not_in_stock }}</span></td>
+                            <td>
+                                {% if bom.parts_with_vqs %}
+                                <span class="badge bg-success">{{ bom.parts_with_vqs }}</span>
+                                {% else %}
+                                <span class="badge bg-secondary">0</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary view-bom-btn"
+                                        data-bom-id="{{ bom.bom_id }}"
+                                        data-bom-name="{{ bom.bom_name }}">
+                                    <i class="bi bi-eye"></i> View Parts
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if total_parts == 0 %}
+            <div class="alert alert-info mt-3">
+                <i class="bi bi-info-circle"></i> No items found.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <nav aria-label="Page navigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if page > 1 %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page - 1 }}{% if search_query %}&search={{ search_query }}{% endif %}">Previous</a>
+            </li>
+            {% endif %}
+
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == page %}
+                <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+                {% elif p <= 3 or p > total_pages - 3 or (p >= page - 2 and p <= page + 2) %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ p }}{% if search_query %}&search={{ search_query }}{% endif %}">{{ p }}</a>
+                </li>
+                {% elif p == 4 or p == total_pages - 3 %}
+                <li class="page-item disabled"><span class="page-link">...</span></li>
+                {% endif %}
+            {% endfor %}
+
+            {% if page < total_pages %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page + 1 }}{% if search_query %}&search={{ search_query }}{% endif %}">Next</a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+
+<!-- Part Details Modal -->
+<div class="modal fade" id="partDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-xl allow-overflow">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Part Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="modal-loading" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+                <div id="modal-content" style="display: none;">
+                    <!-- Part Info -->
+                    <div class="card mb-3">
+                        <div class="card-header bg-primary text-white">
+                            <h6 class="mb-0"><i class="bi bi-box-seam"></i> Part Information</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <strong>Part Number:</strong> <span id="detail-part-number"></span>
+                                </div>
+                                <div class="col-md-4">
+                                    <strong>System Part #:</strong> <span id="detail-system-part"></span>
+                                </div>
+                                <div class="col-md-4">
+                                    <strong>Category:</strong> <span id="detail-category"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sales Summary -->
+                    <div class="card mb-3">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0"><i class="bi bi-graph-up"></i> Sales Summary</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <div class="text-center">
+                                        <h4 id="summary-orders" class="text-primary">0</h4>
+                                        <small class="text-muted">Total Orders</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="text-center">
+                                        <h4 id="summary-customers" class="text-success">0</h4>
+                                        <small class="text-muted">Customers</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="text-center">
+                                        <h4 id="summary-quantity" class="text-info">0</h4>
+                                        <small class="text-muted">Total Qty Sold</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="text-center">
+                                        <h4 id="summary-avg-price" class="text-warning">£0.00</h4>
+                                        <small class="text-muted">Avg Sale Price</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row mt-3">
+                                <div class="col-md-6">
+                                    <strong>Price Range:</strong> <span id="summary-price-range"></span>
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>Last Sale:</strong> <span id="summary-last-sale"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- VQs Card -->
+                    <div class="card mb-3" id="vqs-card" style="display: none;">
+                        <div class="card-header bg-warning text-dark">
+                            <h6 class="mb-0"><i class="bi bi-file-text"></i> Vendor Quotes Available</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>VQ Number</th>
+                                            <th>Supplier</th>
+                                            <th>Qty Quoted</th>
+                                            <th>Vendor Price</th>
+                                            <th>GBP Equiv</th>
+                                            <th>Lead Days</th>
+                                            <th>Entry Date</th>
+                                            <th>Expiration</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="vqs-table-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- BOMs -->
+                    <div class="card mb-3" id="boms-card" style="display: none;">
+                        <div class="card-header bg-secondary text-white">
+                            <h6 class="mb-0"><i class="bi bi-diagram-3"></i> BOMs Containing This Part</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>BOM Name</th>
+                                            <th>Description</th>
+                                            <th>Quantity</th>
+                                            <th>Guide Price</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="boms-table-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sales History -->
+                    <div class="card">
+                        <div class="card-header bg-success text-white">
+                            <h6 class="mb-0"><i class="bi bi-clock-history"></i> Recent Sales History (Last 20)</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover" id="sales-history-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Order #</th>
+                                            <th>Date</th>
+                                            <th>Customer</th>
+                                            <th>Quantity</th>
+                                            <th>Price</th>
+                                            <th>Line Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="sales-history-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Customer Parts Modal -->
+<div class="modal fade" id="customerPartsModal" tabindex="-1">
+    <div class="modal-dialog modal-xl allow-overflow">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Customer Parts Not in Stock</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="customer-modal-loading" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+                <div id="customer-modal-content" style="display: none;">
+                    <h6 class="mb-3">Customer: <strong id="customer-name"></strong></h6>
+                    <div class="table-responsive">
+                        <table class="table table-hover" id="customer-parts-table">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Part Number</th>
+                                    <th>System Part #</th>
+                                    <th>Orders</th>
+                                    <th>Total Qty</th>
+                                    <th>Avg Price</th>
+                                    <th>Last Sale</th>
+                                    <th>VQ Available</th>
+                                </tr>
+                            </thead>
+                            <tbody id="customer-parts-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- BOM Parts Modal -->
+<div class="modal fade" id="bomPartsModal" tabindex="-1">
+    <div class="modal-dialog modal-xxl allow-overflow">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">BOM Parts Not in Stock</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="bom-modal-loading" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+                <div id="bom-modal-content" style="display: none;">
+                    <h6 class="mb-1">BOM: <strong id="bom-name"></strong></h6>
+                    <p class="text-muted mb-3" id="bom-description"></p>
+                    <div class="table-responsive">
+                        <table class="table table-hover" id="bom-parts-table">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Part Number</th>
+                                    <th>BOM Qty</th>
+                                    <th>Guide Price</th>
+                                    <th>Orders</th>
+                                    <th>Total Sold</th>
+                                    <th>Last Sale</th>
+                                    <th>VQ Available</th>
+                                    <th>% Diff</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bom-parts-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- DataTables JS -->
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.bootstrap5.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.html5.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize DataTables with export buttons based on view
+    const viewBy = '{{ view_by }}';
+
+    // Add click handlers to table headers for server-side sorting
+    if (viewBy === 'part') {
+        $('#parts-table').DataTable({
+            paging: false,
+            searching: false,
+            ordering: false,
+            info: false,
+            dom: 'Brt',
+            buttons: [
+                {
+                    extend: 'excel',
+                    text: '<i class="bi bi-file-earmark-excel"></i> Excel',
+                    className: 'btn btn-success btn-sm',
+                    title: 'Purchase_Suggestions_Parts'
+                },
+                {
+                    extend: 'csv',
+                    text: '<i class="bi bi-file-earmark-text"></i> CSV',
+                    className: 'btn btn-info btn-sm',
+                    title: 'Purchase_Suggestions_Parts'
+                }
+            ]
+        });
+
+        const sortColumns = {
+            0: 'part_number',
+            1: 'system_part_number',
+            2: 'stock_quantity',
+            3: 'avg_monthly_sales',
+            4: 'suggested_reorder_point',
+            5: 'order_count',
+            6: 'customer_count',
+            7: 'total_quantity_sold',
+            8: 'avg_sale_price',
+            9: 'last_sale_date',
+            10: 'purchase_priority_score',
+            11: 'vq_available',
+            12: 'bom_names'
+        };
+
+        $('#parts-table thead th').each(function(index) {
+            if (sortColumns[index]) {
+                $(this).css('cursor', 'pointer');
+                $(this).addClass('sortable');
+
+                // Add sort indicator
+                const currentSort = '{{ sort_column }}';
+                const currentDir = '{{ sort_direction }}';
+                if (currentSort === sortColumns[index]) {
+                    const icon = currentDir === 'asc' ? '↑' : '↓';
+                    $(this).append(' <span class="sort-indicator">' + icon + '</span>');
+                }
+
+                $(this).on('click', function() {
+                    const newSort = sortColumns[index];
+                    let newDir = 'desc';
+
+                    if (currentSort === newSort && currentDir === 'desc') {
+                        newDir = 'asc';
+                    }
+
+                    const url = new URL(window.location);
+                    url.searchParams.set('sort', newSort);
+                    url.searchParams.set('dir', newDir);
+                    url.searchParams.set('page', '1');
+                    window.location = url.toString();
+                });
+            }
+        });
+    } else if (viewBy === 'customer') {
+        $('#customers-table').DataTable({
+            paging: false,
+            searching: false,
+            ordering: false,
+            info: false,
+            dom: 'Brt',
+            buttons: [
+                {
+                    extend: 'excel',
+                    text: '<i class="bi bi-file-earmark-excel"></i> Excel',
+                    className: 'btn btn-success btn-sm',
+                    title: 'Purchase_Suggestions_Customers'
+                },
+                {
+                    extend: 'csv',
+                    text: '<i class="bi bi-file-earmark-text"></i> CSV',
+                    className: 'btn btn-info btn-sm',
+                    title: 'Purchase_Suggestions_Customers'
+                }
+            ]
+        });
+
+        const sortColumns = {
+            0: 'customer_name',
+            1: 'parts_not_in_stock',
+            2: 'parts_with_vqs',
+            3: 'order_count',
+            4: 'total_quantity',
+            5: 'last_sale_date'
+        };
+
+        $('#customers-table thead th').each(function(index) {
+            if (sortColumns[index]) {
+                $(this).css('cursor', 'pointer');
+                $(this).addClass('sortable');
+
+                const currentSort = '{{ sort_column }}';
+                const currentDir = '{{ sort_direction }}';
+                if (currentSort === sortColumns[index]) {
+                    const icon = currentDir === 'asc' ? '↑' : '↓';
+                    $(this).append(' <span class="sort-indicator">' + icon + '</span>');
+                }
+
+                $(this).on('click', function() {
+                    const newSort = sortColumns[index];
+                    let newDir = 'desc';
+
+                    if (currentSort === newSort && currentDir === 'desc') {
+                        newDir = 'asc';
+                    }
+
+                    const url = new URL(window.location);
+                    url.searchParams.set('sort', newSort);
+                    url.searchParams.set('dir', newDir);
+                    url.searchParams.set('page', '1');
+                    window.location = url.toString();
+                });
+            }
+        });
+    } else if (viewBy === 'bom') {
+        $('#boms-table').DataTable({
+            paging: false,
+            searching: false,
+            ordering: false,
+            info: false,
+            dom: 'Brt',
+            buttons: [
+                {
+                    extend: 'excel',
+                    text: '<i class="bi bi-file-earmark-excel"></i> Excel',
+                    className: 'btn btn-success btn-sm',
+                    title: 'Purchase_Suggestions_BOMs'
+                },
+                {
+                    extend: 'csv',
+                    text: '<i class="bi bi-file-earmark-text"></i> CSV',
+                    className: 'btn btn-info btn-sm',
+                    title: 'Purchase_Suggestions_BOMs'
+                }
+            ]
+        });
+
+        const sortColumns = {
+            0: 'bom_name',
+            1: 'description',
+            2: 'total_parts_in_bom',
+            3: 'parts_not_in_stock',
+            4: 'parts_with_vqs'
+        };
+
+        $('#boms-table thead th').each(function(index) {
+            if (sortColumns[index]) {
+                $(this).css('cursor', 'pointer');
+                $(this).addClass('sortable');
+
+                const currentSort = '{{ sort_column }}';
+                const currentDir = '{{ sort_direction }}';
+                if (currentSort === sortColumns[index]) {
+                    const icon = currentDir === 'asc' ? '↑' : '↓';
+                    $(this).append(' <span class="sort-indicator">' + icon + '</span>');
+                }
+
+                $(this).on('click', function() {
+                    const newSort = sortColumns[index];
+                    let newDir = 'desc';
+
+                    if (currentSort === newSort && currentDir === 'desc') {
+                        newDir = 'asc';
+                    }
+
+                    const url = new URL(window.location);
+                    url.searchParams.set('sort', newSort);
+                    url.searchParams.set('dir', newDir);
+                    url.searchParams.set('page', '1');
+                    window.location = url.toString();
+                });
+            }
+        });
+    }
+
+    function createVQBadge(vq, allVqs) {
+        if (!vq) return '<span class="text-muted">No VQ</span>';
+
+        // Normalise list of quotes for tooltip (fallback to the single VQ)
+        const list = (Array.isArray(allVqs) && allVqs.length > 0) ? allVqs.slice(0, 3) : [vq];
+
+        // Helpers
+        const toMoney = (n) => (Number.isFinite(+n) ? (+n).toFixed(2) : '0.00');
+        const curr = (q) => q.currency_symbol || q.vendor_price_currency || '£';
+
+        // Display price for the badge (use the *first* quote in list)
+        const first = list[0];
+        const vendorCurrency = first.vendor_price_currency || 'GBP';
+        const vendorPrice = toMoney(first.vendor_price_original ?? first.vendor_price);
+        const gbpPrice = toMoney(first.vendor_price_gbp ?? first.vendor_price);
+        const currencySymbol = curr(first);
+
+        const badgePrice = (vendorCurrency !== 'GBP')
+            ? `${currencySymbol}${vendorPrice} <small class="text-muted">(£${gbpPrice})</small>`
+            : `£${gbpPrice}`;
+
+        // Build tooltip HTML from list (even if it's just the single VQ)
+        const tooltipContent = list.map((q, idx) => {
+            const qVendorCurrency = q.vendor_price_currency || 'GBP';
+            const qVendorPrice = toMoney(q.vendor_price_original ?? q.vendor_price);
+            const qGbpPrice = toMoney(q.vendor_price_gbp ?? q.vendor_price);
+            const qCurr = curr(q);
+
+            const qPriceDisplay = (qVendorCurrency !== 'GBP')
+                ? `${qCurr}${qVendorPrice} (£${qGbpPrice})`
+                : `£${qGbpPrice}`;
+
+            const entry = (q.entry_date || '').toString().substring(0, 10) || 'N/A';
+            const expires = q.expiration_date ? q.expiration_date.toString().substring(0, 10) : null;
+
+            return `
+                <div class="vq-item">
+                    <div class="vq-item-header">
+                        ${q.vq_number || 'VQ'} ${idx === 0 ? '<span class="vq-best">BEST</span>' : ''}
+                    </div>
+                    <div class="vq-item-row">
+                        <span class="vq-item-label">Supplier:</span>
+                        <span class="vq-item-value">${q.supplier_name || 'N/A'}</span>
+                    </div>
+                    <div class="vq-item-row">
+                        <span class="vq-item-label">Price:</span>
+                        <span class="vq-item-value">${qPriceDisplay}</span>
+                    </div>
+                    <div class="vq-item-row">
+                        <span class="vq-item-label">Quantity:</span>
+                        <span class="vq-item-value">${q.quantity_quoted ?? 'N/A'}</span>
+                    </div>
+                    <div class="vq-item-row">
+                        <span class="vq-item-label">Lead Time:</span>
+                        <span class="vq-item-value">${q.lead_days ?? 'N/A'} days</span>
+                    </div>
+                    <div class="vq-item-row">
+                        <span class="vq-item-label">Date:</span>
+                        <span class="vq-item-value">${entry}</span>
+                    </div>
+                    ${expires ? `
+                    <div class="vq-item-row">
+                        <span class="vq-item-label">Expires:</span>
+                        <span class="vq-item-value">${expires}</span>
+                    </div>` : ''}
+                </div>
+            `;
+        }).join('');
+
+        // Always render tooltip wrapper if vq exists
+        return `
+            <div class="vq-tooltip">
+                <span class="text-success">
+                    <i class="bi bi-check-circle"></i> ${badgePrice}
+                </span>
+                <div class="vq-tooltip-content">
+                    ${tooltipContent}
+                </div>
+            </div>
+        `;
+    }
+
+    // View Details Modal
+    document.querySelectorAll('.view-details-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const basePart = this.getAttribute('data-part');
+            openPartDetailsModal(basePart);
+        });
+    });
+
+    function openPartDetailsModal(basePart) {
+        const modal = new bootstrap.Modal(document.getElementById('partDetailsModal'));
+        modal.show();
+
+        // Show loading, hide content
+        document.getElementById('modal-loading').style.display = 'block';
+        document.getElementById('modal-content').style.display = 'none';
+
+        // Fetch part details
+        fetch(`/purchase-suggestions/api/part-details/${basePart}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    populateModal(data);
+                    document.getElementById('modal-loading').style.display = 'none';
+                    document.getElementById('modal-content').style.display = 'block';
+                } else {
+                    alert('Error loading part details: ' + data.error);
+                    modal.hide();
+                }
+            })
+            .catch(error => {
+                console.error(error);
+                alert('An error occurred while loading part details');
+                modal.hide();
+            });
+    }
+
+    function populateModal(data) {
+        const part = data.part;
+        const summary = data.sales_summary;
+        const boms = data.boms;
+        const history = data.sales_history;
+        const vqs = data.vqs;
+
+        // Part Info
+        document.getElementById('detail-part-number').textContent = part.part_number || '-';
+        document.getElementById('detail-system-part').textContent = part.system_part_number || '-';
+        document.getElementById('detail-category').textContent = part.category_name || '-';
+
+        // Sales Summary
+        document.getElementById('summary-orders').textContent = summary.total_orders || 0;
+        document.getElementById('summary-customers').textContent = summary.total_customers || 0;
+        document.getElementById('summary-quantity').textContent = Math.round(summary.total_quantity_sold || 0);
+        document.getElementById('summary-avg-price').textContent = '£' + (summary.avg_price || 0).toFixed(2);
+
+        if (summary.min_price && summary.max_price) {
+            document.getElementById('summary-price-range').textContent =
+                `£${summary.min_price.toFixed(2)} - £${summary.max_price.toFixed(2)}`;
+        } else {
+            document.getElementById('summary-price-range').textContent = '-';
+        }
+
+        document.getElementById('summary-last-sale').textContent =
+            summary.last_sale_date ? summary.last_sale_date.substring(0, 10) : '-';
+
+        // VQs with dual currency display
+        const vqsCard = document.getElementById('vqs-card');
+        const vqsBody = document.getElementById('vqs-table-body');
+
+        if (vqs && vqs.length > 0) {
+            vqsCard.style.display = 'block';
+            vqsBody.innerHTML = vqs.map(vq => {
+                const vendorCurrency = vq.vendor_price_currency || 'GBP';
+                const vendorPrice = (vq.vendor_price_original || vq.vendor_price || 0).toFixed(2);
+                const gbpPrice = (vq.vendor_price_gbp || vq.vendor_price || 0).toFixed(2);
+                const currencySymbol = vq.currency_symbol || vendorCurrency;
+
+                return `
+                    <tr>
+                        <td><strong>${vq.vq_number}</strong></td>
+                        <td>${vq.supplier_name || '-'}</td>
+                        <td>${vq.quantity_quoted || '-'}</td>
+                        <td><strong>${currencySymbol}${vendorPrice}</strong></td>
+                        <td>${vendorCurrency !== 'GBP' ? '<strong>£' + gbpPrice + '</strong>' : '-'}</td>
+                        <td>${vq.lead_days ? vq.lead_days + ' days' : '-'}</td>
+                        <td><small>${vq.entry_date ? vq.entry_date.substring(0, 10) : '-'}</small></td>
+                        <td><small>${vq.expiration_date ? vq.expiration_date.substring(0, 10) : '-'}</small></td>
+                        <td><span class="badge ${vq.status === 'Active' ? 'bg-success' : 'bg-secondary'}">${vq.status || 'Active'}</span></td>
+                    </tr>
+                `;
+            }).join('');
+        } else {
+            vqsCard.style.display = 'none';
+        }
+
+        // BOMs
+        const bomsCard = document.getElementById('boms-card');
+        const bomsBody = document.getElementById('boms-table-body');
+
+        if (boms && boms.length > 0) {
+            bomsCard.style.display = 'block';
+            bomsBody.innerHTML = boms.map(bom => `
+                <tr>
+                    <td><strong>${bom.name}</strong></td>
+                    <td>${bom.description || '-'}</td>
+                    <td>${bom.bom_quantity || '-'}</td>
+                    <td>${bom.guide_price ? '£' + bom.guide_price.toFixed(2) : '-'}</td>
+                </tr>
+            `).join('');
+        } else {
+            bomsCard.style.display = 'none';
+        }
+
+        // Sales History
+        const historyBody = document.getElementById('sales-history-body');
+
+        if (history && history.length > 0) {
+            historyBody.innerHTML = history.map(sale => `
+                <tr>
+                    <td>${sale.order_number || sale.order_id}</td>
+                    <td>${sale.date_entered ? sale.date_entered.substring(0, 10) : '-'}</td>
+                    <td>${sale.customer_name || '-'}</td>
+                    <td>${sale.quantity || 0}</td>
+                    <td>£${(sale.price || 0).toFixed(2)}</td>
+                    <td>£${(sale.line_total || 0).toFixed(2)}</td>
+                </tr>
+            `).join('');
+        } else {
+            historyBody.innerHTML = '<tr><td colspan="6" class="text-center">No sales history available</td></tr>';
+        }
+    }
+
+    // Customer View Handlers
+    document.querySelectorAll('.view-customer-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const customerId = this.getAttribute('data-customer-id');
+            const customerName = this.getAttribute('data-customer-name');
+            openCustomerPartsModal(customerId, customerName);
+        });
+    });
+
+    function openCustomerPartsModal(customerId, customerName) {
+        const modal = new bootstrap.Modal(document.getElementById('customerPartsModal'));
+        modal.show();
+
+        document.getElementById('customer-modal-loading').style.display = 'block';
+        document.getElementById('customer-modal-content').style.display = 'none';
+
+        fetch(`/purchase-suggestions/api/customer-parts/${customerId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('customer-name').textContent = customerName;
+                    const tbody = document.getElementById('customer-parts-body');
+
+                    if (data.parts && data.parts.length > 0) {
+                        tbody.innerHTML = data.parts.map(part => `
+                            <tr>
+                                <td><strong>${part.part_number || part.base_part_number}</strong></td>
+                                <td><small class="text-muted">${part.system_part_number || '-'}</small></td>
+                                <td><span class="badge bg-info">${part.order_count}</span></td>
+                                <td><span class="badge bg-primary">${Math.round(part.total_quantity || 0)}</span></td>
+                                <td>£${(part.avg_price || 0).toFixed(2)}</td>
+                                <td><small>${part.last_sale_date ? part.last_sale_date.substring(0, 10) : '-'}</small></td>
+                                <td>${createVQBadge(part.vq_available, part.all_vqs)}</td>
+                            </tr>
+                        `).join('');
+                    } else {
+                        tbody.innerHTML = '<tr><td colspan="7" class="text-center">No parts found</td></tr>';
+                    }
+
+                    document.getElementById('customer-modal-loading').style.display = 'none';
+                    document.getElementById('customer-modal-content').style.display = 'block';
+                } else {
+                    alert('Error loading customer parts: ' + data.error);
+                    modal.hide();
+                }
+            })
+            .catch(error => {
+                console.error(error);
+                alert('An error occurred while loading customer parts');
+                modal.hide();
+            });
+    }
+
+    // BOM View Handlers
+    document.querySelectorAll('.view-bom-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const bomId = this.getAttribute('data-bom-id');
+            const bomName = this.getAttribute('data-bom-name');
+            openBomPartsModal(bomId, bomName);
+        });
+    });
+
+    function openBomPartsModal(bomId, bomName) {
+        const modal = new bootstrap.Modal(document.getElementById('bomPartsModal'));
+        modal.show();
+
+        document.getElementById('bom-modal-loading').style.display = 'block';
+        document.getElementById('bom-modal-content').style.display = 'none';
+
+        fetch(`/purchase-suggestions/api/bom-parts/${bomId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('bom-name').textContent = data.bom.name;
+                    document.getElementById('bom-description').textContent = data.bom.description || 'No description';
+                    const tbody = document.getElementById('bom-parts-body');
+
+                    if (data.parts && data.parts.length > 0) {
+                        tbody.innerHTML = data.parts.map(part => {
+                            let priceDiffHtml = '-';
+                            if (part.price_difference_pct !== null && part.price_difference_pct !== undefined) {
+                                const pctClass = part.price_difference_pct > 0 ? 'price-diff-positive' : 'price-diff-negative';
+                                priceDiffHtml = `<span class="${pctClass}">${part.price_difference_pct.toFixed(1)}%</span>`;
+                            }
+
+                            return `
+                                <tr>
+                                    <td><strong>${part.part_number || part.base_part_number}</strong></td>
+                                    <td>${part.bom_quantity || '-'}</td>
+                                    <td>${part.guide_price ? '£' + part.guide_price.toFixed(2) : '-'}</td>
+                                    <td><span class="badge bg-info">${part.order_count || 0}</span></td>
+                                    <td><span class="badge bg-primary">${Math.round(part.total_sold || 0)}</span></td>
+                                    <td><small>${part.last_sale_date ? part.last_sale_date.substring(0, 10) : '-'}</small></td>
+                                    <td>${createVQBadge(part.vq_available, part.all_vqs)}</td>
+                                    <td>${priceDiffHtml}</td>
+                                </tr>
+                            `;
+                        }).join('');
+                    } else {
+                        tbody.innerHTML = '<tr><td colspan="8" class="text-center">No parts found</td></tr>';
+                    }
+
+                    document.getElementById('bom-modal-loading').style.display = 'none';
+                    document.getElementById('bom-modal-content').style.display = 'block';
+
+                    // Initialize DataTable for sorting
+                    if ($.fn.DataTable.isDataTable('#bom-parts-table')) {
+                        $('#bom-parts-table').DataTable().destroy();
+                    }
+
+                    $('#bom-parts-table').DataTable({
+                        paging: false,
+                        searching: false,
+                        info: false,
+                        order: [[3, 'desc']], // Default sort by Orders (desc)
+                        columnDefs: [
+                            { orderable: true, targets: '_all' }
+                        ]
+                    });
+                } else {
+                    alert('Error loading BOM parts: ' + data.error);
+                    modal.hide();
+                }
+            })
+            .catch(error => {
+                console.error(error);
+                alert('An error occurred while loading BOM parts');
+                modal.hide();
+            });
+    }
+
+    // Cleanup DataTable when BOM modal is closed
+    const bomModal = document.getElementById('bomPartsModal');
+    if (bomModal) {
+        bomModal.addEventListener('hidden.bs.modal', function () {
+            if ($.fn.DataTable.isDataTable('#bom-parts-table')) {
+                $('#bom-parts-table').DataTable().destroy();
+            }
+        });
+    }
+});
+</script>
+
+{% endblock %}

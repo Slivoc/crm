@@ -1,0 +1,200 @@
+<!-- customers_table_body.html - Partial template for AJAX table refreshes -->
+{% for customer in customers %}
+  <tr class="customer-row"
+      data-name="{{ customer.name|lower }}"
+      data-status="{{ customer.customer_status or '' }}"
+      data-country="{{ (customer.country|country_code_to_name)|lower if customer.country else '' }}"
+      data-tags="{{ customer.tags|join(',')|lower if customer.tags else '' }}">
+
+    <!-- Customer name cell with logo, website, and country -->
+    <td class="customer-name-cell">
+      <div class="customer-info">
+        {% if customer.logo_url %}
+          <img src="{{ customer.logo_url }}" alt="{{ customer.name }} logo" class="customer-logo"
+               onerror="this.style.display='none';">
+        {% else %}
+          <div class="customer-logo d-flex align-items-center justify-content-center">
+            <i class="bi bi-building text-muted"></i>
+          </div>
+        {% endif %}
+        <div class="customer-details">
+          <div class="customer-name">{{ customer.name }}</div>
+          {% if customer.website %}
+            <div class="customer-website">
+              <a href="{{ customer.website if customer.website.startswith('http') else 'https://' + customer.website }}"
+                 target="_blank" rel="noopener noreferrer">
+                {{ customer.website }}
+              </a>
+            </div>
+          {% endif %}
+          {% if customer.country %}
+            <div class="customer-country">
+              <img src="https://flagcdn.com/20x15/{{ customer.country.lower() }}.png"
+                   alt="{{ customer.country|country_code_to_name }} flag" class="country-flag"
+                   onerror="this.style.display='none';">
+              <span class="country-name">{{ customer.country|country_code_to_name }}</span>
+            </div>
+          {% endif %}
+          <!-- Add contacts count under country -->
+          <div class="customer-contacts">
+            <i class="bi bi-people me-1 text-muted"></i>
+            {% set contact_count = customer.contacts_count or 0 %}
+            <span class="contacts-count"
+                  data-count="{{ contact_count }}"
+                  {% if contact_count > 5 %}data-count-high="true"{% endif %}>
+              {{ contact_count }}
+            </span>
+            <span class="contacts-label">{{ 'contact' if contact_count == 1 else 'contacts' }}</span>
+          </div>
+        </div>
+      </div>
+    </td>
+
+    <!-- Status -->
+    <td>
+      {% set status = customer.customer_status or 'Not Set' %}
+      <span class="badge status-badge clickable"
+            data-status="{{ status.lower() }}"
+            data-customer-id="{{ customer.id }}"
+            title="Click to advance status">
+        {{ status }}
+      </span>
+    </td>
+
+    <!-- Tags -->
+    <td class="customer-tags">
+      {% if customer.tags %}
+        {% for tag in customer.tags %}
+          <span class="tag-badge tag-{{ tag.lower().replace(' ', '-') }}">{{ tag }}</span>
+        {% endfor %}
+      {% else %}
+        <span class="text-muted">No tags</span>
+      {% endif %}
+    </td>
+
+    <!-- Historical Spend -->
+    <td>
+      {% set spend = customer.historical_spend or 0 %}
+      {% if spend == 0 %}
+        <span class="historical-spend zero">£0</span>
+      {% elif spend > 100000 %}
+        <span class="historical-spend high">{{ "£{:,.0f}".format(spend) }}</span>
+      {% else %}
+        <span class="historical-spend">{{ "£{:,.0f}".format(spend) }}</span>
+      {% endif %}
+    </td>
+
+    <!-- Estimated Revenue -->
+    <td>
+      {% set est_revenue = customer.estimated_revenue or 0 %}
+      <div class="editable-field estimated-revenue"
+           data-field="estimated_revenue"
+           data-value="{{ est_revenue }}"
+           data-customer-id="{{ customer.id }}">
+        {% if est_revenue == 0 %}
+          <span class="estimated-revenue zero display-value">£0</span>
+        {% elif est_revenue > 250000 %}
+          <span class="estimated-revenue high display-value">{{ "£{:,.0f}".format(est_revenue) }}</span>
+        {% else %}
+          <span class="estimated-revenue display-value">{{ "£{:,.0f}".format(est_revenue) }}</span>
+        {% endif %}
+      </div>
+      <form class="edit-form" method="post" action="{{ url_for('salespeople.update_customer_field') }}">
+        <input type="hidden" name="customer_id" value="{{ customer.id }}">
+        <input type="hidden" name="field" value="estimated_revenue">
+        <input type="number" name="value" class="form-control form-control-sm" min="0" step="1000" required>
+        <button type="submit" class="btn btn-success btn-sm">
+          <i class="bi bi-check"></i>
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm cancel-edit">
+          <i class="bi bi-x"></i>
+        </button>
+      </form>
+    </td>
+
+    <!-- Fleet Size -->
+    <td>
+      {% set fleet = customer.fleet_size or 0 %}
+      <div class="editable-field fleet-size"
+           data-field="fleet_size"
+           data-value="{{ fleet }}"
+           data-customer-id="{{ customer.id }}">
+        {% if fleet == 0 %}
+          <span class="fleet-size zero display-value">-</span>
+        {% elif fleet > 100 %}
+          <span class="fleet-size large display-value">{{ "{:,}".format(fleet) }}</span>
+        {% else %}
+          <span class="fleet-size display-value">{{ "{:,}".format(fleet) }}</span>
+        {% endif %}
+      </div>
+      <form class="edit-form" method="post" action="{{ url_for('salespeople.update_customer_field') }}">
+        <input type="hidden" name="customer_id" value="{{ customer.id }}">
+        <input type="hidden" name="field" value="fleet_size">
+        <input type="number" name="value" class="form-control form-control-sm" min="0" required>
+        <button type="submit" class="btn btn-success btn-sm">
+          <i class="bi bi-check"></i>
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm cancel-edit">
+          <i class="bi bi-x"></i>
+        </button>
+      </form>
+    </td>
+
+    <!-- Latest Update -->
+    <td>
+      {% if customer.latest_update %}
+        <small class="d-block text-truncate" style="max-width: 250px;">{{ customer.latest_update }}</small>
+        {% if customer.latest_update_contact_name %}
+          <small class="text-primary">
+            <i class="bi bi-person"></i> {{ customer.latest_update_contact_name }}
+          </small>
+        {% endif %}
+        <small class="text-muted">{{ customer.latest_update_date }}</small>
+      {% else %}
+        <span class="text-muted">No updates</span>
+      {% endif %}
+    </td>
+
+    <!-- Last Order -->
+    <td>
+      {% if customer.most_recent_order_number %}
+        <div class="d-flex flex-column order-info" data-order-date="{{ customer.most_recent_order_date }}">
+          <span class="time-ago" data-date="{{ customer.most_recent_order_date }}">
+            Loading...
+          </span>
+        </div>
+      {% else %}
+        <div class="d-flex flex-column order-info very-stale">
+          <span class="time-ago very-stale">Never</span>
+        </div>
+      {% endif %}
+    </td>
+
+    <!-- Notes -->
+    <td>
+      {% if customer.notes %}
+        <small class="d-block text-truncate" style="max-width: 200px;">{{ customer.notes }}</small>
+      {% else %}
+        <span class="text-muted">No notes</span>
+      {% endif %}
+    </td>
+
+    <!-- Actions -->
+    <td>
+      <div class="btn-group">
+        <button type="button" class="btn btn-sm btn-primary customer-details-btn" data-customer-id="{{ customer.id }}">
+          <i class="bi bi-eye"></i> View
+        </button>
+        <button type="button" class="btn btn-sm btn-success add-update-btn" data-customer-id="{{ customer.id }}" data-customer-name="{{ customer.name }}">
+          <i class="bi bi-plus-circle"></i> Communication
+        </button>
+      </div>
+    </td>
+  </tr>
+{% else %}
+  <tr>
+    <td colspan="10" class="text-center py-3">
+      <p class="text-muted">No customers found matching your criteria</p>
+    </td>
+  </tr>
+{% endfor %}

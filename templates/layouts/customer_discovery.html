@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Updated navigation with card styling and primary color scheme -->
+<div class="card mb-4">
+  <div class="card-body p-0">
+    <div class="d-flex justify-content-between align-items-center px-4 py-3">
+      <div class="d-flex align-items-center">
+        <i class="bi bi-diagram-3 me-2 text-primary"></i>
+        <h5 class="mb-0">Customer Discovery Pipeline</h5>
+      </div>
+      <div class="btn-group">
+        <a href="{{ url_for('customers.enrich_dashboard') }}"
+           class="btn {% if request.endpoint == 'customers.enrich_dashboard' %}btn-primary{% else %}btn-secondary{% endif %}">
+          <i class="bi bi-people-fill me-1"></i>
+          <span>1. Customer Enrichment</span>
+        </a>
+        <a href="{{ url_for('customers.market_coverage') }}"
+           class="btn {% if request.endpoint == 'customers.market_coverage' %}btn-primary{% else %}btn-secondary{% endif %}">
+          <i class="bi bi-graph-up me-1"></i>
+          <span>2. Market Analysis</span>
+        </a>
+        <a href="{{ url_for('customers.prospecting') }}"
+           class="btn {% if request.endpoint == 'customers.prospecting' %}btn-primary{% else %}btn-secondary{% endif %}">
+          <i class="bi bi-bullseye me-1"></i>
+          <span>3. Prospecting</span>
+        </a>
+        <a href="{{ url_for('geo_deepdive.list_deepdives') }}"
+           class="btn {% if request.endpoint in ['geo_deepdive.list_deepdives', 'geo_deepdive.view_deepdive', 'geo_deepdive.new_deepdive', 'geo_deepdive.edit_deepdive'] %}btn-primary{% else %}btn-secondary{% endif %}">
+          <i class="bi bi-globe me-1"></i>
+          <span>4. Geographic Deep Dives</span>
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Content block for child templates -->
+{% block customer_discovery_content %}{% endblock %}
+{% endblock %}

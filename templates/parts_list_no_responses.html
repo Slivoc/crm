@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+
+{% block title %}Supplier No Responses{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h4 class="mb-1">Supplier No Responses</h4>
+    <div class="text-muted small">Emailed suppliers that have not replied with a quote or no-bid.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary btn-sm" id="dismissCosted">Remove costed</button>
+    <button class="btn btn-outline-secondary btn-sm" id="dismissQuoted">Remove quoted</button>
+    <a href="{{ url_for('parts_list.parts_list') }}" class="btn btn-outline-secondary btn-sm">Back to parts lists</a>
+  </div>
+</div>
+
+{% if suppliers %}
+  {% for supplier in suppliers %}
+  <div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <div>
+        <strong>{{ supplier.supplier_name }}</strong>
+        {% if supplier.contact_email %}
+        <span class="text-muted ms-2">{{ supplier.contact_email }}</span>
+        {% endif %}
+        <span class="badge bg-light text-dark ms-2">{{ supplier.lines|length }} open</span>
+      </div>
+      <div class="d-flex gap-2">
+        <button class="btn btn-outline-primary btn-sm copy-list"
+                data-lines='{{ supplier.copy_lines | tojson | safe }}'>
+          Copy list
+        </button>
+        <button class="btn btn-outline-success btn-sm build-email"
+                data-supplier='{{ {
+                    "supplier_name": supplier.supplier_name,
+                    "contact_email": supplier.contact_email,
+                    "contact_name": supplier.contact_name or "",
+                    "supplier_id": supplier.supplier_id
+                } | tojson | safe }}'
+                data-lines='{{ supplier.lines | tojson | safe }}'>
+          Build email
+        </button>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Part</th>
+            <th>Qty</th>
+            <th>Date Sent</th>
+            <th>Parts List</th>
+            <th>Supplier Ref</th>
+            <th>Customer</th>
+            <th>Flags</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for line in supplier.lines %}
+          <tr>
+            <td>{{ line.customer_part_number }}</td>
+            <td>{{ line.quantity }}</td>
+            <td>{{ line.date_sent_short or line.date_sent }}</td>
+            <td>
+              <a href="{{ url_for('parts_list.view_parts_list', list_id=line.parts_list_id) }}"
+                 class="text-decoration-none">
+                {{ line.parts_list_name or ('List #' ~ line.parts_list_id) }}
+              </a>
+            </td>
+            <td>{{ line.parts_list_reference }}</td>
+            <td>{{ line.customer_name or '-' }}</td>
+            <td>
+              {% if line.has_cost %}<span class="badge bg-success">Costed</span>{% endif %}
+              {% if line.has_quote %}<span class="badge bg-info text-dark">Quoted</span>{% endif %}
+            </td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-danger dismiss-line"
+                      data-email-id="{{ line.email_id }}">
+                Remove
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="alert alert-success mb-0">
+    No outstanding requests – all emailed suppliers have responded or were cleared.
+  </div>
+{% endif %}
+
+<div id="no-response-feedback" class="alert alert-success d-none mt-3"></div>
+
+<!-- Email preview modal -->
+<div class="modal fade" id="noResponseEmailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Follow-up Email</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2 text-muted" id="nrRecipient"></div>
+        <div class="mb-3"><strong>Subject:</strong> <span id="nrSubject"></span></div>
+        <div class="border rounded p-3 bg-light" id="nrBody"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-outline-primary" id="nrCopyHtml">Copy styled</button>
+        <button type="button" class="btn btn-primary" id="nrOpenMail">Copy & open email</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const feedback = document.getElementById('no-response-feedback');
+  const modalEl = document.getElementById('noResponseEmailModal');
+  const modal = modalEl ? new bootstrap.Modal(modalEl) : null;
+  let currentEmailData = null;
+
+  function dismissEmails(emailIds) {
+    return fetch('{{ url_for("parts_list.dismiss_no_response_entries") }}', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email_ids: emailIds })
+    });
+  }
+
+  function showFeedback(message, isError = false) {
+    if (!feedback) return;
+    feedback.textContent = message;
+    feedback.classList.remove('d-none', 'alert-success', 'alert-danger');
+    feedback.classList.add(isError ? 'alert-danger' : 'alert-success');
+    setTimeout(() => feedback.classList.add('d-none'), 2200);
+  }
+
+  document.querySelectorAll('.copy-list').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const lines = JSON.parse(btn.dataset.lines || '[]');
+      const text = lines.join('\\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        showFeedback('Copied list for follow-up.');
+      } catch (err) {
+        console.error(err);
+        showFeedback('Copy failed. Please copy manually.', true);
+      }
+    });
+  });
+
+  document.querySelectorAll('.build-email').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!modal) return;
+      const supplierInfo = JSON.parse(btn.dataset.supplier || '{}');
+      const lines = JSON.parse(btn.dataset.lines || '[]');
+      if (!lines.length) return;
+
+      try {
+        const resp = await fetch('{{ url_for("parts_list.generate_no_response_email") }}', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            supplier_name: supplierInfo.supplier_name,
+            contact_email: supplierInfo.contact_email,
+            contact_name: supplierInfo.contact_name,
+            supplier_id: supplierInfo.supplier_id,
+            lines: lines
+          })
+        });
+        const data = await resp.json();
+        if (!data.success) {
+          showFeedback(data.message || 'Could not build email.', true);
+          return;
+        }
+        currentEmailData = data;
+        document.getElementById('nrRecipient').textContent =
+          `${data.recipient_name ? data.recipient_name + ' - ' : ''}${data.recipient_email || 'No email set'}`;
+        document.getElementById('nrSubject').textContent = data.subject;
+        document.getElementById('nrBody').innerHTML = data.body_html;
+        modal.show();
+      } catch (e) {
+        console.error(e);
+        showFeedback('Could not build email.', true);
+      }
+    });
+  });
+
+  async function copyStyled() {
+    if (!currentEmailData) return;
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([currentEmailData.body_html], { type: 'text/html' }),
+          'text/plain': new Blob([currentEmailData.body_html.replace(/<[^>]*>/g, '')], { type: 'text/plain' })
+        })
+      ]);
+      showFeedback('Copied styled email.');
+    } catch (e) {
+      console.error(e);
+      showFeedback('Copy failed. Please copy manually.', true);
+    }
+  }
+
+  const copyBtn = document.getElementById('nrCopyHtml');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', copyStyled);
+  }
+
+  const openBtn = document.getElementById('nrOpenMail');
+  if (openBtn) {
+    openBtn.addEventListener('click', async () => {
+      if (!currentEmailData) return;
+      await copyStyled();
+      const mailto = `mailto:${encodeURIComponent(currentEmailData.recipient_email || '')}?subject=${encodeURIComponent(currentEmailData.subject || '')}`;
+      window.open(mailto, '_blank');
+    });
+  }
+
+  document.querySelectorAll('.dismiss-line').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const emailId = btn.dataset.emailId;
+      if (!emailId) return;
+      const resp = await dismissEmails([emailId]);
+      const data = await resp.json().catch(() => ({}));
+      if (data && data.success) {
+        showFeedback('Removed line.');
+        setTimeout(() => window.location.reload(), 300);
+      } else {
+        showFeedback(data.message || 'Could not remove line.', true);
+      }
+    });
+  });
+
+  function bulkDismiss(filterFn, message) {
+    const emailIds = [];
+    document.querySelectorAll('tr').forEach((row) => {
+      const emailId = row.querySelector('.dismiss-line')?.dataset.emailId;
+      if (!emailId) return;
+      const hasCost = row.querySelector('.badge.bg-success') !== null;
+      const hasQuote = row.querySelector('.badge.bg-info') !== null;
+      if (filterFn({ hasCost, hasQuote })) {
+        emailIds.push(emailId);
+      }
+    });
+    if (!emailIds.length) {
+      showFeedback('Nothing to remove.', true);
+      return;
+    }
+    dismissEmails(emailIds).then(r => r.json().catch(() => ({}))).then((data) => {
+      if (data && data.success) {
+        showFeedback(message);
+        setTimeout(() => window.location.reload(), 300);
+      } else {
+        showFeedback(data.message || 'Could not update list.', true);
+      }
+    });
+  }
+
+  const dismissCosted = document.getElementById('dismissCosted');
+  if (dismissCosted) {
+    dismissCosted.addEventListener('click', () => {
+      bulkDismiss(({ hasCost }) => hasCost, 'Removed costed lines.');
+    });
+  }
+
+  const dismissQuoted = document.getElementById('dismissQuoted');
+  if (dismissQuoted) {
+    dismissQuoted.addEventListener('click', () => {
+      bulkDismiss(({ hasQuote }) => hasQuote, 'Removed quoted lines.');
+    });
+  }
+})();
+</script>
+{% endblock %}

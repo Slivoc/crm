@@ -1,0 +1,38 @@
+{% if industry_insights %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h2 class="h5 mb-0">Suggested Target Companies</h2>
+    </div>
+    <div class="card-body">
+       <div class="list-group">
+    {% for insight in industry_insights %}
+    <div class="list-group-item d-flex justify-content-between align-items-start">
+        <div class="ms-2 me-auto">
+            <h5 class="mb-1">
+                {{ insight.name }}
+                {% if insight.website %}
+                <a href="{{ insight.website }}" target="_blank" class="ms-2">
+                    <i class="bi bi-link-45deg"></i>
+                </a>
+                {% endif %}
+            </h5>
+            <p class="mb-1">{{ insight.description }}</p>
+            <small class="text-muted">Estimated Revenue: ${{ "{:,}".format(insight.estimated_revenue|default(0)|int) }}</small>
+        </div>
+        <button type="button" class="btn btn-primary"
+            onclick='openCustomerModal({
+                name: {{ insight.name|tojson|safe }},
+                description: {{ insight.description|tojson|safe }},
+                revenue: {{ insight.estimated_revenue|default(0) }},
+                country: "{{ insight.country }}",
+                tagId: "{{ selected_tag_id }}"
+            })'
+            data-country="{{ insight.country }}">
+            Add as Customer
+        </button>
+    </div>
+    {% endfor %}
+</div>
+    </div>
+</div>
+{% endif %}

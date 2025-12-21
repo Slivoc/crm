@@ -1,0 +1,221 @@
+<!-- Customer Losses Analysis Row -->
+<div class="row mb-4" id="customerLossesSection">
+    <!-- This Month vs Last -->
+    <div class="col-md-4 mb-3">
+        <div class="card border-0 shadow-sm h-100 border-start border-danger border-3">
+            <div class="card-header bg-white border-bottom-0 pb-2">
+                <h6 class="card-title mb-1 text-dark fw-semibold">
+                    <i class="bi bi-arrow-down-circle text-danger me-2"></i>
+                    This Month vs Last
+                    <span class="badge bg-danger text-white ms-2" id="monthDeclinersCount">0</span>
+                </h6>
+                <small class="text-muted d-block">Down 50%+ from last month</small>
+            </div>
+            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                <div id="monthDecliners">
+                    <div class="text-center py-4 text-muted">
+                        <div class="spinner-border spinner-border-sm me-2" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        Analyzing...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lost This Quarter -->
+    <div class="col-md-4 mb-3">
+        <div class="card border-0 shadow-sm h-100 border-start border-warning border-3">
+            <div class="card-header bg-white border-bottom-0 pb-2">
+                <h6 class="card-title mb-1 text-dark fw-semibold">
+                    <i class="bi bi-calendar-x text-warning me-2"></i>
+                    Lost This Quarter
+                    <span class="badge bg-warning text-dark ms-2" id="quarterLostCount">0</span>
+                </h6>
+                <small class="text-muted d-block">Active 3-6 months ago, silent now</small>
+            </div>
+            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                <div id="quarterLost">
+                    <div class="text-center py-4 text-muted">
+                        <div class="spinner-border spinner-border-sm me-2" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        Analyzing...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dormant 12+ Months -->
+    <div class="col-md-4 mb-3">
+        <div class="card border-0 shadow-sm h-100 border-start border-secondary border-3">
+            <div class="card-header bg-white border-bottom-0 pb-2">
+                <h6 class="card-title mb-1 text-dark fw-semibold">
+                    <i class="bi bi-hourglass-split text-secondary me-2"></i>
+                    Dormant 12+ Months
+                    <span class="badge bg-secondary text-white ms-2" id="yearDormantCount">0</span>
+                </h6>
+                <small class="text-muted d-block">High-value, long-term silent</small>
+            </div>
+            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                <div id="yearDormant">
+                    <div class="text-center py-4 text-muted">
+                        <div class="spinner-border spinner-border-sm me-2" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        Analyzing...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.loss-customer-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid #f8f9fa;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.loss-customer-item:last-child {
+    border-bottom: none;
+}
+
+.loss-customer-item:hover {
+    background-color: #f8f9fa;
+}
+
+.loss-customer-name {
+    font-weight: 500;
+    color: #212529;
+    margin-bottom: 4px;
+}
+
+.loss-value {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #495057;
+}
+
+.loss-metric {
+    font-size: 0.85rem;
+    color: #6c757d;
+}
+
+.loss-decline {
+    color: #dc3545;
+    font-weight: 600;
+}
+
+.loss-empty {
+    padding: 2rem 1rem;
+    text-align: center;
+    color: #6c757d;
+}
+</style>
+
+<script>
+function initializeCustomerLosses() {
+    const urlParts = window.location.pathname.split('/');
+    const salespersonId = urlParts[urlParts.indexOf('salespeople') + 1];
+
+    fetch(`/salespeople/${salespersonId}/customer_losses`)
+        .then(response => response.json())
+        .then(data => {
+            displayMonthDecliners(data.month_decliners);
+            displayQuarterLost(data.quarter_lost);
+            displayYearDormant(data.year_dormant);
+        })
+        .catch(error => {
+            console.error('Error fetching customer losses:', error);
+            showError();
+        });
+}
+
+function displayMonthDecliners(customers) {
+    const container = document.getElementById('monthDecliners');
+    document.getElementById('monthDeclinersCount').textContent = customers.length;
+
+    if (customers.length === 0) {
+        container.innerHTML = '<div class="loss-empty">No significant declines</div>';
+        return;
+    }
+
+    let html = '';
+    customers.slice(0, 5).forEach(c => {
+        html += `
+            <div class="loss-customer-item" onclick="showCustomerDetails('${c.customer_id}')">
+                <div class="loss-customer-name">${c.customer_name}</div>
+                <div class="loss-value">Last month: £${c.last_month_value.toLocaleString()}</div>
+                <div class="loss-metric">This month: £${c.this_month_value.toLocaleString()}</div>
+                <div class="loss-metric loss-decline">↓ ${c.decline_percent.toFixed(0)}% (£${c.decline_amount.toLocaleString()})</div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+}
+
+function displayQuarterLost(customers) {
+    const container = document.getElementById('quarterLost');
+    document.getElementById('quarterLostCount').textContent = customers.length;
+
+    if (customers.length === 0) {
+        container.innerHTML = '<div class="loss-empty">No lost customers</div>';
+        return;
+    }
+
+    let html = '';
+    customers.slice(0, 5).forEach(c => {
+        const lastOrderDate = new Date(c.last_order_date).toLocaleDateString('en-GB');
+        html += `
+            <div class="loss-customer-item" onclick="showCustomerDetails('${c.customer_id}')">
+                <div class="loss-customer-name">${c.customer_name}</div>
+                <div class="loss-value">Previous quarter: £${c.previous_quarter_value.toLocaleString()}</div>
+                <div class="loss-metric">Last order: ${lastOrderDate}</div>
+                <div class="loss-metric loss-decline">${c.days_since_order} days silent</div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+}
+
+function displayYearDormant(customers) {
+    const container = document.getElementById('yearDormant');
+    document.getElementById('yearDormantCount').textContent = customers.length;
+
+    if (customers.length === 0) {
+        container.innerHTML = '<div class="loss-empty">No dormant customers</div>';
+        return;
+    }
+
+    let html = '';
+    customers.slice(0, 5).forEach(c => {
+        const lastOrderDate = new Date(c.last_order_date).toLocaleDateString('en-GB');
+        html += `
+            <div class="loss-customer-item" onclick="showCustomerDetails('${c.customer_id}')">
+                <div class="loss-customer-name">${c.customer_name}</div>
+                <div class="loss-value">Lifetime: £${c.total_lifetime_value.toLocaleString()}</div>
+                <div class="loss-metric">${c.total_orders} orders • Last: ${lastOrderDate}</div>
+                <div class="loss-metric loss-decline">${c.months_silent} months silent</div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+}
+
+function showError() {
+    ['monthDecliners', 'quarterLost', 'yearDormant'].forEach(id => {
+        document.getElementById(id).innerHTML = '<div class="loss-empty text-danger">Error loading data</div>';
+    });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeCustomerLosses);
+} else {
+    initializeCustomerLosses();
+}
+</script>

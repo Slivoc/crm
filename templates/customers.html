@@ -1,0 +1,808 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+
+    <div class="row mb-4">
+        <div class="col-12 d-flex justify-content-between align-items-center">
+            <div>
+                <h2 class="fw-bold mb-1">Customers</h2>
+                <p class="text-muted">Manage and track your customer accounts</p>
+            </div>
+            <button class="btn btn-primary" onclick="showAddCustomerModal()">
+                <i class="bi bi-plus-lg me-1"></i> Add Customer
+            </button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body table-container">
+            <div class="table-responsive">
+                <table class="table table-hover" id="customersTable">
+                    <thead>
+                        <tr>
+                            <!-- ID Column -->
+<th>
+    <div class="d-flex flex-column">
+        <div class="d-flex align-items-center gap-2">
+            <span class="cursor-pointer" onclick="sortTable(0)">ID</span>
+            <i class="bi bi-arrow-down sort-icon"></i>
+        </div>
+        <input type="text" class="form-control form-control-sm mt-2"
+               placeholder="Filter ID..." id="filterId" onkeyup="applyFilters()">
+    </div>
+</th>
+
+                            <!-- Name Column -->
+                            <th>
+                                <div class="d-flex flex-column">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="cursor-pointer" onclick="sortTable(0)">Name</span>
+                                        <i class="bi bi-arrow-down sort-icon"></i>
+                                    </div>
+                                    <input type="text" class="form-control form-control-sm mt-2"
+                                           placeholder="Filter name..." id="filterName" onkeyup="applyFilters()">
+                                </div>
+                            </th>
+
+                            <!-- Salesperson Column -->
+                            <th>
+                                <div class="d-flex flex-column">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="cursor-pointer" onclick="sortTable(2)">Salesperson</span>
+                                        <i class="bi bi-arrow-down sort-icon"></i>
+                                    </div>
+                                    <select class="form-select form-select-sm mt-2"
+                                            id="filterSalesperson"
+                                            onchange="applyFilters()"
+                                            multiple>
+                                        <option value="">All Salespeople</option>
+                                        <!-- Options will be populated dynamically -->
+                                    </select>
+                                </div>
+                            </th>
+
+                            <!-- Status Column -->
+                            <th>
+                                <div class="d-flex flex-column">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="cursor-pointer" onclick="sortTable(3)">Status</span>
+                                        <i class="bi bi-arrow-down sort-icon"></i>
+                                    </div>
+                                    <input type="text" class="form-control form-control-sm mt-2"
+                                           placeholder="Filter status..." id="filterStatus" onkeyup="applyFilters()">
+                                </div>
+                            </th>
+
+                            <!-- Budget Column -->
+                            <th>
+                                <div class="d-flex flex-column">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="cursor-pointer" onclick="sortTable(4)">Budget</span>
+                                        <i class="bi bi-arrow-down sort-icon"></i>
+                                    </div>
+                                    <input type="text" class="form-control form-control-sm mt-2"
+                                           placeholder="Filter budget..." id="filterBudget" onkeyup="applyFilters()">
+                                </div>
+                            </th>
+
+                            <!-- YTD Sales Column -->
+                            <th>
+                                <div class="d-flex flex-column">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="cursor-pointer" onclick="sortTable(5)">YTD Sales</span>
+                                        <i class="bi bi-arrow-down sort-icon"></i>
+                                    </div>
+                                    <input type="text" class="form-control form-control-sm mt-2"
+                                           placeholder="Filter YTD sales..." id="filterYtdSales" onkeyup="applyFilters()">
+                                </div>
+                            </th>
+
+                            <!-- Tags Column -->
+                            <th>
+                                <div class="d-flex flex-column">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="cursor-pointer" onclick="sortTable(4)">Tags</span>
+                                        <i class="bi bi-arrow-down sort-icon"></i>
+                                    </div>
+                                    <input type="text" class="form-control form-control-sm mt-2"
+                                           placeholder="Filter tags..." id="filterTags" onkeyup="applyFilters()">
+                                </div>
+                            </th>
+
+                            <!-- Latest Activity Column -->
+                            <th>
+                                <div class="d-flex flex-column">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="cursor-pointer" onclick="sortTable(5)">Latest Activity</span>
+                                        <i class="bi bi-arrow-down sort-icon"></i>
+                                    </div>
+                                    <input type="text" class="form-control form-control-sm mt-2"
+                                           placeholder="Filter activity..." id="filterActivity" onkeyup="applyFilters()">
+                                </div>
+                            </th>
+
+                            <!-- Comments Column -->
+                            <th>
+                                <div class="d-flex flex-column">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="cursor-pointer" onclick="sortTable(6)">Comments</span>
+                                        <i class="bi bi-arrow-down sort-icon"></i>
+                                    </div>
+                                    <input type="text" class="form-control form-control-sm mt-2"
+                                           placeholder="Filter comments..." id="filterComments" onkeyup="applyFilters()">
+                                </div>
+                            </th>
+
+                            <!-- Watch Column -->
+                            <th>
+                                <div class="d-flex flex-column">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span>Watch</span>
+                                    </div>
+                                    <select class="form-select form-select-sm mt-2"
+                                            id="filterWatch"
+                                            onchange="applyFilters()">
+                                        <option value="">All</option>
+                                        <option value="true">Watched</option>
+                                        <option value="false">Not Watched</option>
+                                    </select>
+                                </div>
+                            </th>
+
+                            <!-- Actions Column -->
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="customersList">
+                        <!-- Rows will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Loading spinner -->
+            <div id="loadingSpinner" class="text-center p-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+
+            <!-- No results message -->
+            <div id="noResultsMessage" class="text-center p-4 my-4" style="display: none;">
+                <div class="text-muted">
+                    <i class="bi bi-search fs-2 d-block mb-3"></i>
+                    No customers found
+                </div>
+            </div>
+
+            <!-- Pagination -->
+            <div id="pagination" class="d-flex justify-content-between align-items-center p-3 border-top">
+                <!-- Pagination will be rendered here -->
+            </div>
+        </div>
+    </div>
+<!-- Enhanced Quick Update Modal -->
+<div class="modal fade" id="quickUpdateModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Update - <span id="customerNameInModal"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Single shared textarea for all update types -->
+                <div class="mb-3">
+                    <textarea class="form-control"
+                            id="updateText"
+                            rows="3"
+                            placeholder="Enter your update here..."
+                            required></textarea>
+                </div>
+
+                <div class="d-flex flex-wrap gap-2">
+                    <!-- Generic update button -->
+                    <button type="button" class="btn btn-primary" onclick="setQuickUpdate('generic', null)">Add Update</button>
+
+                    <!-- Quick communication buttons -->
+                    <div class="dropdown">
+                        <button class="btn btn-outline-primary dropdown-toggle" type="button" id="emailDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-envelope"></i> Email
+                        </button>
+                        <ul class="dropdown-menu" aria-labelledby="emailDropdown" id="emailContactsList">
+                            <li><a class="dropdown-item" href="#" onclick="setQuickUpdate('email', null)">Generic Email</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <!-- Contact options will be loaded here -->
+                        </ul>
+                    </div>
+
+                    <div class="dropdown">
+                        <button class="btn btn-outline-primary dropdown-toggle" type="button" id="phoneDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-telephone"></i> Phone
+                        </button>
+                        <ul class="dropdown-menu" aria-labelledby="phoneDropdown" id="phoneContactsList">
+                            <li><a class="dropdown-item" href="#" onclick="setQuickUpdate('phone', null)">Generic Call</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <!-- Contact options will be loaded here -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentPage = 1;
+    let searchTimeout;
+    let sortDirections = Array(6).fill('asc'); // One for each sortable column
+    let currentSortColumn = null;
+    let currentSortOrder = 'asc'; // Default sort order
+    let currentSearchTerm = ''; // Global search term
+    let currentFilters = {
+    id: '',
+    name: '',
+    primary_contact: '',
+    salesperson: '',
+    status: '',
+    budget: '',
+    tags: '',
+    latest_activity: '',
+    comments: '',
+    watch: ''
+};
+
+
+    /**
+     * Load customers from the server with current filters and pagination.
+     * @param {number} page - The page number to load.
+     */
+function loadCustomers(page = 1) {
+    currentPage = page;
+
+    const spinner = document.getElementById('loadingSpinner');
+    const tableBody = document.getElementById('customersList');
+    const noResults = document.getElementById('noResultsMessage');
+    const paginationDiv = document.getElementById('pagination');
+
+    // Clear existing content
+    while (tableBody.firstChild) {
+        tableBody.removeChild(tableBody.firstChild);
+    }
+
+    spinner.style.display = 'block';
+    noResults.style.display = 'none';
+    paginationDiv.innerHTML = '';
+
+    // Build the query parameters
+// Build the query parameters
+const params = new URLSearchParams({
+    page: page,
+    search: '', // Removed currentSearchTerm
+    sort_by: currentSortColumn || 'latest_activity',
+    order: currentSortOrder
+});
+
+    // Add per-column filters
+    for (const [key, value] of Object.entries(currentFilters)) {
+        if (value && value.trim() !== '') {
+            params.append(`filter_${key}`, value.trim());
+        }
+    }
+
+    fetch(`/customers/api/customers/filter?${params.toString()}`)
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => {
+                    throw new Error(err.error || 'Server error');
+                });
+            }
+            return response.json();
+        })
+        .then(data => {
+            spinner.style.display = 'none';
+
+            if (!data || !data.customers) {
+                throw new Error('Invalid response format');
+            }
+
+            if (data.customers.length === 0) {
+                noResults.style.display = 'block';
+                return;
+            }
+
+            // Create a document fragment for better performance
+            const fragment = document.createDocumentFragment();
+
+            data.customers.forEach(customer => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                <td>${customer.id}</td>
+
+                    <td><strong>${sanitizeHTML(customer.name || '')}</strong></td>
+                    <td>${sanitizeHTML(customer.salesperson_name || 'No salesperson')}</td>
+                    <td>${sanitizeHTML(customer.status || '')}</td>
+                    <td>${customer.budget ? `€${customer.budget.amount.toLocaleString()}` : '-'}</td>
+                    <td>${customer.ytd_sales ? `€${Number(customer.ytd_sales).toLocaleString()}` : '€0'}</td>
+                    <td>${sanitizeHTML(customer.tags ? customer.tags.join(', ') : 'No tags')}</td>
+                    <td>${renderActivity(customer)}</td>
+<td>
+    ${customer.latest_update ? `
+        <div class="d-flex flex-column">
+            <div class="d-flex align-items-center gap-2">
+                ${getUpdateTypeIcon(customer.latest_update.communication_type)}
+                <span>${sanitizeHTML(customer.latest_update.update_text)}</span>
+            </div>
+            ${customer.latest_update.contact_name ? `
+                <small class="badge bg-info text-white mt-1">
+                    <i class="bi bi-person"></i> ${sanitizeHTML(customer.latest_update.contact_name)}
+                </small>
+            ` : ''}
+            <small class="text-muted mt-1">${new Date(customer.latest_update.date).toLocaleDateString()}</small>
+        </div>
+    ` : ''}
+</td>
+                    <td>
+    <button class="btn btn-link p-0" onclick="toggleWatch(${customer.id}, ${customer.watch})" title="${customer.watch ? 'Remove from watch' : 'Add to watch'}">
+        <i class="bi ${customer.watch ? 'bi-eye-fill text-primary' : 'bi-eye text-muted'}"></i>
+    </button>
+</td>
+                    <td>
+                        <div class="btn-group" role="group">
+                            <form action="/customers/${customer.id}/edit" method="get" class="me-2">
+                                <button type="submit" class="btn btn-primary btn-sm">Edit</button>
+                            </form>
+                            <button type="button"
+                                    class="btn btn-secondary btn-sm me-2"
+                                    onclick="enrichCustomer(${customer.id})"
+                                    id="enrich-btn-${customer.id}">
+                                Enrich
+                            </button>
+                            <button type="button"
+                                    class="btn btn-info btn-sm"
+                                    onclick="openQuickUpdate(${customer.id}, '${sanitizeHTML(customer.name)}')"
+                                    title="Add quick update">
+                                <i class="bi bi-chat-dots"></i>
+                            </button>
+                        </div>
+                    </td>
+                `;
+                fragment.appendChild(row);
+            });
+
+            // Clear the table again (just to be safe) and append all rows at once
+            while (tableBody.firstChild) {
+                tableBody.removeChild(tableBody.firstChild);
+            }
+            tableBody.appendChild(fragment);
+
+            renderPagination(data);
+        })
+        .catch(error => {
+            console.error('Error details:', error);
+            spinner.style.display = 'none';
+            noResults.textContent = 'Error loading customers: ' + error.message;
+            noResults.style.display = 'block';
+        });
+}
+
+    /**
+     * Render the activity column based on customer data.
+     * @param {object} customer - The customer object.
+     * @returns {string} - HTML string for the activity cell.
+     */
+      function renderActivity(customer) {
+        if (!customer.latest_activity) return 'No activity';
+
+        let icon = '';
+        let badge = '';
+
+        switch (customer.activity_type) {
+            case 'email':
+                icon = 'bi-envelope';
+                badge = customer.activity_status === 'outbound' ?
+                    '<span class="badge bg-primary">Sent</span>' :
+                    '<span class="badge bg-success">Received</span>';
+                break;
+            case 'rfq':
+                icon = 'bi-file-text';
+                badge = `<span class="badge bg-info">${sanitizeHTML(customer.activity_status)}</span>`;
+                break;
+            case 'order':
+                icon = 'bi-bag';
+                badge = `<span class="badge bg-warning">${sanitizeHTML(customer.activity_status)}</span>`;
+                break;
+            default:
+                badge = `<span class="badge bg-secondary">${sanitizeHTML(customer.activity_status)}</span>`;
+        }
+
+        const activityDate = customer.latest_activity
+            ? new Date(customer.latest_activity).toLocaleString()
+            : 'N/A';
+
+            return `
+                <div class="d-flex align-items-center"
+                     onclick="showActivityDetail('${customer.activity_type}', ${customer.activity_id})"
+                     style="cursor: pointer;">
+                    <i class="bi ${icon} me-2"></i>
+                    ${badge}
+                    <small class="text-muted ms-2">${sanitizeHTML(activityDate)}</small>
+                </div>
+            `;
+        }
+
+
+
+    /**
+     * Render pagination controls based on the data.
+     * @param {object} data - The response data from the server.
+     */
+    function renderPagination(data) {
+        const paginationDiv = document.getElementById('pagination');
+
+        // Show pagination only if there's more than one page
+        if (data.pages <= 1) {
+            paginationDiv.innerHTML = '';
+            return;
+        }
+
+        let html = '<div class="btn-group">';
+
+        // Previous Button
+        if (currentPage > 1) {
+            html += `<button class="btn btn-outline-primary" onclick="loadCustomers(${currentPage - 1})">Previous</button>`;
+        }
+
+        // Next Button
+        if (currentPage < data.pages) {
+            html += `<button class="btn btn-outline-primary" onclick="loadCustomers(${currentPage + 1})">Next</button>`;
+        }
+
+        html += '</div>';
+        html += `<span class="text-muted ms-3">Page ${currentPage} of ${data.pages}</span>`;
+
+        paginationDiv.innerHTML = html;
+    }
+
+    /**
+     * Sanitize HTML to prevent XSS attacks.
+     * @param {string} str - The string to sanitize.
+     * @returns {string} - Sanitized string.
+     */
+    function sanitizeHTML(str) {
+        const temp = document.createElement('div');
+        temp.textContent = str;
+        return temp.innerHTML;
+    }
+
+    /**
+     * Enrich a customer by ID.
+     * @param {number} customerId - The ID of the customer to enrich.
+     */
+    async function enrichCustomer(customerId) {
+    const button = document.getElementById(`enrich-btn-${customerId}`);
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Enriching...';
+
+    try {
+        const response = await fetch('/customers/enrich', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ customer_id: customerId })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to enrich customer');
+        }
+
+        // Success! Reload the table
+        loadCustomers(currentPage);
+
+        // Reset button state
+        button.disabled = false;
+        button.innerHTML = 'Enrich';
+
+    } catch (error) {
+        console.error('Error:', error);
+        // Reset button state
+        button.disabled = false;
+        button.innerHTML = 'Enrich';
+        // Show error to user
+        alert('Failed to enrich customer: ' + error.message);
+    }
+}
+    /**
+     * Apply all active filters by collecting their values.
+     */
+    function applyFilters() {
+        const salespersonSelect = document.getElementById('filterSalesperson');
+    const selectedSalespeople = Array.from(salespersonSelect.selectedOptions)
+        .map(option => option.value)
+        .filter(value => value !== '');
+        currentFilters.id = document.getElementById('filterId').value;
+    currentFilters.name = document.getElementById('filterName').value;
+    currentFilters.salesperson = document.getElementById('filterSalesperson').value;
+    currentFilters.status = document.getElementById('filterStatus').value;
+    currentFilters.salesperson = selectedSalespeople.join(',');
+    currentFilters.budget = document.getElementById('filterBudget').value;
+    currentFilters.tags = document.getElementById('filterTags').value;
+    currentFilters.latest_activity = document.getElementById('filterActivity').value;
+    currentFilters.comments = document.getElementById('filterComments').value;
+    currentFilters.watch = document.getElementById('filterWatch').value;
+    loadCustomers(1);
+}
+
+
+    /**
+     * Initial load when the DOM is fully loaded.
+     */
+    document.addEventListener('DOMContentLoaded', () => loadCustomers());
+
+    /**
+     * Sorting functionality with server-side sorting.
+     * @param {number} columnIndex - The index of the column to sort by.
+     */
+    function sortTable(columnIndex) {
+        const sortColumns = ['id', 'name', 'salesperson', 'status', 'budget', 'ytd_sales', 'tags', 'latest_activity', 'latest_update'];
+
+        const sortColumn = sortColumns[columnIndex];
+
+        if (currentSortColumn === sortColumn) {
+            // Toggle sort order
+            currentSortOrder = currentSortOrder === 'asc' ? 'desc' : 'asc';
+        } else {
+            // Set new sort column with default desc order for budget and ytd_sales
+            currentSortColumn = sortColumn;
+            if (sortColumn === 'budget' || sortColumn === 'ytd_sales') {
+                currentSortOrder = 'desc';  // Start with high to low for monetary values
+            } else {
+                currentSortOrder = 'asc';  // Start with A to Z for text values
+            }
+        }
+
+        // Update sort icons
+        document.querySelectorAll('.sort-icon').forEach((icon, index) => {
+            if (index === columnIndex) {
+                icon.className = `bi bi-arrow-${currentSortOrder === 'asc' ? 'down' : 'up'} sort-icon`;
+            } else {
+                icon.className = 'bi bi-arrow-down sort-icon';
+            }
+        });
+
+        // Reset to first page when sorting changes
+        loadCustomers(1);
+    }
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadCustomers();
+    loadSalespeople();
+});
+
+// Function to load salespeople
+function loadSalespeople() {
+    fetch('/customers/api/salespeople')
+        .then(response => response.json())
+        .then(salespeople => {
+            const select = document.getElementById('filterSalesperson');
+            salespeople.forEach(sp => {
+                const option = document.createElement('option');
+                option.value = sp.id;
+                option.textContent = sp.name;
+                select.appendChild(option);
+            });
+        })
+        .catch(error => console.error('Error loading salespeople:', error));
+}
+
+// Enhanced Quick Update functionality
+let currentCustomerId = null;
+let quickUpdateModal = null;
+
+// Initialize the modal when DOM is loaded
+document.addEventListener('DOMContentLoaded', function() {
+    quickUpdateModal = new bootstrap.Modal(document.getElementById('quickUpdateModal'));
+
+    // Add keyboard shortcut to submit with Ctrl+Enter
+    document.getElementById('updateText').addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.key === 'Enter') {
+            setQuickUpdate('generic', null);
+        }
+    });
+});
+
+/**
+ * Open the quick update modal for a specific customer
+ * @param {number} customerId - The ID of the customer
+ * @param {string} customerName - The name of the customer
+ */
+function openQuickUpdate(customerId, customerName) {
+    currentCustomerId = customerId;
+    document.getElementById('customerNameInModal').textContent = customerName;
+    document.getElementById('updateText').value = '';
+
+    // Clear previous content in dropdowns
+    document.getElementById('emailContactsList').innerHTML = '<li><a class="dropdown-item" href="#" onclick="setQuickUpdate(\'email\', null)">Generic Email</a></li><li><hr class="dropdown-divider"></li>';
+    document.getElementById('phoneContactsList').innerHTML = '<li><a class="dropdown-item" href="#" onclick="setQuickUpdate(\'phone\', null)">Generic Call</a></li><li><hr class="dropdown-divider"></li>';
+
+    // Load the customer's contacts
+    loadCustomerContacts(customerId);
+
+    // Show the modal
+    quickUpdateModal.show();
+}
+
+/**
+ * Load contacts for the specified customer
+ * @param {number} customerId - The ID of the customer
+ */
+async function loadCustomerContacts(customerId) {
+    try {
+        const response = await fetch(`/customers/api/customer/${customerId}/contacts`);
+        if (!response.ok) {
+            throw new Error('Failed to load contacts');
+        }
+
+        const data = await response.json();
+
+        if (data.contacts && data.contacts.length > 0) {
+            // Populate the email dropdown
+            const emailList = document.getElementById('emailContactsList');
+            // Populate the phone dropdown
+            const phoneList = document.getElementById('phoneContactsList');
+
+            data.contacts.forEach(contact => {
+                // Only add to email dropdown if the contact has an email
+                if (contact.email) {
+                    const emailItem = document.createElement('li');
+                    // Escape potential quotes in names for the onclick handler
+                    const safeContactName = contact.name.replace(/'/g, "\\'");
+                    emailItem.innerHTML = `<a class="dropdown-item" href="#" onclick="setQuickUpdate('email', ${contact.id}, '${safeContactName}')">
+                        ${contact.name}${contact.second_name ? ' ' + contact.second_name : ''} - ${contact.email}</a>`;
+                    emailList.appendChild(emailItem);
+                }
+
+                // Add to phone dropdown regardless
+                const phoneItem = document.createElement('li');
+                // Escape potential quotes in names for the onclick handler
+                const safeContactName = contact.name.replace(/'/g, "\\'");
+                phoneItem.innerHTML = `<a class="dropdown-item" href="#" onclick="setQuickUpdate('phone', ${contact.id}, '${safeContactName}')">
+                    ${contact.name}${contact.second_name ? ' ' + contact.second_name : ''}</a>`;
+                phoneList.appendChild(phoneItem);
+            });
+        }
+    } catch (error) {
+        console.error('Error loading contacts:', error);
+        // Add an error message to the dropdown
+        const errorItem = document.createElement('li');
+        errorItem.innerHTML = '<span class="dropdown-item text-danger">Failed to load contacts</span>';
+        document.getElementById('emailContactsList').appendChild(errorItem);
+        document.getElementById('phoneContactsList').appendChild(errorItem.cloneNode(true));
+    }
+}
+
+/**
+ * Set quick update with communication type and contact info
+ * @param {string} communicationType - The type of communication (generic, email, phone)
+ * @param {number|null} contactId - The ID of the contact (or null for generic updates)
+ * @param {string|null} contactName - The name of the contact (optional)
+ */
+function setQuickUpdate(communicationType, contactId, contactName) {
+    // Get the text from the textarea
+    let updateText = document.getElementById('updateText').value.trim();
+
+    // If the textarea is empty, generate a default message based on the type and contact
+    if (!updateText) {
+        if (communicationType === 'email') {
+            updateText = contactId ? `Emailed ${contactName}` : 'Emailed customer';
+        } else if (communicationType === 'phone') {
+            updateText = contactId ? `Called ${contactName}` : 'Called customer';
+        } else {
+            updateText = 'Customer update';
+        }
+    }
+
+    // Submit the update
+    submitQuickUpdate(updateText, communicationType, contactId);
+}
+
+/**
+ * Submit the quick update to the server
+ */
+async function submitQuickUpdate(updateText, communicationType, contactId) {
+    if (!updateText) return;
+
+    try {
+        const formData = new URLSearchParams({
+            'update_text': updateText
+        });
+
+        // Add contact_id if present
+        if (contactId) {
+            formData.append('contact_id', contactId);
+        }
+
+        // Add update_type if present (changed from communication_type to match backend)
+        if (communicationType && communicationType !== 'generic') {
+            formData.append('update_type', communicationType);
+        }
+
+        const response = await fetch(`/customers/${currentCustomerId}/add_update`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: formData
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to add update');
+        }
+
+        // Close modal and refresh table
+        quickUpdateModal.hide();
+        loadCustomers(currentPage);
+
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Failed to add update: ' + error.message);
+    }
+}
+// Add this helper function to your script
+function getUpdateTypeIcon(type) {
+    if (!type) return '<i class="bi bi-chat-dots text-muted"></i>'; // Default for NULL
+
+    switch(type.toLowerCase()) {
+        case 'email':
+            return '<i class="bi bi-envelope text-primary"></i>';
+        case 'phone':
+            return '<i class="bi bi-telephone text-success"></i>';
+        default:
+            return '<i class="bi bi-chat-dots text-muted"></i>';
+    }
+}
+</script>
+
+<style>
+ <!--   .customer-row:hover {
+        background-color: rgba(0,0,0,0.02);
+    }
+    .cursor-pointer {
+        cursor: pointer;
+    }
+
+    .sort-icon {
+        opacity: 0.5;
+        font-size: 0.8em;
+    }
+
+    th .form-control-sm {
+        font-size: 0.875rem;
+        padding: 0.25rem 0.5rem;
+    }
+
+    thead th {
+        white-space: nowrap;
+        min-width: 150px; /* Adjust based on your needs */
+    }
+
+    /* Active search input styling */
+    #globalSearchInput.active {
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    }
+
+    #filterSalesperson {
+        height: auto;
+        min-height: 2rem;
+    }
+    #filterSalesperson option {
+        padding: 5px;
+    }-->
+</style>
+{% endblock %}

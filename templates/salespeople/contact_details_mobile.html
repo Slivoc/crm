@@ -1,0 +1,160 @@
+<!-- Contact Header -->
+<div class="bg-light p-3 border-bottom">
+    <h5 class="mb-1">{{ contact.name }}{% if contact.second_name %} {{ contact.second_name }}{% endif %}</h5>
+    {% if contact.job_title %}
+        <div class="text-muted small mb-2">
+            <i class="bi bi-briefcase me-1"></i>{{ contact.job_title }}
+        </div>
+    {% endif %}
+    <div class="fw-semibold text-primary">
+        <i class="bi bi-building me-1"></i>{{ contact.customer_name }}
+    </div>
+</div>
+
+<!-- Contact Actions -->
+<div class="p-3 border-bottom">
+    <div class="row g-2">
+        {% if contact.email %}
+        <div class="col-6">
+            <a href="mailto:{{ contact.email }}" class="btn btn-outline-primary w-100">
+                <i class="bi bi-envelope-fill"></i>
+                <div class="small mt-1">Email</div>
+            </a>
+        </div>
+        {% endif %}
+
+        {% if contact.phone %}
+        <div class="col-6">
+            <a href="tel:{{ contact.phone }}" class="btn btn-outline-success w-100">
+                <i class="bi bi-telephone-fill"></i>
+                <div class="small mt-1">Call</div>
+            </a>
+        </div>
+        {% endif %}
+
+        {% if contact.mobile %}
+        <div class="col-6">
+            <a href="tel:{{ contact.mobile }}" class="btn btn-outline-success w-100">
+                <i class="bi bi-phone-fill"></i>
+                <div class="small mt-1">Mobile</div>
+            </a>
+        </div>
+        {% endif %}
+
+        <div class="col-6">
+            <button type="button" class="btn btn-outline-info w-100"
+                    onclick="openMobileLogCommFromContact({{ contact.id }}, {{ contact.customer_id }}, '{{ contact.name }}', '{{ contact.customer_name }}')">
+                <i class="bi bi-chat-dots-fill"></i>
+                <div class="small mt-1">Log Comm</div>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Contact Information -->
+<div class="p-3 border-bottom">
+    <h6 class="mb-3"><i class="bi bi-info-circle me-2"></i>Contact Information</h6>
+
+    {% if contact.email %}
+    <div class="mb-3">
+        <label class="text-muted small">Email</label>
+        <div>
+            <a href="mailto:{{ contact.email }}" class="text-decoration-none">
+                {{ contact.email }}
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if contact.phone %}
+    <div class="mb-3">
+        <label class="text-muted small">Phone</label>
+        <div>
+            <a href="tel:{{ contact.phone }}" class="text-decoration-none">
+                {{ contact.phone }}
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if contact.mobile %}
+    <div class="mb-3">
+        <label class="text-muted small">Mobile</label>
+        <div>
+            <a href="tel:{{ contact.mobile }}" class="text-decoration-none">
+                {{ contact.mobile }}
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if contact.job_title %}
+    <div class="mb-3">
+        <label class="text-muted small">Job Title</label>
+        <div>{{ contact.job_title }}</div>
+    </div>
+    {% endif %}
+
+    {% if contact.status_name %}
+    <div class="mb-3">
+        <label class="text-muted small">Status</label>
+        <div>
+            <span class="badge" style="background-color: {{ contact.status_color or '#6c757d' }}">
+                {{ contact.status_name }}
+            </span>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Recent Communications -->
+<div class="p-3">
+    <h6 class="mb-3"><i class="bi bi-chat-left-text me-2"></i>Recent Communications</h6>
+
+    {% if communications and communications|length > 0 %}
+        {% for comm in communications[:5] %}
+        <div class="card mb-2">
+            <div class="card-body p-2">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <span class="badge bg-light text-dark">
+                        <i class="bi bi-{{ 'telephone' if comm.communication_type == 'Phone' else 'envelope' if comm.communication_type == 'Email' else 'calendar-event' if comm.communication_type == 'Meeting' else 'camera-video' if comm.communication_type == 'Video Call' else 'chat-dots' }}"></i>
+                        {{ comm.communication_type }}
+                    </span>
+                    <small class="text-muted">
+                        {{ comm.communication_date }}
+                    </small>
+                </div>
+                {% if comm.notes %}
+                <div class="small">{{ comm.notes }}</div>
+                {% endif %}
+                {% if comm.salesperson_name %}
+                <div class="text-muted small mt-1">
+                    <i class="bi bi-person me-1"></i>{{ comm.salesperson_name }}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+
+        {% if communications|length > 5 %}
+        <div class="text-center text-muted small">
+            Showing 5 of {{ communications|length }} communications
+        </div>
+        {% endif %}
+    {% else %}
+        <div class="text-center text-muted py-3">
+            <i class="bi bi-chat-dots fs-3"></i>
+            <p class="mb-0 small">No communications recorded yet</p>
+        </div>
+    {% endif %}
+</div>
+
+<!-- Quick Actions Footer -->
+<div class="p-3 bg-light border-top">
+    <a href="/customers/{{ contact.customer_id }}/edit" class="btn btn-outline-primary w-100 mb-2">
+        <i class="bi bi-pencil me-2"></i>Edit Full Contact Details
+    </a>
+    <button type="button" class="btn btn-secondary w-100" data-bs-dismiss="modal">
+        Close
+    </button>
+</div>

@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Search Details #{{ search.id }}</h2>
+        <a href="{{ url_for('portal_admin.view_search_history') }}" class="btn btn-secondary">
+            Back to Search History
+        </a>
+    </div>
+
+    <div class="row">
+        <!-- Search Information -->
+        <div class="col-md-4">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Search Information</h5>
+                </div>
+                <div class="card-body">
+                    <table class="table table-sm">
+                        <tr>
+                            <th>Date/Time:</th>
+                            <td>{{ search.date_searched }}</td>
+                        </tr>
+                        <tr>
+                            <th>Customer:</th>
+                            <td>
+                                <a href="{{ url_for('portal_admin.view_customer_portal_settings', customer_id=search.customer_id) }}">
+                                    {{ search.customer_name }}
+                                </a>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>User:</th>
+                            <td>
+                                {{ search.first_name }} {{ search.last_name }}<br>
+                                <small class="text-muted">{{ search.user_email }}</small>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Search Type:</th>
+                            <td>
+                                <span class="badge bg-info">
+                                    {{ search.search_type.replace('_', ' ').title() }}
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Parts Count:</th>
+                            <td>{{ search.parts_count }}</td>
+                        </tr>
+                        <tr>
+                            <th>IP Address:</th>
+                            <td><small>{{ search.ip_address or 'N/A' }}</small></td>
+                        </tr>
+                        <tr>
+                            <th>User Agent:</th>
+                            <td><small>{{ search.user_agent or 'N/A' }}</small></td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Parts Searched -->
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Parts Searched</h5>
+                </div>
+                <div class="card-body">
+                    {% if parts_searched %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Part Number</th>
+                                    <th>Quantity</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for part in parts_searched %}
+                                <tr>
+                                    <td>{{ loop.index }}</td>
+                                    <td>
+                                        <strong>{{ part.part_number }}</strong>
+                                    </td>
+                                    <td>
+                                        {% if part.quantity %}
+                                        <span class="badge bg-secondary">{{ part.quantity }}</span>
+                                        {% else %}
+                                        -
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="/part/{{ part.part_number }}"
+                                           class="btn btn-sm btn-outline-primary"
+                                           target="_blank">
+                                            View Part
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted">No parts data available for this search.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Quick Actions</h5>
+                </div>
+                <div class="card-body">
+                    <div class="btn-group" role="group">
+                        <a href="{{ url_for('portal_admin.view_customer_portal_settings', customer_id=search.customer_id) }}"
+                           class="btn btn-outline-primary">
+                            View Customer Portal Settings
+                        </a>
+                        <a href="/customer/{{ search.customer_id }}"
+                           class="btn btn-outline-secondary">
+                            View Customer Details
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

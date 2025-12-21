@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h3 mb-0">{% if template %}Edit Template{% else %}Create Template{% endif %}</h1>
+                <a href="{{ url_for('templates.list_templates') }}" class="btn btn-link">
+                    Back to Templates
+                </a>
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <form method="POST">
+                        <!-- Template Name -->
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Template Name</label>
+                            <input type="text"
+                                   class="form-control"
+                                   id="name"
+                                   name="name"
+                                   value="{{ template.name if template else '' }}"
+                                   required>
+                        </div>
+
+                        <!-- Description -->
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea class="form-control"
+                                      id="description"
+                                      name="description"
+                                      rows="2">{{ template.description if template else '' }}</textarea>
+                        </div>
+
+                        <!-- Subject -->
+                        <div class="mb-3">
+                            <label for="subject" class="form-label">Email Subject</label>
+                            <input type="text"
+                                   class="form-control"
+                                   id="subject"
+                                   name="subject"
+                                   value="{{ template.subject if template else '' }}"
+                                   required>
+                        </div>
+
+                        <!-- Email Body -->
+                        <div class="mb-3">
+                            <label for="body" class="form-label">Email Body</label>
+                            <textarea class="form-control"
+                                      id="body"
+                                      name="body"
+                                      rows="10"
+                                      required>{{ template.body if template else '' }}</textarea>
+
+                            <!-- Placeholders Reference -->
+                            <div class="card mt-3 bg-light">
+                                <div class="card-body">
+                                    <h6 class="card-title mb-3">Available Placeholders</h6>
+                                    <div class="row g-3">
+                                        {% for ph in placeholders %}
+                                        <div class="col-md-6">
+                                            <code>{{ ph.placeholder_key }}</code>
+                                            <small class="text-muted d-block">{{ ph.description }}</small>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Industry Tags -->
+                        <div class="mb-3">
+                            <label class="form-label">Industry Tags</label>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="row g-3">
+                                        {% for tag in industry_tags %}
+                                        <div class="col-md-4">
+                                            <div class="form-check">
+                                                <input class="form-check-input"
+                                                       type="checkbox"
+                                                       name="industry_tags"
+                                                       value="{{ tag.id }}"
+                                                       id="tag{{ tag.id }}"
+                                                       {% if template and tag.id in template.industry_tags|map(attribute='id')|list %}
+                                                       checked
+                                                       {% endif %}>
+                                                <label class="form-check-label" for="tag{{ tag.id }}"
+                                                       style="margin-left: {{ tag.level * 20 }}px">
+                                                    {{ tag.name }}
+                                                </label>
+                                            </div>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Form Actions -->
+                        <div class="d-flex justify-content-end gap-2">
+                            <a href="{{ url_for('templates.list_templates') }}"
+                               class="btn btn-secondary">
+                                Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                {% if template %}Update{% else %}Create{% endif %} Template
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Select all code elements within the placeholders card
+    const codeElements = document.querySelectorAll('.card.bg-light code');
+
+    // Get the textarea - updated selector to match your template
+    const textarea = document.querySelector('textarea[name="body"]');
+
+    codeElements.forEach(code => {
+        // Make the code elements look clickable
+        code.style.cursor = 'pointer';
+
+        // Add click handler
+        code.addEventListener('click', function() {
+            // Get the placeholder text
+            const placeholder = this.textContent.trim();
+
+            // Get cursor position
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+
+            // Insert placeholder at cursor position
+            const textBefore = textarea.value.substring(0, start);
+            const textAfter = textarea.value.substring(end);
+
+            textarea.value = textBefore + placeholder + textAfter;
+
+            // Reset cursor position after the inserted placeholder
+            const newPosition = start + placeholder.length;
+            textarea.focus();
+            textarea.setSelectionRange(newPosition, newPosition);
+
+            // Optional: scroll the textarea if the cursor is out of view
+            textarea.scrollTop = textarea.scrollHeight;
+
+            // Trigger change event in case you have other listeners
+            textarea.dispatchEvent(new Event('input'));
+        });
+
+        // Add hover effect class
+        code.classList.add('placeholder-clickable');
+    });
+});
+</script>
+<style>.placeholder-clickable:hover {
+    background-color: #e9ecef;
+    transition: background-color 0.2s;
+}</style>
+{% endblock %}

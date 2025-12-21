@@ -1,0 +1,1244 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="container-fluid mt-4">
+    <!-- Project Info Card -->
+    <div class="card shadow mb-4 border-0">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Project: {{ project.id }}</strong>
+            <button class="btn btn-link p-0" type="button" data-bs-toggle="collapse" data-bs-target="#projectInfoContent" aria-expanded="true" aria-controls="projectInfoContent">
+                <i class="bi bi-chevron-up"></i>
+            </button>
+        </div>
+        <div class="collapse show" id="projectInfoContent">
+            <div class="card-body p-0">
+                <div class="row g-0">
+                    <!-- Project Info Section -->
+                    <div class="col-4 border-end">
+                        <div class="p-3">
+                            <form action="{{ url_for('projects.update_project_route', project_id=project.id) }}" method="post">
+                                <!-- Add a field for project name -->
+                                <div class="mb-3">
+                                    <label for="project_name" class="form-label">Project Name:</label>
+                                    <input type="text" id="project_name" name="name" class="form-control" value="{{ project.name }}" required>
+                                </div>
+
+                                <!-- Customer Selection -->
+                                <div class="mb-3">
+                                    <label for="customer_id" class="form-label">Customer:</label>
+                                    <select id="customer_id" name="customer_id" class="form-select" required>
+                                        {% for customer in customers %}
+                                        <option value="{{ customer.id }}" {% if project.customer_id == customer.id %}selected{% endif %}>
+                                            {{ customer.name }}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+
+                                <!-- Description -->
+                                <div class="mb-3">
+                                    <label for="description" class="form-label">Description:</label>
+                                    <textarea id="description" name="description" class="form-control" rows="3">{{ project.description }}</textarea>
+                                </div>
+
+                                <!-- Salesperson Selection -->
+                                <div class="mb-3">
+                                    <label for="salesperson_id" class="form-label">Salesperson:</label>
+                                    <select id="salesperson_id" name="salesperson_id" class="form-select">
+                                        <option value="">Select a salesperson (optional)</option>
+                                        {% for salesperson in salespeople %}
+                                        <option value="{{ salesperson.id }}" {% if project.salesperson_id == salesperson.id %}selected{% endif %}>
+                                            {{ salesperson.name }}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+
+                                <!-- Status Selection -->
+                                <div class="mb-3">
+                                    <label for="status_id" class="form-label">Status:</label>
+                                    <select id="status_id" name="status_id" class="form-select" required>
+                                        {% for status in statuses %}
+                                        <option value="{{ status.id }}" {% if project.status_id == status.id %}selected{% endif %}>
+                                            {{ status.status }}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+
+                                <!-- Save Button -->
+                                <button type="submit" class="btn btn-primary">Update Project</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Files and RFQs Column -->
+                    <div class="col-4 border-end">
+                        <!-- Files Section -->
+                        <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
+                            <span class="text-muted">Files</span>
+                            <button class="btn btn-primary btn-sm" onclick="addNewFile()">Upload</button>
+                        </div>
+                        <div class="p-3">
+                            <!-- Files List -->
+                            <div class="list-group" id="filesList">
+                                <!-- Files will be populated here -->
+                            </div>
+                        </div>
+
+                        <!-- RFQs Section -->
+                        <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
+                            <span class="text-muted">RFQs</span>
+                            <button class="btn btn-primary btn-sm" onclick="createNewRFQ()">Create RFQ</button>
+                        </div>
+                        <div class="p-3">
+                            <!-- RFQs List -->
+                            <div class="list-group" id="rfqsList">
+                                {% if project_rfqs %}
+                                    {% for rfq in project_rfqs %}
+                                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>RFQ #{{ rfq.id }}</strong><br>
+                                            <small class="text-muted">{{ rfq.customer_ref or 'No reference' }} - {{ rfq.entered_date }}</small>
+                                        </div>
+                                        <div>
+                                            <a href="{{ url_for('rfqs.edit_rfq', rfq_id=rfq.id) }}" class="btn btn-link btn-sm">
+                                                <i class="bi bi-pencil"></i>
+                                            </a>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <p class="text-muted">No RFQs linked to this project.</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Updates Section -->
+                    <div class="col-4">
+                        <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
+                            <span class="text-muted">Updates</span>
+                            <button class="btn btn-primary btn-sm" onclick="addNewUpdate()">Add</button>
+                        </div>
+                        <div class="p-3">
+                            <ul class="list-group mb-3">
+                                {% for update in updates %}
+                                <li class="list-group-item">{{ update.comment }} <br> <small class="text-muted">Posted on: {{ update.date_created }}</small></li>
+                                {% endfor %}
+                            </ul>
+                            <form action="{{ url_for('projects.add_project_update', project_id=project.id) }}" method="post">
+                                <div class="mb-3">
+                                    <textarea id="new_update" name="comment" class="form-control" rows="3" required></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Submit Update</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Enhanced Stages Card -->
+    <div class="card shadow border-0">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Project Stages</h5>
+            <button class="btn btn-link p-0" type="button" data-bs-toggle="collapse" data-bs-target="#projectStagesContent" aria-expanded="true" aria-controls="projectStagesContent">
+                <i class="bi bi-chevron-up"></i>
+            </button>
+        </div>
+        <div class="collapse show" id="projectStagesContent">
+            <div class="card-body p-0">
+                <div class="row g-0">
+                    <!-- Enhanced Stages List with Hierarchy -->
+                    <div class="col-3 border-end">
+                        <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
+                            <span class="text-muted">Stages</span>
+                            <button class="btn btn-primary btn-sm" onclick="addNewStage()">Add Stage</button>
+                        </div>
+                        <div class="stages-hierarchy" id="stagesHierarchy">
+                            <!-- Stages will be rendered here -->
+                        </div>
+                    </div>
+
+                    <!-- Stage Details and Files -->
+                    <div class="col-5 border-end d-flex flex-column">
+                        <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
+                            <span class="text-muted" id="stageDetailsHeader">Stage Info</span>
+                            <div>
+                                <button class="btn btn-outline-primary btn-sm me-2" onclick="addSubstage()" id="addSubstageBtn" style="display: none;">
+                                    Add Substage
+                                </button>
+                                <button class="btn btn-outline-danger btn-sm" onclick="deleteCurrentStage()" id="deleteStageBtn" style="display: none;">
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                        <div class="p-4" id="stageDetailsContainer">
+                            <div class="text-muted text-center py-5">
+                                <i class="bi bi-arrow-left"></i> Select a stage to view details
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Stage Updates -->
+                    <div class="col-4 d-flex flex-column">
+                        <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
+                            <span class="text-muted">Updates</span>
+                            <button class="btn btn-primary btn-sm" onclick="addNewStageUpdate()" id="addUpdateBtn" style="display: none;">Add</button>
+                        </div>
+                        <div class="p-3" id="stageUpdatesContainer">
+                            <div class="text-muted text-center py-5">
+                                Select a stage to view updates
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal fade" id="stageDescriptionModal" tabindex="-1" aria-labelledby="stageDescriptionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="stageDescriptionModalLabel">Stage Description</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <h6 class="text-muted mb-2" id="modalStageName">Stage Name</h6>
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb" id="modalStageBreadcrumb">
+                            <!-- Breadcrumb will be populated here -->
+                        </ol>
+                    </nav>
+                </div>
+                <div class="border rounded p-3" id="renderedDescription">
+                    <!-- Rendered markdown will appear here -->
+                </div>
+                <div class="mt-3">
+                    <small class="text-muted">Raw markdown:</small>
+                    <pre class="bg-light p-2 rounded mt-1" id="rawDescription" style="white-space: pre-wrap; font-size: 0.85em; max-height: 150px; overflow-y: auto;"></pre>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" onclick="editStageDescription()">Edit Description</button>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+<script>
+let currentStageId = null;
+let currentStageData = null;
+let stages = []; // Will hold our stages data
+
+// Initialize the page
+document.addEventListener('DOMContentLoaded', function() {
+    loadStages();
+    initializeProjectFiles();
+    initializeRFQs();
+});
+
+// Load and render all stages
+function loadStages() {
+    const projectId = {{ project.id }};
+
+    fetch(`/projects/${projectId}/stages`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                stages = data.stages;
+                renderStagesHierarchy();
+            }
+        })
+        .catch(error => console.error('Error loading stages:', error));
+}
+
+// Render the hierarchical stage list
+function renderStagesHierarchy() {
+    const container = document.getElementById('stagesHierarchy');
+    container.innerHTML = '';
+
+    stages.forEach(stage => {
+        // Create parent stage element
+        const stageElement = createStageElement(stage, false);
+        container.appendChild(stageElement);
+
+        // Create substages if they exist
+        if (stage.substages && stage.substages.length > 0) {
+            stage.substages.forEach(substage => {
+                const substageElement = createStageElement(substage, true);
+                container.appendChild(substageElement);
+            });
+        }
+    });
+}
+
+// Create a single stage element
+function createStageElement(stage, isSubstage = false) {
+    const element = document.createElement('div');
+    element.className = `stage-item ${isSubstage ? 'substage' : 'parent-stage'}`;
+    element.setAttribute('data-stage-id', stage.id);
+    element.setAttribute('data-is-substage', isSubstage);
+
+    const isCompleted = stage.status_id === 2;
+    const hasSubstages = !isSubstage && stage.substages && stage.substages.length > 0;
+
+    element.innerHTML = `
+        <div class="stage-content d-flex align-items-center p-2 ${isSubstage ? 'ps-4' : ''}" onclick="selectStage(${stage.id})">
+            ${hasSubstages ? `<i class="bi bi-chevron-right expand-icon me-2" onclick="event.stopPropagation(); toggleSubstages(${stage.id})"></i>` : ''}
+            ${isSubstage ? '<i class="bi bi-dash me-2 text-muted"></i>' : ''}
+            <input type="checkbox"
+                   class="form-check-input me-2"
+                   ${isCompleted ? 'checked' : ''}
+                   onclick="event.stopPropagation(); toggleStageStatus(${stage.id})"
+                   data-stage-id="${stage.id}">
+            <span class="stage-name flex-grow-1 ${isCompleted ? 'text-decoration-line-through text-muted' : ''}">${stage.name}</span>
+        </div>
+    `;
+
+    return element;
+}
+
+// Toggle substages visibility
+function toggleSubstages(parentStageId) {
+    const parentElement = document.querySelector(`[data-stage-id="${parentStageId}"]`);
+    const icon = parentElement.querySelector('.expand-icon');
+    const substages = document.querySelectorAll(`[data-stage-id]:not([data-stage-id="${parentStageId}"])`);
+
+    // Find substages that belong to this parent
+    const parentStage = stages.find(s => s.id === parentStageId);
+    if (!parentStage || !parentStage.substages) return;
+
+    const isExpanded = icon.classList.contains('bi-chevron-down');
+
+    if (isExpanded) {
+        // Collapse
+        icon.classList.remove('bi-chevron-down');
+        icon.classList.add('bi-chevron-right');
+        parentStage.substages.forEach(substage => {
+            const substageElement = document.querySelector(`[data-stage-id="${substage.id}"][data-is-substage="true"]`);
+            if (substageElement) substageElement.style.display = 'none';
+        });
+    } else {
+        // Expand
+        icon.classList.remove('bi-chevron-right');
+        icon.classList.add('bi-chevron-down');
+        parentStage.substages.forEach(substage => {
+            const substageElement = document.querySelector(`[data-stage-id="${substage.id}"][data-is-substage="true"]`);
+            if (substageElement) substageElement.style.display = 'block';
+        });
+    }
+}
+
+// Select a stage and show its details
+function selectStage(stageId) {
+    currentStageId = stageId;
+
+    // Update visual selection
+    document.querySelectorAll('.stage-item').forEach(item => {
+        item.classList.remove('selected');
+    });
+    document.querySelector(`[data-stage-id="${stageId}"]`).classList.add('selected');
+
+    // Load stage details
+    loadStageDetails(stageId);
+
+    // Show action buttons
+    document.getElementById('addSubstageBtn').style.display = 'inline-block';
+    document.getElementById('deleteStageBtn').style.display = 'inline-block';
+    document.getElementById('addUpdateBtn').style.display = 'inline-block';
+
+    // Update header
+    const stage = findStageById(stageId);
+    const isSubstage = isStageSubstage(stageId);
+    document.getElementById('stageDetailsHeader').textContent = isSubstage ? 'Substage Info' : 'Stage Info';
+
+    // Hide "Add Substage" button for substages
+    if (isSubstage) {
+        document.getElementById('addSubstageBtn').style.display = 'none';
+    }
+}
+
+// Helper function to find stage by ID
+function findStageById(stageId) {
+    for (const stage of stages) {
+        if (stage.id === stageId) return stage;
+        if (stage.substages) {
+            for (const substage of stage.substages) {
+                if (substage.id === stageId) return substage;
+            }
+        }
+    }
+    return null;
+}
+
+// Helper function to check if stage is a substage
+function isStageSubstage(stageId) {
+    for (const stage of stages) {
+        if (stage.substages) {
+            for (const substage of stage.substages) {
+                if (substage.id === stageId) return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Load stage details
+function loadStageDetails(stageId) {
+    const projectId = {{ project.id }};
+
+    fetch(`/projects/${projectId}/edit_stage/${stageId}`)
+        .then(response => response.json())
+        .then(data => {
+            currentStageData = data;
+            renderStageDetails(data);
+            renderStageUpdates(data.updates || []);
+        })
+        .catch(error => {
+            console.error('Error loading stage details:', error);
+        });
+}
+
+// Replace the existing description section in renderStageDetails with this:
+function renderStageDetails(data) {
+    const container = document.getElementById('stageDetailsContainer');
+
+    container.innerHTML = `
+        <div class="stage-breadcrumb mb-3">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    ${generateStageBreadcrumb()}
+                </ol>
+            </nav>
+        </div>
+
+        <form id="stageDetailsForm" class="mb-4">
+            <div class="mb-3">
+                <label for="stageName" class="form-label">Name</label>
+                <input type="text"
+                       class="form-control"
+                       id="stageName"
+                       value="${data.name || ''}"
+                       onchange="updateStageField(${currentStageId}, 'name')">
+            </div>
+            <div class="mb-3">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <label for="stageDescription" class="form-label mb-0">Description</label>
+                    <div>
+                        <button class="btn btn-outline-info btn-sm me-2"
+                                type="button"
+                                onclick="showStageDescriptionModal()"
+                                title="View formatted description">
+                            <i class="bi bi-eye"></i> Preview
+                        </button>
+                        <button class="btn btn-link btn-sm p-0"
+                                type="button"
+                                onclick="enableEdit()"
+                                title="Edit description">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                    </div>
+                </div>
+                <textarea class="form-control"
+                        id="stageDescription"
+                        name="description"
+                        rows="4"
+                        placeholder="Enter description (supports Markdown formatting)"
+                        onchange="updateStageField(${currentStageId}, 'description')">${data.description || ''}</textarea>
+                <small class="form-text text-muted">
+                    Supports Markdown: **bold**, *italic*, # Headers, - Lists, [links](url)
+                </small>
+            </div>
+        </form>
+
+        <div class="mb-4">
+            <h6 class="mb-3">Stage Files</h6>
+            <form id="upload-stage-file-form-${currentStageId}"
+                  method="post"
+                  enctype="multipart/form-data"
+                  action="/projects/{{ project.id }}/upload_stage_file"
+                  class="mb-3">
+                <input type="hidden" name="stage_id" value="${currentStageId}">
+                <div class="input-group">
+                    <input type="file" name="file" class="form-control" required>
+                    <button type="submit" class="btn btn-primary">Upload</button>
+                </div>
+            </form>
+            <div class="list-group" id="stageFilesList">
+                ${renderFiles(data.files)}
+            </div>
+        </div>
+    `;
+}
+
+// Generate breadcrumb for current stage
+function generateStageBreadcrumb() {
+    if (!currentStageId) return '';
+
+    const stage = findStageById(currentStageId);
+    if (!stage) return '';
+
+    const isSubstage = isStageSubstage(currentStageId);
+
+    if (isSubstage) {
+        // Find parent stage
+        const parentStage = stages.find(s =>
+            s.substages && s.substages.some(sub => sub.id === currentStageId)
+        );
+
+        return `
+            <li class="breadcrumb-item">${parentStage ? parentStage.name : 'Parent Stage'}</li>
+            <li class="breadcrumb-item active" aria-current="page">${stage.name}</li>
+        `;
+    } else {
+        return `<li class="breadcrumb-item active" aria-current="page">${stage.name}</li>`;
+    }
+}
+
+// Render stage updates in the right column
+function renderStageUpdates(updates) {
+    const container = document.getElementById('stageUpdatesContainer');
+
+    container.innerHTML = `
+        <ul class="list-group mb-3">
+            ${updates.length > 0 ? updates.map(update => `
+                <li class="list-group-item">
+                    <div>${update.comment}</div>
+                    <small class="text-muted">Posted by ${update.created_by || 'Unknown'} on ${new Date(update.date_created).toLocaleString()}</small>
+                </li>
+            `).join('') : '<li class="list-group-item text-muted">No updates yet.</li>'}
+        </ul>
+        <div class="input-group">
+            <textarea class="form-control"
+                      id="newStageUpdate"
+                      placeholder="Add an update..."
+                      rows="2"></textarea>
+            <button class="btn btn-primary"
+                    type="button"
+                    onclick="addStageUpdate()">Add Update</button>
+        </div>
+    `;
+}
+
+// Toggle stage completion status
+function toggleStageStatus(stageId) {
+    const checkbox = document.querySelector(`input[data-stage-id="${stageId}"]`);
+    const stageNameSpan = checkbox.parentElement.querySelector('.stage-name');
+    const newStatus = checkbox.checked ? 2 : 1;
+
+    // Update UI immediately
+    if (checkbox.checked) {
+        stageNameSpan.classList.add('text-decoration-line-through', 'text-muted');
+    } else {
+        stageNameSpan.classList.remove('text-decoration-line-through', 'text-muted');
+    }
+
+    // Send update to server
+    fetch(`/projects/{{ project.id }}/edit_stage/${stageId}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            status_id: newStatus
+        })
+    })
+    .then(response => response.json())
+    .catch(error => {
+        console.error('Error updating stage status:', error);
+        // Revert UI on error
+        checkbox.checked = !checkbox.checked;
+        if (checkbox.checked) {
+            stageNameSpan.classList.add('text-decoration-line-through', 'text-muted');
+        } else {
+            stageNameSpan.classList.remove('text-decoration-line-through', 'text-muted');
+        }
+    });
+}
+
+// Add a new parent stage
+function addNewStage() {
+    const projectId = {{ project.id }};
+
+    fetch(`/projects/${projectId}/add_stage`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            name: "New Stage",
+            status_id: 1,
+            project_id: projectId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadStages(); // Reload all stages
+        }
+    })
+    .catch(error => console.error('Error adding new stage:', error));
+}
+
+// Add a substage to the current stage
+function addSubstage() {
+    if (!currentStageId) return;
+
+    const projectId = {{ project.id }};
+
+    fetch(`/projects/${currentStageId}/add_substage`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            name: "New Substage",
+            status_id: 1,
+            project_id: projectId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadStages(); // Reload all stages
+        }
+    })
+    .catch(error => console.error('Error adding substage:', error));
+}
+
+// Delete the current stage
+function deleteCurrentStage() {
+    if (!currentStageId) return;
+
+    if (confirm("Are you sure you want to delete this stage?")) {
+        fetch(`/projects/${currentStageId}/update_stage_status`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ status: 3 })  // 3 represents deleted
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                loadStages(); // Reload stages
+                // Clear details panel
+                document.getElementById('stageDetailsContainer').innerHTML = '<div class="text-muted text-center py-5"><i class="bi bi-arrow-left"></i> Select a stage to view details</div>';
+                document.getElementById('stageUpdatesContainer').innerHTML = '<div class="text-muted text-center py-5">Select a stage to view updates</div>';
+                // Hide buttons
+                document.getElementById('addSubstageBtn').style.display = 'none';
+                document.getElementById('deleteStageBtn').style.display = 'none';
+                document.getElementById('addUpdateBtn').style.display = 'none';
+                currentStageId = null;
+            }
+        })
+        .catch(error => console.error('Error deleting stage:', error));
+    }
+}
+
+// Update stage field (name or description)
+function updateStageField(stageId, field) {
+    const projectId = {{ project.id }};
+    const value = document.getElementById(`stage${field.charAt(0).toUpperCase() + field.slice(1)}`).value;
+
+    const updateData = {};
+    updateData[field] = value;
+
+    fetch(`/projects/${projectId}/edit_stage/${stageId}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updateData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Update the stage name in the sidebar if it was changed
+            if (field === 'name') {
+                const stageElement = document.querySelector(`[data-stage-id="${stageId}"] .stage-name`);
+                if (stageElement) stageElement.textContent = value;
+                // Update stages data
+                const stage = findStageById(stageId);
+                if (stage) stage.name = value;
+            }
+        }
+    })
+    .catch(error => console.error(`Error updating ${field}:`, error));
+}
+
+// Add stage update
+function addStageUpdate() {
+    if (!currentStageId) return;
+
+    const comment = document.getElementById('newStageUpdate').value;
+    if (!comment.trim()) return;
+
+    const formData = new FormData();
+    formData.append('comment', comment);
+    formData.append('salesperson_id', localStorage.getItem('salesperson_id') || '1');
+
+    fetch(`/projects/{{ project.id }}/stages/${currentStageId}/add_update`, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            renderStageUpdates(data.updates);
+        }
+    })
+    .catch(error => console.error('Error adding stage update:', error));
+}
+
+// Helper function to render files
+function renderFiles(files) {
+    if (!files || files.length === 0) {
+        return '<p class="text-muted">No files uploaded yet.</p>';
+    }
+
+    return files.map(file => `
+        <div class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+                <strong>${file.description || 'No description'}</strong> <br>
+                <small class="text-muted">${file.filename}</small>
+            </div>
+            <div>
+                <button class="btn btn-link btn-sm" onclick="downloadFile('${file.id}')">
+                    <i class="bi bi-download"></i>
+                </button>
+                <button class="btn btn-link btn-sm text-danger" onclick="deleteFile('${file.id}')">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function downloadFile(fileId) {
+    fetch(`/projects/download/${fileId}`)
+        .then(response => {
+            if (!response.ok) throw new Error('Download failed');
+            return response.blob();
+        })
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = '';
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        })
+        .catch(error => {
+            console.error('Error downloading file:', error);
+            alert('Failed to download file');
+        });
+}
+
+// RFQ functions (kept from original)
+function initializeRFQs() {
+    updateRFQsList();
+}
+
+function createNewRFQ() {
+    const projectId = "{{ project.id }}";
+    const customerId = "{{ project.customer_id }}";
+
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = "{{ url_for('rfqs.create_rfq') }}";
+    form.style.display = 'none';
+
+    const customerIdInput = document.createElement('input');
+    customerIdInput.type = 'hidden';
+    customerIdInput.name = 'customer_id';
+    customerIdInput.value = customerId;
+
+    const projectIdInput = document.createElement('input');
+    projectIdInput.type = 'hidden';
+    projectIdInput.name = 'project_id';
+    projectIdInput.value = projectId;
+
+    const todayDate = new Date().toISOString().split('T')[0];
+    const dateInput = document.createElement('input');
+    dateInput.type = 'hidden';
+    dateInput.name = 'entered_date';
+    dateInput.value = todayDate;
+
+    const refInput = document.createElement('input');
+    refInput.type = 'hidden';
+    refInput.name = 'customer_ref';
+    refInput.value = `Project #${projectId}`;
+
+    const salespersonInput = document.createElement('input');
+    salespersonInput.type = 'hidden';
+    salespersonInput.name = 'salesperson_id';
+    salespersonInput.value = "{{ project.salesperson_id or '' }}";
+
+    form.appendChild(customerIdInput);
+    form.appendChild(projectIdInput);
+    form.appendChild(dateInput);
+    form.appendChild(refInput);
+    form.appendChild(salespersonInput);
+
+    document.body.appendChild(form);
+    form.submit();
+}
+
+function updateRFQsList() {
+    const projectId = "{{ project.id }}";
+
+    fetch(`/projects/${projectId}/rfqs`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                const rfqsList = document.getElementById('rfqsList');
+                if (!data.rfqs || data.rfqs.length === 0) {
+                    rfqsList.innerHTML = '<p class="text-muted">No RFQs linked to this project.</p>';
+                    return;
+                }
+
+                rfqsList.innerHTML = data.rfqs.map(rfq => `
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>RFQ #${rfq.id}</strong><br>
+                            <small class="text-muted">${rfq.customer_ref || 'No reference'} - ${rfq.entered_date}</small>
+                        </div>
+                        <div>
+                            <a href="/rfqs/${rfq.id}/edit" class="btn btn-link btn-sm">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+        });
+}
+
+// Enable description editing (simplified version)
+function enableEdit() {
+    const textarea = document.getElementById('stageDescription');
+    textarea.focus();
+}
+
+// Basic project update functionality
+function addNewUpdate() {
+    const form = document.querySelector('form[action*="add_project_update"]');
+    if (form) {
+        const textarea = form.querySelector('textarea');
+        textarea.focus();
+    }
+}
+// Simple markdown to HTML converter
+function convertMarkdownToHTML(markdown) {
+    if (!markdown || markdown.trim() === '') {
+        return '<div class="empty-description">No description provided</div>';
+    }
+
+    let html = markdown;
+
+    // Headers
+    html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+    html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+    html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+
+    // Bold
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
+
+    // Italic
+    html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+    html = html.replace(/_(.*?)_/g, '<em>$1</em>');
+
+    // Code blocks
+    html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+
+    // Inline code
+    html = html.replace(/`(.*?)`/g, '<code>$1</code>');
+
+    // Links
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+
+    // Horizontal rules
+    html = html.replace(/^---$/gim, '<hr>');
+    html = html.replace(/^\*\*\*$/gim, '<hr>');
+
+    // Blockquotes
+    html = html.replace(/^> (.*)$/gim, '<blockquote>$1</blockquote>');
+
+    // Unordered lists
+    html = html.replace(/^\* (.*)$/gim, '<ul><li>$1</li></ul>');
+    html = html.replace(/^- (.*)$/gim, '<ul><li>$1</li></ul>');
+
+    // Ordered lists
+    html = html.replace(/^\d+\. (.*)$/gim, '<ol><li>$1</li></ol>');
+
+    // Fix consecutive list items
+    html = html.replace(/<\/ul>\s*<ul>/g, '');
+    html = html.replace(/<\/ol>\s*<ol>/g, '');
+
+    // Line breaks and paragraphs
+    html = html.replace(/\n\n/g, '</p><p>');
+    html = html.replace(/\n/g, '<br>');
+
+    // Wrap in paragraph tags if not already wrapped
+    if (!html.match(/^<[h1-6|ul|ol|blockquote|pre|hr]/)) {
+        html = '<p>' + html + '</p>';
+    }
+
+    // Clean up empty paragraphs
+    html = html.replace(/<p><\/p>/g, '');
+    html = html.replace(/<p>\s*<\/p>/g, '');
+
+    return html;
+}
+// Function to show the stage description modal
+function showStageDescriptionModal() {
+    if (!currentStageData) return;
+
+    const stage = findStageById(currentStageId);
+    const isSubstage = isStageSubstage(currentStageId);
+
+    // Set modal title and stage name
+    document.getElementById('modalStageName').textContent = stage ? stage.name : 'Unknown Stage';
+
+    // Generate breadcrumb for modal
+    const breadcrumbContainer = document.getElementById('modalStageBreadcrumb');
+    if (isSubstage) {
+        const parentStage = stages.find(s =>
+            s.substages && s.substages.some(sub => sub.id === currentStageId)
+        );
+        breadcrumbContainer.innerHTML = `
+            <li class="breadcrumb-item">${parentStage ? parentStage.name : 'Parent Stage'}</li>
+            <li class="breadcrumb-item active" aria-current="page">${stage ? stage.name : 'Unknown Stage'}</li>
+        `;
+    } else {
+        breadcrumbContainer.innerHTML = `
+            <li class="breadcrumb-item active" aria-current="page">${stage ? stage.name : 'Unknown Stage'}</li>
+        `;
+    }
+
+    // Convert and display markdown
+    const description = currentStageData.description || '';
+    const renderedHTML = convertMarkdownToHTML(description);
+
+    document.getElementById('renderedDescription').innerHTML = renderedHTML;
+    document.getElementById('rawDescription').textContent = description || 'No description provided';
+
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('stageDescriptionModal'));
+    modal.show();
+}
+
+// Function to edit stage description (closes modal and focuses on textarea)
+function editStageDescription() {
+    // Close modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('stageDescriptionModal'));
+    modal.hide();
+
+    // Focus on description textarea
+    setTimeout(() => {
+        const textarea = document.getElementById('stageDescription');
+        if (textarea) {
+            textarea.focus();
+            // Position cursor at end
+            textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+        }
+    }, 300);
+}
+</script>
+
+<style>
+/* Stage hierarchy styles */
+.stages-hierarchy {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.stage-item {
+    border-bottom: 1px solid rgba(0,0,0,.05);
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.stage-item:hover {
+    background-color: #f8f9fa;
+}
+
+.stage-item.selected {
+    background-color: #e3f2fd;
+    border-left: 3px solid #2196f3;
+}
+
+.parent-stage {
+    font-weight: 500;
+}
+
+.substage {
+    background-color: #fafafa;
+    border-left: 2px solid #e0e0e0;
+}
+
+.substage .stage-content {
+    padding-left: 2rem !important;
+}
+
+.expand-icon {
+    cursor: pointer;
+    transition: transform 0.2s;
+    font-size: 12px;
+    width: 16px;
+    color: #666;
+}
+
+.expand-icon:hover {
+    color: #333;
+}
+
+/* Stage details styles */
+.stage-breadcrumb .breadcrumb {
+    background: none;
+    padding: 0;
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+.stage-breadcrumb .breadcrumb-item + .breadcrumb-item::before {
+    content: ">";
+    color: #6c757d;
+}
+
+/* Form and input styles */
+.form-control {
+    max-width: 100%;
+}
+
+#stageDescription {
+    width: 100%;
+    min-height: 100px;
+    resize: vertical;
+}
+
+#stageDetailsContainer {
+    width: 100%;
+}
+
+#stageDetailsForm {
+    width: 100%;
+}
+
+/* List and card styles */
+.list-group-item.active {
+    background-color: #f8f9fa;
+    border-color: transparent;
+    color: #0d6efd;
+}
+
+.list-group-item:hover {
+    background-color: #f8f9fa;
+}
+
+.card {
+    border: none;
+}
+
+.shadow-sm {
+    box-shadow: 0 .125rem .25rem rgba(0,0,0,.075)!important;
+}
+
+/* Updates container scrolling */
+.updates-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.updates-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+.updates-container::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 3px;
+}
+
+.updates-container::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Subtle border between list items */
+.list-group-item + .list-group-item {
+    border-top: 1px solid rgba(0,0,0,.05);
+}
+
+/* Checkbox and text styling */
+.form-check-input {
+    margin-right: 10px;
+}
+
+.text-decoration-line-through {
+    text-decoration: line-through !important;
+}
+
+/* Stage name styling */
+.stage-name {
+    user-select: none;
+}
+
+/* Action buttons */
+.btn-outline-primary:hover,
+.btn-outline-danger:hover {
+    transform: translateY(-1px);
+    transition: transform 0.2s;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .substage .stage-content {
+        padding-left: 1.5rem !important;
+    }
+
+    .stages-hierarchy {
+        max-height: 300px;
+    }
+}
+    /* Markdown rendering styles */
+#renderedDescription {
+    min-height: 200px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    line-height: 1.6;
+}
+
+#renderedDescription h1, #renderedDescription h2, #renderedDescription h3,
+#renderedDescription h4, #renderedDescription h5, #renderedDescription h6 {
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+    font-weight: 600;
+}
+
+#renderedDescription h1 { font-size: 1.5em; border-bottom: 2px solid #eee; padding-bottom: 0.3em; }
+#renderedDescription h2 { font-size: 1.3em; border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+#renderedDescription h3 { font-size: 1.1em; }
+#renderedDescription h4 { font-size: 1em; }
+#renderedDescription h5 { font-size: 0.9em; }
+#renderedDescription h6 { font-size: 0.85em; }
+
+#renderedDescription p {
+    margin-bottom: 1em;
+}
+
+#renderedDescription ul, #renderedDescription ol {
+    margin-bottom: 1em;
+    padding-left: 2em;
+}
+
+#renderedDescription li {
+    margin-bottom: 0.25em;
+}
+
+#renderedDescription blockquote {
+    border-left: 4px solid #ddd;
+    padding-left: 1em;
+    margin: 1em 0;
+    font-style: italic;
+    color: #666;
+}
+
+#renderedDescription code {
+    background-color: #f5f5f5;
+    padding: 0.2em 0.4em;
+    border-radius: 3px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.9em;
+}
+
+#renderedDescription pre {
+    background-color: #f5f5f5;
+    padding: 1em;
+    border-radius: 5px;
+    overflow-x: auto;
+    margin: 1em 0;
+}
+
+#renderedDescription pre code {
+    background: none;
+    padding: 0;
+}
+
+#renderedDescription table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+}
+
+#renderedDescription th, #renderedDescription td {
+    border: 1px solid #ddd;
+    padding: 0.5em;
+    text-align: left;
+}
+
+#renderedDescription th {
+    background-color: #f5f5f5;
+    font-weight: 600;
+}
+
+#renderedDescription a {
+    color: #0066cc;
+    text-decoration: none;
+}
+
+#renderedDescription a:hover {
+    text-decoration: underline;
+}
+
+#renderedDescription hr {
+    border: none;
+    border-top: 2px solid #eee;
+    margin: 2em 0;
+}
+
+#renderedDescription .empty-description {
+    color: #999;
+    font-style: italic;
+    text-align: center;
+    padding: 2em;
+}
+
+/* Raw description styles */
+#rawDescription {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.85em;
+    color: #666;
+    border: 1px solid #e0e0e0;
+}
+
+/* Modal breadcrumb styles */
+#modalStageBreadcrumb {
+    background: none;
+    padding: 0;
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+#modalStageBreadcrumb .breadcrumb-item + .breadcrumb-item::before {
+    content: "›";
+    color: #6c757d;
+}
+</style>
+
+{% endblock %}

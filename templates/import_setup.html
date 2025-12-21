@@ -1,0 +1,1051 @@
+{% extends 'base.html' %}
+
+{% block title %}Sales Order Mapping{% endblock %}
+
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+<style>
+    .hot-container {
+        height: 400px;
+        overflow: hidden;
+        margin-bottom: 20px;
+    }
+    .field-mapping {
+        margin-bottom: 15px;
+    }
+    .mapping-label {
+        font-weight: bold;
+    }
+    .required-field::after {
+        content: " *";
+        color: red;
+    }
+    .results-panel {
+        display: none;
+        margin-top: 20px;
+    }
+    .nav-tabs {
+        margin-bottom: 15px;
+    }
+    .skipped-details {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12 mb-3">
+            <h2>Sales Order Import Mapping</h2>
+            <p class="text-muted">Map your spreadsheet columns to sales order fields</p>
+        </div>
+    </div>
+
+    <!-- Steps indicator -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="mb-4">
+                <div class="progress" style="height: 3px;">
+                    <div class="progress-bar" role="progressbar" style="width: 20%"></div>
+                </div>
+                <div class="d-flex justify-content-between">
+                    {% for step in ['Map Columns', 'Parts', 'Customers', 'Sales Orders', 'Order Lines'] %}
+                    <div class="text-center">
+                        <div class="rounded-circle d-flex align-items-center justify-content-center mx-auto mb-1
+                                {{ 'bg-primary text-white' if loop.index == 1 else 'bg-light' }}"
+                             style="width: 30px; height: 30px;">
+                            {{ loop.index }}
+                        </div>
+                        <div class="small">{{ step }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top section with data preview and mapping -->
+    <div class="row mb-4">
+        <!-- File preview -->
+        <div class="col-md-7">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">File Preview</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div id="hot-container" class="hot-container"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mapping controls -->
+        <div class="col-md-5">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Column Mapping</h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-group mb-3">
+                        <label for="saved-mappings">Load Saved Mapping</label>
+                        <select class="form-select" id="saved-mappings">
+                            <option value="">-- Select a mapping --</option>
+                            {% for mapping in saved_mappings %}
+                            <option value="{{ mapping.id }}">{{ mapping.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <hr>
+
+                    <ul class="nav nav-tabs" id="mapping-tabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="sales-order-tab" data-bs-toggle="tab" data-bs-target="#so-fields" type="button" role="tab">Sales Order</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="customer-tab" data-bs-toggle="tab" data-bs-target="#customer-fields" type="button" role="tab">Customer</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="parts-tab" data-bs-toggle="tab" data-bs-target="#part-fields" type="button" role="tab">Parts</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="lines-tab" data-bs-toggle="tab" data-bs-target="#line-fields" type="button" role="tab">Order Lines</button>
+                        </li>
+                    </ul>
+
+                    <div class="tab-content" id="mapping-content">
+                        <!-- Sales Order Fields -->
+                        <div class="tab-pane fade show active" id="so-fields" role="tabpanel">
+                            <div class="field-mapping">
+                                <label for="field-sales-order-ref" class="mapping-label required-field">Sales Order Reference</label>
+                                <select class="form-select field-select" id="field-sales-order-ref" data-field="sales_orders.sales_order_ref">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-date-entered" class="mapping-label required-field">Date Entered</label>
+                                <select class="form-select field-select" id="field-date-entered" data-field="sales_orders.date_entered">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-customer-po-ref" class="mapping-label">Customer PO Reference</label>
+                                <select class="form-select field-select" id="field-customer-po-ref" data-field="sales_orders.customer_po_ref">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-total-value" class="mapping-label">Total Value</label>
+                                <select class="form-select field-select" id="field-total-value" data-field="sales_orders.total_value">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Customer Fields -->
+                        <div class="tab-pane fade" id="customer-fields" role="tabpanel">
+                            <div class="field-mapping">
+                                <label for="field-customer-code" class="mapping-label required-field">Customer System Code</label>
+                                <select class="form-select field-select" id="field-customer-code" data-field="customers.system_code">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-customer-name" class="mapping-label">Customer Name</label>
+                                <select class="form-select field-select" id="field-customer-name" data-field="customers.name">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-contact-name" class="mapping-label">Contact Name</label>
+                                <select class="form-select field-select" id="field-contact-name" data-field="customers.contact_name">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-email" class="mapping-label">Email</label>
+                                <select class="form-select field-select" id="field-email" data-field="customers.email">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-phone" class="mapping-label">Phone</label>
+                                <select class="form-select field-select" id="field-phone" data-field="customers.phone">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Part Fields -->
+                        <div class="tab-pane fade" id="part-fields" role="tabpanel">
+                            <div class="field-mapping">
+                                <label for="field-system-part-number" class="mapping-label required-field">System Part Number</label>
+                                <select class="form-select field-select" id="field-system-part-number" data-field="part_numbers.system_part_number">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-part-number" class="mapping-label">Part Number</label>
+                                <select class="form-select field-select" id="field-part-number" data-field="part_numbers.part_number">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-description" class="mapping-label">Description</label>
+                                <select class="form-select field-select" id="field-description" data-field="part_numbers.description">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-manufacturer" class="mapping-label">Manufacturer</label>
+                                <select class="form-select field-select" id="field-manufacturer" data-field="part_numbers.manufacturer">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Order Line Fields -->
+                        <div class="tab-pane fade" id="line-fields" role="tabpanel">
+                            <div class="field-mapping">
+                                <label for="field-line-number" class="mapping-label required-field">Line Number</label>
+                                <select class="form-select field-select" id="field-line-number" data-field="sales_order_lines.line_number">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-quantity" class="mapping-label required-field">Quantity</label>
+                                <select class="form-select field-select" id="field-quantity" data-field="sales_order_lines.quantity">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-price" class="mapping-label required-field">Price</label>
+                                <select class="form-select field-select" id="field-price" data-field="sales_order_lines.price">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-delivery-date" class="mapping-label">Delivery Date</label>
+                                <select class="form-select field-select" id="field-delivery-date" data-field="sales_order_lines.delivery_date">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-requested-date" class="mapping-label">Requested Date</label>
+                                <select class="form-select field-select" id="field-requested-date" data-field="sales_order_lines.requested_date">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-promise-date" class="mapping-label">Promise Date</label>
+                                <select class="form-select field-select" id="field-promise-date" data-field="sales_order_lines.promise_date">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-ship-date" class="mapping-label">Ship Date</label>
+                                <select class="form-select field-select" id="field-ship-date" data-field="sales_order_lines.ship_date">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="field-mapping">
+                                <label for="field-note" class="mapping-label">Note</label>
+                                <select class="form-select field-select" id="field-note" data-field="sales_order_lines.note">
+                                    <option value="">-- Select Column --</option>
+                                    {% for col in columns %}
+                                    <option value="{{ loop.index0 }}">{{ col }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Update Existing Lines Option -->
+                    <div class="form-check mb-3 mt-3">
+                        <input type="checkbox" class="form-check-input" id="updateExistingLines" checked>
+                        <label class="form-check-label" for="updateExistingLines">
+                            Update existing order lines
+                        </label>
+                        <small class="form-text text-muted d-block">
+                            If checked, existing lines will be updated with new values including dates.
+                        </small>
+                    </div>
+
+                    <div class="form-group mt-4">
+                        <label for="mapping-name">Save Mapping As</label>
+                        <input type="text" class="form-control" id="mapping-name" placeholder="Enter a name for this mapping">
+                    </div>
+
+                    <div class="d-grid gap-2 mt-3">
+                        <button class="btn btn-secondary" id="save-mapping-btn">Save Mapping</button>
+                        <button class="btn btn-primary" id="process-btn">Start Import</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results panel -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card results-panel" id="results-panel">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Import Results</h5>
+                </div>
+                <div class="card-body">
+                    <div class="progress mb-3">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <p id="status-message">Processing...</p>
+
+                    <div class="row">
+                        <!-- Parts & Customer results -->
+                        <div class="col-md-6">
+                            <div id="parts-customers-results" style="display: none;">
+                                <h5 class="card-title">Parts & Customers</h5>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <table class="table table-sm">
+                                            <tbody>
+                                                <tr>
+                                                    <th>Parts Processed:</th>
+                                                    <td id="parts-processed">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Parts Created:</th>
+                                                    <td id="parts-created">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Parts Updated:</th>
+                                                    <td id="parts-updated">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Parts Skipped:</th>
+                                                    <td id="parts-skipped">0</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <table class="table table-sm">
+                                            <tbody>
+                                                <tr>
+                                                    <th>Customers Processed:</th>
+                                                    <td id="customers-processed">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Customers Created:</th>
+                                                    <td id="customers-created">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Customers Updated:</th>
+                                                    <td id="customers-updated">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Customers Skipped:</th>
+                                                    <td id="customers-skipped">0</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Sales Orders results -->
+                        <div class="col-md-6">
+                            <div id="orders-results" style="display: none;">
+                                <h5 class="card-title">Sales Orders</h5>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <table class="table table-sm">
+                                            <tbody>
+                                                <tr>
+                                                    <th>Orders Processed:</th>
+                                                    <td id="orders-processed">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Orders Created:</th>
+                                                    <td id="orders-created">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Orders Updated:</th>
+                                                    <td id="orders-updated">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Orders Skipped:</th>
+                                                    <td id="orders-skipped">0</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Order Lines results -->
+                    <div class="row mt-4">
+                        <div class="col-12">
+                            <div id="lines-results" style="display: none;">
+                                <h5 class="card-title">Sales Order Lines</h5>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <table class="table table-sm">
+                                            <tbody>
+                                                <tr>
+                                                    <th>Lines Processed:</th>
+                                                    <td id="lines-processed">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Lines Created:</th>
+                                                    <td id="lines-created">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Lines Updated:</th>
+                                                    <td id="lines-updated">0</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Lines Skipped:</th>
+                                                    <td id="lines-skipped">0</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Error details -->
+                    <div class="row mt-4">
+                        <div class="col-12">
+                            <div id="errors-container" class="mt-3" style="display: none;">
+                                <h5 class="text-danger">Errors:</h5>
+                                <ul id="error-list" class="text-danger"></ul>
+                            </div>
+
+                            <!-- Skipped items details -->
+                            <div id="skipped-details-container" class="mt-3" style="display: none;">
+                                <h5>Skipped Items Details:</h5>
+                                <div class="skipped-details border rounded p-2">
+                                    <table class="table table-sm table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Row</th>
+                                                <th>Type</th>
+                                                <th>Reference</th>
+                                                <th>Reason</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="skipped-details-list">
+                                            <!-- This will be populated dynamically -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 text-center">
+                        <a href="{{ url_for('imports.list_files') }}" class="btn btn-primary">Back to Import List</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize data from the server
+    const rawFileData = {{ file_data|tojson }};
+    const fileId = {{ file_id }};
+    const columns = {{ columns|tojson }};
+
+    // Transform the data for Handsontable (from array of objects to array of arrays)
+    const fileData = rawFileData.map(row => {
+        return columns.map(column => row[column] || '');
+    });
+
+    // Debug: Log transformed data
+    console.log('Transformed data first row:', fileData.length > 0 ? fileData[0] : 'No data');
+    console.log('Columns from file:', columns);
+
+    // Initialize Handsontable for file preview
+    const container = document.getElementById('hot-container');
+    const hot = new Handsontable(container, {
+        data: fileData,
+        rowHeaders: true,
+        colHeaders: columns,
+        stretchH: 'all',
+        readOnly: true,
+        licenseKey: 'non-commercial-and-evaluation'
+    });
+
+    // Attempt auto-mapping by column name
+    function attemptAutoMapping() {
+        const commonMappings = {
+            // Sales Order fields
+            'so': 'sales_orders.sales_order_ref',
+            'so number': 'sales_orders.sales_order_ref',
+            'so #': 'sales_orders.sales_order_ref',
+            'sales order': 'sales_orders.sales_order_ref',
+            'sales order ref': 'sales_orders.sales_order_ref',
+            'order number': 'sales_orders.sales_order_ref',
+            'order': 'sales_orders.sales_order_ref',
+            'date': 'sales_orders.date_entered',
+            'date entered': 'sales_orders.date_entered',
+            'order date': 'sales_orders.date_entered',
+            'customer po': 'sales_orders.customer_po_ref',
+            'po ref': 'sales_orders.customer_po_ref',
+            'po number': 'sales_orders.customer_po_ref',
+            'customer po reference': 'sales_orders.customer_po_ref',
+            'total': 'sales_orders.total_value',
+            'total value': 'sales_orders.total_value',
+            'order total': 'sales_orders.total_value',
+
+            // Customer fields
+            'customer': 'customers.system_code',
+            'customer code': 'customers.system_code',
+            'customer id': 'customers.system_code',
+            'customer system code': 'customers.system_code',
+            'customer name': 'customers.name',
+            'company name': 'customers.name',
+            'contact': 'customers.contact_name',
+            'contact name': 'customers.contact_name',
+            'email': 'customers.email',
+            'customer email': 'customers.email',
+            'phone': 'customers.phone',
+            'tel': 'customers.phone',
+            'telephone': 'customers.phone',
+
+            // Part fields
+            'part number': 'part_numbers.system_part_number',
+            'part #': 'part_numbers.system_part_number',
+            'part': 'part_numbers.system_part_number',
+            'system part': 'part_numbers.system_part_number',
+            'system part number': 'part_numbers.system_part_number',
+            'part no': 'part_numbers.part_number',
+            'customer part number': 'part_numbers.part_number',
+            'part desc': 'part_numbers.description',
+            'description': 'part_numbers.description',
+            'part description': 'part_numbers.description',
+            'manufacturer': 'part_numbers.manufacturer',
+            'mfg': 'part_numbers.manufacturer',
+
+            // Order Line fields
+            'line': 'sales_order_lines.line_number',
+            'line #': 'sales_order_lines.line_number',
+            'line no': 'sales_order_lines.line_number',
+            'line number': 'sales_order_lines.line_number',
+            'qty': 'sales_order_lines.quantity',
+            'quantity': 'sales_order_lines.quantity',
+            'price': 'sales_order_lines.price',
+            'unit price': 'sales_order_lines.price',
+            'delivery date': 'sales_order_lines.delivery_date',
+            'due date': 'sales_order_lines.delivery_date',
+            'requested date': 'sales_order_lines.requested_date',
+            'need by date': 'sales_order_lines.requested_date',
+            'need date': 'sales_order_lines.requested_date',
+            'request date': 'sales_order_lines.requested_date',
+            'promise date': 'sales_order_lines.promise_date',
+            'promised date': 'sales_order_lines.promise_date',
+            'commit date': 'sales_order_lines.promise_date',
+            'ship date': 'sales_order_lines.ship_date',
+            'shipping date': 'sales_order_lines.ship_date',
+            'shipped date': 'sales_order_lines.ship_date',
+            'note': 'sales_order_lines.note',
+            'line note': 'sales_order_lines.note',
+            'comment': 'sales_order_lines.note'
+        };
+
+        // Check each column and try to auto-map
+        columns.forEach((col, idx) => {
+            const lowerCol = col.toLowerCase().trim();
+            if (commonMappings[lowerCol]) {
+                const field = commonMappings[lowerCol];
+                const select = document.querySelector(`.field-select[data-field="${field}"]`);
+                if (select) {
+                    select.value = idx;
+                    // Add subtle highlighting to indicate auto-mapped fields
+                    select.classList.add('border-success', 'bg-success', 'bg-opacity-10');
+                }
+            }
+        });
+    }
+
+    // Try auto-mapping on page load
+    attemptAutoMapping();
+
+    // Load saved mapping
+    document.getElementById('saved-mappings').addEventListener('change', function() {
+        const mappingId = this.value;
+        if (!mappingId) return;
+
+        fetch(`/handson/load_import_mapping/${mappingId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Clear all current selections
+                    document.querySelectorAll('.field-select').forEach(select => {
+                        select.value = '';
+                        // Remove any auto-mapping highlighting
+                        select.classList.remove('border-success', 'bg-success', 'bg-opacity-10');
+                    });
+
+                    // Apply the loaded mapping
+                    const mapping = data.mapping.mapping;
+                    for (const col in mapping) {
+                        const field = mapping[col];
+                        const select = document.querySelector(`.field-select[data-field="${field}"]`);
+                        if (select) {
+                            select.value = col;
+                        }
+                    }
+                } else {
+                    alert('Error loading mapping: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while loading the mapping.');
+            });
+    });
+
+    // Save mapping
+    document.getElementById('save-mapping-btn').addEventListener('click', function() {
+        const mappingName = document.getElementById('mapping-name').value.trim();
+        if (!mappingName) {
+            alert('Please enter a name for this mapping.');
+            return;
+        }
+
+        const mapping = getMapping();
+        if (Object.keys(mapping).length === 0) {
+            alert('Please map at least one column before saving.');
+            return;
+        }
+
+        fetch('/handson/save_import_mapping', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: mappingName,
+                import_type: 'sales_orders',
+                mapping: mapping
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Mapping saved successfully!');
+                // Reload page to show the new mapping in the dropdown
+                window.location.reload();
+            } else {
+                alert('Error saving mapping: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while saving the mapping.');
+        });
+    });
+
+    // Process import button click handler
+    document.getElementById('process-btn').addEventListener('click', function() {
+        const mapping = getMapping();
+        if (!validateMapping(mapping)) {
+            return;
+        }
+
+        // Show results panel and progress indicators
+        document.getElementById('results-panel').style.display = 'block';
+        document.getElementById('parts-customers-results').style.display = 'none';
+        document.getElementById('orders-results').style.display = 'none';
+        document.getElementById('lines-results').style.display = 'none';
+        document.querySelector('.progress-bar').style.width = '0%';
+        document.getElementById('status-message').textContent = 'Starting import...';
+
+        // Clear all previous results
+        document.getElementById('error-list').innerHTML = '';
+        document.getElementById('skipped-details-list').innerHTML = '';
+
+        // Hide all detail containers
+        document.getElementById('errors-container').style.display = 'none';
+        document.getElementById('skipped-details-container').style.display = 'none';
+
+        // Disable the process button
+        this.disabled = true;
+
+        // Start the import process
+        processImport(mapping);
+
+        // Scroll to the results panel
+        document.getElementById('results-panel').scrollIntoView({ behavior: 'smooth' });
+    });
+
+    // Get current mapping
+    function getMapping() {
+        const mapping = {};
+        document.querySelectorAll('.field-select').forEach(select => {
+            const field = select.getAttribute('data-field');
+            const value = select.value;
+            if (value) {
+                mapping[value] = field;
+            }
+        });
+        return mapping;
+    }
+
+    // Validate mapping
+    function validateMapping(mapping) {
+        // Define all required fields across categories
+        const requiredFields = {
+            'sales_orders': ['sales_orders.sales_order_ref', 'sales_orders.date_entered'],
+            'customers': ['customers.system_code'],
+            'parts': ['part_numbers.system_part_number'],
+            'order_lines': ['sales_order_lines.line_number', 'sales_order_lines.quantity', 'sales_order_lines.price']
+        };
+
+        const mappedFields = Object.values(mapping);
+
+        // Check each category of required fields
+        for (const [category, fields] of Object.entries(requiredFields)) {
+            const missing = fields.filter(field => !mappedFields.includes(field));
+
+            if (missing.length > 0) {
+                // Format field names for display (remove table prefix)
+                const formattedMissing = missing.map(field => {
+                    const parts = field.split('.');
+                    return parts[1].replace(/_/g, ' ');
+                });
+
+                // Determine which tab to switch to
+                let tabId;
+                if (category === 'sales_orders') tabId = 'sales-order-tab';
+                else if (category === 'customers') tabId = 'customer-tab';
+                else if (category === 'parts') tabId = 'parts-tab';
+                else if (category === 'order_lines') tabId = 'lines-tab';
+
+                alert(`Required fields missing in ${category.replace('_', ' ')}: ${formattedMissing.join(', ')}`);
+
+                // Switch to the relevant tab
+                if (tabId) document.getElementById(tabId).click();
+
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Process import
+    function processImport(mapping) {
+        updateProgress(10, 'Processing parts...');
+
+        // Store update option
+        const updateExisting = document.getElementById('updateExistingLines').checked;
+
+        // Store mapping in localStorage for subsequent steps
+        localStorage.setItem(`import_mapping_${fileId}`, JSON.stringify(mapping));
+
+        // Process parts first
+        fetch('/handson/import/parts', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                mapping: mapping,
+                file_id: fileId,
+                update_existing: updateExisting
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Display parts results
+                showPartsResults(data.results);
+
+                // Continue with customers
+                updateProgress(25, 'Processing customers...');
+                return processCustomers(mapping, updateExisting);
+            } else {
+                throw new Error(data.message || 'Error processing parts');
+            }
+        })
+        .then(customerData => {
+            if (customerData.success) {
+                // Display customer results
+                showCustomersResults(customerData.results);
+
+                // Continue with sales orders
+                updateProgress(50, 'Processing sales orders...');
+                return processSalesOrders(mapping, updateExisting);
+            } else {
+                throw new Error(customerData.message || 'Error processing customers');
+            }
+        })
+        .then(orderData => {
+            if (orderData.success) {
+                // Display sales order results
+                showOrdersResults(orderData.results);
+
+                // Continue with order lines
+                updateProgress(75, 'Processing sales order lines...');
+                return processOrderLines(mapping, updateExisting);
+            } else {
+                throw new Error(orderData.message || 'Error processing sales orders');
+            }
+        })
+        .then(lineData => {
+            if (lineData.success) {
+                // Display order lines results
+                showLinesResults(lineData.results);
+
+                // Complete the import process
+                updateProgress(100, 'Import completed successfully');
+            } else {
+                throw new Error(lineData.message || 'Error processing order lines');
+            }
+        })
+        .catch(error => {
+            console.error('Import error:', error);
+            updateProgress(100, `Import failed: ${error.message}`);
+
+            // Show error in the UI
+            const errorList = document.getElementById('error-list');
+            const errorItem = document.createElement('li');
+            errorItem.textContent = error.message;
+            errorList.appendChild(errorItem);
+            document.getElementById('errors-container').style.display = 'block';
+        })
+        .finally(() => {
+            // Re-enable the process button
+            document.getElementById('process-btn').disabled = false;
+        });
+    }
+
+    // Process customers
+    function processCustomers(mapping, updateExisting) {
+        return fetch('/handson/import/customers', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                mapping: mapping,
+                file_id: fileId,
+                update_existing: updateExisting
+            })
+        })
+        .then(response => response.json());
+    }
+
+    // Process sales orders
+    function processSalesOrders(mapping, updateExisting) {
+        return fetch('/handson/import/sales_orders', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                mapping: mapping,
+                file_id: fileId,
+                update_existing: updateExisting
+            })
+        })
+        .then(response => response.json());
+    }
+
+    // Process order lines
+    function processOrderLines(mapping, updateExisting) {
+        return fetch('/handson/import/sales_order_lines', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                mapping: mapping,
+                file_id: fileId,
+                update_existing: updateExisting
+            })
+        })
+        .then(response => response.json());
+    }
+
+    // Show parts results
+    function showPartsResults(results) {
+        document.getElementById('parts-customers-results').style.display = 'block';
+        document.getElementById('parts-processed').textContent = results.processed || 0;
+        document.getElementById('parts-created').textContent = results.created || 0;
+        document.getElementById('parts-updated').textContent = results.updated || 0;
+        document.getElementById('parts-skipped').textContent = results.skipped || 0;
+
+        // Add any skipped details to the list
+        addSkippedDetails(results.skipped_details || [], 'Part');
+    }
+
+    // Show customers results
+    function showCustomersResults(results) {
+        document.getElementById('parts-customers-results').style.display = 'block';
+        document.getElementById('customers-processed').textContent = results.processed || 0;
+        document.getElementById('customers-created').textContent = results.created || 0;
+        document.getElementById('customers-updated').textContent = results.updated || 0;
+        document.getElementById('customers-skipped').textContent = results.skipped || 0;
+
+        // Add any skipped details to the list
+        addSkippedDetails(results.skipped_details || [], 'Customer');
+    }
+
+    // Show orders results
+    function showOrdersResults(results) {
+        document.getElementById('orders-results').style.display = 'block';
+        document.getElementById('orders-processed').textContent = results.processed || 0;
+        document.getElementById('orders-created').textContent = results.created || 0;
+        document.getElementById('orders-updated').textContent = results.updated || 0;
+        document.getElementById('orders-skipped').textContent = results.skipped || 0;
+
+        // Add any skipped details to the list
+        addSkippedDetails(results.skipped_details || [], 'Order');
+    }
+
+    // Show lines results
+    function showLinesResults(results) {
+        document.getElementById('lines-results').style.display = 'block';
+        document.getElementById('lines-processed').textContent = results.processed || 0;
+        document.getElementById('lines-created').textContent = results.created || 0;
+        document.getElementById('lines-updated').textContent = results.updated || 0;
+        document.getElementById('lines-skipped').textContent = results.skipped || 0;
+
+        // Add any skipped details to the list
+        addSkippedDetails(results.skipped_details || [], 'Line');
+    }
+
+    // Add skipped details to the list
+    function addSkippedDetails(details, type) {
+        if (!details || details.length === 0) return;
+
+        const detailsList = document.getElementById('skipped-details-list');
+        document.getElementById('skipped-details-container').style.display = 'block';
+
+        details.forEach(item => {
+            const tr = document.createElement('tr');
+
+            const tdRow = document.createElement('td');
+            tdRow.textContent = item.row;
+            tr.appendChild(tdRow);
+
+            const tdType = document.createElement('td');
+            tdType.textContent = type;
+            tr.appendChild(tdType);
+
+            const tdRef = document.createElement('td');
+            tdRef.textContent = type === 'Line' ? `${item.so_ref} - Line ${item.line_number}` :
+                              (type === 'Order' ? item.so_ref :
+                              (type === 'Customer' ? item.customer_code : item.part_number));
+            tr.appendChild(tdRef);
+
+            const tdReason = document.createElement('td');
+            tdReason.textContent = item.reason;
+            tr.appendChild(tdReason);
+
+            detailsList.appendChild(tr);
+        });
+    }
+
+    // Update progress bar
+    function updateProgress(percent, status) {
+        document.querySelector('.progress-bar').style.width = percent + '%';
+        document.querySelector('.progress-bar').setAttribute('aria-valuenow', percent);
+        document.getElementById('status-message').textContent = status;
+    }
+});
+</script>
+{% endblock %}

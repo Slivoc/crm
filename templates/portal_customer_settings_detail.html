@@ -1,0 +1,782 @@
+{% extends "base.html" %}
+{% block title %}{{ customer.name }} - Portal Settings{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>{{ customer.name }} - Portal Settings</h2>
+        <span class="badge bg-info">{{ customer.user_count }} portal user{% if customer.user_count != 1 %}s{% endif %}</span>
+    </div>
+
+    <!-- MARGIN SETTINGS SECTION -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">
+                <i class="fas fa-percentage"></i> Margin Settings
+            </h5>
+            {% if margin_settings %}
+            <button class="btn btn-sm btn-outline-danger" onclick="revertToGlobal()">
+                <i class="fas fa-undo"></i> Revert to Global
+            </button>
+            {% endif %}
+        </div>
+        <div class="card-body">
+            <p class="text-muted">
+                Set customer-specific margins for automatic pricing in the portal. Leave empty to use global defaults.
+            </p>
+
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-body">
+                            <h6 class="text-muted">Stock Margin</h6>
+                            <div class="input-group mb-2">
+                                <input type="number"
+                                       class="form-control"
+                                       id="stock_margin"
+                                       step="0.1"
+                                       value="{{ margin_settings.stock_margin_percentage if margin_settings else '' }}"
+                                       placeholder="{{ global_margins.stock }}">
+                                <span class="input-group-text">%</span>
+                            </div>
+                            <small class="text-muted">Global: {{ global_margins.stock }}%</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-body">
+                            <h6 class="text-muted">Vendor Quote Margin</h6>
+                            <div class="input-group mb-2">
+                                <input type="number"
+                                       class="form-control"
+                                       id="vq_margin"
+                                       step="0.1"
+                                       value="{{ margin_settings.vq_margin_percentage if margin_settings else '' }}"
+                                       placeholder="{{ global_margins.vq }}">
+                                <span class="input-group-text">%</span>
+                            </div>
+                            <small class="text-muted">Global: {{ global_margins.vq }}%</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-body">
+                            <h6 class="text-muted">Purchase Order Margin</h6>
+                            <div class="input-group mb-2">
+                                <input type="number"
+                                       class="form-control"
+                                       id="po_margin"
+                                       step="0.1"
+                                       value="{{ margin_settings.po_margin_percentage if margin_settings else '' }}"
+                                       placeholder="{{ global_margins.po }}">
+                                <span class="input-group-text">%</span>
+                            </div>
+                            <small class="text-muted">Global: {{ global_margins.po }}%</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-3">
+                <button class="btn btn-primary" onclick="saveMargins()">
+                    <i class="fas fa-save"></i> Save Margin Settings
+                </button>
+            </div>
+
+            {% if margin_settings %}
+            <div class="alert alert-info mt-3 mb-0">
+                <small>
+                    <i class="fas fa-info-circle"></i>
+                    Custom margins active. Last updated: {{ margin_settings.date_modified }}
+                </small>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- SUGGESTED PARTS SECTION -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">
+                <i class="fas fa-lightbulb"></i> Suggested Parts
+            </h5>
+            <button class="btn btn-sm btn-success" onclick="showAddSuggestedPartModal()">
+                <i class="fas fa-plus"></i> Suggest Part
+            </button>
+        </div>
+        <div class="card-body">
+            <p class="text-muted">
+                Suggest specific parts to this customer. These will appear in their portal dashboard as recommendations.
+            </p>
+
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Part Number</th>
+                            <th>Stock</th>
+                            <th>Priority</th>
+                            <th>Suggested By</th>
+                            <th>Date</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for suggestion in suggested_parts %}
+                        <tr class="{% if not suggestion.is_active %}table-secondary{% endif %}">
+                            <td>
+                                <strong>{{ suggestion.part_number or suggestion.base_part_number }}</strong>
+                                {% if suggestion.notes %}
+                                <br><small class="text-muted">{{ suggestion.notes }}</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if suggestion.stock_quantity and suggestion.stock_quantity > 0 %}
+                                    <span class="badge bg-success">{{ suggestion.stock_quantity }} in stock</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Not in stock</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge {% if suggestion.priority >= 5 %}bg-danger{% elif suggestion.priority >= 3 %}bg-warning{% else %}bg-info{% endif %}">
+                                    {{ suggestion.priority }}
+                                </span>
+                            </td>
+                            <td>
+                                <small>{{ suggestion.suggested_by_username or 'Unknown' }}</small>
+                            </td>
+                            <td>
+                                <small>{{ suggestion.date_created[:10] }}</small>
+                            </td>
+                            <td>
+                                {% if suggestion.is_active %}
+                                    <span class="badge bg-success">Active</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Inactive</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-primary"
+                                            onclick='editSuggestedPart({{ suggestion.id }}, "{{ suggestion.part_number or suggestion.base_part_number }}", {{ suggestion.notes|tojson }}, {{ suggestion.priority }}, {{ suggestion.is_active }})'>
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button class="btn btn-outline-{% if suggestion.is_active %}warning{% else %}success{% endif %}"
+                                            onclick="toggleSuggestedPart({{ suggestion.id }})">
+                                        <i class="fas fa-{% if suggestion.is_active %}pause{% else %}play{% endif %}"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger"
+                                            onclick="deleteSuggestedPart({{ suggestion.id }})">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="7" class="text-center text-muted py-4">
+                                No parts suggested yet
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- PRICING AGREEMENTS SECTION -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">
+                <i class="fas fa-file-contract"></i> Pricing Agreements
+            </h5>
+            <button class="btn btn-sm btn-success" onclick="showAddPricingModal()">
+                <i class="fas fa-plus"></i> Add Agreement
+            </button>
+        </div>
+        <div class="card-body">
+            <p class="text-muted">
+                Set fixed prices for specific parts. These override all other pricing logic in the portal.
+            </p>
+
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Part Number</th>
+                            <th>Price</th>
+                            <th>Valid From</th>
+                            <th>Valid Until</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pricing in pricing_agreements %}
+                        <tr class="{% if not pricing.is_active %}table-secondary{% endif %}">
+                            <td>
+                                <strong>{{ pricing.part_number or pricing.base_part_number }}</strong>
+                                {% if pricing.notes %}
+                                <br><small class="text-muted">{{ pricing.notes }}</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <strong>{{ pricing.currency_code }} {{ "%.2f"|format(pricing.price) }}</strong>
+                            </td>
+                            <td>
+                                {{ pricing.valid_from or 'Immediate' }}
+                            </td>
+                            <td>
+                                {{ pricing.valid_until or 'No expiry' }}
+                            </td>
+                            <td>
+                                {% if pricing.status == 'active' %}
+                                    <span class="badge bg-success">Active</span>
+                                {% elif pricing.status == 'expired' %}
+                                    <span class="badge bg-warning">Expired</span>
+                                {% elif pricing.status == 'future' %}
+                                    <span class="badge bg-info">Future</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Inactive</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-primary"
+                                            onclick='editPricing({{ pricing.id }}, "{{ pricing.part_number or pricing.base_part_number }}", {{ pricing.price }}, {{ pricing.currency_id }}, "{{ pricing.valid_from or "" }}", "{{ pricing.valid_until or "" }}", {{ pricing.notes|tojson }}, {{ pricing.is_active }})'>
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button class="btn btn-outline-{% if pricing.is_active %}warning{% else %}success{% endif %}"
+                                            onclick="togglePricing({{ pricing.id }})">
+                                        <i class="fas fa-{% if pricing.is_active %}pause{% else %}play{% endif %}"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger"
+                                            onclick="deletePricing({{ pricing.id }})">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="text-center text-muted py-4">
+                                No pricing agreements configured
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Pricing Modal -->
+<div class="modal fade" id="pricingModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="pricingModalTitle">Add Pricing Agreement</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="pricing_id">
+
+                <div class="mb-3">
+                    <label class="form-label">Part Number *</label>
+                    <input type="text"
+                           class="form-control"
+                           id="modal_part_number"
+                           autocomplete="off"
+                           placeholder="Start typing to search..."
+                           required>
+                    <div id="part_number_dropdown" class="dropdown-menu" style="width: 100%;"></div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-8">
+                        <div class="mb-3">
+                            <label class="form-label">Price *</label>
+                            <input type="number" class="form-control" id="modal_price" step="0.01" required>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label class="form-label">Currency</label>
+                            <select class="form-select" id="modal_currency">
+                                {% for currency in currencies %}
+                                <option value="{{ currency.id }}" {% if currency.id == 3 %}selected{% endif %}>
+                                    {{ currency.currency_code }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Valid From</label>
+                            <input type="date" class="form-control" id="modal_valid_from">
+                            <small class="text-muted">Leave empty for immediate effect</small>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Valid Until</label>
+                            <input type="date" class="form-control" id="modal_valid_until">
+                            <small class="text-muted">Leave empty for no expiry</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Notes</label>
+                    <textarea class="form-control" id="modal_notes" rows="2"></textarea>
+                </div>
+
+                <div class="form-check" id="is_active_container" style="display: none;">
+                    <input class="form-check-input" type="checkbox" id="modal_is_active" checked>
+                    <label class="form-check-label" for="modal_is_active">
+                        Active
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="savePricing()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Suggested Part Modal -->
+<div class="modal fade" id="suggestedPartModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="suggestedPartModalTitle">Suggest Part</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="suggestion_id">
+
+                <div class="mb-3">
+                    <label class="form-label">Part Number *</label>
+                    <input type="text"
+                           class="form-control"
+                           id="modal_suggested_part_number"
+                           autocomplete="off"
+                           placeholder="Start typing to search..."
+                           required>
+                    <div id="suggested_part_number_dropdown" class="dropdown-menu" style="width: 100%;"></div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Priority</label>
+                    <select class="form-select" id="modal_priority">
+                        <option value="0">Normal (0)</option>
+                        <option value="1">Low Priority (1)</option>
+                        <option value="2">Medium-Low (2)</option>
+                        <option value="3">Medium (3)</option>
+                        <option value="4">Medium-High (4)</option>
+                        <option value="5">High Priority (5)</option>
+                        <option value="6">Very High (6)</option>
+                        <option value="7">Urgent (7)</option>
+                        <option value="8">Critical (8)</option>
+                        <option value="9">Emergency (9)</option>
+                        <option value="10">Highest (10)</option>
+                    </select>
+                    <small class="text-muted">Higher priority parts appear first in customer dashboard</small>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Notes/Reason</label>
+                    <textarea class="form-control" id="modal_suggested_notes" rows="3" placeholder="Why are you suggesting this part? (visible to customer)"></textarea>
+                </div>
+
+                <div class="form-check" id="suggested_is_active_container" style="display: none;">
+                    <input class="form-check-input" type="checkbox" id="modal_suggested_is_active" checked>
+                    <label class="form-check-label" for="modal_suggested_is_active">
+                        Active
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveSuggestedPart()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const customerId = {{ customer.id }};
+let pricingModal;
+let suggestedPartModal;
+let partSearchTimeout;
+
+document.addEventListener('DOMContentLoaded', function() {
+    pricingModal = new bootstrap.Modal(document.getElementById('pricingModal'));
+    suggestedPartModal = new bootstrap.Modal(document.getElementById('suggestedPartModal'));
+    setupPartNumberAutocomplete();
+    setupSuggestedPartNumberAutocomplete();
+});
+
+// PART NUMBER AUTOCOMPLETE (for pricing)
+function setupPartNumberAutocomplete() {
+    const input = document.getElementById('modal_part_number');
+    const dropdown = document.getElementById('part_number_dropdown');
+
+    input.addEventListener('input', function() {
+        clearTimeout(partSearchTimeout);
+        const query = this.value.trim();
+
+        if (query.length < 2) {
+            dropdown.classList.remove('show');
+            return;
+        }
+
+        partSearchTimeout = setTimeout(() => {
+            fetch(`/api/search_parts?search=${encodeURIComponent(query)}&page=1`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.part_numbers && data.part_numbers.length > 0) {
+                        dropdown.innerHTML = data.part_numbers.map(part =>
+                            `<a class="dropdown-item" href="#" onclick="selectPartNumber('${part.part_number}'); return false;">
+                                <strong>${part.part_number}</strong>
+                                ${part.base_part_number !== part.part_number ? '<br><small class="text-muted">Base: ' + part.base_part_number + '</small>' : ''}
+                            </a>`
+                        ).join('');
+                        dropdown.classList.add('show');
+                    } else {
+                        dropdown.innerHTML = '<div class="dropdown-item text-muted">No parts found</div>';
+                        dropdown.classList.add('show');
+                    }
+                });
+        }, 300);
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.classList.remove('show');
+        }
+    });
+}
+
+// PART NUMBER AUTOCOMPLETE (for suggested parts)
+function setupSuggestedPartNumberAutocomplete() {
+    const input = document.getElementById('modal_suggested_part_number');
+    const dropdown = document.getElementById('suggested_part_number_dropdown');
+
+    input.addEventListener('input', function() {
+        clearTimeout(partSearchTimeout);
+        const query = this.value.trim();
+
+        if (query.length < 2) {
+            dropdown.classList.remove('show');
+            return;
+        }
+
+        partSearchTimeout = setTimeout(() => {
+            fetch(`/api/search_parts?search=${encodeURIComponent(query)}&page=1`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.part_numbers && data.part_numbers.length > 0) {
+                        dropdown.innerHTML = data.part_numbers.map(part =>
+                            `<a class="dropdown-item" href="#" onclick="selectSuggestedPartNumber('${part.part_number}'); return false;">
+                                <strong>${part.part_number}</strong>
+                                ${part.base_part_number !== part.part_number ? '<br><small class="text-muted">Base: ' + part.base_part_number + '</small>' : ''}
+                            </a>`
+                        ).join('');
+                        dropdown.classList.add('show');
+                    } else {
+                        dropdown.innerHTML = '<div class="dropdown-item text-muted">No parts found</div>';
+                        dropdown.classList.add('show');
+                    }
+                });
+        }, 300);
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.classList.remove('show');
+        }
+    });
+}
+
+function selectPartNumber(partNumber) {
+    document.getElementById('modal_part_number').value = partNumber;
+    document.getElementById('part_number_dropdown').classList.remove('show');
+}
+
+function selectSuggestedPartNumber(partNumber) {
+    document.getElementById('modal_suggested_part_number').value = partNumber;
+    document.getElementById('suggested_part_number_dropdown').classList.remove('show');
+}
+
+// MARGIN SETTINGS
+function saveMargins() {
+    const data = {
+        stock_margin_percentage: parseFloat(document.getElementById('stock_margin').value) || null,
+        vq_margin_percentage: parseFloat(document.getElementById('vq_margin').value) || null,
+        po_margin_percentage: parseFloat(document.getElementById('po_margin').value) || null
+    };
+
+    fetch(`/portal-admin/customer-settings/${customerId}/margins`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showToast('Margin settings saved', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to save', 'danger');
+        }
+    });
+}
+
+function revertToGlobal() {
+    if (!confirm('Revert to global margin settings? This will delete customer-specific settings.')) return;
+
+    fetch(`/portal-admin/customer-settings/${customerId}/margins`, {
+        method: 'DELETE'
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showToast('Reverted to global settings', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to revert', 'danger');
+        }
+    });
+}
+
+// PRICING AGREEMENTS
+function showAddPricingModal() {
+    document.getElementById('pricingModalTitle').textContent = 'Add Pricing Agreement';
+    document.getElementById('pricing_id').value = '';
+    document.getElementById('modal_part_number').value = '';
+    document.getElementById('modal_part_number').disabled = false;
+    document.getElementById('modal_price').value = '';
+    document.getElementById('modal_currency').value = '3';
+    document.getElementById('modal_valid_from').value = '';
+    document.getElementById('modal_valid_until').value = '';
+    document.getElementById('modal_notes').value = '';
+    document.getElementById('is_active_container').style.display = 'none';
+    pricingModal.show();
+}
+
+function editPricing(id, partNumber, price, currencyId, validFrom, validUntil, notes, isActive) {
+    document.getElementById('pricingModalTitle').textContent = 'Edit Pricing Agreement';
+    document.getElementById('pricing_id').value = id;
+    document.getElementById('modal_part_number').value = partNumber;
+    document.getElementById('modal_part_number').disabled = true;
+    document.getElementById('modal_price').value = price;
+    document.getElementById('modal_currency').value = currencyId;
+    document.getElementById('modal_valid_from').value = validFrom;
+    document.getElementById('modal_valid_until').value = validUntil;
+    document.getElementById('modal_notes').value = notes || '';
+    document.getElementById('modal_is_active').checked = isActive == 1;
+    document.getElementById('is_active_container').style.display = 'block';
+    pricingModal.show();
+}
+
+function savePricing() {
+    const pricingId = document.getElementById('pricing_id').value;
+    const isEdit = !!pricingId;
+
+    const data = {
+        part_number: document.getElementById('modal_part_number').value.trim(),
+        price: parseFloat(document.getElementById('modal_price').value),
+        currency_id: parseInt(document.getElementById('modal_currency').value),
+        valid_from: document.getElementById('modal_valid_from').value || null,
+        valid_until: document.getElementById('modal_valid_until').value || null,
+        notes: document.getElementById('modal_notes').value.trim()
+    };
+
+    if (isEdit) {
+        data.is_active = document.getElementById('modal_is_active').checked ? 1 : 0;
+    }
+
+    if (!data.part_number || !data.price) {
+        showToast('Part number and price are required', 'danger');
+        return;
+    }
+
+    const url = isEdit
+        ? `/portal-admin/customer-settings/${customerId}/pricing/${pricingId}`
+        : `/portal-admin/customer-settings/${customerId}/pricing`;
+
+    const method = isEdit ? 'PUT' : 'POST';
+
+    fetch(url, {
+        method: method,
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showToast(data.message || 'Pricing agreement saved', 'success');
+            pricingModal.hide();
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to save', 'danger');
+        }
+    });
+}
+
+function togglePricing(pricingId) {
+    fetch(`/portal-admin/customer-settings/${customerId}/pricing/${pricingId}/toggle`, {
+        method: 'POST'
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showToast('Status updated', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to toggle', 'danger');
+        }
+    });
+}
+
+function deletePricing(pricingId) {
+    if (!confirm('Delete this pricing agreement?')) return;
+
+    fetch(`/portal-admin/customer-settings/${customerId}/pricing/${pricingId}`, {
+        method: 'DELETE'
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showToast('Pricing agreement deleted', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to delete', 'danger');
+        }
+    });
+}
+
+// SUGGESTED PARTS
+function showAddSuggestedPartModal() {
+    document.getElementById('suggestedPartModalTitle').textContent = 'Suggest Part';
+    document.getElementById('suggestion_id').value = '';
+    document.getElementById('modal_suggested_part_number').value = '';
+    document.getElementById('modal_suggested_part_number').disabled = false;
+    document.getElementById('modal_priority').value = '0';
+    document.getElementById('modal_suggested_notes').value = '';
+    document.getElementById('suggested_is_active_container').style.display = 'none';
+    suggestedPartModal.show();
+}
+
+function editSuggestedPart(id, partNumber, notes, priority, isActive) {
+    document.getElementById('suggestedPartModalTitle').textContent = 'Edit Suggested Part';
+    document.getElementById('suggestion_id').value = id;
+    document.getElementById('modal_suggested_part_number').value = partNumber;
+    document.getElementById('modal_suggested_part_number').disabled = true;
+    document.getElementById('modal_priority').value = priority;
+    document.getElementById('modal_suggested_notes').value = notes || '';
+    document.getElementById('modal_suggested_is_active').checked = isActive == 1;
+    document.getElementById('suggested_is_active_container').style.display = 'block';
+    suggestedPartModal.show();
+}
+
+function saveSuggestedPart() {
+    const suggestionId = document.getElementById('suggestion_id').value;
+    const isEdit = !!suggestionId;
+
+    const data = {
+        part_number: document.getElementById('modal_suggested_part_number').value.trim(),
+        priority: parseInt(document.getElementById('modal_priority').value),
+        notes: document.getElementById('modal_suggested_notes').value.trim()
+    };
+
+    if (isEdit) {
+        data.is_active = document.getElementById('modal_suggested_is_active').checked ? 1 : 0;
+    }
+
+    if (!data.part_number) {
+        showToast('Part number is required', 'danger');
+        return;
+    }
+
+    const url = isEdit
+        ? `/portal-admin/customer-settings/${customerId}/suggested-parts/${suggestionId}`
+        : `/portal-admin/customer-settings/${customerId}/suggested-parts`;
+
+    const method = isEdit ? 'PUT' : 'POST';
+
+    fetch(url, {
+        method: method,
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showToast(data.message || 'Suggested part saved', 'success');
+            suggestedPartModal.hide();
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to save', 'danger');
+        }
+    });
+}
+
+function toggleSuggestedPart(suggestionId) {
+    fetch(`/portal-admin/customer-settings/${customerId}/suggested-parts/${suggestionId}/toggle`, {
+        method: 'POST'
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showToast('Status updated', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to toggle', 'danger');
+        }
+    });
+}
+
+function deleteSuggestedPart(suggestionId) {
+    if (!confirm('Delete this suggested part?')) return;
+
+    fetch(`/portal-admin/customer-settings/${customerId}/suggested-parts/${suggestionId}`, {
+        method: 'DELETE'
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showToast('Suggested part deleted', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to delete', 'danger');
+        }
+    });
+}
+
+function showToast(message, type) {
+    const alertClass = type === 'success' ? 'alert-success' : 'alert-danger';
+    const alertHtml = `<div class="alert ${alertClass} alert-dismissible fade show" role="alert">
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>`;
+
+    const container = document.querySelector('.container-fluid');
+    container.insertAdjacentHTML('afterbegin', alertHtml);
+}
+</script>
+{% endblock %}

@@ -1,0 +1,434 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Quick Import - Sales Orders</h2>
+        <a href="{{ url_for('imports.list_files') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Import Files
+        </a>
+    </div>
+
+    <div class="card">
+        <div class="card-body" style="padding: 30px;">
+            <div class="alert alert-info mb-4">
+                <i class="bi bi-info-circle me-2"></i>
+                <strong>How to use:</strong>
+                <ul class="mb-0 mt-2">
+                    <li>Paste a SharePoint sharing link or CSV file URL</li>
+                    <li>Select the file type (CSV or Excel)</li>
+                    <li>Select a pre-configured mapping</li>
+                    <li>Click "Import Now"</li>
+                </ul>
+                <p class="mb-0 mt-2">
+                    <strong>Supported formats:</strong> Excel (.xlsx, .xls), CSV (.csv)
+                </p>
+            </div>
+
+            <form id="importForm">
+                <div class="mb-3">
+                    <label for="fileUrl" class="form-label">File URL (SharePoint or Direct Link):</label>
+                    <input type="url"
+                           class="form-control form-control-lg"
+                           id="fileUrl"
+                           name="fileUrl"
+                           placeholder="https://yourcompany.sharepoint.com/..."
+                           required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="fileType" class="form-label">File Type:</label>
+                    <select class="form-select form-select-lg" id="fileType" name="fileType" required>
+                        <option value="csv" selected>CSV (.csv)</option>
+                        <option value="excel">Excel (.xlsx, .xls)</option>
+                    </select>
+                    <div class="form-text">
+                        Select the format of your file. Most SharePoint exports are CSV.
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label for="mapping" class="form-label">Select Mapping:</label>
+                    <select class="form-select form-select-lg" id="mapping" name="mapping" required>
+                        <option value="">-- Choose a mapping --</option>
+                        {% for mapping in saved_mappings %}
+                        <option value="{{ mapping.id }}">{{ mapping.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-lg w-100" id="importBtn">
+                    <i class="bi bi-cloud-download me-2"></i>Import Now
+                </button>
+            </form>
+
+            <div id="progress" style="display: none;" class="mt-4">
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-3 text-muted" id="progressText">Processing import...</p>
+                </div>
+            </div>
+
+            <div id="results" style="display: none;" class="mt-4">
+                <div class="alert" id="resultsAlert">
+                    <h5 id="resultsTitle"></h5>
+                    <div id="resultsContent"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function downloadDebugLog() {
+    if (!window.lastImportResults) {
+        alert('No import results available');
+        return;
+    }
+
+    const results = window.lastImportResults;
+    const timestamp = new Date().toISOString();
+
+    let logContent = `Import Debug Log\n`;
+    logContent += `Generated: ${timestamp}\n`;
+    logContent += `${'='.repeat(80)}\n\n`;
+
+    const steps = ['parts', 'customers', 'sales_orders', 'order_lines'];
+
+    steps.forEach(step => {
+        if (results[step]) {
+            logContent += `\n${step.toUpperCase().replace('_', ' ')}\n`;
+            logContent += `${'-'.repeat(80)}\n`;
+            logContent += `Processed: ${results[step].processed}\n`;
+            logContent += `Created: ${results[step].created}\n`;
+            logContent += `Updated: ${results[step].updated || 0}\n`;
+            logContent += `Skipped: ${results[step].skipped}\n`;
+
+            if (results[step].errors && results[step].errors.length > 0) {
+                logContent += `\nErrors (${results[step].errors.length}):\n`;
+                results[step].errors.forEach((error, idx) => {
+                    logContent += `  ${idx + 1}. ${error}\n`;
+                });
+            }
+
+            if (results[step].skipped_details && results[step].skipped_details.length > 0) {
+                logContent += `\nSkipped Details (${results[step].skipped_details.length}):\n`;
+                results[step].skipped_details.forEach((detail, idx) => {
+                    logContent += `  ${idx + 1}. Row ${detail.row}: ${detail.reason}\n`;
+                    if (detail.po_ref) logContent += `     PO: ${detail.po_ref}\n`;
+                    if (detail.part) logContent += `     Part: ${detail.part}\n`;
+                });
+            }
+        }
+    });
+
+    // Create and download file
+    const blob = new Blob([logContent], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `import_log_${new Date().getTime()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+}
+
+function formatResults(data) {
+    let html = '';
+
+    // Summary cards at the top
+    html += '<div class="row mb-4">';
+
+    const steps = [
+        { key: 'parts', label: 'Parts', icon: 'box-seam' },
+        { key: 'customers', label: 'Customers', icon: 'people' },
+        { key: 'sales_orders', label: 'Sales Orders', icon: 'file-earmark-text' },
+        { key: 'order_lines', label: 'Order Lines', icon: 'list-ul' }
+    ];
+
+    steps.forEach(step => {
+        if (data.results[step.key]) {
+            const result = data.results[step.key];
+            const hasErrors = result.errors && result.errors.length > 0;
+            const cardClass = hasErrors ? 'border-warning' : 'border-success';
+
+            html += `
+                <div class="col-md-3 mb-3">
+                    <div class="card ${cardClass}">
+                        <div class="card-body text-center">
+                            <i class="bi bi-${step.icon} fs-1 mb-2 ${hasErrors ? 'text-warning' : 'text-success'}"></i>
+                            <h6 class="card-title">${step.label}</h6>
+                            <div class="mt-2">
+                                <span class="badge bg-success me-1">${result.created || 0} created</span>
+                                ${result.updated ? `<span class="badge bg-info me-1">${result.updated} updated</span>` : ''}
+                                ${result.skipped ? `<span class="badge bg-secondary">${result.skipped} skipped</span>` : ''}
+                            </div>
+                            ${hasErrors ? `<div class="mt-2"><span class="badge bg-warning">${result.errors.length} errors</span></div>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    });
+
+    html += '</div>';
+
+    // Detailed results table
+    html += '<div class="table-responsive">';
+    html += '<table class="table table-striped table-hover">';
+    html += '<thead class="table-dark"><tr><th>Step</th><th>Processed</th><th>Created</th><th>Updated</th><th>Skipped</th><th>Errors</th><th>Actions</th></tr></thead>';
+    html += '<tbody>';
+
+    steps.forEach(step => {
+        if (data.results[step.key]) {
+            const result = data.results[step.key];
+            html += `
+                <tr>
+                    <td><strong>${step.label}</strong></td>
+                    <td>${result.processed || 0}</td>
+                    <td><span class="badge bg-success">${result.created || 0}</span></td>
+                    <td><span class="badge bg-info">${result.updated || 0}</span></td>
+                    <td><span class="badge bg-secondary">${result.skipped || 0}</span></td>
+                    <td>
+                        ${result.errors && result.errors.length > 0
+                            ? `<span class="badge bg-danger">${result.errors.length}</span>`
+                            : '<span class="badge bg-success">0</span>'}
+                    </td>
+                    <td>
+                        ${(result.errors && result.errors.length > 0) || (result.skipped_details && result.skipped_details.length > 0)
+                            ? `<button class="btn btn-sm btn-outline-primary" type="button" onclick="showStepDetails('${step.key}', '${step.label}')">View Details</button>`
+                            : '<span class="text-muted">-</span>'}
+                    </td>
+                </tr>
+            `;
+        }
+    });
+
+    html += '</tbody></table></div>';
+
+    // Action buttons
+    html += '<div class="mt-4 d-flex gap-2">';
+    html += '<button class="btn btn-outline-info" onclick="downloadDebugLog()"><i class="bi bi-download me-2"></i>Download Full Log</button>';
+
+    if (data.file_id) {
+        html += `<a href="/handson/import/progress/${data.file_id}" class="btn btn-outline-secondary"><i class="bi bi-clock-history me-2"></i>View Import History</a>`;
+    }
+
+    html += '</div>';
+
+    return html;
+}
+
+function showStepDetails(stepKey, stepLabel) {
+    const result = window.lastImportResults[stepKey];
+    if (!result) return;
+
+    let modalContent = `
+        <div class="modal fade" id="detailsModal" tabindex="-1">
+            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">${stepLabel} - Detailed Results</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+    `;
+
+    // Errors section
+    if (result.errors && result.errors.length > 0) {
+        modalContent += `
+            <div class="mb-4">
+                <h6 class="text-danger"><i class="bi bi-exclamation-triangle me-2"></i>Errors (${result.errors.length})</h6>
+                <div class="list-group">
+        `;
+
+        result.errors.forEach((error, idx) => {
+            modalContent += `
+                <div class="list-group-item">
+                    <div class="d-flex w-100 justify-content-between">
+                        <h6 class="mb-1 text-danger">Error #${idx + 1}</h6>
+                    </div>
+                    <p class="mb-0 small">${error}</p>
+                </div>
+            `;
+        });
+
+        modalContent += '</div></div>';
+    }
+
+    // Skipped details section
+    if (result.skipped_details && result.skipped_details.length > 0) {
+        modalContent += `
+            <div class="mb-4">
+                <h6 class="text-warning"><i class="bi bi-info-circle me-2"></i>Skipped Records (${result.skipped_details.length})</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Row</th>
+                                ${result.skipped_details[0].po_ref ? '<th>PO Ref</th>' : ''}
+                                ${result.skipped_details[0].part ? '<th>Part</th>' : ''}
+                                ${result.skipped_details[0].line_number ? '<th>Line</th>' : ''}
+                                <th>Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        `;
+
+        result.skipped_details.forEach((detail, idx) => {
+            modalContent += `
+                <tr>
+                    <td><span class="badge bg-secondary">${detail.row}</span></td>
+                    ${detail.po_ref ? `<td><code>${detail.po_ref}</code></td>` : ''}
+                    ${detail.part ? `<td><code>${detail.part}</code></td>` : ''}
+                    ${detail.line_number ? `<td>${detail.line_number}</td>` : ''}
+                    <td class="small">${detail.reason}</td>
+                </tr>
+            `;
+        });
+
+        modalContent += '</tbody></table></div></div>';
+    }
+
+    // Updated details section (if applicable)
+    if (result.updated_details && result.updated_details.length > 0) {
+        modalContent += `
+            <div class="mb-4">
+                <h6 class="text-info"><i class="bi bi-pencil-square me-2"></i>Updated Records (${result.updated_details.length})</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Row</th>
+                                <th>PO Ref</th>
+                                <th>Line</th>
+                                <th>Part</th>
+                                <th>Updated Fields</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        `;
+
+        result.updated_details.forEach(detail => {
+            modalContent += `
+                <tr>
+                    <td><span class="badge bg-secondary">${detail.row}</span></td>
+                    <td><code>${detail.po_ref}</code></td>
+                    <td>${detail.line_number}</td>
+                    <td><code>${detail.part}</code></td>
+                    <td><span class="badge bg-info">${detail.updated_fields.join(', ')}</span></td>
+                </tr>
+            `;
+        });
+
+        modalContent += '</tbody></table></div></div>';
+    }
+
+    modalContent += `
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Remove existing modal if present
+    const existingModal = document.getElementById('detailsModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    // Add and show modal
+    document.body.insertAdjacentHTML('beforeend', modalContent);
+    const modal = new bootstrap.Modal(document.getElementById('detailsModal'));
+    modal.show();
+}
+
+document.getElementById('importForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const fileUrl = document.getElementById('fileUrl').value;
+    const fileType = document.getElementById('fileType').value;
+    const mappingId = document.getElementById('mapping').value;
+    const importBtn = document.getElementById('importBtn');
+    const progress = document.getElementById('progress');
+    const progressText = document.getElementById('progressText');
+    const results = document.getElementById('results');
+    const resultsAlert = document.getElementById('resultsAlert');
+
+    // Show progress, disable button
+    importBtn.disabled = true;
+    progress.style.display = 'block';
+    results.style.display = 'none';
+    progressText.textContent = 'Downloading file...';
+
+    try {
+        const response = await fetch('/handson/quick_import/process', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                file_url: fileUrl,
+                file_type: fileType,
+                mapping_id: mappingId
+            })
+        });
+
+        const data = await response.json();
+
+        // Hide progress
+        progress.style.display = 'none';
+
+        // Show results
+        results.style.display = 'block';
+
+        if (data.success) {
+            resultsAlert.className = 'alert alert-success';
+            document.getElementById('resultsTitle').innerHTML = '<i class="bi bi-check-circle me-2"></i>Import Completed Successfully!';
+
+            // Store results for later use
+            window.lastImportResults = data.results;
+
+            // Generate formatted results
+            document.getElementById('resultsContent').innerHTML = formatResults(data);
+
+            // Reset form
+            document.getElementById('importForm').reset();
+            // Reset file type to CSV default
+            document.getElementById('fileType').value = 'csv';
+
+        } else {
+            resultsAlert.className = 'alert alert-danger';
+            document.getElementById('resultsTitle').innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Import Failed';
+            document.getElementById('resultsContent').innerHTML =
+                `<p class="mb-0"><strong>Error:</strong> ${data.message}</p>`;
+        }
+
+    } catch (error) {
+        progress.style.display = 'none';
+        results.style.display = 'block';
+        resultsAlert.className = 'alert alert-danger';
+        document.getElementById('resultsTitle').innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Import Failed';
+        document.getElementById('resultsContent').innerHTML =
+            `<p class="mb-0"><strong>Error:</strong> ${error.message}</p>`;
+    } finally {
+        importBtn.disabled = false;
+    }
+});
+</script>
+
+<style>
+.card {
+    transition: transform 0.2s;
+}
+.card:hover {
+    transform: translateY(-2px);
+}
+</style>
+{% endblock %}

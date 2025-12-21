@@ -1,0 +1,574 @@
+{% extends "base.html" %}
+
+{% block title %}Test Customer Portal - Portal Admin{% endblock %}
+
+{% block extra_css %}
+<style>
+    .test-container {
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+    
+    .input-section {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .results-section {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .result-card {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 15px;
+        margin-bottom: 15px;
+        transition: all 0.2s;
+    }
+    
+    .result-card:hover {
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    
+    .result-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        margin-bottom: 12px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .part-number-display {
+        font-size: 1.1em;
+        font-weight: 600;
+        color: #2c3e50;
+    }
+    
+    .quantity-badge {
+        background: #6c757d;
+        color: white;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: 0.85em;
+        margin-left: 8px;
+    }
+    
+    .status-badge {
+        padding: 5px 12px;
+        border-radius: 4px;
+        font-size: 0.85em;
+        font-weight: 500;
+    }
+    
+    .status-available {
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .status-quote-required {
+        background: #fff3cd;
+        color: #856404;
+    }
+    
+    .customer-view {
+        background: #f8f9fa;
+        border-radius: 6px;
+        padding: 15px;
+        margin-bottom: 12px;
+    }
+    
+    .customer-view-title {
+        font-weight: 600;
+        color: #495057;
+        margin-bottom: 10px;
+        font-size: 0.9em;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .price-display {
+        font-size: 1.3em;
+        font-weight: 700;
+        color: #28a745;
+        margin-bottom: 5px;
+    }
+    
+    .price-source {
+        font-size: 0.85em;
+        color: #6c757d;
+        font-style: italic;
+    }
+    
+    .lead-time {
+        display: inline-block;
+        background: #e3f2fd;
+        color: #1976d2;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 0.85em;
+        margin-top: 8px;
+    }
+    
+    .admin-debug {
+        background: #fff8e1;
+        border: 1px solid #ffd54f;
+        border-radius: 6px;
+        padding: 15px;
+        margin-top: 12px;
+    }
+    
+    .admin-debug-title {
+        font-weight: 600;
+        color: #f57c00;
+        margin-bottom: 10px;
+        font-size: 0.9em;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .debug-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px;
+        margin-top: 10px;
+    }
+    
+    .debug-item {
+        background: white;
+        padding: 8px 12px;
+        border-radius: 4px;
+        border-left: 3px solid #ffa726;
+    }
+    
+    .debug-label {
+        font-size: 0.75em;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        margin-bottom: 2px;
+    }
+    
+    .debug-value {
+        font-size: 0.95em;
+        font-weight: 600;
+        color: #333;
+    }
+
+    .debug-value.date-value {
+        font-size: 0.85em;
+        color: #666;
+        font-weight: 500;
+    }
+
+    .winning-source {
+        display: inline-block;
+        background: #4caf50;
+        color: white;
+        padding: 3px 8px;
+        border-radius: 3px;
+        font-size: 0.75em;
+        margin-left: 8px;
+    }
+
+    .no-data {
+        color: #999;
+        font-style: italic;
+    }
+
+    .parts-textarea {
+        font-family: 'Courier New', monospace;
+        font-size: 0.95em;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="test-container">
+    <h2 class="mb-4">
+        <i class="fas fa-vial"></i> Test Customer Portal
+    </h2>
+
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        <strong>What is this?</strong> This page simulates what a customer would see when they search for parts in the customer portal,
+        plus additional backend information about pricing sources and data availability.
+        <br><br>
+        <strong>Customer Selection:</strong> You can optionally select a specific customer to check for customer-specific <strong>pricing agreements</strong> only.
+        All other pricing (sales, quotes, VQ, PO, stock) uses data from <strong>all customers</strong> to show general market pricing.
+    </div>
+
+    <div class="input-section">
+        <h5 class="mb-3">Search Configuration</h5>
+
+        <form id="testSearchForm">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="customer_select" class="form-label">
+                        Select Customer (Optional)
+                        <small class="text-muted">Leave blank for general analysis</small>
+                    </label>
+                    <select class="form-select" id="customer_select" name="customer_id">
+                        <option value="">-- No Specific Customer (General) --</option>
+                        {% for customer in customers %}
+                        <option value="{{ customer.id }}">{{ customer.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="parts_input" class="form-label">
+                    Part Numbers (one per line) *
+                    <small class="text-muted">You can optionally specify quantity: "2x PART123" or "PART123 x 2"</small>
+                </label>
+                <textarea
+                    class="form-control parts-textarea"
+                    id="parts_input"
+                    name="parts"
+                    rows="10"
+                    placeholder="Enter part numbers, one per line:&#10;MS21251L4&#10;2x NAS1149D0332P&#10;BAC16AB5-24 x 3&#10;AN6227B16"
+                    required
+                ></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-lg">
+                <i class="fas fa-search"></i> Analyze Parts
+            </button>
+        </form>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="text-center my-4" style="display: none;">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="mt-2">Analyzing parts...</p>
+    </div>
+
+    <!-- Results Section -->
+    <div id="resultsSection" style="display: none;">
+        <div class="results-section">
+            <h5 class="mb-3">
+                <i class="fas fa-chart-line"></i> Search Results
+                <small class="text-muted" id="resultsCount"></small>
+            </h5>
+
+            <!-- Results Cards -->
+            <div id="resultsContainer"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('testSearchForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const customerSelect = document.getElementById('customer_select');
+    const partsInput = document.getElementById('parts_input');
+
+    if (!partsInput.value.trim()) {
+        alert('Please enter at least one part number');
+        return;
+    }
+
+    // Show loading
+    document.getElementById('loadingSpinner').style.display = 'block';
+    document.getElementById('resultsSection').style.display = 'none';
+
+    try {
+        const response = await fetch('{{ url_for("portal_admin.test_portal_analyze") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                customer_id: customerSelect.value || null,
+                parts: partsInput.value
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            displayResults(data);
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Failed to analyze parts: ' + error.message);
+    } finally {
+        document.getElementById('loadingSpinner').style.display = 'none';
+    }
+});
+
+function displayResults(data) {
+    const resultsSection = document.getElementById('resultsSection');
+    const resultsContainer = document.getElementById('resultsContainer');
+    const resultsCount = document.getElementById('resultsCount');
+
+    // Show results section
+    resultsSection.style.display = 'block';
+
+    // Update count
+    const customerName = document.getElementById('customer_select').selectedOptions[0]?.text || 'General Analysis';
+    const customerInfo = customerName !== 'General Analysis' ? ` for ${customerName}` : ' (No specific customer)';
+    resultsCount.textContent = `(${data.results.length} part${data.results.length !== 1 ? 's' : ''}${customerInfo})`;
+
+    // Display results
+    resultsContainer.innerHTML = data.results.map(result => createResultCard(result)).join('');
+
+    // Scroll to results
+    resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function createResultCard(result) {
+    const debug = result.debug_info || {};
+    const sourceDetails = debug.source_details || {};
+
+    // Determine status display
+    let statusClass, statusText;
+    if (result.status === 'available') {
+        statusClass = 'status-available';
+        statusText = 'Available';
+    } else {
+        statusClass = 'status-quote-required';
+        statusText = 'Quote Required';
+    }
+
+    // Format price display
+    let priceDisplay = '<span class="no-data">Price not available</span>';
+    let priceSourceText = 'No pricing data found';
+
+    if (result.estimated_price) {
+        priceDisplay = `${result.currency} £${result.estimated_price.toFixed(2)}`;
+
+        // Strip parts_list_ prefix for comparison
+        const cleanSource = result.price_source.replace('parts_list_', '');
+
+        switch(cleanSource) {
+            case 'pricing_agreement':
+                priceSourceText = 'From pricing agreement';
+                break;
+            case 'stock':
+                priceSourceText = 'Based on current stock cost';
+                break;
+            case 'customer_quote':
+            case 'recent_quote':
+                priceSourceText = 'Based on recent customer quotes';
+                break;
+            case 'sales_order':
+            case 'recent_sale':
+                priceSourceText = 'Based on recent sales';
+                break;
+            case 'vendor_quote':
+            case 'vendor_quote_estimate':
+                priceSourceText = 'Estimated from vendor quotes';
+                break;
+            case 'purchase_order':
+            case 'purchase_order_estimate':
+                priceSourceText = 'Estimated from purchase orders';
+                break;
+        }
+    }
+
+    // Format lead time
+    let leadTimeDisplay = '';
+    if (result.estimated_lead_days !== null) {
+        if (result.estimated_lead_days === 0) {
+            leadTimeDisplay = '<span class="lead-time"><i class="fas fa-check-circle"></i> In Stock - Ready to Ship</span>';
+        } else {
+            leadTimeDisplay = `<span class="lead-time"><i class="fas fa-clock"></i> Est. ${result.estimated_lead_days} days</span>`;
+        }
+    }
+
+    // Stock display
+    let stockDisplay = '';
+    if (result.stock_quantity !== undefined && result.stock_quantity !== null) {
+        stockDisplay = result.stock_quantity > 0
+            ? `<strong>${result.stock_quantity}</strong> units in stock`
+            : '<span class="no-data">Out of stock</span>';
+    } else {
+        stockDisplay = result.in_stock
+            ? '<strong>In Stock</strong>'
+            : '<span class="no-data">Not in stock</span>';
+    }
+
+    // Format source details
+    let sourceDetailsHTML = '';
+    if (Object.keys(sourceDetails).length > 0) {
+        sourceDetailsHTML = '<div class="debug-grid">';
+
+        // Type
+        if (sourceDetails.type) {
+            sourceDetailsHTML += `
+                <div class="debug-item">
+                    <div class="debug-label">Source Type</div>
+                    <div class="debug-value">${sourceDetails.type}</div>
+                </div>`;
+        }
+
+        // Reference
+        if (sourceDetails.reference) {
+            sourceDetailsHTML += `
+                <div class="debug-item">
+                    <div class="debug-label">Reference</div>
+                    <div class="debug-value">${sourceDetails.reference}</div>
+                </div>`;
+        }
+
+        // Customer or Supplier
+        if (sourceDetails.customer) {
+            sourceDetailsHTML += `
+                <div class="debug-item">
+                    <div class="debug-label">Customer</div>
+                    <div class="debug-value">${sourceDetails.customer}</div>
+                </div>`;
+        }
+        if (sourceDetails.supplier) {
+            sourceDetailsHTML += `
+                <div class="debug-item">
+                    <div class="debug-label">Supplier</div>
+                    <div class="debug-value">${sourceDetails.supplier}</div>
+                </div>`;
+        }
+
+        // Price or Cost
+        if (sourceDetails.price) {
+            sourceDetailsHTML += `
+                <div class="debug-item">
+                    <div class="debug-label">Source Price</div>
+                    <div class="debug-value">${sourceDetails.price}</div>
+                </div>`;
+        }
+        if (sourceDetails.cost) {
+            sourceDetailsHTML += `
+                <div class="debug-item">
+                    <div class="debug-label">Source Cost</div>
+                    <div class="debug-value">${sourceDetails.cost}</div>
+                </div>`;
+        }
+
+        // Date
+        if (sourceDetails.date || sourceDetails.date_created) {
+            const dateValue = sourceDetails.date || sourceDetails.date_created;
+            sourceDetailsHTML += `
+                <div class="debug-item">
+                    <div class="debug-label">Date</div>
+                    <div class="debug-value date-value">${formatDate(dateValue)}</div>
+                </div>`;
+        }
+
+        // Validity dates for pricing agreements
+        if (sourceDetails.valid_from || sourceDetails.valid_until) {
+            sourceDetailsHTML += `
+                <div class="debug-item" style="grid-column: span 2;">
+                    <div class="debug-label">Valid Period</div>
+                    <div class="debug-value date-value">
+                        ${sourceDetails.valid_from ? formatDate(sourceDetails.valid_from) : 'Start'}
+                        →
+                        ${sourceDetails.valid_until ? formatDate(sourceDetails.valid_until) : 'No End'}
+                    </div>
+                </div>`;
+        }
+
+        sourceDetailsHTML += '</div>';
+    } else {
+        sourceDetailsHTML = '<div class="no-data">No source details available</div>';
+    }
+
+    return `
+        <div class="result-card">
+            <div class="result-header">
+                <div>
+                    <span class="part-number-display">${result.part_number}</span>
+                    <span class="quantity-badge">Qty: ${result.quantity_requested}</span>
+                    ${result.base_part_number !== result.part_number ?
+                        `<br><small class="text-muted">Base: ${result.base_part_number}</small>` : ''}
+                </div>
+                <span class="status-badge ${statusClass}">${statusText}</span>
+            </div>
+
+            <!-- Customer View (what they would see) -->
+            <div class="customer-view">
+                <div class="customer-view-title">
+                    <i class="fas fa-user"></i> Customer Portal View
+                </div>
+
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="mb-2">
+                            <small class="text-muted d-block">Stock Status</small>
+                            ${stockDisplay}
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-2">
+                            <small class="text-muted d-block">Estimated Price</small>
+                            <div class="price-display">${priceDisplay}</div>
+                            <div class="price-source">${priceSourceText}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-2">
+                            <small class="text-muted d-block">Lead Time</small>
+                            ${leadTimeDisplay || '<span class="no-data">Not available</span>'}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Admin Debug Info with Source Details -->
+            <div class="admin-debug">
+                <div class="admin-debug-title">
+                    <i class="fas fa-code"></i> Price Source:
+                    ${debug && debug.winning_source ?
+                        `<span class="winning-source">${formatSourceName(debug.winning_source)}</span>` :
+                        '<span class="no-data">No price found</span>'}
+                </div>
+                ${sourceDetailsHTML}
+            </div>
+        </div>
+    `;
+}
+
+// Helper function to format source names for display
+function formatSourceName(source) {
+    // Strip parts_list_ prefix if present
+    const cleanSource = source.replace('parts_list_', '');
+
+    const names = {
+        'pricing_agreement': 'Pricing Agreement',
+        'stock': 'Stock Cost',
+        'customer_quote': 'Customer Quote',
+        'recent_quote': 'Customer Quote',
+        'sales_order': 'Sales Order',
+        'recent_sale': 'Sales Order',
+        'vendor_quote': 'Vendor Quote',
+        'vendor_quote_estimate': 'Vendor Quote',
+        'purchase_order': 'Purchase Order',
+        'purchase_order_estimate': 'Purchase Order',
+        'none': 'No Source'
+    };
+    return names[cleanSource] || source;
+}
+
+// Helper function to format dates nicely
+function formatDate(dateString) {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-GB', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+    });
+}
+</script>
+{% endblock %}

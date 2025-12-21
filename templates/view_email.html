@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div class="card mb-4 shadow p-3 border-0 shadow p-3">
+        <div class="card-header">
+            <strong>Email Details</strong>
+        </div>
+        <div class="card-body">
+            <!-- Render the email content (HTML or plain text) -->
+            {% if html_body %}
+                {{ html_body | safe }}
+            {% else %}
+                <p>No email content available.</p>
+            {% endif %}
+
+            <!-- Render attachments if there are any -->
+            {% if attachments %}
+                <h3>Attachments:</h3>
+                <div>
+                    {% for attachment in attachments %}
+                        <a href="{{ url_for('static', filename='uploads/' + attachment['filename']) }}" class="btn btn-primary" target="_blank">
+                            {{ attachment['filename'] }}
+                        </a>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}

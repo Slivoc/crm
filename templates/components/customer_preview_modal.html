@@ -1,0 +1,149 @@
+{# templates/components/customer_preview_modal.html #}
+
+<!-- Main Customer Preview Modal -->
+<div class="modal fade" id="customerPreviewModal" tabindex="-1" aria-labelledby="customerPreviewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="customerPreviewModalLabel">Customer Preview</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Loading Spinner -->
+                <div id="customerPreviewLoading" class="text-center py-4 d-none">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+
+                <!-- Customer Preview Content -->
+                <div id="customerPreviewContent" class="d-none">
+                    <!-- Customer Info -->
+                    <div class="mb-4">
+                        <h6 class="border-bottom pb-2">Customer Information</h6>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <p class="mb-1"><strong>Name:</strong> <span id="previewCustomerName"></span></p>
+                                <p class="mb-1"><strong>Country:</strong> <span id="previewCustomerCountry"></span></p>
+                                <p class="mb-1">
+                                    <strong>Apollo Match:</strong>
+                                    <span id="apolloMatchStatus" class="badge rounded-pill"></span>
+                                    <button class="btn btn-sm btn-link p-0 ms-2" id="searchApolloBtn">Search</button>
+                                </p>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="mb-2">Industry Tags</h6>
+                                <!-- Tag Search -->
+                                <div class="mb-3">
+                                    <input type="text" id="previewTagsSearch" class="form-control" placeholder="Search and manage tags...">
+                                </div>
+                                <!-- Search Results -->
+                                <div class="border rounded p-2 mb-3" style="background-color: #f8f9fa;">
+                                    <h6>Search Results</h6>
+                                    <div id="previewTagsSearchResults">
+                                        <!-- Searched tags will appear here -->
+                                        <p class="text-muted">Start typing to find tags...</p>
+                                    </div>
+                                </div>
+
+                                <!-- Assigned Tags -->
+                                <div>
+                                    <h6>Assigned Tags</h6>
+                                    <div id="previewTagsList" class="mt-2">
+                                        <!-- Pre-assigned tags will appear here -->
+                                        <p class="text-muted">No tags assigned yet.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Contacts -->
+                    <div class="mb-4">
+                        <h6 class="border-bottom pb-2">Contacts</h6>
+                        <div id="contactsList"></div>
+                        <div id="contactsPagination" class="mt-2 text-center">
+                            <button class="btn btn-sm btn-link d-none" id="loadMoreContacts">
+                                Show More
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- New Lead Search Section -->
+                    <div class="mb-4" id="leadSearchSection">
+                        <h6 class="border-bottom pb-2 d-flex justify-content-between align-items-center">
+                            Lead Search
+                            <div class="btn-group btn-group-sm">
+                                <!-- FIXED: Changed onclick handlers to use customerPreview instance -->
+                                <button class="btn btn-outline-primary" onclick="customerPreview.searchLeads('procurement')" id="procurementLeadsBtn">
+                                    Procurement Leads
+                                </button>
+                                <button class="btn btn-outline-primary" onclick="customerPreview.searchLeads('general')" id="generalLeadsBtn">
+                                    Senior Contacts
+                                </button>
+                            </div>
+                        </h6>
+                        <div id="leadsSection">
+                            <div class="text-center py-3" id="initialLeadMessage">
+                                <p class="text-muted mb-2">Match with Apollo to start finding leads</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Emails -->
+                    <div>
+                        <h6 class="border-bottom pb-2">Recent Emails</h6>
+                        <div id="emailsList"></div>
+                        <div id="emailsPagination" class="mt-2 text-center">
+                            <button class="btn btn-sm btn-link d-none" id="loadMoreEmails">
+                                Show More
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Error Message -->
+                <div id="customerPreviewError" class="alert alert-danger d-none"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tags Edit Modal -->
+<div class="modal fade" id="editTagsModal" tabindex="-1" aria-labelledby="editTagsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editTagsModalLabel">Edit Industry Tags</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="tagsTree"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveTagsBtn">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Apollo Search Modal -->
+<div class="modal fade" id="apolloSearchModal" tabindex="-1" aria-labelledby="apolloSearchModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="apolloSearchModalLabel">Search Apollo</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <input type="text" class="form-control" id="apolloSearchInput" placeholder="Search companies...">
+                </div>
+                <div id="apolloSearchResults" class="mt-3">
+                    <!-- Will be populated by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

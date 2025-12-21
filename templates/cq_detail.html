@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>CQ: {{ cq.cq_number }}</h2>
+        <a href="{{ url_for('cqs.cqs_list') }}" class="btn btn-secondary">Back to List</a>
+    </div>
+    
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <p><strong>Customer:</strong> {{ cq.customer_name }}</p>
+                    <p><strong>Status:</strong> {{ cq.status }}</p>
+                    <p><strong>Currency:</strong> {{ cq.currency_code }}</p>
+                    <p><strong>Sales Person:</strong> {{ cq.sales_person }}</p>
+                </div>
+                <div class="col-md-6">
+                    <p><strong>Entry Date:</strong> {{ cq.entry_date }}</p>
+                    <p><strong>Due Date:</strong> {{ cq.due_date }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <h4>CQ Lines</h4>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Line</th>
+                <th>Part Number</th>
+                <th>Description</th>
+                <th>Condition</th>
+                <th>Qty Req</th>
+                <th>Qty Quoted</th>
+                <th>Qty Alloc</th>
+                <th>Unit Price</th>
+                <th>Total Price</th>
+                <th>Lead Days</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in cq_lines %}
+            <tr>
+                <td>{{ line.line_number }}</td>
+                <td>{{ line.part_number }}</td>
+                <td>{{ line.description }}</td>
+                <td>{{ line.condition_code }}</td>
+                <td>{{ line.quantity_requested }}</td>
+                <td>{{ line.quantity_quoted }}</td>
+                <td>{{ line.quantity_allocated }}</td>
+                <td>{{ "%.2f"|format(line.unit_price) }}</td>
+                <td>{{ "%.2f"|format(line.total_price) }}</td>
+                <td>{{ line.lead_days }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

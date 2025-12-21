@@ -1,0 +1,215 @@
+<!-- Contact Header Information -->
+<div class="row mb-4">
+  <div class="col-md-8">
+    <h3>{{ contact.name }}</h3>
+    <p class="text-muted mb-1">{{ contact.job_title or 'No job title' }} at <strong>{{ contact.customer_name }}</strong></p>
+    <p class="mb-2">
+      <a href="mailto:{{ contact.email }}" class="text-decoration-none">
+        <i class="bi bi-envelope me-1"></i> {{ contact.email }}
+      </a>
+    </p>
+    <div class="mt-3">
+      <a href="{{ url_for('salespeople.customers', salesperson_id=request.args.get('salesperson_id'), search=contact.customer_name) }}" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-building"></i> View Customer
+      </a>
+    </div>
+  </div>
+  <div class="col-md-4 text-md-end">
+    <button type="button" class="btn btn-success mb-2" data-bs-toggle="modal" data-bs-target="#detailsCommunicationModal">
+      <i class="bi bi-plus-circle"></i> Log New Communication
+    </button>
+  </div>
+</div>
+<!-- Contact Information and Notes Section -->
+<div class="row mb-4">
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header">
+        <h5 class="card-title mb-0">Contact Information</h5>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Name:</dt>
+          <dd class="col-sm-8">{{ contact.name }}</dd>
+      <dt class="col-sm-4">Customer:</dt>
+      <dd class="col-sm-8">{{ contact.customer_name }}</dd>
+
+      <dt class="col-sm-4">Job Title:</dt>
+      <dd class="col-sm-8">{{ contact.job_title or 'Not specified' }}</dd>
+
+      <dt class="col-sm-4">Email:</dt>
+      <dd class="col-sm-8">
+        <a href="mailto:{{ contact.email }}">{{ contact.email }}</a>
+      </dd>
+
+      {% if contact.updated_at %}
+      <dt class="col-sm-4">Last Updated:</dt>
+      <dd class="col-sm-8">{{ contact.updated_at }}</dd>
+      {% endif %}
+    </dl>
+  </div>
+</div>
+  </div>
+  <div class="col-lg-8">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0">Notes</h5>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="saveNotesBtn">
+          <i class="bi bi-save"></i> Save
+        </button>
+      </div>
+      <div class="card-body">
+        <textarea class="form-control h-100" id="contactNotes" rows="5">{{ contact.notes or '' }}</textarea>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- Contact Communications Timeline -->
+<div class="card">
+  <div class="card-header">
+    <h5 class="card-title mb-0">Communication History</h5>
+  </div>
+  <div class="card-body">
+    <div class="timeline">
+      {% for comm in communications %}
+        <div class="timeline-item">
+          <div class="timeline-marker" style="background-color: {{ '#4CAF50' if comm.communication_type|lower == 'email' else '#2196F3' if comm.communication_type|lower == 'phone' else '#9C27B0' if comm.communication_type|lower == 'meeting' else '#FF9800' if comm.communication_type|lower == 'video call' else '#607D8B' }}"></div>
+<div class="timeline-content">
+  <div class="d-flex justify-content-between">
+    <div>
+      <span class="badge {{ 'bg-success' if comm.communication_type|lower == 'email' else 'bg-primary' if comm.communication_type|lower == 'phone' else 'bg-purple' if comm.communication_type|lower == 'meeting' else 'bg-warning' if comm.communication_type|lower == 'video call' else 'bg-secondary' }}">
+        {{ comm.communication_type }}
+      </span>
+      <small class="text-muted ms-2">by {{ comm.salesperson_name }}</small>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <small class="text-muted">{{ comm.date_formatted }}</small>
+      <button type="button" class="btn btn-sm btn-outline-primary edit-update-btn"
+              data-update-id="{{ comm.update_id or comm.id }}"
+              data-update-date="{{ comm.date.strftime('%Y-%m-%d') if comm.date else '' }}"
+              data-update-text="{{ comm.notes }}"
+              data-communication-type="{{ comm.communication_type|lower if comm.communication_type else 'generic' }}"
+              data-contact-id="{{ contact.id }}"
+              data-customer-id="{{ contact.customer_id }}"
+              title="Edit this communication">
+        <i class="bi bi-pencil"></i>
+      </button>
+    </div>
+  </div>
+  <div class="mt-2">
+    {{ comm.notes|nl2br|safe }}
+  </div>
+</div>
+        </div>
+      {% else %}
+        <div class="text-center py-4">
+          <p class="text-muted">No communication history found</p>
+          <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#detailsCommunicationModal">
+            <i class="bi bi-plus-circle"></i> Add First Communication
+          </button>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+<!-- Communication Modal in Details View -->
+<div class="modal fade" id="detailsCommunicationModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Log New Communication with {{ contact.name }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="contactCommunicationForm" action="{{ url_for('salespeople.add_contact_communication', salesperson_id=request.args.get('salesperson_id')) }}" method="post">
+          <input type="hidden" name="contact_id" value="{{ contact.id }}">
+          <input type="hidden" name="customer_id" value="{{ contact.customer_id }}">
+     <div class="mb-3">
+  <label for="detailsCommunicationType" class="form-label">Communication Type</label>
+  <select class="form-select" id="detailsCommunicationType" name="communication_type" required>
+    <option value="">Select type...</option>
+    {% for type in communication_types %}
+      <option value="{{ type }}">{{ type }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<!-- ADD THIS NEW FIELD -->
+<div class="mb-3">
+  <label for="detailsCommunicationDate" class="form-label">Date</label>
+  <input type="date" class="form-control" id="detailsCommunicationDate" name="update_date" required>
+  <div class="form-text">When did this communication take place?</div>
+</div>
+
+<div class="mb-3">
+  <label for="detailsCommunicationNotes" class="form-label">Notes</label>
+  <textarea class="form-control" id="detailsCommunicationNotes" name="notes" rows="4" required></textarea>
+</div>
+
+      <div class="d-grid">
+        <button type="submit" class="btn btn-primary">Save Communication</button>
+      </div>
+    </form>
+  </div>
+</div>
+  </div>
+</div>
+<!-- Hidden Contact ID for JavaScript reference -->
+<input type="hidden" id="contactIdInput" value="{{ contact.id }}">
+<script>
+  // Save contact notes functionality
+  document.addEventListener('DOMContentLoaded', function() {
+    const saveNotesBtn = document.getElementById('saveNotesBtn');
+    if (!saveNotesBtn) return;
+
+    const contactNotes = document.getElementById('contactNotes');
+    const contactId = document.getElementById('contactIdInput').value;
+
+    saveNotesBtn.addEventListener('click', function() {
+      const notes = contactNotes.value;
+
+      fetch('/salespeople/save_contact_notes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          contact_id: contactId,
+          notes: notes
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // Show a success toast
+          const successToast = document.createElement('div');
+          successToast.className = 'toast show position-fixed bottom-0 end-0 m-3';
+          successToast.setAttribute('role', 'alert');
+          successToast.innerHTML = `
+            <div class="toast-header bg-success text-white">
+              <strong class="me-auto">Success</strong>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+            </div>
+            <div class="toast-body">
+              Notes saved successfully
+            </div>
+          `;
+          document.body.appendChild(successToast);
+
+          // Remove toast after 3 seconds
+          setTimeout(() => {
+            successToast.remove();
+          }, 3000);
+        } else {
+          // Show error notification
+          alert('Error saving notes: ' + data.error);
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred while saving notes');
+      });
+    });
+  });
+</script>

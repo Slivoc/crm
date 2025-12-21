@@ -1,0 +1,94 @@
+{% if offer_history or rfq_lines or sales_order_lines %}
+    <div class="container-fluid">
+        <h4 class="mb-3">History for {{ base_part_number }}</h4>
+
+        <!-- Offer History Table -->
+        {% if offer_history %}
+            <div class="table-responsive mb-4">
+                <h5>Offer History</h5>
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>Supplier</th>
+                            <th>Price</th>
+                            <th>Lead Time</th>
+                            <th>Quantity</th>
+                            <th>Valid To</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for offer in offer_history %}
+                        <tr>
+                            <td>{{ offer.supplier_name }}</td>
+                            <td>{{ offer.currency_symbol }}{{ offer.price }}</td>
+                            <td>{{ offer.lead_time }} weeks</td>
+                            <td>{{ offer.quantity }}</td>
+                            <td>{{ offer.valid_to }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+
+        <!-- RFQ Lines Table -->
+        {% if rfq_lines %}
+            <div class="table-responsive mb-4">
+                <h5>RFQ History</h5>
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>Customer</th>
+                            <th>Price</th>
+                            <th>Lead Time</th>
+                            <th>Quantity</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in rfq_lines %}
+                        <tr>
+                            <td>{{ line.customer_name }}</td>
+                            <td>{{ line.currency_symbol }}{{ line.price }}</td>
+                            <td>{{ line.lead_time_days }} days</td>
+                            <td>{{ line.rfq_quantity }}</td>
+                            <td>{{ line.entered_date }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+
+        <!-- Sales Order Lines Table -->
+        {% if sales_order_lines %}
+            <div class="table-responsive">
+                <h5>Sales History</h5>
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>Customer</th>
+                            <th>SO Ref</th>
+                            <th>Price</th>
+                            <th>Quantity</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in sales_order_lines %}
+                        <tr>
+                            <td>{{ line.customer_name }}</td>
+                            <td>{{ line.sales_order_ref }}</td>
+                            <td>{{ line.currency_symbol }}{{ line.price }}</td>
+                            <td>{{ line.quantity }}</td>
+                            <td>{{ line.sales_status }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </div>
+{% else %}
+    <div class="alert alert-info">No history available for this part number.</div>
+{% endif %}

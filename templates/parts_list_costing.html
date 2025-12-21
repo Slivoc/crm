@@ -1,0 +1,639 @@
+{% extends "base.html" %}{% block title %}Parts List Costing{% endblock %}{% block extra_css %}<style>
+.costing-table-container {
+    max-height: calc(100vh - 300px);
+    overflow: auto;
+    border: 1px solid #dee2e6;
+}
+
+.costing-table {
+    font-size: 0.9rem;
+    margin-bottom: 0 !important;
+}
+
+.costing-table thead {
+    position: sticky;
+    top: 0;
+    background: #f8f9fa;
+    z-index: 100;
+}
+
+.costing-table thead th {
+    font-weight: 600;
+    border-bottom: 2px solid #dee2e6;
+    padding: 0.75rem;
+    white-space: nowrap;
+}
+
+.costing-table tbody td {
+    vertical-align: middle;
+    padding: 0.75rem;
+}
+
+.cost-input-group {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.cost-input-group input,
+.cost-input-group select {
+    font-size: 0.875rem;
+}
+
+.has-cost {
+    background-color: #d1e7dd;
+}
+
+.missing-cost {
+    background-color: #fff3cd;
+}
+
+.editable-cell {
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.editable-cell:hover {
+    background-color: #e7f1ff;
+}
+
+#quotes-table .table-success {
+    background-color: #d1e7dd !important;
+}
+
+#quotes-table tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+.use-quote-btn {
+    white-space: nowrap;
+}
+
+/* Chosen qty input styling */
+.chosen-qty-input {
+    width: 80px;
+    font-weight: 500;
+}
+
+.chosen-qty-input:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13,110,253,.25);
+}
+
+/* Show when chosen qty differs from requested */
+.qty-mismatch {
+    background-color: #fff3cd !important;
+}
+
+/* Additional styles for quote availability indicators */
+
+/* Tooltip styling for additional context */
+.view-quotes-btn[title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    z-index: 1000;
+    margin-bottom: 0.25rem;
+}
+    .row-modified {
+    background-color: #fff3cd !important;
+    border-left: 4px solid #ffc107;
+}
+
+.row-modified .save-line-btn {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.use-stock-btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+.use-stock-btn:hover {
+    transform: scale(1.05);
+}
+
+#filter-all-btn.active,
+#filter-in-stock-btn.active,
+#filter-no-cost-btn.active {
+    background-color: #0d6efd;
+    color: white;
+    border-color: #0d6efd;
+}
+
+/* Highlight parts sent to this supplier */
+.bg-info.bg-opacity-25 {
+    background-color: rgba(13, 202, 240, 0.15) !important;
+}
+
+/* Optional: Add a left border for extra emphasis */
+.htCore tbody tr td.bg-info.bg-opacity-25:first-child::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background-color: #0dcaf0;
+}
+</style>
+{% endblock %}{% block extra_js %}
+{# <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script> #}
+{% endblock %}{% block content %}<div class="container-fluid mt-4">
+
+<!-- Header / Nav Card -->
+<div class="card mb-4" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
+    <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
+                <i class="bi bi-calculator me-2" style="color:#0d6efd;"></i>
+                Parts List: {{ list_name }}
+                {% if customer_name %}
+                    <span class="text-muted" style="font-size:.9rem;">| {{ customer_name }}</span>
+                {% endif %}
+            </h5>
+            <div class="btn-group" role="group">
+                <a href="{{ url_for('parts_list.parts_list', list_id=list_id) }}"
+                   class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-house-door me-1"></i>Overview
+                </a>
+                <a href="{{ url_for('parts_list.parts_list_sourcing', list_id=list_id) }}"
+                   class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-truck me-1"></i>Sourcing
+                </a>
+                <a href="{{ url_for('parts_list.parts_list_costing', list_id=list_id) }}"
+                   class="btn btn-sm btn-primary">
+                    <i class="bi bi-calculator me-1"></i>Costing
+                </a>
+                <a href="/customer-quoting/parts-lists/{{ list_id }}/customer-quote-simple"
+                   class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-cash-stack me-1"></i>Quoting
+                </a>
+            </div>
+        </div>
+    </div>
+</div><!-- Costing Card -->
+<div class="card" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
+    <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
+        <div class="d-flex flex-wrap justify-content-between align-items-center">
+            <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
+                <i class="bi bi-currency-pound me-2" style="color:#0d6efd;"></i>
+                Parts List Costing
+            </h5>
+            <div class="d-flex flex-wrap gap-2">
+    <div class="btn-group btn-group-sm" role="group">
+        <button type="button" class="btn btn-outline-secondary active" id="filter-all-btn">
+            All ({{ total_lines }})
+        </button>
+        <button type="button" class="btn btn-outline-success" id="filter-in-stock-btn">
+            <i class="bi bi-boxes me-1"></i>Fully In Stock ({{ lines_fully_in_stock }})
+        </button>
+        <button type="button" class="btn btn-outline-warning" id="filter-no-cost-btn">
+            <i class="bi bi-exclamation-triangle me-1"></i>No Cost ({{ lines_without_cost }})
+        </button>
+    </div>
+
+    <button id="use-stock-all-btn" class="btn btn-sm btn-success">
+        <i class="bi bi-boxes me-1"></i>Use Stock for All Available
+    </button>
+
+    <button id="email-suppliers-btn" class="btn btn-sm btn-success" style="display: none;">
+        <i class="bi bi-envelope-at me-1"></i>Email ILS Suppliers
+    </button>
+                <button id="manage-supplier-quotes-btn" class="btn btn-sm btn-outline-info">
+                    <i class="bi bi-clipboard-check me-1"></i>Supplier Quotes
+                </button>
+
+                <button id="save-all-costs-btn" class="btn btn-sm btn-primary">
+                    <i class="bi bi-save me-1"></i>Save All Changes
+                </button>
+                <button id="export-costing-btn" class="btn btn-sm btn-success">
+                    <i class="bi bi-file-earmark-spreadsheet me-1"></i>Export
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <div class="costing-table-container">
+            <table class="table table-hover costing-table">
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">#</th>
+                        <th style="width: 180px;">Part Number</th>
+                        <th style="width: 80px;">Req Qty</th>
+                        <th style="width: 100px;">Chosen Qty</th>
+                        <th style="width: 200px;">Supplier</th>
+                        <th style="width: 120px;">Cost</th>
+                        <th style="width: 100px;">Currency</th>
+                        <th style="width: 100px;">Lead Days</th>
+                        <th style="width: 120px;">Line Total</th>
+                        <th style="width: 120px;">Quotes</th>
+                        <th style="width: 120px;">Stock</th>
+                        <th style="width: 200px;">Notes</th>
+                        <th style="width: 120px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="costing-table-body">
+                    {% for line in lines %}
+                    <tr class="{{ 'has-cost' if line.chosen_cost else 'missing-cost' }}"
+                        data-line-id="{{ line.id }}">
+                        <td>{{ line.line_number }}</td>
+                        <td><strong>{{ line.customer_part_number }}</strong></td>
+                        <td>
+                            <span class="badge bg-secondary" data-requested-qty="{{ line.quantity }}">
+                                {{ line.quantity }}
+                            </span>
+                        </td>
+
+                    <!-- Chosen Quantity (editable) -->
+                    <td class="editable-cell" data-field="chosen_qty">
+                        <input type="number"
+                               class="form-control form-control-sm chosen-qty-input"
+                               data-line-id="{{ line.id }}"
+                               value="{{ line.chosen_qty if line.chosen_qty else line.quantity }}"
+                               placeholder="{{ line.quantity }}"
+                               min="1"
+                               title="Quantity being costed/quoted">
+                    </td>
+
+                    <!-- Supplier -->
+                    <td class="editable-cell" data-field="supplier">
+                        <select class="form-select form-select-sm supplier-select"
+                                data-line-id="{{ line.id }}">
+                            {% if line.chosen_supplier_id %}
+                                {% set chosen_supplier = suppliers
+                                    | selectattr('id', 'equalto', line.chosen_supplier_id)
+                                    | first %}
+                                <option value="{{ line.chosen_supplier_id }}" selected>
+                                    {{ chosen_supplier.name if chosen_supplier else 'Unknown Supplier' }}
+                                </option>
+                            {% else %}
+                                <option value="">Select supplier...</option>
+                            {% endif %}
+                        </select>
+                    </td>
+
+                    <!-- Cost -->
+                    <td class="editable-cell" data-field="cost">
+                        <input type="number"
+                               class="form-control form-control-sm cost-input"
+                               data-line-id="{{ line.id }}"
+                               value="{{ line.chosen_cost if line.chosen_cost else '' }}"
+                               step="0.01"
+                               placeholder="0.00">
+                    </td>
+
+                    <!-- Currency -->
+                    <td>
+                        <select class="form-select form-select-sm currency-select"
+                                data-line-id="{{ line.id }}">
+                            {% for currency in currencies %}
+                            <option value="{{ currency.id }}"
+                                {{ 'selected' if currency.id == (line.chosen_currency_id or 3) }}>
+                                {{ currency.currency_code }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </td>
+
+                    <!-- Lead Days -->
+                    <td class="editable-cell" data-field="lead_days">
+                        <input type="number"
+                               class="form-control form-control-sm lead-days-input"
+                               data-line-id="{{ line.id }}"
+                               value="{{ line.chosen_lead_days if line.chosen_lead_days else '' }}"
+                               placeholder="Days">
+                    </td>
+
+                    <!-- Line Total (using chosen_qty) -->
+                    <td>
+                        <strong class="line-total" data-line-id="{{ line.id }}">
+                            {% if line.chosen_cost %}
+                                £{{ "%.2f"|format(line.chosen_cost * (line.chosen_qty or line.quantity)) }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </strong>
+                    </td>
+
+                    <!-- Suggested Suppliers -->
+
+
+                    <!-- Quotes -->
+                    <!-- Quotes -->
+                    <td>
+                        <button class="btn btn-sm btn-outline-secondary view-quotes-btn"
+                                data-line-id="{{ line.id }}"
+                                data-part-number="{{ line.customer_part_number }}"
+                                title="View quotes">
+                            <i class="bi bi-clipboard-data"></i>
+                        </button>
+                    </td>
+
+                        <!-- Stock -->
+<td>
+    {% if line.stock_available and line.stock_available > 0 %}
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge {{ 'bg-success' if line.stock_available >= (line.chosen_qty or line.quantity) else 'bg-warning' }}">
+                {{ line.stock_available }}
+            </span>
+            {% if line.stock_cheapest_cost %}
+                <button class="btn btn-sm btn-outline-primary use-stock-btn"
+                        data-line-id="{{ line.id }}"
+                        data-stock-cost="{{ line.stock_cheapest_cost }}"
+                        data-stock-qty="{{ line.stock_available }}"
+                        data-movement-id="{{ line.stock_cheapest_movement_id }}"
+                        title="Use stock: £{{ '%.2f'|format(line.stock_cheapest_cost) }}">
+                    <i class="bi bi-box-arrow-down"></i>
+                </button>
+            {% endif %}
+        </div>
+    {% else %}
+        <span class="text-muted">-</span>
+    {% endif %}
+</td>
+
+                    <!-- Notes -->
+                    <td>
+                        <input type="text"
+                               class="form-control form-control-sm notes-input"
+                               data-line-id="{{ line.id }}"
+                               value="{{ line.internal_notes or '' }}"
+                               placeholder="Internal notes...">
+                        {% if line.supplier_quote_notes %}
+                        <small class="text-muted d-block mt-1">
+                            Quote notes: {{ line.supplier_quote_notes }}
+                        </small>
+                        {% endif %}
+                    </td>
+
+                    <!-- Actions -->
+                    <!-- Actions -->
+                    <td>
+                        <button class="btn btn-sm btn-success save-line-btn"
+                                data-line-id="{{ line.id }}"
+                                title="Save changes">
+                            <i class="bi bi-check"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div></div>
+
+<script>
+    window.PARTS_LIST_ID = {{ list_id }};
+
+    // Add listener to highlight when chosen qty differs from requested
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('.chosen-qty-input').forEach(input => {
+            input.addEventListener('input', function() {
+                const row = this.closest('tr');
+                const requestedQty = parseInt(row.querySelector('.badge[data-requested-qty]').dataset.requestedQty);
+                const chosenQty = parseInt(this.value);
+
+                // Highlight row if quantities differ
+                if (chosenQty && chosenQty !== requestedQty) {
+                    this.style.backgroundColor = '#fff3cd'; // Light yellow
+                    this.style.fontWeight = '600';
+                } else {
+                    this.style.backgroundColor = '';
+                    this.style.fontWeight = '500';
+                }
+            });
+        });
+    });
+</script>
+
+<script src="{{ url_for('static', filename='js/parts_list_costing.js') }}"></script>
+
+<!-- Supplier Quotes Modal (Full management / AI extract) -->
+<div class="modal fade" id="supplierQuotesModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-clipboard-check me-2"></i>
+                    Supplier Quotes
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="quotes-list-view">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6>Existing Quotes</h6>
+                        <button class="btn btn-primary btn-sm" id="create-new-quote-btn">
+                            <i class="bi bi-plus-circle me-1"></i>New Quote
+                        </button>
+                    </div>
+                    <div id="quotes-list-container">
+                    </div>
+                </div>
+
+            <div id="quote-input-view" style="display: none;">
+                <button class="btn btn-sm btn-outline-secondary mb-3" id="back-to-quotes-list">
+                    <i class="bi bi-arrow-left me-1"></i>Back to Quotes
+                </button>
+
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Supplier</label>
+                                <select class="form-select" id="quote-supplier-select" required>
+                                    <option value="">Select supplier...</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Quote Reference</label>
+                                <input type="text" class="form-control" id="quote-reference-input"
+                                       placeholder="Supplier's quote number">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label">Quote Date</label>
+                                <input type="date" class="form-control" id="quote-date-input">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label">Currency</label>
+                                <select class="form-select" id="quote-currency-select">
+                                    {% for currency in currencies %}
+                                    <option value="{{ currency.id }}" {{ 'selected' if currency.id == 3 }}>
+                                        {{ currency.currency_code }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <label class="form-label">Notes</label>
+                            <textarea class="form-control" id="quote-notes-input" rows="2"></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-3">
+                    <div class="card-header bg-light">
+                        <h6 class="mb-0">
+                            <i class="bi bi-magic me-2"></i>AI Extract from Supplier Response
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <textarea class="form-control mb-2" id="supplier-response-text" rows="6"
+                                  placeholder="Paste supplier's email or quote response here..."></textarea>
+                        <button class="btn btn-success btn-sm" id="extract-quote-btn">
+                            <i class="bi bi-stars me-1"></i>Extract Quote Data
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card border-primary mb-3" id="pdf-drop-zone" style="border-style: dashed; background:#f8f9ff;">  <div class="card-body text-center py-5">
+    <i class="bi bi-file-earmark-pdf display-4 text-primary mb-3"></i>
+    <p class="lead">Drag & drop supplier PDF quote here<br>or click to select</p>
+    <input type="file" accept=".pdf" id="pdf-upload-input" style="display:none;">
+  </div>
+</div>
+
+                <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Quote Lines</h6>
+        <div class="d-flex align-items-center gap-3">
+            <!-- Legend -->
+            <small class="text-muted">
+                <span class="badge bg-info bg-opacity-25 text-dark">Sent to Supplier</span>
+            </small>
+            <!-- Buttons -->
+            <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-success" id="save-quote-btn">
+                    <i class="bi bi-save me-1"></i>Save Quote
+                </button>
+                <button class="btn btn-outline-danger" id="delete-quote-btn" style="display: none;">
+                    <i class="bi bi-trash me-1"></i>Delete Quote
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div id="quote-lines-table-container"></div>
+    </div>
+</div>
+            </div>
+
+        </div>
+    </div>
+</div></div>
+
+<link href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+
+<script src="{{ url_for('static', filename='js/supplier_quotes.js') }}"></script>
+
+<!-- Quote Selection Modal (per line) -->
+<!-- Quote Selection Modal -->
+<div class="modal fade" id="quoteSelectionModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-clipboard-check me-2"></i>
+                    Select Quote for Part: <span id="quote-modal-part-number" class="text-primary"></span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Loading spinner -->
+                <div id="quotes-loading" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2 text-muted">Loading quotes...</p>
+                </div>
+
+            <!-- Main content -->
+            <div id="quotes-content" style="display: none;">
+                <!-- Quotes for this parts list -->
+                <h6 class="mb-3">
+                    <i class="bi bi-list-check me-2"></i>Quotes for This Parts List
+                </h6>
+
+                <!-- No quotes message -->
+                <div id="no-quotes-message" class="alert alert-info" style="display: none;">
+                    <i class="bi bi-info-circle me-2"></i>
+                    No quotes available for this part yet.
+                </div>
+
+                <!-- Quotes table -->
+                <div class="table-responsive">
+                    <table class="table table-hover" id="quotes-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Supplier</th>
+                                <th>Quote Ref</th>
+                                <th>Date</th>
+                                <th>Part Number</th>
+                                <th>Qty</th>
+                                <th>Unit Price</th>
+                                <th>Lead Time</th>
+                                <th>Condition</th>
+                                <th>Certs</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="quotes-table-body">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Other Offers Section -->
+                <div id="other-offers-section" class="mt-4" style="display: none;">
+                    <hr class="my-4">
+                    <h6 class="text-muted mb-3">
+                        <i class="bi bi-clock-history me-2"></i>Recent Offers from Other Parts Lists
+                    </h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Supplier</th>
+                                    <th>Parts List</th>
+                                    <th>Quote Ref</th>
+                                    <th>Date</th>
+                                    <th>Part Number</th>
+                                    <th>Qty</th>
+                                    <th>Unit Price</th>
+                                    <th>Lead Time</th>
+                                    <th>Condition</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="other-offers-table-body">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle me-1"></i>
+                        These are the 3 most recent offers for this part from other parts lists
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div></div>
+{% endblock %}
+

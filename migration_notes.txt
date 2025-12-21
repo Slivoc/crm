@@ -1,0 +1,264 @@
+Postgres migration notes (ongoing)
+## 2025-12-15
+- `models.py`: migrated `create_part_alternative` / `get_part_alternatives` off direct `sqlite3.connect('database.db')` and onto shared `db_execute` helper (so placeholders translate for Postgres).
+- `models.py`: removed duplicate SQLite-only `get_table_columns` (PRAGMA) that was shadowing the cross-database version.
+- Validated with: `python -m py_compile models.py`.
+
+
+Current state
+- DB access is mostly raw sqlite3 calls with '?' placeholders and sqlite3.Row usage.
+- Added dual-mode db.py: detects DATABASE_URL (postgresql://) and opens psycopg2 with RealDictCursor; keeps SQLite default. Added db_cursor context manager with commit/rollback handling.
+- Added db.py helpers to translate '?' -> '%s' when using Postgres, and a simple execute wrapper to reuse per-call logic.
+- models.py (partial): converted customer/contact entry points to use db.execute with RETURNING and placeholder translation; added cross-DB column introspection helper and generic query_one/query_all wrappers. Still many SQLite-specific spots deeper in the file.
+- models.py progress (additional): RFQ CRUD, salespeople, part numbers, alt part numbers, customer tags/industries, project CRUD/stages/files, contact counts, bulk tag add/remove, and assorted helpers now use db.execute/db_cursor with RETURNING and ON-CONFLICT-ready structure. Removed remaining last_insert_rowid() usage.
+- routes/parts_list.py (partial): supplier quote list/create/detail/update and delete converted to db.execute/db_cursor with RETURNING; parts list costing read path, statuses, suppliers, line quotes, and main list view now use db.execute. Still many routes use raw sqlite connections and will need conversion (lines CRUD, sourcing, email helpers, etc.).
+
+Scale / hotspots
+- ~2,185 execute(...) calls across ~83 Python files.
+- Heaviest files: models.py (~517), routes/rfqs.py (~155), routes/parts_list.py (~143), routes/customers.py (~142), routes/offers.py (~103), routes/handson.py (~97), routes/portal_admin.py (~81), routes/salespeople.py (~70), routes/price_lists.py (~70), routes/finance.py (~66), routes/invoices.py (~62).
+- SQLite-specific constructs to replace in early passes:
+  * last_insert_rowid() -> INSERT ... RETURNING id (or cursor.fetchone()[0] pattern).
+  * PRAGMA table_info and other PRAGMAs -> use migrations/schema or catalog queries.
+  * INSERT OR IGNORE / INSERT OR REPLACE -> INSERT ... ON CONFLICT DO NOTHING/DO UPDATE.
+  * datetime('now') and datetime(...) -> NOW() or parameterized timestamps.
+  * '?' placeholders -> '%s' for psycopg2 (or adopt SQLAlchemy Core).
+
+- routes/projects.py
+- routes/salespeople.py (COMPLETED: migrated all get_db_connection() calls to db_cursor/db_execute with placeholder translation; verified with python -m py_compile)
+- routes/salesperson_metrics.py
+- routes/sales_orders.py (mostly migrated: removed get_db_connection usage, converted helper queries to db_execute, and ensured Postgres placeholder translation/RETURNING patterns where IDs are needed; file passes py_compile. Remaining note: calendar stock check currently passes db=None into check_order_stock_availability; confirm that helper can handle None or refactor it to open its own db handle.)
+- routes/sales_suggestions.py (migrated: now runs under `db_cursor` for the main handler; fixed several indentation/control-flow issues introduced during cursor-lifecycle refactor; verified with `python -m py_compile routes/sales_suggestions.py`)
+- routes/so_import.py
+- routes/stock_movements.py
+- routes/upload.py
+
+Next blueprint to migrate: `routes/projects.py` (note: once that path is wrapped with `db_execute`/`db_cursor`, continue down the list in priority order above).
+
+Environment/deps
+- requirements.txt already includes SQLAlchemy 2.x. psycopg2/psycopg2-binary is not listed; install one to use DATABASE_URL.
+- env vars: DATABASE_URL (postgresql://...), SQLITE_PATH (optional override for SQLite). Default remains database.db.
+
+How to resume
+- Open db.py to see the dual-mode connection and execute helper.
+- Continue converting call sites in models.py to use db.execute(...) or SQLAlchemy Core with RETURNING/ON CONFLICT semantics; routes/rfqs.py can be deferred if unused.
+- Keep this file updated with what's been migrated and any gotchas.
+
+Updates 2025-12-13
+- routes/parts_list.py: added a local _execute_with_cursor helper to translate '?' placeholders when using db_cursor in Postgres mode.
+- Migrated analyze_parts_list (and _lookup_single_part) plus email supplier selection helpers to db_cursor/_execute_with_cursor instead of raw sqlite connections.
+- Converted table_view, line update/add/delete/reorder/replace flows, duplicate_parts_list, save_parts_list, and suggested-supplier add/list/remove to db helpers; inserts now use RETURNING where IDs are needed and COALESCE replaces SQLite-only IFNULL in add_lines.
+- Converted line cost update helper/use_cost, supplier email record/list/bulk, sourcing view, line-level ILS API, parts list search/view, quick-quote, no-bid/no-response/status flows, set_line_cost/use_cost, and email parse/import to db_cursor/db_execute with RETURNING where applicable. Removed remaining get_db_connection usage from parts_list.py.
+- app.py: swapped remaining get_db_connection reads for db_execute in add_rfq_from_outlook, projects injector, and project_stages injector.
+- models.py: added _using_postgres/_execute_with_cursor helpers and rewired get_table_columns to use db_execute with placeholder translation instead of raw get_db_connection.
+- requirements.txt: added psycopg2-binary so Postgres connections work out of the box when DATABASE_URL is set.
+- routes/finance.py: added local placeholder-aware cursor helpers and migrated all routes off get_db_connection. Journal entry create/post flows and fiscal year creation now run inside db_cursor transactions with RETURNING for IDs; SQLite-specific JULIANDAY overdue calc moved to Python; all queries now translate '?' to '%s' for Postgres.
+- Compatibility note: keep all migrations and helpers database-agnostic so the codebase continues to work against the existing SQLite deployment while Postgres support is gradually introduced; avoid Postgres-only syntax until we can phase SQLite out.
+- routes/files.py: switched the file-serving/edit-description routes to `db_execute`/`db_cursor`, eliminating `get_db_connection()` so the handlers already translate placeholders and coordinate SQLite/Postgres commits through the shared helpers.
+- routes/currencies.py: replaced the manual `get_db_connection()` usage with `db_execute`, so both rate fetches and live-rate updates go through the shared helper and stay compatible with SQLite/Postgres translations.
+- routes/customers.py: moved the customer BOM lookup and notes helper to `db_execute`, avoiding raw sqlite connections for those read paths while still keeping the larger mix of existing code for future refactors.
+- routes/email_signatures.py: rewired signature CRUD helpers to shared `db_execute`/`db_cursor` helpers with placeholder translation so retrievals, inserts, updates, and deletes stay compatible across SQLite and Postgres while respecting default-signature workflows.
+- routes/offers.py: rewired the `create_offer` and `edit_offer` handlers to use `db_cursor`/`db_execute` instead of `get_db_connection()` so uploads, offer inserts, and updates now stay in placeholder-translated helpers while still handling file attachments and related lookups.
+- Updates 2025-12-14
+- Continued tracking the migration work while focusing next on `routes/parts_list.py` helpers that still relied on sqlite-specific constructs, plus any leftover `get_db_connection()` usage in `routes/customers.py` and `routes/offers.py`.
+- Plan to finish out `models.py` by replacing the remaining PRAGMAs/INSERT OR IGNORE clauses with Postgres-friendly queries via `db.execute`, tighten the placeholder translation helpers, and confirm `RETURNING` coverage for INSERTs needing IDs.
+- Double-check `requirements.txt`/env docs to keep `psycopg2-binary` and `DATABASE_URL` callouts in sync with the new requirements, then run smoke tests against Postgres when the staging vars are ready.
+- Updates 2025-12-15
+- routes/customers.py: replaced the contact notes + customer reassignment helpers with `db_execute` so they use the shared translation/commit logic and keep the rest of the blueprint ready for the upcoming placeholder sweep.
+- routes/sales_suggestions.py: fixed syntax/indentation regressions in `sales_suggestions()` after moving the handler under `with db_cursor() as cursor:`.
+  * Repaired mis-nested `if/elif/else` blocks for `view_by` (part/customer/bom) and the BOM branch’s system-stock `else:`.
+  * Repaired a mistakenly-inserted `else:` inside `upload_stock()` weighted-average price logic.
+  * Verification: `python -m py_compile routes/sales_suggestions.py` (clean).
+- models.py: migrated the `update_sales_order_line_status*` helpers (single/multi/all, plus validators) off raw cursor code and removed `%s` placeholders.
+  * Now uses `db_execute`/`db_cursor` + `_execute_with_cursor` so `?` placeholders translate to `%s` automatically on Postgres.
+  * `validate_line_ids_for_sales_order` now uses `IN (...)` with `?` placeholders (db_execute handles translation), and the count helpers now read via `db_execute(fetch='one')`.
+  * Verification: `python -m py_compile models.py` (clean).
+- Next chunk: continue cleaning `models.py` by removing raw `sqlite3.connect('database.db')` blocks (e.g., `create_part_alternative` / `get_part_alternatives`) and replacing `GROUP_CONCAT`/`strftime`/`julianday` usage with cross-DB alternatives (usually compute in Python).
+- Updates 2025-12-16
+- routes/customers.py: converted the `/add_update` handler to `db_execute` (salesperson lookup, contact name/email, and error handling all use the shared helper), so the AJAX/non-AJAX flow no longer opens a raw connection or cursor before calling `insert_update`.
+- Next chunk: customer association APIs (`associations/api`, `/associations/<id>/api` for add/update/delete/list) still rely on `get_db_connection()` for the inserts/selects/deletes; knock those out next so we finish the remaining ~753 raw connection usages in this blueprint before moving elsewhere.
+- Updates 2025-12-17
+- routes/customers.py: converted all customer-association API endpoints (add/delete/update/list) to `db_execute`/`db_cursor`, added an explicit UTC timestamp instead of `datetime('now')`, and removed the raw connection so the validation/CRUD flows stay placeholder-translated and Postgres-friendly.
+- Next chunk: the customers blueprint still has ~58 direct `get_db_connection()` calls (repo total ~750) mostly in analytics/overview helpers like `/overview` plus the various import/export helpers; tidy those next so the blueprint can go fully through the shared DB helpers.
+- Updates 2025-12-18
+- routes/customers.py: rewired the `/update/<id>/edit` and `/delete` flows, bump status/priority, Apollo matching, listing, activity timelines/orders/emails/rfqs, and contact primary-contact updates to use `db_execute`/`db_cursor`, eliminating raw sqlite connections and reusing the shared placeholder translation + commit helpers.
+- Next chunk: ~44 `get_db_connection()` calls still linger across the blueprint (analytics helpers, import/export paths, scheduled reports, and the big `get_customers_data`/`customers_overview` queries); the next round should wrap those sections in `db_execute`/`db_cursor` or SQLAlchemy helpers so we can close out the file.
+Updates 2025-12-19
+- routes/customers.py: scanned the blueprint and confirmed ~44 remaining `get_db_connection()` call sites concentrated in analytics/overview helpers, import/export flows, scheduled reports, and the `get_customers_data`/`customers_overview` queries; placeholder translation and UTC timestamp helpers already exist, so these can plug into `db_execute`/`db_cursor` around the existing logic.
+- routes/offers.py: there are still ~25 raw connections covering uploads, price history snapshots, email helpers, and the API/key sections; this file should also adopt the shared helpers so the bulk of its CRUD + export flows translate to `%s` and `RETURNING` semantics.
+- Next chunk: start with `routes/customers.py` analytics/overview/import-export helpers that demand large multi-statement queries so we can scope them into transactions, then tackle the remaining `routes/offers.py` handlers; keep translating `INSERT OR IGNORE`/`INSERT OR REPLACE` to `ON CONFLICT` once helpers are wired up. 
+Updates 2025-12-20
+- models.py: replaced several `INSERT OR ...` helpers (app/settings conversions, salesperson engagement preferences, and deepdive link inserts) with `db_execute` calls that use `ON CONFLICT` (or simple `INSERT` when no unique constraint exists) plus shared placeholder translation; also rewired the base-conversion getters to `query_one` so the cross-db helper handles closing and row shaping consistently.
+Updates 2025-12-21
+- routes/customers.py: rewired `get_customers_data` to rely on `db_execute` with translated `?` placeholders, replaced the Postgres-only `NULLS LAST` ordering with a cross-DB tuple `(la.activity_date IS NULL), la.activity_date DESC`, and removed the manual cursor/connection handling while keeping the pagination/search filters and tag lookups intact.
+Updates 2025-12-22
+- routes/offers.py: converted `add_offer_line`, `update_offer_lines`, and the inline field updater to use `db_cursor`/_`execute_with_cursor` so part-number checks, line inserts/updates, and part-manufacturer associations reuse the shared placeholder translation and commit/rollback handling instead of manual sqlite connections.
+Updates 2025-12-23
+- routes/offers.py: rewired the offers list, manufacturer lookup, file management/upload/view helpers, requisition import, and RFQ line import to go through `db_execute`/`db_cursor` while keeping status calculations on the Python side; added helper-driven file inserts (with Postgres-aware `RETURNING id`) and centralized the PDF viewing flow for better compatibility.
+Updates 2025-12-24
+- routes/parts_list.py: replaced the SQLite-only `GROUP_CONCAT` preview subquery with a standard `SELECT parts_list_lines` query that pulls the first five rows per list, then builds the comma-separated preview string in Python so the shared helpers can still translate placeholders and remain Postgres-friendly.
+Updates 2025-12-25
+- routes/offers.py: still relies on `get_db_connection()`/`cursor` in roughly two dozen locations (create/edit offer flows, file upload management, offer line CRUD, RFQ linkage, price history snapshots, and API helpers); the module explicitly imports `sqlite3`, uses `cursor.lastrowid`, and contains the `INSERT OR IGNORE` part-number insert, so placeholder translation (`?` → `%s`) plus `RETURNING`/`ON CONFLICT` rewrites and `db_cursor` transactions are still needed before Postgres parity. Next step is to gradually replace these blocks with the shared helpers, ensure uploads and file ties use `RETURNING id`, and drop the remaining raw sqlite modules.
+Updates 2025-12-26
+- routes/offers.py: rewrote the `create_offer` and `/offers/<id>/edit` handlers to use `db_cursor`/`db_execute` with `_execute_with_cursor` placeholder translation, `RETURNING id`, and shared commit handling so uploads, supplier lookups, and offer inserts/updates no longer open manual sqlite connections; the GET paths now pull suppliers/manufacturers/lines through `db_execute`, and the file-upload branch persists attachments via helper-driven inserts while returning JSON, leaving the remaining raw-query helpers still to refactor.
+Updates 2025-12-27
+- routes/offers.py: ported `add_offer_line` and `update_offer_lines` to `db_cursor`/`_execute_with_cursor` transactions so base-part lookups/inserts, line upserts, and part-manufacturer associations now leverage the shared placeholder translation and commit handling; this removes the last sqlite connection from these flows while showcasing the pattern for the remaining `get_db_connection()` blocks further down the module.
+Updates 2025-12-28
+- routes/offers.py: migrated the RFQ/offer helper routes (`add_offer_for_rfq`, `submit_offer_for_rfq`, `add_multiple_offer_lines`), email uploads/views, PDF processing, offer line bulk updates, comparison page helpers, and submit handlers to `db_cursor`/`db_execute` with `_execute_with_cursor` translation, `RETURNING id`, and `ON CONFLICT DO NOTHING` semantics so the blueprint no longer references `get_db_connection()` or raw sqlite cursors; the migration diary now reflects the completion of the raw-connection cleanup, leaving only downstream analytic helpers (if any) to be audited next.
+Updates 2025-12-29
+- routes/parts_list.py: cleaned up the fallback rendering block and both `/parse-email` and `/create-from-email` flows so they no longer reference the removed `conn` object; these paths now simply rely on `db_execute`/`db_cursor` plus `_execute_with_cursor`, keeping Postgres placeholder translation and transaction handling intact without stray sqlite cleanup.
+Updates 2025-12-30
+- routes/customers.py: added a local `_execute_with_cursor`/ `_add_months`/`_parse_datetime` helper set so cursor usage can translate `?` into `%s` and handle common date math; `/activity/insights` now gathers monthly/yearly totals in Python, still pulls top-product/manufacturer stats via the shared helper, and keeps the returned payload Postgres-friendly.  
+- routes/customers.py: rewired `customer_overview` to run inside `db_cursor`, drop the SQLite `strftime` usage, and build lifetime/yearly spend, recent updates/orders, and contacts through Python while still respecting the shared helpers for placeholders and transactions.
+Updates 2025-12-31
+- routes/customers.py: switched the `/enrich/dashboard`, `/enrich/status`, `/enrich/suggestions`, and `/enrich/stop` endpoints to `db_cursor`/`_execute_with_cursor`, removing manual `get_db_connection()` handling and committing through the helper so stats/views stay Postgres-ready while preserving the existing SQL.
+Updates 2026-01-01
+- routes/customers.py: rewired the natural-language search helpers, contact exports, tags analytics, and contact CRUD endpoints to run entirely through `db_cursor`, `db_execute`, and `_execute_with_cursor`; removed the last `get_db_connection()` usages for the export/contact modals so Postgres placeholder translation handles the various selects/inserts/updates without raw sqlite connections. Remaining `get_db_connection()` call sites are now limited to `filter_customers` and the analytics-heavy `list_with_activity`, which still need a dedicated rewrite.
+Updates 2026-01-02
+- Added `_prepare_query` + `_NAMED_PLACEHOLDER_RE` helpers in `routes/customers.py` so `:named` bindings translate cleanly to `%(<name>)s` on Postgres while still running against SQLite.
+- routes/customers.py: migrated `filter_customers` off the manual connection path by reusing `db_cursor`, swapping `GROUP_CONCAT` for a request-time aggregate string, replacing `IFNULL/NULLS LAST/strftime` with cross-DB equivalents, and tracking YTD sales with a start-of-year filter.
+- routes/customers.py: rewired `/list_with_activity` to run inside `db_cursor`, build placeholder-safe filters for `countries`, and order by `(la.activity_date IS NULL)` so the handler no longer touches `db.session` or raw SQLite-only clauses.
+Updates 2026-01-03
+- routes/admin.py: switched the `/admin/users` view to `db_execute(fetch='all')`, dropping the raw `get_db_connection()` usage so the blueprint now relies on the shared helper for placeholder translation and connection management.
+- routes/templates.py: rewired the template create/edit/delete flows to run inside `db_cursor`/`_execute_with_cursor`, added `RETURNING id` for inserts, and now reuse `db_execute` for the delete path so placeholder translation and commit handling work on Postgres without manual sqlite connections.
+- Next chunk: keep moving through smaller blueprints (e.g., `routes/rfq_helpers.py` or `routes/excess.py`) to replace remaining `get_db_connection()` usages with the shared helpers and document the progress here.
+Updates 2026-01-04
+- routes/excess.py: retired every direct `get_db_connection()` usage in the CRUD/email flows, introduced `_execute_with_cursor`/`db_cursor` so inserts/updates/reads automatically translate `?` placeholders, and kept the template rendering path compatible with both SQLite rows and Postgres `RealDictCursor` results.
+- Next chunk: tackle `routes/api.py` to finish migrating its remaining helpers (email uploads, template queries, and the excess email upload endpoint) through the shared DB helpers so Postgres placeholder translation covers requests that still used manual sqlite cursors.
+Updates 2026-01-05
+- routes/api.py: remodeled the excess email upload, `get_all_templates`, email logging, Apollo matching, watched-tag APIs, and the `/add-email` helper so each flow now uses `_execute_with_cursor`/`db_cursor` or `db_execute`, avoids `sqlite3` imports, and keeps placeholder translation/`RETURNING` semantics for Postgres.
+- Next chunk: keep working through other blueprints with lingering manual connections (e.g., `routes/price_lists.py`, `routes/rfqs.py`) so the shared helpers cover the hottest 2k+ SQL call sites documented earlier.
+Updates 2026-01-06
+- routes/price_lists.py: replaced the top-level helpers and CRUD flows (list, detail, create/update/delete price lists plus price list items) with `db_execute`/`db_cursor` so each step now translates placeholders, returns dict-like rows, and avoids manual sqlite transactions while still supporting count lookups, price breaks, and attachments.
+- Next chunk: finish migrating the remaining item-level helpers and upload handlers in `routes/price_lists.py` (they still open raw SQLite connections), then proceed to `routes/rfqs.py` or `routes/sales_orders.py` for the heavy call sites.
+
+Updates 2026-01-07
+- routes/price_lists.py: completed the remaining migrations by converting upload/search/bulk/batch/delete/statistics/handsontable helpers to the shared `db_execute`/`db_cursor` helpers with `_execute_with_cursor`, adding `RETURNING id` where needed, and moving every CSV/transactional flow off manual SQLite connections so the blueprint now runs under the Postgres-compatible placeholders.
+- Next chunk: shift attention to `routes/rfqs.py` or another high-usage blueprint so the shared helpers can keep replacing legacy `get_db_connection()` blocks.
+
+- Updates 2026-01-08
+- routes/rfqs.py: began the migration by converting `create_rfq` to `db_cursor`/`_execute_with_cursor`, adding a Postgres-aware `RETURNING id`, and ensuring the customer currency lookup and project linkage reuse the shared helper rather than raw sqlite connections; dozens more `get_db_connection()` sites remain for future passes.
+- Updates 2026-01-09
+- routes/rfqs.py: rewired the edit view’s supplier/history block so the per-line supplier lookups, part-number resolution, and offer/RFQ/sales-order history counts run inside `db_cursor` using `_execute_with_cursor` plus helper-driven row unwrapping, eliminating the manual connection and aligning the metadata queries with the shared placeholder translation; `get_statuses` now simply calls `db_execute` to stay Postgres-friendly.
+- Updates 2026-01-10
+- routes/rfqs.py: refactored helper endpoints (`add_rfq_line`, `generate_requisitions`, default margin/supplier setters) to reuse `db_cursor`, `_execute_with_cursor`, and `db_execute` so manufacturer lookup, suggested supplier collection, and part-number queries keep placeholder translation consistent while removing the raw SQLite connections.
+
+Updates 2026-01-11
+- routes/rfqs.py: continued the helper sweep by converting extract_data, update_all_rfq_lines, and the requisition assembly loop to the shared cursor helpers so RFQ line creation, bulk updates, and requisition inserts all use Postgres-safe placeholder translation and db_cursor transactions instead of raw SQLite connections.
+
+Updates 2026-01-12
+- routes/rfqs.py: kept moving through helper routes by updating get_base_cost, update_rfq_line_field, update_rfq_line_offer, update_rfq_line_fields, generate_quote, generate_cost_list, update_costs, and the surrounding loops so each path now relies on db_cursor, _execute_with_cursor, and db_execute instead of raw sqlite connections while preserving the prior logic and calculated values.
+
+Updates 2026-01-13
+- routes/rfqs.py: retired the remaining sqlite-specific helpers (top-level requisition creation, bulk requisition generators, and auxiliary API responses) by reusing `_execute_with_cursor`, removing leftover group_concat usage, and logging errors through the shared helper so the blueprint no longer imports `sqlite3` or manages raw cursors.
+- routes/customers.py: modernized the prospecting activity query to use `db_execute`, guard empty customer lists, and translate the result set into dicts before enriching the customer payload so the analytics view stays compatible with both SQLite and Postgres connections.
+- routes/vqs.py: rewired the entire blueprint (listing/detail views, CSV import, delete/search helpers, and lookup utilities) to `db_execute`/`db_cursor` plus Postgres-aware helper wrappers, ensuring placeholder translation, RETURNING semantics, and transactional commits work cleanly when DATABASE_URL points at Postgres.
+- routes/cqs.py: converted the CQ list/detail/search/high-conversion helpers to `db_execute`, added db_cursor-backed CSV import with placeholder translation/RETURNING semantics, and introduced shared helpers so all CREATE/UPDATE/Delete paths translate cleanly across SQLite and Postgres.
+Updates 2026-01-14
+- routes/salespeople.py: converted the activity view’s consolidated order query to `db_execute`, rewrote the consolidation helpers (updates, RFQs, orders, contacts) plus the debug/notes endpoints to rely on shared helpers, and removed several raw sqlite connection blocks so the blueprint is progressively more Postgres-friendly while the remaining analytics-heavy sections still need attention.
+- routes/handson.py: rewired import mapping persistence plus the parts/customers import passes to `db_cursor`/`_execute_with_cursor`, introduced placeholder translation and `RETURNING` helpers, and added unique-conflict handling so those flows now use the shared `db.py` helpers instead of direct `sqlite3` connections (later sales/orders/order-lines helpers still need the same refactor).
+Updates 2026-01-15
+- routes/handson.py: converted the `/import/sales_orders` and `/import/order_lines` chunks (including the total-value recalculations) to `db_cursor`/`_execute_with_cursor`, added placeholder-aware inserts with `RETURNING id`, and migrated `import_status`, `get_current_import_step`, and `update_imdport_status` to the shared helpers so the import pipeline now commits through the dual-mode DB layer instead of raw SQLite connections.
+- Updates 2026-01-16
+- routes/handson.py: ported the import progress/setup/mapping/directory helpers and the `run_full_import` lookup to `db_execute`/`db_cursor`, so the metadata queries now reuse the placeholder-translation helpers instead of raw `get_db()` loops.
+- routes/handson.py: rewired the part-number, purchase-order, and purchase-order-line import flows to run inside `db_cursor(commit=True)` transactions and `_execute_with_cursor` calls, translating `?` placeholders to `%s`, committing via the shared helper, and switching inserts/updates to `RETURNING`/cursor-friendly patterns.
+- Routes/handson.py still has a handful of `get_db()` call sites (quick import, customer/statistics helpers) that need the same treatment; next pass should consolidate them under the shared helpers before tackling the remaining import/summary flows.
+- Updates 2026-01-17
+- routes/handson.py: converted the quick-import view/process, part/customer/sales-order import steps, and order-line handling to `db_cursor`/`_execute_with_cursor` so every lookup/insert (including on-the-fly part creation) now runs through the shared helper with placeholder translation instead of managing raw sqlite cursors and commits.
+- routes/handson.py: reshaped the currency/status helper functions to use `db_execute(...)` for validation lookups, keeping the utility code aligned with the broader db helper migration.
+# TODO please carry on with perparing handson.py for migration
+
+Updates 2026-01-18
+- routes/customer_quoting.py: still relies on `get_db_connection()` dozens of times (quote view, bulk updates, margin helpers, minimum-line-value review, line adjustments, and the simple quote view) so every SQL statement needs `_execute_with_cursor` translation and db_cursor-based commits before the blueprint can run against Postgres without sqlite-specific commits.
+- Investigated leftover hotspots via `rg -n get_db_connection routes` and confirmed that blueprints such as `routes/bom.py`, `routes/sales_orders.py`, and `routes/salespeople.py` remain high-priority candidates for the shared helper migration sweep.
+
+Updates 2026-01-19
+- routes/bom.py: added shared cursor helpers plus RETURNING-aware helpers, rewired the `/bom/` list view to `db_execute`, and rephrased `/bom/create` so the header insert and optional component upload run inside a single `db_cursor(commit=True)` transaction with `_execute_with_cursor` to keep placeholders/Postgres translations consistent.
+- routes/bom.py: finished migrating the remaining handlers (view, import_components, customer search/update, component/customer adds/removals) to `db_execute`/`db_cursor` plus the helper translations so no parts of the blueprint rely on raw sqlite cursors anymore.
+Updates 2026-01-21
+- `routes/bulk_emails.py`: dropped the raw sqlite connection, now calls `db_execute` for customer lists and contact searches so the tiny blueprint inherits placeholder translation and dict rows.
+- `models.py`: `update_currency_rate` now passes `commit=True` so the shared helper handles persistence whenever settings or other modules adjust exchange rates.
+- `routes/settings.py`: rewired the conversion page to run entirely through `db_execute`/`db_cursor`, added helper functions for placeholder translation, and keeps rate conversion/manual updates inside the shared helpers instead of managing sqlite cursors.
+- `routes/tax_rates.py`: rewired the CRUD helpers so the list/insert/update/delete paths all use `db_execute`/`db_cursor` (no manual sqlite connections) and translate placeholders/transactions consistently for Postgres.
+- `routes/suppliers.py`: create/get-api/contact helpers now use `_execute_with_cursor` + `db_cursor`, call `_with_returning_clause`/`_last_inserted_id`, and drop the sqlite3 import so the blueprint commits/rollbacks through the shared helpers.
+- `routes/expediting.py`: refactored the dashboard/detail views to fetch via `db_execute`, move the expedite reasoning/timeline calculations into Python (avoiding `julianday`), and sort/categorize entirely client-side so the blueprint can run against Postgres.
+Updates 2026-01-22
+- `routes/customer_quoting.py`: rewired every customer quoting endpoint so the header/line helpers, bulk calculations, margin previews/applications, line adjustments, status updates, and the simple quote view now rely on `db_cursor`/`db_execute` plus the shared `_execute_with_cursor` helpers (with a new `RETURNING`/`_last_inserted_id` helper) instead of raw SQLite connections, so debug + transactional paths stay Postgres-compatible.
+Updates 2026-01-23
+- `routes/emails.py`: removed every `get_db_connection()` import by adding local `_execute_with_cursor`/placeholder helpers at the top and rewiring the RFQ/offer/email upload/view/sync helpers to use `db_cursor`/`db_execute` so inserts now RETURNING ids, sync metadata updates call the shared helper, and the blueprint handles files + attachments through the Postgres-aware pipeline while staying SQLite-compatible.
+
+Updates 2026-01-24
+- `routes/invoices.py`: migrated the suggestion generation, invoice creation/viewing/PDF rendering, and the line/tax/discount/payment helpers plus tax-rate CRUD to the shared `db_execute`/`db_cursor` layer, so placeholder translation, transactional commits, and `RETURNING` semantics now funnel through the helpers rather than raw sqlite cursors.
+- Next blueprint after invoices/ILS: `routes/manufacturers.py` still tops the `get_db_connection()` leaderboard and should be the subsequent migration target for the shared helpers.
+- Updates 2026-01-25
+- `routes/purchase_orders.py`: removed manual sqlite cursors by adding `_using_postgres`/`_execute_with_cursor`, rewired `/generate_po` and the ERP import flow to `db_cursor` transactions, and migrated the supplier/currency/status helpers plus the CSV import helpers to helper-driven inserts so the blueprint now uses the shared placeholder translation/commit path instead of `get_db_connection()`.
+- Next blueprint after `routes/purchase_orders.py`: `routes/projects.py` remains the highest-priority `get_db_connection()` hotspot.
+- Updates 2026-01-26
+- `routes/purchase_suggestions.py`: rewired the `/purchase-suggestions` index view to the shared `db_cursor` helpers, refactored every `/api/*` helper so the queries translate `?` → `%s` through `_execute_with_cursor`, and updated the VQ utilities to rely on the helper-driven cursor so Postgres transactions, placeholder translation, and CSV-friendly logic replace the remaining raw sqlite connections.
+
+Updates 2026-01-27
+- Route migration audit: scanned `routes/*.py` for adoption of the shared Postgres-compatible DB helpers (`db_execute`, `db_cursor`, `_execute_with_cursor`).
+  * Already using shared helpers (Postgres-ready): `admin.py`, `api.py`, `bom.py`, `bulk_emails.py`, `cqs.py`, `currencies.py`, `customers.py`, `customer_quoting.py`, `excess.py`, `expediting.py`, `files.py`, `finance.py`, `invoices.py`, `manufacturers.py`, `offers.py`, `parts_list.py`, `price_lists.py`, `projects.py`, `purchase_orders.py`, `purchase_suggestions.py`, `suppliers.py`, `tax_rates.py`, `templates.py`.
+  * Still using raw SQLite / `get_db_connection()` patterns (needs migration): `dynamic_table.py`, `geo_deepdive.py`, `imports.py`, `salespeople.py`, `salesperson_metrics.py`, `sales_orders.py`, `sales_suggestions.py`, `so_import.py`, `stock_movements.py`, `upload.py`.
+  * Partially migrated / minor SQLite artifacts to clean up: `handson.py` (remaining sqlite3 exception references), `rfqs.py` (legacy row-shaping comments/assumptions).
+
+Updates 2026-01-28 (CORRECTED STATUS)
+- `routes/dynamic_table.py`: STILL NEEDS MIGRATION - contains `get_db_connection()` calls
+- `routes/geo_deepdive.py`: STILL NEEDS MIGRATION - contains SQLite `strftime()` functions
+- `routes/imports.py`: STILL NEEDS MIGRATION - contains `get_db_connection()` calls
+- `routes/upload.py`: STILL NEEDS MIGRATION - contains `get_db_connection()` calls
+- `routes/sales_orders.py`: STILL NEEDS MIGRATION - contains SQLite `strftime()` functions and `date('now')` expressions
+- `routes/salespeople.py`: STILL NEEDS MIGRATION - contains extensive SQLite-specific functions including `date('now', '-24 months')`, `strftime('%Y-%m')`, `JULIANDAY()`, and raw `get_db_connection()` calls throughout
+- `routes/salesperson_metrics.py`: STILL NEEDS MIGRATION - contains `get_db_connection()` calls
+- `routes/so_import.py`: STILL NEEDS MIGRATION - contains `get_db_connection()` calls and `sqlite3.IntegrityError` usage
+
+Updates 2026-01-29
+- `routes/dynamic_table.py`: COMPLETED - removed `sqlite3` import, replaced `sqlite3.Error` with generic `Exception` handler for cross-DB compatibility while keeping all existing `db_execute`/`db_cursor` usage intact.
+- `routes/geo_deepdive.py`: ALREADY MIGRATED - confirmed using `db_execute`/`db_cursor` with `_execute_with_cursor` helpers throughout.
+- `routes/imports.py`: COMPLETED - removed `sqlite3` import, added `_using_postgres`/`_prepare_query`/`_execute_with_cursor` helpers, updated `ImportHelpers` class to use `db_execute` instead of raw cursors, and replaced `sqlite3.Error` handler with generic `Exception` handler.
+- `routes/upload.py`: COMPLETED - added `_using_postgres`/`_prepare_query`/`_execute_with_cursor` helpers to translate placeholders and handle `RETURNING id` for file uploads inside the existing `db_cursor` transaction.
+- `routes/stock_movements.py`: COMPLETED - removed `sqlite3` import, updated `create_part_on_demand` function to use cursor parameter and `_execute_with_cursor` helper instead of raw `db.execute`, replaced `sqlite3.IntegrityError` with generic exception handling that checks error messages for constraint violations.
+
+Updates 2025-12-15
+- `routes/salesperson_metrics.py`: COMPLETED - added `_execute_with_cursor` helper function to translate `?` placeholders to `%s` for PostgreSQL; replaced all `cursor.execute()` calls with `_execute_with_cursor(cursor, ...)` throughout all helper functions (get_salesperson_metrics_summary, get_activities, get_funnel_data, get_communication_breakdown); the blueprint now uses `db_cursor()` context manager and automatically handles placeholder translation for Postgres compatibility; verified with `python -m py_compile`.
+- `routes/so_import.py`: COMPLETED - added `_execute_with_cursor` helper for placeholder translation; migrated all functions (process_parts, process_customers, process_sales_orders, process_order_lines, calculate_order_totals) from `get_db_connection()` to `db_cursor(commit=True)` context manager; replaced all `cursor.execute()` calls with `_execute_with_cursor(cursor, ...)`; removed manual commit/close calls as they're now handled by the context manager; the sales order import CSV processing now runs entirely through shared DB helpers with automatic Postgres placeholder translation and transactional safety; verified with `python -m py_compile`.
+- **Route-level PostgreSQL migration is now complete** - all route files in the `routes/` directory now use the shared `db_execute`/`db_cursor` helpers with automatic placeholder translation, making them compatible with both SQLite and PostgreSQL databases.
+
+---
+
+## 📌 models.py status (what was done + what to do next)
+
+### What I changed recently in `models.py`
+- Migrated email log helpers to the shared DB layer (SQLite + Postgres compatible):
+  - `save_email_log(email_data)` now uses `db_execute(..., fetch='one', commit=True)` and `RETURNING id`.
+  - `get_email_logs(limit, offset)` now uses `db_execute(..., fetch='all')`.
+  - `get_email_log_by_id(log_id)` now uses `db_execute(..., fetch='one')`.
+- These functions keep `?` placeholders so `db.py` can translate them to `%s` automatically when `DATABASE_URL` is Postgres.
+- Smoke test run: `python -m py_compile models.py` (clean).
+
+### What still needs doing in `models.py` (next session)
+Priority is to remove the remaining SQLite-only patterns so Postgres works end-to-end.
+
+1) **Eliminate remaining raw `sqlite3` usage / `get_db_connection()` usage in hotspots**
+   - Search targets:
+     - `sqlite3.connect(`
+     - `sqlite3.Row`
+     - `.lastrowid`
+     - `cursor = db.cursor()` with manual `commit()/close()` patterns
+   - Replace with `db_execute(...)` or `with db_cursor(commit=True) as cur:` + `_execute_with_cursor(...)` where needed.
+
+2) **Replace SQLite-only SQL functions inside queries**
+   - `strftime(...)`, `date('now'...)`, `datetime('now'...)`, `julianday(...)`, `GROUP_CONCAT(...)`
+   - Preferred approach: fetch rows and compute aggregation/date math in Python (works on both DBs).
+
+3) **Standardize insert patterns**
+   - For inserts needing IDs: `INSERT ... RETURNING id` + `fetch='one'`
+   - For `INSERT OR IGNORE` / `INSERT OR REPLACE`:
+     - move to `ON CONFLICT DO NOTHING/DO UPDATE` (and keep this behind shared helpers where possible)
+
+4) **Run quick safety checks**
+   - `python -m py_compile models.py`
+   - optionally add a tiny Postgres smoke test by setting `DATABASE_URL` and running a trivial `db_execute('SELECT 1', fetch='one')`.
+
+### Handy commands
+- Find remaining sqlite patterns in models:
+  - `rg -n "sqlite3\\.|sqlite3\\.connect|get_db_connection\\(|lastrowid|GROUP_CONCAT|strftime\\(|julianday\\(|date\('now'|datetime\('now'" models.py`

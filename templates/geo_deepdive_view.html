@@ -1,0 +1,1766 @@
+<!-- templates/geo_deepdive_view.html -->
+{% extends "base.html" %}
+
+{% block title %}{{ deepdive.title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <!-- Content Column -->
+        <div class="col-lg-8">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+               <h2 class="fw-bold mb-1">{{ deepdive.title }}</h2>
+                <div class="btn-group">
+                    <button type="button" class="btn btn-primary" onclick="showImproveContentModal()">
+                        <i class="fas fa-magic"></i> Improve Content
+                    </button>
+                    <a href="{{ url_for('geo_deepdive.edit_deepdive', deepdive_id=deepdive.id) }}"
+                       class="btn btn-outline-primary">
+                        <i class="fas fa-edit"></i> Edit
+                    </a>
+                    <a href="{{ url_for('geo_deepdive.list_deepdives') }}" class="btn btn-secondary">
+                        <i class="fas fa-arrow-left"></i> Back
+                    </a>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <div class="mb-3">
+                        <span class="badge badge-primary">{{ deepdive.country }}</span>
+                        <span class="badge badge-info">{{ deepdive.tag_description or 'Unknown' }}</span>
+                        <small class="text-muted ms-2">
+                            Created: {{ deepdive.created_at }} | Updated: {{ deepdive.updated_at }}
+                        </small>
+                    </div>
+
+                    <div class="content-display markdown-content" id="contentDisplay">
+    <!-- Use processed_content instead of raw content -->
+    {{ deepdive.processed_content | markdown | safe }}
+</div>
+                </div>
+            </div>
+        </div>
+
+      <!-- Curated Customer List Column -->
+        <div class="col-lg-4">
+            <!-- Market Penetration Analytics Card -->
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-chart-bar"></i> Market Penetration</h6>
+                </div>
+                <div class="card-body p-3">
+                    <div id="penetrationChart">
+                        <div class="text-center text-muted">
+                            <i class="fas fa-spinner fa-spin"></i> Loading analytics...
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+
+          <!-- Curated Customers Section -->
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h6 class="mb-0"><i class="fas fa-users"></i> Curated Customers</h6>
+    <button class="btn btn-sm btn-primary" onclick="showGeoDeepDiveAddCustomerModal()">
+      <i class="fas fa-plus"></i> Add
+    </button>
+  </div>
+  <div class="card-body table-container p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead>
+          <tr>
+            <th style="width: 45%;">Customer</th>
+            <th style="width: 12%;">Fleet Size</th>
+            <th style="width: 15%;">Est. Revenue</th>
+            <th style="width: 28%;">Notes</th>
+          </tr>
+        </thead>
+      <tbody id="curatedCustomersTable">
+        {% for customer in curated_customers %}
+        <tr data-customer-id="{{ customer.id }}">
+<td>
+  <div class="d-flex align-items-center">
+
+    <div>
+      <a href="/customers/{{ customer.id }}" class="text-decoration-none">
+        {{ customer.name }}
+      </a>
+      {% if customer.website %}
+      <a href="{{ customer.website }}" target="_blank" class="ms-1" title="Visit website">
+        <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem;"></i>
+      </a>
+      {% endif %}
+      <br>
+      <small class="text-muted">
+        <span class="badge badge-sm status-badge clickable"
+              data-status="{{ customer.status|lower if customer.status else 'unknown' }}"
+              data-status-id="{{ customer.status_id or '' }}"
+              data-customer-id="{{ customer.id }}"
+              title="Click to advance status">
+          {{ customer.status or 'Unknown' }}
+        </span>
+        <button class="btn btn-link btn-sm p-0 ms-2"
+                onclick="showApolloLeadFinder({{ customer.id }})"
+                title="Find leads for {{ customer.name }}">
+          <i class="bi bi-search"></i>
+        </button>
+      </small>
+    </div>
+  </div>
+</td>
+          <td>
+            <div class="editable-field" data-field="fleet_size" data-customer-id="{{ customer.id }}">
+              <span class="field-value">{{ customer.fleet_size or '-' }}</span>
+              <input type="number" class="form-control form-control-sm field-input" style="display: none;"
+                     value="{{ customer.fleet_size or '' }}" min="0">
+              <button class="btn btn-sm btn-link edit-btn p-0 ms-1" title="Edit fleet size">
+                <i class="bi bi-pencil"></i>
+              </button>
+            </div>
+          </td>
+          <td>
+            <div class="editable-field" data-field="estimated_revenue" data-customer-id="{{ customer.id }}">
+              <span class="field-value">£{{ '{:,.0f}'.format(customer.estimated_revenue) if customer.estimated_revenue else '-' }}</span>
+              <input type="number" class="form-control form-control-sm field-input" style="display: none;"
+                     value="{{ customer.estimated_revenue or '' }}" min="0" step="1000">
+              <button class="btn btn-sm btn-link edit-btn p-0 ms-1" title="Edit estimated revenue">
+                <i class="bi bi-pencil"></i>
+              </button>
+            </div>
+          </td>
+          <td>
+  <div class="editable-field" data-field="notes" data-customer-id="{{ customer.id }}">
+    <span class="field-value">{{ customer.deepdive_notes or '-' }}</span>
+    <textarea class="form-control form-control-sm field-input" style="display: none;" rows="2">{{ customer.deepdive_notes or '' }}</textarea>
+    <button class="btn btn-sm btn-link edit-btn p-0 ms-1" title="Edit notes">
+      <i class="bi bi-pencil"></i>
+    </button>
+    <button class="btn btn-sm btn-link text-danger remove-btn p-0 ms-2"
+            onclick="removeCuratedCustomer({{ customer.id }})"
+            title="Remove customer">
+      <i class="bi bi-x-circle"></i>
+    </button>
+  </div>
+</td>
+
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+        </div>
+            <!-- All Matching Customers Section -->
+<div class="card mt-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h6 class="mb-0"><i class="fas fa-globe"></i> All {{ deepdive.country_name }} Customers - {{ deepdive.tag_description }}</h6>
+    <span class="badge bg-secondary">{{ country_customers|length }} total</span>
+  </div>
+  <div class="card-body table-container p-0">
+    <div class="table-responsive">
+      <table class="table table-hover table-sm mb-0">
+        <thead>
+          <tr>
+            <th style="width: 45%;">Customer</th>
+            <th style="width: 12%;">Fleet Size</th>
+            <th style="width: 15%;">Est. Revenue</th>
+            <th style="width: 28%;">Salesperson</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for customer in country_customers %}
+          <tr>
+            <td>
+              <div class="d-flex align-items-center">
+                <div>
+                  <a href="/customers/{{ customer.id }}" class="text-decoration-none">
+                    {{ customer.name }}
+                  </a>
+                  {% if customer.website %}
+                  <a href="{{ customer.website }}" target="_blank" class="ms-1" title="Visit website">
+                    <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem;"></i>
+                  </a>
+                  {% endif %}
+                  <br>
+                  <small class="text-muted">
+                    <span class="badge badge-sm status-badge clickable"
+                          data-status="{{ customer.status|lower if customer.status else 'unknown' }}"
+                          data-status-id="{{ customer.status_id or '' }}"
+                          data-customer-id="{{ customer.id }}"
+                          title="Click to advance status">
+                      {{ customer.status or 'Unknown' }}
+                    </span>
+                  </small>
+                </div>
+              </div>
+            </td>
+            <td>{{ customer.fleet_size or '-' }}</td>
+            <td>£{{ '{:,.0f}'.format(customer.estimated_revenue) if customer.estimated_revenue else '-' }}</td>
+            <td>
+              <small class="text-muted">
+                {{ customer.assigned_salesperson_name or 'Unassigned' }}
+              </small>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+    </div>
+</div>
+<!-- GeoDeepDive Customer Search Modal -->
+<div class="modal fade" id="geoDeepDiveCustomerModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Customer to DeepDive</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Search Customers</label>
+                    <input type="text" class="form-control" id="geoCustomerSearch" placeholder="Type to search...">
+                    <div id="geoSearchResults" class="mt-2"></div>
+                </div>
+                <div class="form-group">
+                    <label>Notes (optional)</label>
+                    <textarea class="form-control" id="geoCustomerNotes" rows="2" placeholder="Add any notes about this customer..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="geoConfirmAddCustomer" disabled>Add Customer</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Text Selection Modal for Customer Matching -->
+<div class="modal fade" id="textSelectionModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Link Customer</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <strong>Selected Text:</strong>
+                    <span id="selectedText" class="text-primary font-weight-bold"></span>
+                </div>
+
+                <div class="btn-group w-100 mb-3">
+                    <button type="button" class="btn btn-outline-primary" id="searchExistingBtn">
+                        <i class="fas fa-search"></i> Search Existing
+                    </button>
+                    <button type="button" class="btn btn-primary" id="createNewBtn">
+                        <i class="fas fa-plus"></i> Create New
+                    </button>
+                </div>
+
+                <!-- Search Existing Customer Section -->
+                <div id="searchExistingSection">
+                    <div class="form-group">
+                        <label>Search Customers</label>
+                        <input type="text" class="form-control" id="textSelectionSearch" placeholder="Type to search for existing customers...">
+                        <div id="textSelectionResults" class="mt-2"></div>
+                    </div>
+                </div>
+
+                <!-- Create New Customer Section -->
+                <div id="createNewSection" style="display: none;">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> This will open the customer creation modal.
+                        <br><small>The selected text will be pre-filled as the company name.</small>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirmTextSelection" disabled>Link Customer</button>
+                <!--<button type="button" class="btn btn-success" id="confirmCreateNew" style="display: none;">Create Customer</button>-->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Improve Content Modal -->
+<div class="modal fade" id="improveContentModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-magic"></i> Improve Content with AI
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="improvementRequest"><strong>What would you like to improve or add?</strong></label>
+                            <textarea class="form-control" id="improvementRequest" rows="4"
+                                placeholder="Examples:&#10;• What about Airbus Helicopters presence?&#10;• Add information about cargo operators&#10;• Include more details on maintenance facilities&#10;• What about military helicopter operations?&#10;• Tell me about training schools in this region"></textarea>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <button type="button" class="btn btn-primary" id="generateImprovedContent">
+                                <i class="fas fa-robot"></i> Generate Improved Content
+                            </button>
+                            <small class="text-muted">AI will search for current information and enhance the content</small>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="bg-light p-3 rounded" style="height: 200px; overflow-y: auto;">
+                            <h6 class="text-muted mb-2">Current Content Preview:</h6>
+                            <div class="small text-muted">
+                                {{ deepdive.content[:500] }}{% if deepdive.content|length > 500 %}...{% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="improvedContentSection" class="mt-4" style="display: none;">
+                    <hr>
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6><i class="fas fa-sparkles"></i> AI-Enhanced Content</h6>
+                        <div class="btn-group">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="showContentDiff()">
+                                <i class="fas fa-eye"></i> Show Changes
+                            </button>
+                            <button type="button" class="btn btn-sm btn-success" id="applyImprovedContent">
+                                <i class="fas fa-check"></i> Apply Changes
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <div id="improvedContentPreview" style="max-height: 400px; overflow-y: auto;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="contentDiffSection" class="mt-4" style="display: none;">
+                    <hr>
+                    <h6><i class="fas fa-code-compare"></i> Content Comparison</h6>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-danger text-white">
+                                    <small><i class="fas fa-minus"></i> Original Content</small>
+                                </div>
+                                <div class="card-body" style="max-height: 300px; overflow-y: auto;">
+                                    <pre id="originalContentDiff" class="small"></pre>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-success text-white">
+                                    <small><i class="fas fa-plus"></i> Enhanced Content</small>
+                                </div>
+                                <div class="card-body" style="max-height: 300px; overflow-y: auto;">
+                                    <pre id="enhancedContentDiff" class="small"></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let geoSelectedCustomerId = null;
+let textSelectionSelectedCustomer = null;
+let improvedContentData = null;
+let selectedTextForCustomer = '';
+
+document.addEventListener('DOMContentLoaded', function() {
+    initializeStatusBadgeHandlers();
+    initializeImproveContentHandlers();
+    initializeTextSelectionHandlers();
+    loadMarketPenetrationData();
+    attachSearchListeners();
+    makeContentInteractive();
+});
+
+function makeContentInteractive() {
+    // Make all bold text clickable in the content
+    const contentDiv = document.getElementById('contentDisplay');
+    const boldElements = contentDiv.querySelectorAll('strong, b');
+
+    boldElements.forEach(element => {
+        element.classList.add('clickable-text');
+        element.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            handleTextClick(this.textContent.trim());
+        });
+    });
+
+    // Also enable text selection for any text
+    contentDiv.addEventListener('mouseup', function(e) {
+        const selection = window.getSelection();
+        const selectedText = selection.toString().trim();
+
+        if (selectedText && selectedText.length > 2) {
+            // Show a small tooltip or context menu
+            showSelectionTooltip(e, selectedText);
+        }
+    });
+}
+
+function showSelectionTooltip(event, text) {
+    // Remove any existing tooltip
+    const existingTooltip = document.querySelector('.selection-tooltip');
+    if (existingTooltip) {
+        existingTooltip.remove();
+    }
+
+    // Create tooltip
+    const tooltip = document.createElement('div');
+    tooltip.className = 'selection-tooltip';
+    tooltip.innerHTML = `
+        <button class="btn btn-sm btn-primary" onclick="handleTextClick('${text.replace(/'/g, "\\'")}'); removeSelectionTooltip();">
+            <i class="fas fa-link"></i> Link Customer
+        </button>
+    `;
+
+    // Position tooltip
+    tooltip.style.position = 'absolute';
+    tooltip.style.left = event.pageX + 'px';
+    tooltip.style.top = (event.pageY - 40) + 'px';
+    tooltip.style.zIndex = '9999';
+    tooltip.style.backgroundColor = 'white';
+    tooltip.style.border = '1px solid #ddd';
+    tooltip.style.borderRadius = '4px';
+    tooltip.style.padding = '4px';
+    tooltip.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+
+    document.body.appendChild(tooltip);
+
+    // Remove tooltip after 3 seconds or on click elsewhere
+    setTimeout(() => removeSelectionTooltip(), 3000);
+
+    // Remove on click elsewhere
+    document.addEventListener('click', function removeOnClick(e) {
+        if (!tooltip.contains(e.target)) {
+            removeSelectionTooltip();
+            document.removeEventListener('click', removeOnClick);
+        }
+    });
+}
+
+function removeSelectionTooltip() {
+    const tooltip = document.querySelector('.selection-tooltip');
+    if (tooltip) {
+        tooltip.remove();
+    }
+    // Clear text selection
+    window.getSelection().removeAllRanges();
+}
+
+function handleTextClick(text) {
+    selectedTextForCustomer = text;
+    document.getElementById('selectedText').textContent = text;
+    document.getElementById('textSelectionSearch').value = text;
+
+    // Reset modal state
+    document.getElementById('searchExistingSection').style.display = 'block';
+    document.getElementById('createNewSection').style.display = 'none';
+    document.getElementById('confirmTextSelection').style.display = 'inline-block';
+    // Remove this line - the button doesn't exist anymore:
+    // document.getElementById('confirmCreateNew').style.display = 'none';
+    document.getElementById('searchExistingBtn').classList.add('active');
+    document.getElementById('createNewBtn').classList.remove('active');
+
+    // Clear previous results
+    document.getElementById('textSelectionResults').innerHTML = '';
+    textSelectionSelectedCustomer = null;
+    document.getElementById('confirmTextSelection').disabled = true;
+
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('textSelectionModal'));
+    modal.show();
+
+    // Trigger search
+    setTimeout(() => {
+        handleTextSelectionSearch();
+    }, 100);
+}
+function initializeTextSelectionHandlers() {
+    // Tab switching
+    document.getElementById('searchExistingBtn').addEventListener('click', function() {
+        document.getElementById('searchExistingSection').style.display = 'block';
+        document.getElementById('createNewSection').style.display = 'none';
+        document.getElementById('confirmTextSelection').style.display = 'inline-block';
+        document.getElementById('confirmCreateNew').style.display = 'none';
+        this.classList.add('active');
+        document.getElementById('createNewBtn').classList.remove('active');
+    });
+
+    document.getElementById('createNewBtn').addEventListener('click', function() {
+        // Don't just show a section - IMMEDIATELY open the customer modal
+        const textSelectionModal = bootstrap.Modal.getInstance(document.getElementById('textSelectionModal'));
+        if (textSelectionModal) {
+            textSelectionModal.hide();
+        }
+
+        // Wait for modal to close, then open customer modal
+        setTimeout(() => {
+            openAddCustomerModal(selectedTextForCustomer);
+        }, 300);
+    });
+
+    // Search input
+    document.getElementById('textSelectionSearch').addEventListener('input', handleTextSelectionSearch);
+
+    // Confirm button for linking existing customer
+    document.getElementById('confirmTextSelection').addEventListener('click', function() {
+        if (textSelectionSelectedCustomer) {
+            const isAlreadyCurated = checkIfCustomerIsCurated(textSelectionSelectedCustomer);
+
+            if (!isAlreadyCurated) {
+                addCuratedCustomer(textSelectionSelectedCustomer, selectedTextForCustomer);
+            }
+
+            createCustomerLink(textSelectionSelectedCustomer, selectedTextForCustomer);
+            $('#textSelectionModal').modal('hide');
+        }
+    });
+
+    // Remove the confirmCreateNew listener entirely - it's not needed anymore
+}
+
+
+function checkIfCustomerIsCurated(customerId) {
+    // Check if customer exists in the curated list on the page
+    return document.querySelector(`[data-customer-id="${customerId}"]`) !== null;
+}
+
+function createCustomerLink(customerId, linkedText) {
+    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/customer-links`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            customer_id: customerId,
+            linked_text: linkedText
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Reload page to show the updated content with customer tags
+            window.location.reload();
+        } else {
+            console.error('Failed to create customer link:', data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error creating customer link:', error);
+    });
+}
+
+
+function handleTextSelectionSearch() {
+    const query = document.getElementById('textSelectionSearch').value.trim();
+    const resultsDiv = document.getElementById('textSelectionResults');
+
+    if (query.length < 2) {
+        resultsDiv.innerHTML = '';
+        document.getElementById('confirmTextSelection').disabled = true;
+        textSelectionSelectedCustomer = null;
+        return;
+    }
+
+    fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=10`)
+        .then(response => response.json())
+        .then(data => {
+            displayTextSelectionResults(data || []);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            resultsDiv.innerHTML = '<small class="text-danger">Error searching customers</small>';
+        });
+}
+
+function displayTextSelectionResults(customers) {
+    const resultsDiv = document.getElementById('textSelectionResults');
+
+    if (customers.length === 0) {
+        resultsDiv.innerHTML = '<small class="text-muted">No customers found</small>';
+        return;
+    }
+
+    let html = '';
+    customers.forEach(customer => {
+        const escapedName = customer.name.replace(/'/g, "\\'");
+        html += `
+            <div class="search-result p-2 border rounded mb-2 cursor-pointer" onclick="selectTextSelectionCustomer(${customer.id}, '${escapedName}', this)">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div class="flex-grow-1">
+                        <strong>${customer.name}</strong>
+                        <span class="badge badge-info badge-sm ml-1">${customer.country || 'Unknown'}</span>
+                        ${customer.assigned_salesperson_name ?
+                            `<br><small class="text-muted">Rep: ${customer.assigned_salesperson_name}</small>` :
+                            `<br><small class="text-muted">No Rep Assigned</small>`
+                        }
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    resultsDiv.innerHTML = html;
+}
+
+function selectTextSelectionCustomer(customerId, customerName, element) {
+    textSelectionSelectedCustomer = customerId;
+    document.getElementById('confirmTextSelection').disabled = false;
+
+    // Highlight selected result
+    document.querySelectorAll('#textSelectionResults .search-result').forEach(el => {
+        el.classList.remove('selected');
+    });
+    element.classList.add('selected');
+}
+
+function attachSearchListeners() {
+    // Geo search
+    document.getElementById('geoCustomerSearch').addEventListener('input', handleSearchInput.bind(null, 'geo'));
+    document.getElementById('geoConfirmAddCustomer').addEventListener('click', handleGeoConfirmAdd);
+}
+
+function handleSearchInput(type) {
+    const inputId = type === 'geo' ? 'geoCustomerSearch' : 'textSelectionSearch';
+    const resultsId = type === 'geo' ? 'geoSearchResults' : 'textSelectionResults';
+    const confirmId = type === 'geo' ? 'geoConfirmAddCustomer' : 'confirmTextSelection';
+    const selectedVar = type === 'geo' ? 'geoSelectedCustomerId' : 'textSelectionSelectedCustomer';
+
+    const query = document.getElementById(inputId).value.trim();
+    const resultsDiv = document.getElementById(resultsId);
+    const confirmBtn = document.getElementById(confirmId);
+
+    if (query.length < 2) {
+        resultsDiv.innerHTML = '';
+        confirmBtn.disabled = true;
+        window[selectedVar] = null;
+        return;
+    }
+
+    fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=10`)
+        .then(response => response.json())
+        .then(data => {
+            displaySearchResults(data || [], type);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            resultsDiv.innerHTML = '<small class="text-danger">Error searching customers</small>';
+        });
+}
+
+function displaySearchResults(customers, type) {
+    const resultsId = type === 'geo' ? 'geoSearchResults' : 'textSelectionResults';
+    const resultsDiv = document.getElementById(resultsId);
+
+    if (customers.length === 0) {
+        resultsDiv.innerHTML = '<small class="text-muted">No customers found</small>';
+        return;
+    }
+
+    let html = '';
+    customers.forEach(customer => {
+        const escapedName = customer.name.replace(/'/g, "\\'");
+        const selectFunction = type === 'geo' ? 'selectCustomer' : 'selectTextSelectionCustomer';
+        html += `
+            <div class="search-result p-2 border rounded mb-2 cursor-pointer" onclick="${selectFunction}(${customer.id}, '${escapedName}', this)">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div class="flex-grow-1">
+                        <strong>${customer.name}</strong>
+                        <span class="badge badge-info badge-sm ml-1">${customer.country || 'Unknown'}</span>
+                        ${customer.assigned_salesperson_name ?
+                            `<br><small class="text-muted">Rep: ${customer.assigned_salesperson_name}</small>` :
+                            `<br><small class="text-muted">No Rep Assigned</small>`
+                        }
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    resultsDiv.innerHTML = html;
+}
+
+function selectCustomer(customerId, customerName, element) {
+    geoSelectedCustomerId = customerId;
+    document.getElementById('geoConfirmAddCustomer').disabled = false;
+
+    // Highlight selected result
+    document.querySelectorAll('#geoSearchResults .search-result').forEach(el => {
+        el.classList.remove('selected');
+    });
+    element.classList.add('selected');
+}
+
+function handleGeoConfirmAdd() {
+    if (geoSelectedCustomerId) {
+        const notes = document.getElementById('geoCustomerNotes').value.trim();
+        addCuratedCustomer(geoSelectedCustomerId, '', notes);
+        $('#geoDeepDiveCustomerModal').modal('hide');
+
+        // Reset modal
+        resetGeoModal();
+    }
+}
+
+function resetGeoModal() {
+    document.getElementById('geoCustomerSearch').value = '';
+    document.getElementById('geoCustomerNotes').value = '';
+    document.getElementById('geoSearchResults').innerHTML = '';
+    geoSelectedCustomerId = null;
+    document.getElementById('geoConfirmAddCustomer').disabled = true;
+}
+
+function initializeImproveContentHandlers() {
+    // Generate improved content button
+    document.getElementById('generateImprovedContent').addEventListener('click', function() {
+        const request = document.getElementById('improvementRequest').value.trim();
+
+        if (!request) {
+            alert('Please enter what you would like to improve or add to the content.');
+            return;
+        }
+
+        generateImprovedContent(request);
+    });
+
+    // Apply improved content button
+    document.getElementById('applyImprovedContent').addEventListener('click', function() {
+        if (improvedContentData) {
+            applyImprovedContent();
+        }
+    });
+}
+
+function generateImprovedContent(request) {
+    const button = document.getElementById('generateImprovedContent');
+    const originalText = button.innerHTML;
+
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+    button.disabled = true;
+
+    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/improve-content`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            request: request
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            improvedContentData = data;
+            displayImprovedContent(data.improved_content);
+            document.getElementById('improvedContentSection').style.display = 'block';
+    } else {
+            alert('Failed to generate improved content: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error generating improved content');
+    })
+    .finally(() => {
+        button.innerHTML = originalText;
+        button.disabled = false;
+    });
+}
+
+function displayImprovedContent(content) {
+    // Convert markdown to HTML for preview (basic conversion)
+    const htmlContent = content
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/^- (.+)$/gm, '<li>$1</li>')
+        .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+        .replace(/^---$/gm, '<hr>')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/^(?!<[h|u|l|p|d])(.+)$/gm, '<p>$1</p>')
+        .replace(/<p><\/p>/g, '');
+
+    document.getElementById('improvedContentPreview').innerHTML = htmlContent;
+}
+
+function showContentDiff() {
+    const diffSection = document.getElementById('contentDiffSection');
+
+    if (diffSection.style.display === 'none') {
+        if (improvedContentData) {
+            document.getElementById('originalContentDiff').textContent = improvedContentData.original_content;
+            document.getElementById('enhancedContentDiff').textContent = improvedContentData.improved_content;
+        }
+        diffSection.style.display = 'block';
+    } else {
+        diffSection.style.display = 'none';
+    }
+}
+
+function applyImprovedContent() {
+    if (!improvedContentData) return;
+
+    const button = document.getElementById('applyImprovedContent');
+    const originalText = button.innerHTML;
+
+    if (!confirm('This will replace the current content with the AI-enhanced version. Continue?')) {
+        return;
+    }
+
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying...';
+    button.disabled = true;
+
+    const formData = new FormData();
+    formData.append('improved_content', improvedContentData.improved_content);
+
+    fetch(`/geographic-deepdives/{{ deepdive.id }}/apply-improvement`, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        if (response.ok) {
+            window.location.href = `/geographic-deepdives/{{ deepdive.id }}`;
+        } else {
+            throw new Error('Failed to apply improvements');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error applying improved content');
+        button.innerHTML = originalText;
+        button.disabled = false;
+    });
+}
+
+function initializeStatusBadgeHandlers() {
+    // Apply to ALL status badges on the page, not just in curated list
+    document.querySelectorAll('.status-badge.clickable').forEach(badge => {
+        badge.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const customerId = this.getAttribute('data-customer-id');
+            if (customerId && !this.classList.contains('updating')) {
+                bumpCustomerStatus(parseInt(customerId), this);
+            }
+        });
+    });
+}
+
+function reinitializeStatusBadges() {
+    // Remove existing listeners and reapply to all badges
+    document.querySelectorAll('.status-badge.clickable').forEach(badge => {
+        // Clone node to remove existing listeners
+        const newBadge = badge.cloneNode(true);
+        badge.parentNode.replaceChild(newBadge, badge);
+    });
+
+    // Reapply listeners
+    initializeStatusBadgeHandlers();
+}
+
+async function bumpCustomerStatus(customerId, statusBadge) {
+    statusBadge.classList.add('updating');
+    statusBadge.setAttribute('title', 'Updating status...');
+
+    try {
+        const response = await fetch(`/customers/${customerId}/bump_status`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to update status');
+        }
+
+        if (data.success && data.new_status) {
+            statusBadge.textContent = data.new_status.name;
+            statusBadge.setAttribute('data-status', data.new_status.name.toLowerCase());
+            statusBadge.setAttribute('title', 'Click to advance status');
+
+            const cell = statusBadge.closest('td');
+            if (cell) {
+                cell.classList.add('field-updated');
+                setTimeout(() => {
+                    cell.classList.remove('field-updated');
+                }, 1000);
+            }
+
+            showSuccessToast('Status updated successfully');
+        } else {
+            throw new Error('Invalid response from server');
+        }
+
+    } catch (error) {
+        console.error('Error bumping status:', error);
+        showErrorToast('Failed to update status: ' + error.message);
+    } finally {
+        statusBadge.classList.remove('updating');
+    }
+}
+
+// Utility functions for toast notifications
+function showSuccessToast(message) {
+    showToast(message, 'success');
+}
+
+function showErrorToast(message) {
+    showToast(message, 'danger');
+}
+
+function showToast(message, type) {
+    const toast = document.createElement('div');
+    toast.className = 'toast show position-fixed bottom-0 end-0 m-3';
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+        <div class="toast-header bg-${type} text-white">
+            <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-triangle'} me-2"></i>
+            <strong class="me-auto">${type === 'success' ? 'Success' : 'Error'}</strong>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+        </div>
+        <div class="toast-body">
+            ${message}
+        </div>
+    `;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        if (toast.parentNode) {
+            toast.remove();
+        }
+    }, 5000);
+}
+
+function loadMarketPenetrationData() {
+    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/market-penetration`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayPenetrationChart(data);
+            } else {
+                document.getElementById('penetrationChart').innerHTML =
+                    '<div class="text-center text-muted small">No penetration data available</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading penetration data:', error);
+            document.getElementById('penetrationChart').innerHTML =
+                '<div class="text-center text-muted small">Error loading analytics</div>';
+        });
+}
+
+function displayPenetrationChart(data) {
+    const chartDiv = document.getElementById('penetrationChart');
+
+    if (!data.penetration_data || data.penetration_data.length === 0) {
+        if (data.total_revenue > 0) {
+            chartDiv.innerHTML = `
+                <div class="text-center">
+                    <div class="mb-2">
+                        <small class="text-muted font-weight-bold">Total Market Value</small>
+                        <div class="font-weight-bold text-primary">${formatRevenue(data.total_revenue)}</div>
+                    </div>
+                    <div class="text-muted small">
+                        Status information not available for customers in this deepdive
+                    </div>
+                </div>
+            `;
+        } else {
+            chartDiv.innerHTML = '<div class="text-center text-muted small">No customer data available</div>';
+        }
+        return;
+    }
+
+    const totalRevenue = data.total_revenue;
+    let chartHtml = `
+        <div class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <small class="text-muted font-weight-bold">Total Market Value</small>
+                <small class="font-weight-bold text-primary">${formatRevenue(totalRevenue)}</small>
+            </div>
+        </div>
+    `;
+
+    data.penetration_data.forEach((statusData, index) => {
+        const statusLabel = statusData.status_name || statusData.status || `Status ${statusData.status}`;
+        const percentage = statusData.percentage;
+        const revenue = statusData.revenue;
+        const count = statusData.customer_count;
+        const barColor = getStatusColor(statusData.status);
+
+        chartHtml += `
+            <div class="mb-3">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <small class="font-weight-medium">${statusLabel}</small>
+                    <small class="text-muted">${count} customer${count !== 1 ? 's' : ''}</small>
+                </div>
+                <div class="progress mb-1" style="height: 24px; border-radius: 4px;">
+                    <div class="progress-bar d-flex align-items-center justify-content-center"
+                         style="width: ${percentage}%; background-color: ${barColor}; min-width: ${percentage > 0 ? '30px' : '0'};"
+                         title="${statusLabel}: ${formatRevenue(revenue)} (${percentage.toFixed(1)}%)">
+                        <small class="text-white font-weight-bold" style="font-size: 11px;">${percentage.toFixed(1)}%</small>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-between">
+                    <small class="text-muted">${formatRevenue(revenue)}</small>
+                    <small class="text-muted">${percentage.toFixed(1)}% of total</small>
+                </div>
+            </div>
+        `;
+    });
+
+    chartDiv.innerHTML = chartHtml;
+}
+
+function formatRevenue(amount) {
+    if (amount >= 1000000) {
+        return (amount / 1000000).toFixed(1) + 'M';
+    } else if (amount >= 1000) {
+        return (amount / 1000).toFixed(0) + 'K';
+    } else {
+        return amount.toLocaleString();
+    }
+}
+
+function getStatusColor(status) {
+  // Use the same color scheme as the customers page
+  const statusColors = {
+    1: '#17a2b8',  // Target - Teal
+    2: '#fd7e14',  // Contact Identified - Orange
+    3: '#ffc107',  // Initial Contact - Yellow
+    4: '#007bff',  // Engaged - Blue
+    5: '#6f42c1',  // Qualified - Purple
+    6: '#28a745',  // Active Customer - Green
+  };
+  return statusColors[status] || '#6c757d';
+}
+
+function showImproveContentModal() {
+    $('#improveContentModal').modal('show');
+    $('#improvementRequest').focus();
+}
+
+function showGeoDeepDiveAddCustomerModal() {
+    $('#geoDeepDiveCustomerModal').modal('show');
+    $('#geoCustomerSearch').focus();
+}
+
+function addCuratedCustomer(customerId, customerName, notes = '') {
+    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/customers`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            customer_id: customerId,
+            notes: notes
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            window.location.reload();
+        } else {
+            alert('Failed to add customer: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error adding customer');
+    });
+}
+
+function removeCuratedCustomer(customerId) {
+    if (!confirm('Remove this customer from the list?')) return;
+
+    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/customers/${customerId}`, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            window.location.reload();
+        } else {
+            alert('Failed to remove customer: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error removing customer');
+    });
+}
+
+// Inline editing for customer fields
+document.addEventListener('DOMContentLoaded', function() {
+    initializeInlineEditing();
+});
+
+function initializeInlineEditing() {
+    const editableFields = document.querySelectorAll('.editable-field');
+
+    editableFields.forEach(field => {
+        const editBtn = field.querySelector('.edit-btn');
+        const valueSpan = field.querySelector('.field-value');
+        const input = field.querySelector('.field-input');
+        const fieldName = field.dataset.field;
+        const customerId = field.dataset.customerId;
+
+        editBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            enterEditMode(field, valueSpan, input, editBtn);
+        });
+
+        // Save on blur
+        input.addEventListener('blur', function() {
+            saveFieldValue(field, valueSpan, input, editBtn, fieldName, customerId);
+        });
+
+        // Save on Enter key
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && fieldName !== 'notes') {
+                e.preventDefault();
+                input.blur();
+            }
+            if (e.key === 'Escape') {
+                cancelEdit(field, valueSpan, input, editBtn);
+            }
+        });
+    });
+}
+
+function enterEditMode(field, valueSpan, input, editBtn) {
+    valueSpan.style.display = 'none';
+    editBtn.style.display = 'none';
+    input.style.display = 'block';
+    input.focus();
+
+    // Select text for easy replacement
+    if (input.tagName === 'TEXTAREA') {
+        input.select();
+    }
+}
+
+function cancelEdit(field, valueSpan, input, editBtn) {
+    valueSpan.style.display = 'inline';
+    editBtn.style.display = 'inline';
+    input.style.display = 'none';
+}
+
+async function saveFieldValue(field, valueSpan, input, editBtn, fieldName, customerId) {
+    const newValue = input.value.trim();
+    const deepdiveId = {{ deepdive.id }};
+
+    try {
+        const response = await fetch(`/api/geographic-deepdives/${deepdiveId}/customers/${customerId}/quick-update`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                field: fieldName,
+                value: newValue
+            })
+        });
+
+        if (response.ok) {
+            // Update display value
+            if (fieldName === 'fleet_size') {
+                valueSpan.textContent = newValue || '-';
+            } else if (fieldName === 'estimated_revenue') {
+                const formatted = newValue ? `£${parseFloat(newValue).toLocaleString('en-GB', {minimumFractionDigits: 0, maximumFractionDigits: 0})}` : '-';
+                valueSpan.textContent = formatted;
+            } else {
+                valueSpan.textContent = newValue || '-';
+            }
+
+            cancelEdit(field, valueSpan, input, editBtn);
+
+            // Show success feedback
+            showToast('Updated successfully', 'success');
+        } else {
+            const error = await response.json();
+            showToast(error.error || 'Failed to update', 'danger');
+            cancelEdit(field, valueSpan, input, editBtn);
+        }
+    } catch (error) {
+        console.error('Error updating field:', error);
+        showToast('Failed to update field', 'danger');
+        cancelEdit(field, valueSpan, input, editBtn);
+    }
+}
+
+function showToast(message, type = 'info') {
+    // Simple toast notification
+    const toast = document.createElement('div');
+    toast.className = `alert alert-${type} position-fixed top-0 end-0 m-3`;
+    toast.style.zIndex = '9999';
+    toast.textContent = message;
+
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.remove();
+    }, 3000);
+}
+</script>
+<style>
+/* Interactive Text Styles */
+.clickable-text {
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s ease;
+    border-radius: 3px;
+    padding: 1px 2px;
+}
+
+.clickable-text:hover {
+    background-color: #e3f2fd;
+    color: #1976d2;
+    box-shadow: 0 1px 3px rgba(25, 118, 210, 0.2);
+}
+
+.clickable-text:active {
+    background-color: #bbdefb;
+    transform: scale(0.98);
+}
+
+.selection-tooltip {
+    z-index: 9999;
+    animation: fadeIn 0.2s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Modal Tab Styles */
+.btn-group .btn.active {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
+.markdown-content {
+    line-height: 1.6;
+}
+
+.markdown-content h1, .markdown-content h2, .markdown-content h3 {
+    color: var(--text-dark);
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+}
+
+.markdown-content h1 {
+    font-size: 1.8rem;
+    border-bottom: 3px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.markdown-content h2 {
+    font-size: 1.5rem;
+    border-bottom: 2px solid var(--border-color);
+    padding-bottom: 0.3rem;
+}
+
+.markdown-content h3 {
+    font-size: 1.2rem;
+    color: var(--text-dark);
+}
+
+.markdown-content strong {
+    color: var(--primary) !important;
+    font-weight: 600;
+}
+
+.markdown-content ul, .markdown-content ol {
+    margin-left: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.markdown-content li {
+    margin-bottom: 0.5rem;
+}
+
+.markdown-content hr {
+    border: none;
+    border-top: 2px solid var(--border-color);
+    margin: 2rem 0;
+}
+
+.markdown-content p {
+    margin-bottom: 1rem;
+}
+
+.markdown-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+}
+
+.markdown-content table th,
+.markdown-content table td {
+    border: 1px solid var(--border-color);
+    padding: 0.5rem;
+    text-align: left;
+}
+
+.markdown-content table th {
+    background-color: var(--sidebar-bg);
+    font-weight: bold;
+}
+
+.markdown-content em {
+    color: var(--primary-dark);
+    font-style: italic;
+}
+
+.markdown-content a {
+    color: var(--primary);
+    text-decoration: none;
+}
+
+.markdown-content a:hover {
+    color: var(--primary-dark);
+    text-decoration: underline;
+}
+
+.customer-item {
+    transition: all 0.2s ease;
+    border: 1px solid #dee2e6;
+}
+
+.customer-item:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    border-color: #007bff;
+}
+
+.max-height-300 {
+    max-height: 300px;
+}
+
+.badge-sm {
+    font-size: 0.7rem;
+    padding: 0.2em 0.4em;
+}
+
+.search-result {
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid #dee2e6;
+}
+
+.search-result:hover {
+    background-color: #f8f9fa;
+    border-color: #007bff;
+}
+
+.search-result.selected {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
+.search-result.selected .text-muted {
+    color: rgba(255, 255, 255, 0.8) !important;
+}
+
+.search-result.selected .badge-info {
+    background-color: rgba(255, 255, 255, 0.2);
+    color: white;
+}
+
+.cursor-pointer {
+    cursor: pointer;
+}
+
+.btn-xs {
+    padding: 0.125rem 0.25rem;
+    font-size: 0.75rem;
+}
+
+.customer-item .row.text-muted {
+    font-size: 0.85rem;
+}
+
+.customer-item .row.text-muted strong {
+    font-weight: 600;
+}
+
+.customer-item .fas {
+    width: 12px;
+    text-align: center;
+    margin-right: 4px;
+}
+
+#geoSearchResults, #textSelectionResults {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    background-color: white;
+}
+
+#geoSearchResults:empty, #textSelectionResults:empty {
+    border: none;
+}
+
+/* Unified Status Badge Styles for Both Pages */
+
+.status-badge {
+  font-weight: 600;
+  text-transform: capitalize;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+  margin-left: 4px;
+}
+
+.status-badge.clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.status-badge.clickable:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.status-badge.clickable:active {
+  transform: scale(0.98);
+}
+
+.status-badge.updating {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.status-badge.updating::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  border-top-color: transparent;
+  animation: spin 0.8s linear infinite;
+  margin-right: 4px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Unified Status-Specific Colors */
+/* Target - Teal */
+.status-badge[data-status*="target"],
+.status-badge[data-status="1"] {
+  background-color: #17a2b8 !important;
+  color: white !important;
+}
+
+/* Contact Identified - Orange */
+.status-badge[data-status*="contact identified"],
+.status-badge[data-status="2"] {
+  background-color: #fd7e14 !important;
+  color: white !important;
+}
+
+/* Initial Contact - Yellow */
+.status-badge[data-status*="initial contact"],
+.status-badge[data-status="3"] {
+  background-color: #ffc107 !important;
+  color: #212529 !important;
+}
+
+/* Engaged - Blue */
+.status-badge[data-status*="engaged"],
+.status-badge[data-status="4"] {
+  background-color: #007bff !important;
+  color: white !important;
+}
+
+/* Qualified - Purple */
+.status-badge[data-status*="qualified"],
+.status-badge[data-status="5"] {
+  background-color: #6f42c1 !important;
+  color: white !important;
+}
+
+/* Active Customer - Green */
+.status-badge[data-status*="active"],
+.status-badge[data-status="6"] {
+  background-color: #28a745 !important;
+  color: white !important;
+}
+
+/* Additional status variations for compatibility */
+.status-badge[data-status*="negotiat"] {
+  background-color: #ffc107 !important;
+  color: #212529 !important;
+}
+
+.status-badge[data-status*="prospect"] {
+  background-color: #dc3545 !important;
+  color: white !important;
+}
+
+.status-badge[data-status*="cold"] {
+  background-color: #6f42c1 !important;
+  color: white !important;
+}
+
+.status-badge[data-status*="inactive"],
+.status-badge[data-status*="dormant"] {
+  background-color: #6c757d !important;
+  color: white !important;
+}
+
+.status-badge[data-status*="lost"],
+.status-badge[data-status*="reject"] {
+  background-color: #495057 !important;
+  color: #adb5bd !important;
+}
+
+.status-badge[data-status*="hold"] {
+  background-color: #e9ecef !important;
+  color: #495057 !important;
+  border: 1px solid #adb5bd !important;
+}
+
+.status-badge[data-status="not set"],
+.status-badge[data-status=""] {
+  background-color: #f8f9fa !important;
+  color: #6c757d !important;
+  border: 1px dashed #dee2e6 !important;
+}
+
+
+
+.badge.status-unknown {
+  background-color: #6c757d !important;
+  color: white !important;
+}
+
+/* Priority Badge Styles */
+.priority-badge {
+  font-weight: 500;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.priority-badge.clickable:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.priority-badge.clickable:active {
+  transform: scale(0.98);
+}
+
+.priority-badge.updating {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* Customer Link Indicators */
+.customer-link-indicator {
+  display: inline !important;
+  margin-left: 6px !important;
+  white-space: nowrap !important;
+  vertical-align: baseline !important;
+}
+
+.customer-link-indicator .fas {
+  font-size: 0.7rem;
+  color: #28a745;
+  margin-right: 3px;
+}
+
+.customer-link-indicator .badge {
+  font-size: 0.7rem;
+  padding: 0.2em 0.4em;
+  vertical-align: baseline;
+}
+
+.customer-linked-text:hover {
+  background-color: #e8f5e8;
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .status-badge {
+    font-size: 0.7rem;
+    padding: 0.2em 0.4em;
+  }
+
+  .priority-badge {
+    font-size: 0.7rem;
+  }
+}
+#penetrationChart .progress {
+    background-color: #f8f9fa;
+    border: 1px solid #e9ecef;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+}
+
+#penetrationChart .progress-bar {
+    transition: width 0.6s ease;
+    border-radius: 3px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+
+/* Simple inline customer tag indicator */
+.customer-link-indicator {
+    display: inline !important;
+    margin-left: 6px !important;
+    white-space: nowrap !important;
+    vertical-align: baseline !important;
+}
+
+.customer-link-indicator .fas {
+    font-size: 0.7rem;
+    color: #28a745;
+    margin-right: 3px;
+}
+
+.customer-link-indicator .badge {
+    font-size: 0.7rem;
+    padding: 0.2em 0.4em;
+    vertical-align: baseline;
+}
+
+.customer-link-indicator .fas {
+    font-size: 0.7rem;
+    color: #28a745;
+}
+
+.customer-linked-text:hover {
+    background-color: #e8f5e8;
+    border-radius: 3px;
+    padding: 1px 3px;
+}
+
+/* If you have a container for multiple customer tags, ensure they flow horizontally */
+.customer-tags-container {
+    display: flex;
+    flex-wrap: wrap; /* Allow wrapping to next line if needed */
+    gap: 8px; /* Space between tags */
+    align-items: center;
+}
+
+/* Alternative: If you want them to stay on one line with horizontal scroll */
+.customer-tags-container-horizontal {
+    display: flex;
+    flex-wrap: nowrap; /* No wrapping */
+    gap: 8px;
+    align-items: center;
+    overflow-x: auto; /* Horizontal scroll if content overflows */
+    white-space: nowrap;
+    padding-bottom: 4px; /* Space for scrollbar */
+}
+
+/* For the badges within customer tags */
+.customer-linked-text .badge {
+    margin-left: 4px;
+    white-space: nowrap;
+}
+
+
+
+/* For any parent containers that might contain customer linked text */
+.markdown-content .customer-linked-text,
+.content-display .customer-linked-text {
+    display: inline;
+    vertical-align: baseline;
+}
+.editable-field {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.editable-field .field-value {
+    flex: 1;
+    min-height: 1.5rem;
+}
+
+.editable-field .field-input {
+    flex: 1;
+}
+
+.editable-field .edit-btn {
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.editable-field:hover .edit-btn {
+    opacity: 0.6;
+}
+
+.editable-field .edit-btn:hover {
+    opacity: 1 !important;
+}
+
+.editable-field .edit-btn i {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+.editable-field .remove-btn {
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.editable-field:hover .remove-btn {
+    opacity: 0.6;
+}
+
+.editable-field .remove-btn:hover {
+    opacity: 1 !important;
+}
+
+.editable-field .remove-btn i {
+    font-size: 0.875rem;
+}
+</style>
+
+{% endblock %}

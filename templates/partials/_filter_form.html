@@ -1,0 +1,42 @@
+<form method="get" action="{{ url_for('customers.prospecting') }}" id="prospectingForm">
+    <div class="row align-items-end">
+        <div class="col-md-3">
+            <label for="tag" class="form-label">Industry Tag:</label>
+            <select name="tag" id="tag" class="form-select">
+                <option value="">All Industries</option>
+                {% for tag in tags %}
+                    {{ render_tag_options(tag, 0, watched_tags) }}
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="continent" class="form-label">Continent:</label>
+            <select name="continent" id="continent" class="form-select">
+                <option value="">All Continents</option>
+                {% for continent in continents %}
+                    <option value="{{ continent }}" {% if continent == selected_continent %}selected{% endif %}>
+                        {{ continent }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="countries" class="form-label">Country (optional):</label>
+            <select name="countries" id="countries" class="form-select" {% if not available_countries %}disabled{% endif %}>
+                {% if available_countries %}
+                    <option value="">All Countries in {{ selected_continent }}</option>
+                    {% for country in available_countries %}
+                        <option value="{{ country.code }}" {% if country.code == selected_countries[0] %}selected{% endif %}>
+                            {{ country.name }}
+                        </option>
+                    {% endfor %}
+                {% else %}
+                    <option value="">Select a continent first</option>
+                {% endif %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary">Filter</button>
+        </div>
+    </div>
+</form>

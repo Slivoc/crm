@@ -1,0 +1,329 @@
+{% extends "layouts/customer_discovery.html" %}
+
+{% block customer_discovery_content %}
+<div class="container mt-4">
+
+<!-- Status Alert -->
+<div id="statusAlert" class="alert d-none">
+    <span id="statusMessage"></span>
+</div>
+
+    <!-- Status Cards - Updated with stats-card styling -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-people-fill me-2 text-primary"></i>
+                        <strong>Total Customers</strong>
+                    </div>
+                    <p class="display-6 fw-bold mb-0 mt-2 text-primary" id="totalCustomers">{{ stats.total_customers }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-gear-fill me-2 text-primary"></i>
+                        <strong>Processed</strong>
+                    </div>
+                    <p class="display-6 fw-bold mb-0 mt-2 text-primary" id="processedCount">{{ stats.processed }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-check-circle-fill me-2 text-primary"></i>
+                        <strong>Completed</strong>
+                    </div>
+                    <p class="display-6 fw-bold mb-0 mt-2 text-primary" id="completedCount">{{ stats.completed }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-exclamation-triangle-fill me-2 text-danger"></i>
+                        <strong>Failed</strong>
+                    </div>
+                    <p class="display-6 fw-bold mb-0 mt-2 text-danger" id="failedCount">{{ stats.failed }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Bar - Updated with card styling -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title">
+                <i class="bi bi-bar-chart-fill me-2"></i>
+                Overall Progress
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="progress" style="height: 25px;">
+                <div id="progressBar" class="progress-bar bg-primary" role="progressbar" style="width: 0%">
+                    0%
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Control Panel - Updated with card styling -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title">
+                <i class="bi bi-sliders me-2"></i>
+                Controls
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="d-flex gap-2">
+                <button id="startEnrichment" class="btn btn-primary">
+                    <i class="bi bi-play-fill me-1"></i>
+                    Start Enrichment
+                </button>
+                <button id="stopEnrichment" class="btn btn-danger" disabled>
+                    <i class="bi bi-stop-fill me-1"></i>
+                    Stop Enrichment
+                </button>
+                <a href="{{ url_for('customers.view_suggestions') }}" class="btn btn-secondary">
+                    <i class="bi bi-lightbulb-fill me-1"></i>
+                    View Suggestions (<span id="suggestionCount">0</span>)
+                </a>
+                <div id="processingSpinner" class="spinner-border text-primary ms-2 d-none" role="status">
+                    <span class="visually-hidden">Processing...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Activity - Updated with card and table styling -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title">
+                <i class="bi bi-activity me-2"></i>
+                Recent Activity
+            </h5>
+        </div>
+        <div class="card-body table-container p-0">
+            <div class="table-responsive">
+                <table class="table table-hover" id="activityTable">
+                    <thead>
+                        <tr>
+                            <th>Customer</th>
+                            <th>Status</th>
+                            <th>Last Updated</th>
+                            <th>Message</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in recent %}
+                        <tr>
+                            <td>
+                                <strong>{{ item.customer_name }}</strong>
+                            </td>
+                            <td>
+                                <span class="badge {{
+                                    'badge-success' if item.status == 'completed'
+                                    else 'badge-danger' if item.status == 'failed'
+                                    else 'badge-warning' }}">
+                                    {{ item.status }}
+                                </span>
+                            </td>
+                            <td>{{ item.last_attempt }}</td>
+                            <td>{{ item.error_message or '' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Customer Updates - Updated with card and table styling -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="card-title">
+                <i class="bi bi-arrow-repeat me-2"></i>
+                Recent Customer Updates
+            </h5>
+        </div>
+        <div class="card-body table-container p-0">
+            <div class="table-responsive">
+                <table class="table table-hover" id="updatesTable">
+                    <thead>
+                        <tr>
+                            <th>Customer</th>
+                            <th>Revenue</th>
+                            <th>Country</th>
+                            <th>Industry Tags</th>
+                            <th>Company Types</th>
+                            <th>Updated At</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function updateUI(data) {
+    // Update numbers
+    document.getElementById('totalCustomers').textContent = data.stats.total_customers;
+    document.getElementById('processedCount').textContent = data.stats.processed;
+    document.getElementById('completedCount').textContent = data.stats.completed;
+    document.getElementById('failedCount').textContent = data.stats.failed;
+
+    // Update progress bar
+    const progress = data.stats.total_customers > 0
+        ? (data.stats.processed / data.stats.total_customers * 100).toFixed(1)
+        : 0;
+    const progressBar = document.getElementById('progressBar');
+    progressBar.style.width = `${progress}%`;
+    progressBar.textContent = `${progress}%`;
+
+    // Update status alert
+    const statusAlert = document.getElementById('statusAlert');
+    const statusMessage = document.getElementById('statusMessage');
+
+    // Only show alert when enrichment is running or just completed
+    if (data.stats.in_progress > 0) {
+        statusAlert.classList.remove('d-none');
+        statusAlert.classList.remove('alert-success', 'alert-danger');
+        statusAlert.classList.add('alert-info');
+        statusMessage.textContent = `Processing ${data.stats.in_progress} customers...`;
+    } else if (data.stats.processed === data.stats.total_customers && data.stats.processed > 0) {
+        statusAlert.classList.remove('d-none', 'alert-info', 'alert-danger');
+        statusAlert.classList.add('alert-success');
+        statusMessage.textContent = 'Processing complete!';
+    } else if (data.stats.failed > 0 && data.stats.in_progress === 0 && enrichmentRunning) {
+        // Only show failed message if enrichment was running in this session
+        statusAlert.classList.remove('d-none', 'alert-info', 'alert-success');
+        statusAlert.classList.add('alert-danger');
+        statusMessage.textContent = `Failed to process ${data.stats.failed} customers.`;
+    } else {
+        statusAlert.classList.add('d-none');
+    }
+
+    // Update suggestion count if available
+    if (data.suggestion_count !== undefined) {
+        document.getElementById('suggestionCount').textContent = data.suggestion_count;
+    }
+
+    // Update activity table if there are new activities
+    if (data.recent_activity) {
+        const tbody = document.querySelector('#activityTable tbody');
+        tbody.innerHTML = data.recent_activity.map(item => `
+            <tr>
+                <td><strong>${item.customer_name}</strong></td>
+                <td>
+                    <span class="badge ${
+                        item.status === 'completed' ? 'badge-success' :
+                        item.status === 'failed' ? 'badge-danger' : 'badge-warning'
+                    }">
+                        ${item.status}
+                    </span>
+                </td>
+                <td>${item.last_attempt}</td>
+                <td>${item.error_message || ''}</td>
+            </tr>
+        `).join('');
+    }
+
+    // Update updates table if there are recent updates
+    if (data.recent_updates) {
+        const tbody = document.querySelector('#updatesTable tbody');
+        tbody.innerHTML = data.recent_updates.map(item => `
+            <tr>
+                <td><strong>${item.name}</strong></td>
+                <td>${new Intl.NumberFormat('en-US', {
+                    style: 'currency',
+                    currency: 'USD'
+                }).format(item.estimated_revenue)}</td>
+                <td>${item.country || ''}</td>
+                <td>${(item.industry_tags || '').split(',').join(', ')}</td>
+                <td>${(item.company_types || '').split(',').join(', ')}</td>
+                <td>${new Date(item.updated_at).toLocaleString()}</td>
+            </tr>
+        `).join('');
+    }
+}
+
+// Add this at the top of your script
+let enrichmentRunning = false;
+
+function updateStatus() {
+    fetch('/customers/enrich/status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                updateUI(data.data);
+                enrichmentRunning = data.data.stats.in_progress > 0;
+
+                // Update button states
+                document.getElementById('startEnrichment').disabled = enrichmentRunning;
+                document.getElementById('stopEnrichment').disabled = !enrichmentRunning;
+                document.getElementById('processingSpinner').classList.toggle('d-none', !enrichmentRunning);
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching status:', error);
+        });
+}
+
+// Modify the start/stop event listeners to track enrichmentRunning
+document.getElementById('startEnrichment').addEventListener('click', function() {
+    if (confirm('Start enrichment process?')) {
+        fetch('/customers/enrich/start', {
+            method: 'POST',
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                enrichmentRunning = true;
+                updateStatus();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            alert('Error starting enrichment: ' + error);
+        });
+    }
+});
+
+document.getElementById('stopEnrichment').addEventListener('click', function() {
+    if (confirm('Stop enrichment process?')) {
+        fetch('/customers/enrich/stop', {
+            method: 'POST',
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                enrichmentRunning = false;
+                updateStatus();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            alert('Error stopping enrichment: ' + error);
+        });
+    }
+});
+
+// Update status every 2 seconds
+setInterval(updateStatus, 2000);
+
+// Initial update
+updateStatus();
+</script>
+{% endblock %}

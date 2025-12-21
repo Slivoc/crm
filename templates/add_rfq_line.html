@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="section">
+    <h2>Add RFQ Line</h2>
+    <form action="{{ url_for('rfqs.add_rfq_line', rfq_id=rfq_id) }}" method="post" class="horizontal-form">
+        <div class="form-group">
+            <label for="line_number">Line Number:</label>
+            <input type="text" id="line_number" name="line_number" required>
+        </div>
+        <div class="form-group">
+            <label for="part_number">Part Number:</label>
+            <input type="text" id="part_number" name="part_number" required>
+        </div>
+        <div class="form-group">
+            <label for="quantity">Quantity:</label>
+            <input type="number" id="quantity" name="quantity" required onchange="updateLineValue(this)">
+        </div>
+        <div class="form-group">
+            <label for="manufacturer">Manufacturer:</label>
+            <input type="text" id="manufacturer" name="manufacturer">
+        </div>
+        <div class="form-group">
+            <label for="suggested_suppliers">Suggested Suppliers:</label>
+            <select id="suggested_suppliers" name="suggested_suppliers" multiple>
+                {% for supplier in suppliers %}
+                    <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="chosen_supplier">Chosen Supplier:</label>
+            <select id="chosen_supplier" name="chosen_supplier">
+                {% for supplier in suppliers %}
+                    <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="cost">Cost:</label>
+            <input type="number" step="0.01" id="cost" name="cost" required>
+        </div>
+        <div class="form-group">
+            <label for="supplier_lead_time">Supplier Lead Time:</label>
+            <input type="number" id="supplier_lead_time" name="supplier_lead_time">
+        </div>
+        <div class="form-group">
+            <label for="margin">Margin (%):</label>
+            <input type="number" step="0.01" id="margin" name="margin" required>
+        </div>
+        <div class="form-group">
+            <label for="price">Price (auto-calculated):</label>
+            <input type="number" step="0.01" id="price" name="price" readonly>
+        </div>
+        <div class="form-group">
+            <label for="lead_time">Lead Time:</label>
+            <input type="number" id="lead_time" name="lead_time">
+        </div>
+        <div class="form-group">
+            <label for="line_value">Line Value (auto-calculated):</label>
+            <input type="number" step="0.01" id="line_value" name="line_value" readonly>
+        </div>
+        <button type="submit" class="button">Add Line</button>
+    </form>
+</div>
+<script>
+    function updateLineValue(element) {
+        var lineId = element.name.split('_')[1];
+        updatePrice(lineId);
+    }
+    // Add additional JavaScript functions here if needed
+</script>
+{% endblock %}

@@ -1,0 +1,583 @@
+{% extends "base.html" %}
+
+{% block title %}{{ request.reference_number }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h2>{{ request.reference_number }}</h2>
+        </div>
+        <div class="col-md-4 text-end">
+            <span class="badge
+                {% if request.status == 'pending' %}bg-warning
+                {% elif request.status == 'processing' %}bg-info
+                {% elif request.status == 'quoted' %}bg-success
+                {% else %}bg-secondary{% endif %} fs-5">
+                {{ request.status | title }}
+            </span>
+        </div>
+    </div>
+
+    <!-- Request Info -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5>Request Information</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <p><strong>Customer:</strong> {{ request.customer_name }}</p>
+                    <p><strong>Customer Ref:</strong> {{ request.customer_reference or '-' }}</p>
+                    <p><strong>Submitted By:</strong> {{ request.first_name }} {{ request.last_name }} ({{ request.user_email }})</p>
+                    <p><strong>Date Submitted:</strong> {{ request.date_submitted }}</p>
+                </div>
+                <div class="col-md-6">
+                    <p><strong>Parts List:</strong>
+                        {% if request.parts_list_id %}
+                        <a href="{{ url_for('parts_list.view_parts_list', list_id=request.parts_list_id) }}" target="_blank">
+                            {{ request.parts_list_name }}
+                        </a>
+                        {% else %}
+                        N/A
+                        {% endif %}
+                    </p>
+                    <p><strong>Processed By:</strong> {{ request.processed_by or '-' }}</p>
+                    <p><strong>Date Processed:</strong> {{ request.date_processed or '-' }}</p>
+                </div>
+            </div>
+
+            {% if request.customer_notes %}
+            <div class="mt-3">
+                <strong>Customer Notes:</strong>
+                <p class="border p-2 bg-light">{{ request.customer_notes }}</p>
+            </div>
+            {% endif %}
+
+            <!-- Status Actions -->
+            <div class="mt-3">
+                {% if request.status == 'pending' %}
+                <button class="btn btn-info" onclick="updateStatus('processing')">
+                    <i class="fas fa-cog"></i> Mark as Processing
+                </button>
+                {% endif %}
+
+                {% if request.status in ['pending', 'processing'] %}
+                <button class="btn btn-danger" onclick="declineRequest()">
+                    <i class="fas fa-times"></i> Decline Request
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Quote Response Grid -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5>Quote Lines</h5>
+            <div>
+                <button class="btn btn-sm btn-primary" onclick="loadFromPartsListAll()">
+                    <i class="fas fa-sync"></i> Load All from Parts List
+                </button>
+                <button class="btn btn-sm btn-success" onclick="publishQuote()">
+                    <i class="fas fa-paper-plane"></i> Publish to Customer
+                </button>
+            </div>
+        </div>
+<div class="card-body">
+    <table class="table table-bordered table-sm" id="quoteTable">
+        <thead>
+            <tr>
+                <th style="width: 50px;">Line</th>
+                <th>Part Number</th>
+                <th style="width: 60px;">Qty</th>
+                <th style="width: 180px;">
+                    Status
+                    <br><small class="text-muted">What stage is this line at?</small>
+                </th>
+                <th style="width: 200px;">
+                    Customer Portal View
+                    <br><small class="text-muted">Current portal estimate</small>
+                </th>
+                <th style="width: 120px;">Portal Quote Price</th>
+                <th style="width: 100px;">Lead Time</th>
+                <th style="width: 80px;">Currency</th>
+                <th style="width: 100px;">Portal Status</th>
+                <th style="width: 200px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in lines %}
+            <tr data-line-id="{{ line.id }}">
+                <td>{{ line.line_number }}</td>
+                <td><strong>{{ line.part_number }}</strong></td>
+                <td>{{ line.quantity }}</td>
+
+                <!-- Overall Status Column -->
+                <td>
+                    {% if line.overall_status == 'customer_quoted' %}
+                        <span class="badge bg-success">✓ Customer Quoted</span>
+                        <br>
+                        <strong>£{{ "%.2f"|format(line.quote_price_gbp) }}</strong>
+                        {% if line.margin_percent %}
+                        <br><small class="text-success">{{ "%.1f"|format(line.margin_percent) }}% margin</small>
+                        {% endif %}
+                        {% if line.parts_list_supplier_name %}
+                        <br><small class="text-muted">{{ line.parts_list_supplier_name }}</small>
+                        {% endif %}
+
+                    {% elif line.overall_status == 'no_bid' %}
+                        <span class="badge bg-secondary">No Bid</span>
+                        <br><small class="text-muted">Marked as no bid</small>
+
+                    {% elif line.overall_status == 'customer_created' %}
+                        <span class="badge bg-info">Customer Quote Started</span>
+                        <br><small class="text-muted">In customer quoting module</small>
+                        {% if line.base_cost_gbp %}
+                        <br><small>Base cost: £{{ "%.2f"|format(line.base_cost_gbp) }}</small>
+                        {% endif %}
+
+                    {% elif line.overall_status == 'parts_list_priced' %}
+                        <span class="badge bg-warning text-dark">Parts List Priced</span>
+                        <br>
+                        <span class="text-success">
+                            {{ line.parts_list_currency_code or 'GBP' }} {{ "%.2f"|format(line.parts_list_chosen_price) }}
+                        </span>
+                        {% if line.parts_list_supplier_name %}
+                        <br><small class="text-muted">{{ line.parts_list_supplier_name }}</small>
+                        {% endif %}
+                        <br><small class="text-info">→ Use Customer Quote module</small>
+
+                    {% elif line.overall_status == 'parts_list_costed' %}
+                        <span class="badge bg-info">Costed Only</span>
+                        <br><small class="text-muted">Has cost, needs margin</small>
+
+                    {% elif line.overall_status == 'has_supplier_quotes' %}
+                        <span class="badge bg-warning text-dark">Has Supplier Quotes</span>
+                        <br><small class="text-muted">Check sourcing tab</small>
+
+                    {% else %}
+                        <span class="badge bg-light text-dark">Not Started</span>
+                        <br><small class="text-muted">No sourcing yet</small>
+                    {% endif %}
+                </td>
+
+                <!-- Customer Portal Estimate -->
+                <td>
+                    {% if line.portal_estimated_price is not none %}
+                        <div><strong>{{ line.portal_estimated_currency or 'GBP' }} {{ "%.2f"|format(line.portal_estimated_price) }}</strong></div>
+                    {% else %}
+                        <div class="text-muted">No estimate</div>
+                    {% endif %}
+
+                    {% if line.portal_estimated_lead_days is not none %}
+                        <small class="text-muted">
+                            Lead: {{ line.portal_estimated_lead_days }} days{% if line.portal_estimated_lead_days == 0 %} (in stock){% endif %}
+                        </small>
+                    {% else %}
+                        <small class="text-muted">Lead: N/A</small>
+                    {% endif %}
+
+                    {% if line.portal_price_source %}
+                        <br><small class="text-muted">Source: {{ line.portal_price_source | replace('_', ' ') }}</small>
+                    {% endif %}
+                </td>
+
+                <!-- Quote Price Input -->
+                <td>
+                    <input type="number"
+                           class="form-control form-control-sm"
+                           id="price_{{ line.id }}"
+                           value="{{ line.quoted_price or '' }}"
+                           step="0.01"
+                           placeholder="0.00"
+                           {% if line.status == 'no_bid' %}disabled{% endif %}>
+                    {% if line.quote_price_gbp and line.overall_status == 'customer_quoted' %}
+                    <small class="text-muted">Suggested: £{{ "%.2f"|format(line.quote_price_gbp) }}</small>
+                    {% endif %}
+                </td>
+
+                <!-- Lead Time Input -->
+                <td>
+                    <input type="number"
+                           class="form-control form-control-sm"
+                           id="lead_{{ line.id }}"
+                           value="{{ line.quoted_lead_days or line.parts_list_lead_days or '' }}"
+                           placeholder="Days"
+                           {% if line.status == 'no_bid' %}disabled{% endif %}>
+                </td>
+
+                <!-- Currency Select -->
+                <td>
+                    <select class="form-select form-select-sm"
+                            id="currency_{{ line.id }}"
+                            {% if line.status == 'no_bid' %}disabled{% endif %}>
+                        {% for curr in currencies %}
+                        <option value="{{ curr.id }}"
+                            {% if line.quoted_currency_id == curr.id or (not line.quoted_currency_id and curr.id == 3) %}selected{% endif %}>
+                            {{ curr.currency_code }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </td>
+
+                <!-- Portal Status Badge -->
+                <td>
+                    <span class="badge
+                        {% if line.status == 'quoted' %}bg-success
+                        {% elif line.status == 'no_bid' %}bg-secondary
+                        {% else %}bg-warning{% endif %}"
+                        id="status_badge_{{ line.id }}">
+                        {{ line.status | replace('_', ' ') | title }}
+                    </span>
+                </td>
+
+                <!-- Actions -->
+                <td>
+                    {% if line.overall_status == 'customer_quoted' %}
+                    <button class="btn btn-sm btn-success"
+                            onclick="loadFromCustomerQuote({{ line.id }})"
+                            title="Load from Customer Quote (recommended)">
+                        <i class="fas fa-download"></i> Load CQ
+                    </button>
+                    {% elif line.overall_status == 'parts_list_priced' %}
+                    <button class="btn btn-sm btn-warning"
+                            onclick="loadFromPartsList({{ line.id }})"
+                            title="Load from Parts List (use Customer Quote for margin)">
+                        <i class="fas fa-download"></i> Load PL
+                    </button>
+                    {% else %}
+                    <button class="btn btn-sm btn-outline-secondary" disabled
+                            title="Not ready - complete pricing first">
+                        <i class="fas fa-download"></i> Load
+                    </button>
+                    {% endif %}
+
+                    <button class="btn btn-sm btn-primary"
+                            onclick="saveLine({{ line.id }})"
+                            id="save_btn_{{ line.id }}">
+                        <i class="fas fa-save"></i>
+                    </button>
+
+                    <button class="btn btn-sm {% if line.status == 'no_bid' %}btn-warning{% else %}btn-secondary{% endif %}"
+                            onclick="toggleNoBid({{ line.id }})"
+                            id="nobid_btn_{{ line.id }}">
+                        {% if line.status == 'no_bid' %}
+                        <i class="fas fa-undo"></i>
+                        {% else %}
+                        No Bid
+                        {% endif %}
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- Summary Stats -->
+    <div class="row mt-3">
+        <div class="col-md-12">
+            <div class="alert alert-info mb-2">
+                <strong>Pricing Status:</strong>
+                <span class="badge bg-success">{{ lines | selectattr('overall_status', 'equalto', 'customer_quoted') | list | length }}</span> Customer Quoted (ready!) |
+                <span class="badge bg-info">{{ lines | selectattr('overall_status', 'equalto', 'customer_created') | list | length }}</span> In Progress |
+                <span class="badge bg-warning text-dark">{{ lines | selectattr('overall_status', 'equalto', 'parts_list_priced') | list | length }}</span> Needs CQ Module |
+                <span class="badge bg-secondary">{{ lines | selectattr('overall_status', 'equalto', 'no_bid') | list | length }}</span> No Bid |
+                <span class="badge bg-light text-dark">{{ lines | selectattr('overall_status', 'equalto', 'not_worked') | list | length }}</span> Not Started
+            </div>
+            <div class="alert alert-warning">
+                <i class="fas fa-info-circle"></i> <strong>Recommended workflow:</strong>
+                Use the <a href="{{ url_for('customer_quoting.customer_quote', list_id=request.parts_list_id) }}" target="_blank">Customer Quote</a> module to add margins and set selling prices, then click "Load CQ" here.
+            </div>
+        </div>
+    </div>
+</div>
+        </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="mb-4">
+        <a href="{{ url_for('portal_admin.portal_requests') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Requests
+        </a>
+
+        {% if request.parts_list_id %}
+        <a href="{{ url_for('parts_list.parts_list_costing', list_id=request.parts_list_id) }}"
+           class="btn btn-primary" target="_blank">
+            <i class="fas fa-external-link-alt"></i> Work on Costing
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+const requestId = {{ request.id }};
+
+// Load price/lead time from parts list for a single line
+async function loadFromPartsList(lineId) {
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/lines/${lineId}/load-from-parts-list`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            document.getElementById(`price_${lineId}`).value = result.price || '';
+            document.getElementById(`lead_${lineId}`).value = result.lead_days || '';
+
+            // Set currency if provided
+            if (result.currency_id) {
+                document.getElementById(`currency_${lineId}`).value = result.currency_id;
+            }
+
+            // Enable fields if they were disabled
+            document.getElementById(`price_${lineId}`).disabled = false;
+            document.getElementById(`lead_${lineId}`).disabled = false;
+            document.getElementById(`currency_${lineId}`).disabled = false;
+
+            // Update status badge
+            updateStatusBadge(lineId, 'pending');
+
+            alert('Loaded from parts list');
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error: ' + error);
+    }
+}
+
+// Load ALL lines from parts list
+async function loadFromPartsListAll() {
+    if (!confirm('Load pricing from parts list for all lines that have been costed?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/load-all-from-parts-list`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert(`Loaded ${result.loaded_count} lines from parts list`);
+            location.reload();
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error: ' + error);
+    }
+}
+
+// Save a single line
+async function saveLine(lineId) {
+    const price = document.getElementById(`price_${lineId}`).value;
+    const leadDays = document.getElementById(`lead_${lineId}`).value;
+    const currencyId = document.getElementById(`currency_${lineId}`).value;
+
+    if (!price || parseFloat(price) <= 0) {
+        alert('Please enter a valid price');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/lines/${lineId}/save`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                price: parseFloat(price),
+                lead_days: leadDays ? parseInt(leadDays) : null,
+                currency_id: parseInt(currencyId)
+            })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            updateStatusBadge(lineId, 'quoted');
+            alert('Line saved');
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error: ' + error);
+    }
+}
+
+// Toggle no-bid status
+async function toggleNoBid(lineId) {
+    const currentStatus = document.getElementById(`status_badge_${lineId}`).textContent.trim().toLowerCase();
+    const isNoBid = currentStatus === 'no bid';
+
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/lines/${lineId}/toggle-no-bid`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            const newStatus = result.status;
+            updateStatusBadge(lineId, newStatus);
+
+            // Enable/disable inputs
+            const disabled = (newStatus === 'no_bid');
+            document.getElementById(`price_${lineId}`).disabled = disabled;
+            document.getElementById(`lead_${lineId}`).disabled = disabled;
+            document.getElementById(`currency_${lineId}`).disabled = disabled;
+
+            // Update button
+            const btn = document.getElementById(`nobid_btn_${lineId}`);
+            if (disabled) {
+                btn.innerHTML = '<i class="fas fa-undo"></i>';
+                btn.classList.remove('btn-secondary');
+                btn.classList.add('btn-warning');
+            } else {
+                btn.innerHTML = 'No Bid';
+                btn.classList.remove('btn-warning');
+                btn.classList.add('btn-secondary');
+            }
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error: ' + error);
+    }
+}
+
+// Update status badge
+function updateStatusBadge(lineId, status) {
+    const badge = document.getElementById(`status_badge_${lineId}`);
+    badge.className = 'badge';
+
+    if (status === 'quoted') {
+        badge.classList.add('bg-success');
+        badge.textContent = 'Quoted';
+    } else if (status === 'no_bid') {
+        badge.classList.add('bg-secondary');
+        badge.textContent = 'No Bid';
+    } else {
+        badge.classList.add('bg-warning');
+        badge.textContent = 'Pending';
+    }
+}
+
+// Publish quote to customer
+async function publishQuote() {
+    // Check if all lines are quoted or no-bid
+    const rows = document.querySelectorAll('#quoteTable tbody tr');
+    let hasUnquoted = false;
+
+    rows.forEach(row => {
+        const badge = row.querySelector('[id^="status_badge_"]');
+        if (badge && badge.textContent.trim().toLowerCase() === 'pending') {
+            hasUnquoted = true;
+        }
+    });
+
+    if (hasUnquoted) {
+        if (!confirm('Some lines are still pending. Publish anyway?')) {
+            return;
+        }
+    }
+
+    if (!confirm('Publish this quote to the customer? They will be able to see all prices.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/publish`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert('Quote published to customer!');
+            location.reload();
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error: ' + error);
+    }
+}
+
+// Update overall request status
+async function updateStatus(newStatus) {
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/status`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({status: newStatus})
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            location.reload();
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error: ' + error);
+    }
+}
+
+// Decline request
+async function declineRequest() {
+    const reason = prompt('Reason for declining (optional):');
+    if (reason === null) return; // Cancelled
+
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/decline`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({reason: reason})
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert('Request declined');
+            location.reload();
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error: ' + error);
+    }
+}
+
+    // Load price from customer quote line (recommended source)
+async function loadFromCustomerQuote(lineId) {
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/lines/${lineId}/load-from-customer-quote`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            document.getElementById(`price_${lineId}`).value = result.price || '';
+            document.getElementById(`lead_${lineId}`).value = result.lead_days || '';
+
+            // Set currency (should be GBP from customer quote)
+            if (result.currency_id) {
+                document.getElementById(`currency_${lineId}`).value = result.currency_id;
+            }
+
+            // Enable fields if they were disabled
+            document.getElementById(`price_${lineId}`).disabled = false;
+            document.getElementById(`lead_${lineId}`).disabled = false;
+            document.getElementById(`currency_${lineId}`).disabled = false;
+
+            updateStatusBadge(lineId, 'pending');
+
+            alert('Loaded from customer quote (with margin applied)');
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error: ' + error);
+    }
+}
+</script>
+{% endblock %}

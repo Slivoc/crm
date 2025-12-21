@@ -1,0 +1,706 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h3 mb-0">
+            <i class="bi bi-journal-text me-2"></i>
+            Journal Entries
+        </h1>
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addJournalEntryModal">
+            <i class="bi bi-plus-circle me-1"></i>
+            New Journal Entry
+        </button>
+    </div>
+
+    <!-- Filter Card -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form action="{{ url_for('finance.list_journal_entries') }}" method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label for="fiscal_period_id" class="form-label">Fiscal Period</label>
+                    <select class="form-select" id="fiscal_period_id" name="fiscal_period_id">
+                        <option value="">All Periods</option>
+                        {% for period in fiscal_periods %}
+                            <option value="{{ period.id }}" {% if selected_fiscal_period == period.id|string %}selected{% endif %}>
+                                {{ period.period_name }} - {{ period.year_name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="journal_entry_type_id" class="form-label">Entry Type</label>
+                    <select class="form-select" id="journal_entry_type_id" name="journal_entry_type_id">
+                        <option value="">All Types</option>
+                        {% for type in journal_entry_types %}
+                            <option value="{{ type.id }}" {% if selected_journal_entry_type == type.id|string %}selected{% endif %}>
+                                {{ type.type_name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label for="search" class="form-label">Search</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="search" name="search" 
+                               placeholder="Reference or description..." value="{{ search_query }}">
+                        <button class="btn btn-outline-secondary" type="submit">
+                            <i class="bi bi-search"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <div class="d-grid w-100">
+                        <button type="submit" class="btn btn-primary">Apply Filters</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Journal Entries Table -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0">Journal Entries</h5>
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-download me-1"></i>
+                    Export
+                </button>
+                <ul class="dropdown-menu" aria-labelledby="exportDropdown">
+                    <li><a class="dropdown-item" href="#">Export as CSV</a></li>
+                    <li><a class="dropdown-item" href="#">Export as Excel</a></li>
+                    <li><a class="dropdown-item" href="#">Export as PDF</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Entry Date</th>
+                            <th>Reference</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                            <th>Period</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if journal_entries %}
+                            {% for entry in journal_entries %}
+                                <tr>
+                                    <td>{{ entry.entry_date }}</td>
+                                    <td>{{ entry.reference_number or '-' }}</td>
+                                    <td>{{ entry.type_name }}</td>
+                                    <td>{{ entry.description[:50] + '...' if entry.description and entry.description|length > 50 else entry.description or '-' }}</td>
+                                    <td>{{ entry.period_name }} <span class="text-muted small">{{ entry.year_name }}</span></td>
+                                    <td>{{ format_currency(entry.total_debit, entry.currency_code) }}</td>
+                                    <td>
+                                        {% if entry.is_posted %}
+                                            <span class="badge bg-success">Posted</span>
+                                        {% else %}
+                                            <span class="badge bg-warning text-dark">Draft</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            <a href="{{ url_for('finance.view_journal_entry', journal_entry_id=entry.id) }}" class="btn btn-outline-primary">
+                                                <i class="bi bi-eye"></i>
+                                            </a>
+                                            {% if not entry.is_posted %}
+                                                <button type="button" class="btn btn-outline-success post-journal-btn" data-entry-id="{{ entry.id }}">
+                                                    <i class="bi bi-check-lg"></i>
+                                                </button>
+                                                <button type="button" class="btn btn-outline-danger delete-journal-btn" data-entry-id="{{ entry.id }}">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="8" class="text-center py-4">
+                                    <p class="text-muted mb-0">No journal entries found</p>
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% if journal_entries|length > 0 %}
+            <div class="card-footer">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="text-muted">Showing {{ journal_entries|length }} entries</span>
+                    <nav aria-label="Journal entries pagination">
+                        <ul class="pagination pagination-sm mb-0">
+                            <li class="page-item disabled">
+                                <a class="page-link" href="#" tabindex="-1" aria-disabled="true">Previous</a>
+                            </li>
+                            <li class="page-item active"><a class="page-link" href="#">1</a></li>
+                            <li class="page-item"><a class="page-link" href="#">2</a></li>
+                            <li class="page-item"><a class="page-link" href="#">3</a></li>
+                            <li class="page-item">
+                                <a class="page-link" href="#">Next</a>
+                            </li>
+                        </ul>
+                    </nav>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Add Journal Entry Modal -->
+    <div class="modal fade" id="addJournalEntryModal" tabindex="-1" aria-labelledby="addJournalEntryModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addJournalEntryModalLabel">Create New Journal Entry</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="journalEntryForm">
+                    <div class="modal-body">
+                        <div class="row mb-3">
+                            <div class="col-md-3">
+                                <label for="entry_date" class="form-label">Entry Date *</label>
+                                <input type="date" class="form-control" id="entry_date" name="entry_date" required value="{{ today_date }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="fiscal_period_id" class="form-label">Fiscal Period *</label>
+                                <select class="form-select" id="fiscal_period_id" name="fiscal_period_id" required>
+                                    {% for period in fiscal_periods %}
+                                        <option value="{{ period.id }}">{{ period.period_name }} - {{ period.year_name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="journal_entry_type_id" class="form-label">Entry Type *</label>
+                                <select class="form-select" id="journal_entry_type_id" name="journal_entry_type_id" required>
+                                    {% for type in journal_entry_types %}
+                                        <option value="{{ type.id }}">{{ type.type_name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="currency_id" class="form-label">Currency *</label>
+                                <select class="form-select" id="currency_id" name="currency_id" required>
+                                    {% for currency in currencies %}
+                                        <option value="{{ currency.id }}">{{ currency.currency_code }} ({{ currency.symbol }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label for="reference_number" class="form-label">Reference Number</label>
+                                <input type="text" class="form-control" id="reference_number" name="reference_number" placeholder="Optional reference">
+                            </div>
+                            <div class="col-md-8">
+                                <label for="description" class="form-label">Description</label>
+                                <input type="text" class="form-control" id="description" name="description" placeholder="Journal entry description">
+                            </div>
+                        </div>
+
+                        <!-- Journal Lines Table -->
+                        <div class="table-responsive mt-4">
+                            <table class="table table-bordered" id="journalLinesTable">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 35%;">Account</th>
+                                        <th style="width: 35%;">Description</th>
+                                        <th style="width: 12%;">Debit</th>
+                                        <th style="width: 12%;">Credit</th>
+                                        <th style="width: 6%;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="journal-line">
+                                        <td>
+                                            <select class="form-select account-select" name="lines[0][account_id]" required>
+                                                <option value="">Select Account</option>
+                                                <!-- Account options would be populated dynamically -->
+                                            </select>
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control" name="lines[0][description]" placeholder="Line description">
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control debit-input" name="lines[0][debit_amount]" value="0" min="0" step="0.01">
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control credit-input" name="lines[0][credit_amount]" value="0" min="0" step="0.01">
+                                        </td>
+                                        <td class="text-center">
+                                            <button type="button" class="btn btn-sm btn-outline-danger remove-line" disabled>
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    <tr class="journal-line">
+                                        <td>
+                                            <select class="form-select account-select" name="lines[1][account_id]" required>
+                                                <option value="">Select Account</option>
+                                                <!-- Account options would be populated dynamically -->
+                                            </select>
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control" name="lines[1][description]" placeholder="Line description">
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control debit-input" name="lines[1][debit_amount]" value="0" min="0" step="0.01">
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control credit-input" name="lines[1][credit_amount]" value="0" min="0" step="0.01">
+                                        </td>
+                                        <td class="text-center">
+                                            <button type="button" class="btn btn-sm btn-outline-danger remove-line">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <td colspan="2">
+                                            <button type="button" class="btn btn-sm btn-outline-primary" id="addLineBtn">
+                                                <i class="bi bi-plus-circle me-1"></i>
+                                                Add Line
+                                            </button>
+                                        </td>
+                                        <td class="text-end fw-bold" id="totalDebit">0.00</td>
+                                        <td class="text-end fw-bold" id="totalCredit">0.00</td>
+                                        <td></td>
+                                    </tr>
+                                    <tr class="table-light">
+                                        <td colspan="2" class="text-end fw-bold">Difference:</td>
+                                        <td colspan="2" class="text-center fw-bold" id="balanceDifference">0.00</td>
+                                        <td></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+
+                        <div class="form-check mt-3">
+                            <input class="form-check-input" type="checkbox" id="is_posted" name="is_posted">
+                            <label class="form-check-label" for="is_posted">
+                                Post immediately (update account balances)
+                            </label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="saveJournalBtn" disabled>Save Journal Entry</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Fetch accounts for select dropdowns
+    function loadAccounts() {
+        fetch('/finance/accounts/search?term=')
+            .then(response => response.json())
+            .then(accounts => {
+                const accountSelects = document.querySelectorAll('.account-select');
+                accountSelects.forEach(select => {
+                    // Save current value if any
+                    const currentValue = select.value;
+                    
+                    // Clear existing options except first one
+                    while (select.options.length > 1) {
+                        select.remove(1);
+                    }
+                    
+                    // Add account options
+                    accounts.forEach(account => {
+                        const option = document.createElement('option');
+                        option.value = account.id;
+                        option.textContent = `${account.account_number} - ${account.account_name}`;
+                        select.appendChild(option);
+                    });
+                    
+                    // Restore selected value if it exists
+                    if (currentValue) {
+                        select.value = currentValue;
+                    }
+                });
+            })
+            .catch(error => console.error('Error loading accounts:', error));
+    }
+
+    // Initial account load
+    loadAccounts();
+
+    // Journal Entry Form Logic
+    const journalForm = document.getElementById('journalEntryForm');
+    const saveJournalBtn = document.getElementById('saveJournalBtn');
+    const addLineBtn = document.getElementById('addLineBtn');
+    const journalLinesTable = document.getElementById('journalLinesTable').querySelector('tbody');
+    
+    // Calculate totals and validate balance
+    function calculateTotals() {
+        let totalDebit = 0;
+        let totalCredit = 0;
+        
+        // Sum all debit and credit inputs
+        document.querySelectorAll('.debit-input').forEach(input => {
+            totalDebit += parseFloat(input.value) || 0;
+        });
+        
+        document.querySelectorAll('.credit-input').forEach(input => {
+            totalCredit += parseFloat(input.value) || 0;
+        });
+        
+        // Update display
+        document.getElementById('totalDebit').textContent = totalDebit.toFixed(2);
+        document.getElementById('totalCredit').textContent = totalCredit.toFixed(2);
+        
+        // Calculate difference
+        const difference = Math.abs(totalDebit - totalCredit);
+        document.getElementById('balanceDifference').textContent = difference.toFixed(2);
+        
+        // Visual feedback for balance state
+        const balanceDifferenceElement = document.getElementById('balanceDifference');
+        if (difference === 0 && totalDebit > 0) {
+            balanceDifferenceElement.classList.remove('text-danger');
+            balanceDifferenceElement.classList.add('text-success');
+            saveJournalBtn.disabled = false;
+        } else {
+            balanceDifferenceElement.classList.remove('text-success');
+            balanceDifferenceElement.classList.add('text-danger');
+            saveJournalBtn.disabled = true;
+        }
+    }
+    
+    // Ensure only one of debit or credit can have a value per line
+    function setupDebitCreditExclusivity(row) {
+        const debitInput = row.querySelector('.debit-input');
+        const creditInput = row.querySelector('.credit-input');
+        
+        debitInput.addEventListener('input', function() {
+            if (parseFloat(this.value) > 0) {
+                creditInput.value = '0';
+                creditInput.disabled = true;
+            } else {
+                creditInput.disabled = false;
+            }
+            calculateTotals();
+        });
+        
+        creditInput.addEventListener('input', function() {
+            if (parseFloat(this.value) > 0) {
+                debitInput.value = '0';
+                debitInput.disabled = true;
+            } else {
+                debitInput.disabled = false;
+            }
+            calculateTotals();
+        });
+    }
+    
+    // Setup event handlers for all rows
+    document.querySelectorAll('.journal-line').forEach(row => {
+        setupDebitCreditExclusivity(row);
+    });
+    
+    // Add new line to journal entry
+    if (addLineBtn) {
+        let lineCount = 2; // Start with 2 because we already have 0 and 1
+        
+        addLineBtn.addEventListener('click', function() {
+            const newRow = document.createElement('tr');
+            newRow.className = 'journal-line';
+            newRow.innerHTML = `
+                <td>
+                    <select class="form-select account-select" name="lines[${lineCount}][account_id]" required>
+                        <option value="">Select Account</option>
+                        <!-- Account options will be added by loadAccounts() -->
+                    </select>
+                </td>
+                <td>
+                    <input type="text" class="form-control" name="lines[${lineCount}][description]" placeholder="Line description">
+                </td>
+                <td>
+                    <input type="number" class="form-control debit-input" name="lines[${lineCount}][debit_amount]" value="0" min="0" step="0.01">
+                </td>
+                <td>
+                    <input type="number" class="form-control credit-input" name="lines[${lineCount}][credit_amount]" value="0" min="0" step="0.01">
+                </td>
+                <td class="text-center">
+                    <button type="button" class="btn btn-sm btn-outline-danger remove-line">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </td>
+            `;
+            
+            journalLinesTable.appendChild(newRow);
+            setupDebitCreditExclusivity(newRow);
+            loadAccounts(); // Refresh account options
+            lineCount++;
+        });
+    }
+    
+    // Remove line functionality
+    document.addEventListener('click', function(e) {
+        if (e.target.closest('.remove-line')) {
+            const button = e.target.closest('.remove-line');
+            button.closest('tr').remove();
+            calculateTotals();
+        }
+    });
+    
+    // Journal Entry Form Submission
+    if (journalForm) {
+        journalForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Validate form
+            if (!this.checkValidity()) {
+                this.reportValidity();
+                return;
+            }
+            
+            // Prepare form data
+            const formData = new FormData(journalForm);
+            const jsonData = {};
+            
+            // Convert FormData to JSON
+            for (const [key, value] of formData.entries()) {
+                if (key.includes('[')) {
+                    // Handle array inputs like lines[0][account_id]
+                    const matches = key.match(/([^\[]+)\[([^\]]+)\]\[([^\]]+)\]/);
+                    if (matches) {
+                        const [_, arrayName, index, property] = matches;
+                        
+                        if (!jsonData[arrayName]) {
+                            jsonData[arrayName] = [];
+                        }
+                        
+                        if (!jsonData[arrayName][index]) {
+                            jsonData[arrayName][index] = {};
+                        }
+                        
+                        jsonData[arrayName][index][property] = value;
+                    }
+                } else {
+                    jsonData[key] = value;
+                }
+            }
+            
+            // Clean up the lines array (convert to proper array)
+            const lines = [];
+            if (jsonData.lines) {
+                for (const index in jsonData.lines) {
+                    // Convert string values to numbers where appropriate
+                    const line = jsonData.lines[index];
+                    line.debit_amount = parseFloat(line.debit_amount) || 0;
+                    line.credit_amount = parseFloat(line.credit_amount) || 0;
+                    line.account_id = parseInt(line.account_id);
+                    
+                    lines.push(line);
+                }
+            }
+            jsonData.lines = lines;
+            
+            // Submit the form using fetch API
+            fetch('/finance/journal-entries', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(jsonData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Close modal and reload page
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('addJournalEntryModal'));
+                    modal.hide();
+                    
+                    // Show success message
+                    alert('Journal entry created successfully!');
+                    
+                    // Reload page to show new entry
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred. Please try again.');
+            });
+        });
+    }
+    
+    // Post Journal Entry
+    document.querySelectorAll('.post-journal-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            if (confirm('Are you sure you want to post this journal entry? This will update account balances and cannot be undone.')) {
+                const entryId = this.getAttribute('data-entry-id');
+                
+                fetch(`/finance/journal-entries/${entryId}/post`, {
+                    method: 'POST'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Journal entry posted successfully!');
+                        window.location.reload();
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred. Please try again.');
+                });
+            }
+        });
+    });
+    
+    // Delete Journal Entry
+    document.querySelectorAll('.delete-journal-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            if (confirm('Are you sure you want to delete this journal entry? This cannot be undone.')) {
+                const entryId = this.getAttribute('data-entry-id');
+                
+                fetch(`/finance/journal-entries/${entryId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Journal entry deleted successfully!');
+                        window.location.reload();
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred. Please try again.');
+                });
+            }
+        });
+    });
+    
+    // Initialize
+    calculateTotals();
+});
+// Add this script to your page to debug the modal error
+document.addEventListener('DOMContentLoaded', function() {
+    // Override the bootstrap Modal hide method to add debugging
+    const originalModalHide = bootstrap.Modal.prototype.hide;
+
+    bootstrap.Modal.prototype.hide = function() {
+        console.log('Modal hide called on:', this._element);
+        try {
+            originalModalHide.apply(this, arguments);
+        } catch (error) {
+            console.error('Error in modal.hide():', error);
+            console.trace('Stack trace for modal.hide error');
+        }
+    };
+
+    // Track all click events to see what might be triggering the modal
+    document.addEventListener('click', function(event) {
+        const target = event.target;
+
+        // Check if the click is on or within a button that might trigger modal actions
+        const buttonElement = target.closest('button');
+        if (buttonElement) {
+            console.log('Button clicked:', buttonElement);
+            console.log('Button attributes:', Array.from(buttonElement.attributes).map(attr => `${attr.name}="${attr.value}"`).join(', '));
+
+            // Check if this is a modal trigger
+            if (buttonElement.getAttribute('data-bs-toggle') === 'modal' ||
+                buttonElement.getAttribute('data-bs-dismiss') === 'modal') {
+                console.log('Modal-related button clicked');
+            }
+
+            // Track any hidden modals attempting to be accessed
+            setTimeout(() => {
+                try {
+                    const modalInstances = document.querySelectorAll('.modal');
+                    console.log(`${modalInstances.length} modals found in DOM`);
+
+                    modalInstances.forEach(modal => {
+                        const modalId = modal.id;
+                        try {
+                            const instance = bootstrap.Modal.getInstance(modal);
+                            console.log(`Modal #${modalId}: Instance exists:`, !!instance);
+                        } catch (err) {
+                            console.error(`Error getting modal instance for #${modalId}:`, err);
+                        }
+                    });
+                } catch (err) {
+                    console.error('Error checking modal instances:', err);
+                }
+            }, 100);
+        }
+    }, true);
+
+    // Intercept form submissions to check for modal-related actions
+    document.addEventListener('submit', function(event) {
+        console.log('Form submitted:', event.target);
+        const formElement = event.target;
+
+        // Check if a form within a modal is being submitted
+        if (formElement.closest('.modal')) {
+            console.log('Form within modal submitted');
+        }
+    }, true);
+
+    // Log any Bootstrap modal events
+    const modalEvents = [
+        'show.bs.modal', 'shown.bs.modal',
+        'hide.bs.modal', 'hidden.bs.modal',
+        'hidePrevented.bs.modal'
+    ];
+
+    modalEvents.forEach(eventName => {
+        document.addEventListener(eventName, function(event) {
+            console.log(`Modal event "${eventName}" fired:`, event.target);
+        }, true);
+    });
+
+    // Check modal initialization on page load
+    console.log('Checking for modals on page load...');
+    const modalsOnPage = document.querySelectorAll('.modal');
+    modalsOnPage.forEach(modal => {
+        console.log(`Modal found: #${modal.id}`);
+        console.log(`Modal HTML:`, modal.outerHTML.substring(0, 100) + '...');
+    });
+
+    // Check if the specific modal mentioned in the error is present
+    const addJournalEntryModal = document.getElementById('addJournalEntryModal');
+    if (addJournalEntryModal) {
+        console.log('addJournalEntryModal found in DOM');
+
+        // Check if it has a Bootstrap modal instance
+        try {
+            const modalInstance = bootstrap.Modal.getInstance(addJournalEntryModal);
+            console.log('Existing modal instance:', !!modalInstance);
+
+            if (!modalInstance) {
+                console.log('No instance found - modal might not be initialized');
+            }
+        } catch (err) {
+            console.error('Error getting modal instance:', err);
+        }
+    } else {
+        console.warn('addJournalEntryModal not found in DOM');
+    }
+});
+</script>
+{% endblock %}

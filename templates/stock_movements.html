@@ -1,0 +1,463 @@
+{% extends "base.html" %}
+
+{% block title %}Stock Movements{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Stock Movements</h1>
+    
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <ul class="nav nav-tabs card-header-tabs" id="movementTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="add-tab" data-bs-toggle="tab" data-bs-target="#add-content" type="button" role="tab" aria-controls="add-content" aria-selected="true">Add Stock</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="remove-tab" data-bs-toggle="tab" data-bs-target="#remove-content" type="button" role="tab" aria-controls="remove-content" aria-selected="false">Remove Stock</button>
+                        </li>
+                    </ul>
+                </div>
+                <div class="card-body">
+                    <div class="tab-content" id="movementTabsContent">
+                        <div class="tab-pane fade show active" id="add-content" role="tabpanel" aria-labelledby="add-tab">
+                            <form id="add-stock-form">
+                                <div class="mb-3">
+    <label for="part-select-add" class="form-label">Part</label>
+    <input type="text" class="form-control part-search" id="part-search-add"
+           placeholder="Search part number..." autocomplete="off" required>
+    <select class="form-select d-none" id="part-select-add">
+        <option value="">Select part</option>
+        {% for part in parts %}
+        <option value="{{ part.base_part_number }}" data-name="{{ part.part_number }}">{{ part.part_number }} ({{ part.base_part_number }})</option>
+        {% endfor %}
+    </select>
+    <div id="part-results-add" class="part-results border rounded mt-1"></div>
+</div>
+                                <div class="mb-3">
+                                    <label for="quantity-input-add" class="form-label">Quantity</label>
+                                    <input type="number" class="form-control" id="quantity-input-add" min="1" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="datecode-input" class="form-label">Date Code</label>
+                                    <input type="text" class="form-control" id="datecode-input">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="cost-input" class="form-label">Cost Per Unit</label>
+                                    <input type="number" class="form-control" id="cost-input" step="0.01">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="reference-input-add" class="form-label">Reference (PO/Invoice)</label>
+                                    <input type="text" class="form-control" id="reference-input-add">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="notes-input-add" class="form-label">Notes</label>
+                                    <textarea class="form-control" id="notes-input-add" rows="2"></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Add Stock</button>
+                            </form>
+                        </div>
+
+                        <div class="tab-pane fade" id="remove-content" role="tabpanel" aria-labelledby="remove-tab">
+                            <form id="remove-stock-form">
+                                <div class="mb-3">
+                                    <label for="part-select-remove" class="form-label">Part</label>
+                                    <input type="text" class="form-control part-search" id="part-search-remove" placeholder="Search part number..." required>
+                                    <select class="form-select d-none" id="part-select-remove">
+                                        <option value="">Select part</option>
+                                        {% for part in parts %}
+                                        <option value="{{ part.base_part_number }}" data-name="{{ part.part_number }}">{{ part.part_number }} ({{ part.base_part_number }})</option>
+                                        {% endfor %}
+                                    </select>
+                                    <div id="part-results-remove" class="part-results border rounded mt-1"></div>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="quantity-input-remove" class="form-label">Quantity</label>
+                                    <input type="number" class="form-control" id="quantity-input-remove" min="1" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="reference-input-remove" class="form-label">Reference (Order #)</label>
+                                    <input type="text" class="form-control" id="reference-input-remove">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="notes-input-remove" class="form-label">Notes</label>
+                                    <textarea class="form-control" id="notes-input-remove" rows="2"></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-danger">Remove Stock</button>
+                            </form>
+
+                            <div id="stock-balances" class="mt-4 d-none">
+                                <h5>Available Stock Balances</h5>
+                                <div class="table-responsive">
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Date Code</th>
+                                                <th>Cost</th>
+                                                <th>Available</th>
+                                                <th>Reference</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="balances-table-body">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Recent Movements</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Part</th>
+                                    <th>Type</th>
+                                    <th>Qty</th>
+                                    <th>Date Code</th>
+                                    <th>Cost</th>
+                                    <th>Date</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for movement in recent_movements %}
+                                <tr>
+                                    <td>{{ movement.part_number }}</td>
+                                    <td>
+                                        {% if movement.type == 'IN' %}
+                                        <span class="badge bg-success">IN</span>
+                                        {% else %}
+                                        <span class="badge bg-danger">OUT</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ movement.quantity }}</td>
+                                    <td>{{ movement.datecode or '-' }}</td>
+                                    <td>{{ '%.2f'|format(movement.cost_per_unit) if movement.cost_per_unit else '-' }}</td>
+                                    <td>{{ movement.date }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.part-results {
+    max-height: 200px;
+    overflow-y: auto;
+    display: none;
+}
+.part-result-item {
+    padding: 8px 12px;
+    cursor: pointer;
+}
+.part-result-item:hover {
+    background-color: #f8f9fa;
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const addForm = document.getElementById('add-stock-form');
+    const removeForm = document.getElementById('remove-stock-form');
+
+    // Part search functionality
+    initPartSearch('add');
+    initPartSearch('remove');
+
+    // Load balances when part selected in remove tab
+    document.getElementById('part-select-remove').addEventListener('change', function() {
+        loadStockBalances();
+    });
+
+    // Also load balances when selecting from search results
+    document.querySelectorAll('#part-results-remove .part-result-item').forEach(item => {
+        item.addEventListener('click', function() {
+            setTimeout(loadStockBalances, 100); // Small delay to ensure select value is updated
+        });
+    });
+
+    function initPartSearch(formType) {
+        const searchInput = document.getElementById(`part-search-${formType}`);
+        const selectElement = document.getElementById(`part-select-${formType}`);
+        const resultsContainer = document.getElementById(`part-results-${formType}`);
+
+        searchInput.addEventListener('input', function() {
+            const searchTerm = this.value.toLowerCase();
+            if (searchTerm.length < 2) {
+                resultsContainer.style.display = 'none';
+                return;
+            }
+
+            const options = Array.from(selectElement.options).slice(1); // Skip the placeholder option
+            const matchingOptions = options.filter(option => {
+                return option.text.toLowerCase().includes(searchTerm);
+            });
+
+            resultsContainer.innerHTML = '';
+
+            if (matchingOptions.length > 0) {
+                matchingOptions.forEach(option => {
+                    const resultItem = document.createElement('div');
+                    resultItem.className = 'part-result-item';
+                    resultItem.textContent = option.text;
+                    resultItem.addEventListener('click', function() {
+                        selectElement.value = option.value;
+                        searchInput.value = option.text;
+                        resultsContainer.style.display = 'none';
+
+                        // Trigger change event on select
+                        const event = new Event('change');
+                        selectElement.dispatchEvent(event);
+
+                        // Load balances if this is the remove form
+                        if (formType === 'remove') {
+                            loadStockBalances();
+                        }
+                    });
+                    resultsContainer.appendChild(resultItem);
+                });
+                resultsContainer.style.display = 'block';
+            } else {
+                resultsContainer.style.display = 'none';
+            }
+        });
+
+        // Hide results when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!searchInput.contains(e.target) && !resultsContainer.contains(e.target)) {
+                resultsContainer.style.display = 'none';
+            }
+        });
+    }
+
+    // Handle add stock form submission
+    addForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const basePart = document.getElementById('part-select-add').value;
+        const quantity = document.getElementById('quantity-input-add').value;
+
+        if (!basePart) {
+            alert('Please select a part');
+            return;
+        }
+
+        if (!quantity) {
+            alert('Please enter a quantity');
+            return;
+        }
+
+        const data = {
+            base_part_number: basePart,
+            quantity: parseInt(quantity),
+            datecode: document.getElementById('datecode-input').value,
+            cost_per_unit: document.getElementById('cost-input').value || null,
+            reference: document.getElementById('reference-input-add').value,
+            notes: document.getElementById('notes-input-add').value
+        };
+
+        fetch('/stock/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                alert(data.error);
+            } else {
+                window.location.reload();
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred');
+        });
+    });
+
+    // Handle remove stock form submission
+    removeForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const basePart = document.getElementById('part-select-remove').value;
+        const quantity = document.getElementById('quantity-input-remove').value;
+
+        if (!basePart) {
+            alert('Please select a part');
+            return;
+        }
+
+        if (!quantity) {
+            alert('Please enter a quantity');
+            return;
+        }
+
+        const data = {
+            base_part_number: basePart,
+            quantity: parseInt(quantity),
+            reference: document.getElementById('reference-input-remove').value,
+            notes: document.getElementById('notes-input-remove').value
+        };
+
+        fetch('/stock/remove', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                alert(data.error);
+            } else {
+                window.location.reload();
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred');
+        });
+    });
+
+    // Function to load stock balances for a part
+    function loadStockBalances() {
+        const basePart = document.getElementById('part-select-remove').value;
+        const balancesContainer = document.getElementById('stock-balances');
+        const balancesTableBody = document.getElementById('balances-table-body');
+
+        if (!basePart) {
+            balancesContainer.classList.add('d-none');
+            return;
+        }
+
+        fetch(`/stock/balances/${basePart}`)
+            .then(response => response.json())
+            .then(data => {
+                balancesTableBody.innerHTML = '';
+
+                if (data.length > 0) {
+                    data.forEach(balance => {
+                        const row = document.createElement('tr');
+
+                        const dateCell = document.createElement('td');
+                        dateCell.textContent = new Date(balance.receipt_date).toLocaleDateString();
+                        row.appendChild(dateCell);
+
+                        const dateCodeCell = document.createElement('td');
+                        dateCodeCell.textContent = balance.datecode || '-';
+                        row.appendChild(dateCodeCell);
+
+                        const costCell = document.createElement('td');
+                        costCell.textContent = balance.cost_per_unit ?
+                            balance.cost_per_unit.toFixed(2) : '-';
+                        row.appendChild(costCell);
+
+                        const availableCell = document.createElement('td');
+                        availableCell.textContent = balance.available_quantity;
+                        row.appendChild(availableCell);
+
+                        const referenceCell = document.createElement('td');
+                        referenceCell.textContent = balance.reference || '-';
+                        row.appendChild(referenceCell);
+
+                        const actionsCell = document.createElement('td');
+                        const withdrawBtn = document.createElement('button');
+                        withdrawBtn.className = 'btn btn-sm btn-outline-danger';
+                        withdrawBtn.textContent = 'Take from this batch';
+                        withdrawBtn.dataset.movementId = balance.movement_id;
+                        withdrawBtn.dataset.available = balance.available_quantity;
+                        withdrawBtn.addEventListener('click', function() {
+                            withdrawFromSpecificBatch(
+                                balance.movement_id,
+                                balance.available_quantity,
+                                balance.datecode
+                            );
+                        });
+                        actionsCell.appendChild(withdrawBtn);
+                        row.appendChild(actionsCell);
+
+                        balancesTableBody.appendChild(row);
+                    });
+
+                    balancesContainer.classList.remove('d-none');
+                } else {
+                    balancesContainer.classList.add('d-none');
+                }
+            })
+            .catch(error => {
+                console.error('Error loading balances:', error);
+                balancesContainer.classList.add('d-none');
+            });
+    }
+
+    // Function to handle withdrawal from a specific batch
+    function withdrawFromSpecificBatch(movementId, availableQuantity, datecode) {
+        const quantityInput = document.getElementById('quantity-input-remove');
+        let quantity = parseInt(quantityInput.value) || 0;
+
+        if (quantity <= 0) {
+            alert('Please enter a valid quantity to remove');
+            return;
+        }
+
+        if (quantity > availableQuantity) {
+            if (confirm(`Only ${availableQuantity} units available from this batch. Use maximum available?`)) {
+                quantity = availableQuantity;
+                quantityInput.value = quantity;
+            } else {
+                return;
+            }
+        }
+
+        const reference = document.getElementById('reference-input-remove').value;
+        const notes = document.getElementById('notes-input-remove').value;
+
+        const data = {
+            movement_id: movementId,
+            quantity: quantity,
+            reference: reference,
+            notes: notes ? notes : `Removed from batch with datecode: ${datecode || 'none'}`
+        };
+
+        fetch('/stock/remove-specific', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                alert(data.error);
+            } else {
+                window.location.reload();
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred');
+        });
+    }
+});
+</script>
+{% endblock %}

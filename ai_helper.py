@@ -1,0 +1,1054 @@
+import openai
+import os
+from dotenv import load_dotenv
+import logging
+import re
+from flask import jsonify
+import json
+from models import get_all_company_types, get_db_connection, get_consolidated_customer_ids, get_consolidated_customer_orders
+from datetime import datetime, timedelta
+import time
+from openai import OpenAI
+from flask import current_app
+
+import os
+os.environ["OPENAI_API_KEY"] = "sk-proj-c2oa9tXO8aH0N956WypjT3BlbkFJ9MVOXTavBOePTHs8ZpZ2"
+from pathlib import Path
+
+# Load .env from the parent directory (where it actually exists)
+current_dir = Path(__file__).parent  # C:\crm\routes
+parent_dir = current_dir.parent      # C:\crm
+env_path = parent_dir / '.env'
+load_dotenv(dotenv_path=env_path)
+
+client = openai.Client(api_key=os.getenv("OPENAI_API_KEY"))
+
+logging.basicConfig(level=logging.DEBUG)
+
+def extract_part_numbers_and_quantities(request_data):
+    print("Starting extract_part_numbers_and_quantities function")
+    print(f"Input request_data:\n{request_data}")
+
+    try:
+        print("Attempting to send request to OpenAI API")
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system",
+                 "content": "You are an assistant tasked with extracting specific information from text. Provide concise part numbers and quantities without additional commentary or formatting. Just give 'Part number:' and 'Quantity:'"},
+                {"role": "user",
+                 "content": f"Please extract part numbers and quantities from the following text:\n\n{request_data}"}
+            ],
+            max_tokens=500,
+            temperature=0.2,
+        )
+        print("Successfully received response from OpenAI API")
+        print(f"Full API response:\n{response}")
+
+        extracted_data = response.choices[0].message.content.strip()
+        print(f"Extracted data from API response:\n{extracted_data}")
+
+        parsed_data = parse_extracted_data(extracted_data)
+        print(f"Parsed data: {parsed_data}")
+
+        return parsed_data
+
+    except openai.AuthenticationError as e:
+        print(f"Authentication error: {str(e)}")
+        print("Check your OpenAI API key.")
+        raise
+    except openai.APIError as e:
+        print(f"OpenAI API error: {str(e)}")
+        raise
+    except Exception as e:
+        print(f"Unexpected error in extract_part_numbers_and_quantities: {str(e)}")
+        raise
+
+def extract_quote_info(request_data):
+    logging.debug("Sending request data to OpenAI API")
+
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system",
+             "content": "You are an assistant tasked with extracting specific information from text. Provide concise details including 'Part number:', 'Quantity:', 'Price:', 'Lead time:', and 'Manufacturer:'. If any information is not available, leave it blank but maintain the structure."},
+            {"role": "user",
+             "content": f"Please extract part numbers, quantities, prices (strip currency symbols), lead times (round days up to weeks and only give the number - do not say 'weeks'), and manufacturers from the following text, giving multiple lines if there are multiple part numbers:\n\n{request_data}"}
+        ],
+        max_tokens=1500,
+        temperature=0.2,
+    )
+
+    logging.debug(f"Received response: {response}")
+
+    extracted_data = response.choices[0].message.content.strip()
+    logging.debug(f"Extracted data: {extracted_data}")
+
+    return parse_extracted_quote_info(extracted_data)
+
+
+
+def parse_extracted_quote_info(extracted_data):
+    extracted_lines = []
+    parts = extracted_data.split('\n\n')
+
+    for part in parts:
+        part_number = quantity = price = lead_time = manufacturer = None
+        lines = part.split('\n')
+        for line in lines:
+            if 'Part number:' in line:
+                part_number = line.split('Part number:')[1].strip()
+            elif 'Quantity:' in line:
+                quantity = line.split('Quantity:')[1].strip()
+            elif 'Price:' in line:
+                price = line.split('Price:')[1].strip()
+            elif 'Lead time:' in line:
+                lead_time = line.split('Lead time:')[1].strip()
+            elif 'Manufacturer:' in line:
+                manufacturer = line.split('Manufacturer:')[1].strip()
+
+        if part_number and quantity:
+            extracted_lines.append((part_number, quantity, price, lead_time, manufacturer))
+
+    return extracted_lines
+
+
+def parse_extracted_data(extracted_data):
+    print("Starting parse_extracted_data function")
+    print(f"Input extracted_data:\n{extracted_data}")
+
+    pattern = r'Part\s*number:\s*(.*?)\s*\nQuantity:\s*(\d+)\s*'
+    matches = re.findall(pattern, extracted_data, re.IGNORECASE)
+    print(f"Regex matches: {matches}")
+
+    extracted_lines = [(part_number.strip(), int(quantity)) for part_number, quantity in matches]
+    print(f"Extracted lines: {extracted_lines}")
+
+    return extracted_lines
+
+
+def generate_industry_insights_with_custom_prompt(prompt, customer_names):
+    """Modified version of generate_industry_insights that accepts a custom prompt"""
+    try:
+        logging.debug(f"Using custom AI Prompt: {prompt}")
+
+        client = OpenAI()  # This will use OPENAI_API_KEY from environment
+
+        response = client.chat.completions.create(
+            model="gpt-4o",  # Updated from gpt-4o to gpt-4
+            messages=[
+                {"role": "system",
+                 "content": "You are a business development assistant. Return only valid JSON arrays without markdown tags. Always provide revenue estimates as numbers, not text strings."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1000,
+            temperature=0.2,
+        )
+
+        response_content = response.choices[0].message.content.strip()
+        logging.debug(f"Raw AI response content: {response_content}")
+
+        # Rest of the processing remains the same as in original generate_industry_insights
+        if response_content.startswith('```'):
+            parts = response_content.split('```')
+            if len(parts) >= 2:
+                response_content = parts[1]
+                if response_content.startswith('json'):
+                    response_content = response_content[4:]
+
+        response_content = response_content.strip()
+        logging.debug(f"Cleaned response content: {response_content}")
+
+        try:
+            industry_insights = json.loads(response_content)
+
+            if not isinstance(industry_insights, list):
+                logging.error("Parsed JSON is not a list")
+                return [], prompt
+
+            # Convert revenues to numbers if they're strings
+            for insight in industry_insights:
+                if isinstance(insight.get('estimated_revenue'), str):
+                    revenue_str = ''.join(filter(str.isdigit, insight['estimated_revenue']))
+                    insight['estimated_revenue'] = int(revenue_str) if revenue_str else 0
+
+            logging.debug(f"Successfully parsed insights: {industry_insights}")
+            return industry_insights, prompt
+
+        except json.JSONDecodeError as e:
+            logging.error(f"JSON decoding error: {str(e)}")
+            logging.error(f"Failed to parse content: {response_content}")
+            return [], prompt
+
+    except Exception as e:
+        logging.error(f"Error in generate_industry_insights: {str(e)}")
+        logging.error("Stack trace:", exc_info=True)
+        return [], prompt
+
+def generate_industry_insights(customer_names, tag_description, continent=None, countries=None):
+    try:
+        # Generate the prompt using the same function as preview
+        prompt = generate_preview_prompt(customer_names, tag_description, continent, countries)
+        logging.debug(f"Generated AI Prompt: {prompt}")
+
+        # Call the OpenAI API with simpler system prompt
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system",
+                 "content": "You are a business development assistant. Return only valid JSON arrays without markdown tags. Always provide revenue estimates as numbers, not text strings."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1000,
+            temperature=0.2,
+        )
+
+        response_content = response.choices[0].message['content'].strip()
+        logging.debug(f"Raw AI response content: {response_content}")
+
+        # Remove markdown code blocks if present
+        if response_content.startswith('```'):
+            parts = response_content.split('```')
+            if len(parts) >= 2:
+                response_content = parts[1]
+                if response_content.startswith('json'):
+                    response_content = response_content[4:]
+
+        response_content = response_content.strip()
+        logging.debug(f"Cleaned response content: {response_content}")
+
+        try:
+            industry_insights = json.loads(response_content)
+
+            if not isinstance(industry_insights, list):
+                logging.error("Parsed JSON is not a list")
+                return [], prompt
+
+            # Convert revenues to numbers if they're strings
+            for insight in industry_insights:
+                if isinstance(insight.get('estimated_revenue'), str):
+                    revenue_str = ''.join(filter(str.isdigit, insight['estimated_revenue']))
+                    insight['estimated_revenue'] = int(revenue_str) if revenue_str else 0
+
+            logging.debug(f"Successfully parsed insights: {industry_insights}")
+            return industry_insights, prompt
+
+        except json.JSONDecodeError as e:
+            logging.error(f"JSON decoding error: {str(e)}")
+            logging.error(f"Failed to parse content: {response_content}")
+            return [], prompt
+
+    except Exception as e:
+        logging.error(f"Error in generate_industry_insights: {str(e)}")
+        logging.error(f"Stack trace: ", exc_info=True)
+        return [], prompt
+
+
+def generate_preview_prompt(customer_names, tag_description, continent=None, countries=None):
+    """Generate a preview of the prompt without making the API call"""
+
+    # Build the geography part of the prompt
+    geography_filter = ""
+    if continent:
+        geography_filter = f"focusing on {continent}"
+        if countries and any(countries):
+            country_list = ", ".join(countries)
+            geography_filter = f"focusing specifically on country {country_list} in {continent}"
+    else:
+        geography_filter = "focusing on Europe"  # Default case
+
+    prompt = (
+        f"Based on the following existing customer names and the industry tag description '{tag_description}', "
+        f"please suggest potential target companies in this industry, {geography_filter}. "
+        "Do not include customers that are already in the list. Remember that we are a connector manufacturer and distributor. "
+        "Only suggest companies that would need this service. Include ISO alpha-2 country codes in your responses using the 'country' field.\n\n"
+        "Return a JSON array containing companies with this exact format:\n"
+        "{\n"
+        '    "name": "Company Name",\n'
+        '    "description": "Company description",\n'
+        '    "estimated_revenue": 1000000,\n'
+        '    "website": "https://www.example.com",\n'  # Changed to include full URL
+        '    "country": "IT"\n'        
+        "}\n\n"
+        "Important: Always provide complete website URLs including https://\n\n"  # Added explicit instruction
+        "Existing customer names:\n"
+    )
+
+    for name in customer_names:
+        prompt += f"- {name}\n"
+
+    return prompt
+
+def enrich_customer_data(customer_data, available_tags):
+    """Call OpenAI API to enrich customer data"""
+    try:
+        prompt = generate_enrichment_prompt(customer_data, available_tags)
+        logging.debug(f"Generated AI Prompt for enrichment: {prompt}")
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system",
+                 "content": "You are a business data enrichment assistant. Return ONLY the raw JSON object. Do not add markdown formatting, code blocks, or any other text. The response should start with { and end with } with no other characters."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=500,
+            temperature=0.2,
+        )
+
+        # Access content from response
+        response_content = response.choices[0].message.content
+        logging.debug(f"Raw AI Response: {response_content}")
+
+        # Clean up response
+        cleaned_content = response_content.strip()
+        if cleaned_content.startswith("```"):
+            cleaned_content = cleaned_content.split("```")[1]
+            if cleaned_content.startswith("json"):
+                cleaned_content = cleaned_content[4:]
+        cleaned_content = cleaned_content.strip()
+
+        enrichment_data = json.loads(cleaned_content)
+        logging.debug(f"Parsed enrichment data: {enrichment_data}")
+        return enrichment_data
+
+    except json.JSONDecodeError as je:
+        logging.error(f"JSON parsing error: {str(je)}")
+        logging.error(f"Failed to parse content: {cleaned_content}")
+        raise ValueError("Invalid JSON response from AI service")
+
+    except Exception as e:
+        logging.error(f"Error in AI enrichment: {str(e)}")
+        raise ValueError(f"AI enrichment failed: {str(e)}")
+
+def generate_enrichment_prompt(customer_data, available_tags):
+    """Generate prompt for the AI to enrich customer data"""
+    try:
+        # Format tags using the correct column names
+        tags_text = "\n".join([f"ID: {tag['id']} - {tag['name']}" for tag in available_tags])
+
+        # Get company types
+        company_types = get_all_company_types()
+        company_types_text = "\n".join([f"ID: {ct['id']} - {ct['name']}" for ct in company_types])
+
+        prompt = f"""Analyze this customer and return a raw JSON object only.
+
+Customer Information:
+Name: {customer_data['name']}
+Description: {customer_data['description'] or 'Not provided'}
+Website: {customer_data['website'] or 'Not provided'}
+
+Available industry tags:
+{tags_text}
+
+Available company types:
+{company_types_text}
+
+Return only a raw JSON object with these exact fields:
+- estimated_revenue (number)
+- suggested_tag_ids (array of numbers, max 3)
+- suggested_company_type_ids (array of numbers, max 2)
+- country_code (string, ISO alpha-2)
+- fleet_size (optional, integer if available)
+
+Example (return exactly like this):
+{{"estimated_revenue": 1500000, "suggested_tag_ids": [1, 4, 7], "suggested_company_type_ids": [1, 2], "country_code": "IT", "fleet_size": 120}}
+"""
+
+        return prompt
+
+    except Exception as e:
+        print(f"Error in prompt generation: {str(e)}")
+        print(f"Available tags first item: {dict(available_tags[0])}")
+        if company_types:
+            print(f"Company types first item: {dict(company_types[0])}")
+        raise
+
+
+def validate_bulk_enrichment_data(data):
+    """Validate the AI-generated enrichment data for bulk processing"""
+    required_fields = [
+        'estimated_revenue',
+        'country_code',
+        'matched_tag_ids',
+        'suggested_new_tags',
+        'matched_company_type_ids'
+    ]
+
+    # Check all required fields exist
+    for field in required_fields:
+        if field not in data:
+            raise ValueError(f"Missing required field: {field}")
+
+    # Validate data types
+    if not isinstance(data['estimated_revenue'], (int, float)) or data['estimated_revenue'] < 0:
+        raise ValueError("Revenue must be a positive number")
+
+    if not isinstance(data['country_code'], str) or len(data['country_code']) != 2:
+        raise ValueError("Invalid country code format")
+
+    if not isinstance(data['matched_tag_ids'], list):
+        raise ValueError("matched_tag_ids must be a list")
+
+    if not isinstance(data['suggested_new_tags'], list):
+        raise ValueError("suggested_new_tags must be a list")
+
+    if not isinstance(data['matched_company_type_ids'], list):
+        raise ValueError("matched_company_type_ids must be a list")
+
+
+from openai import OpenAI
+import json
+import logging
+
+def bulk_enrich_customer_data(customer, available_tags, company_types):
+    """Bulk enrichment version that handles tag suggestions separately"""
+    try:
+        example = '''{
+    "estimated_revenue": 5000000,
+    "country_code": "US",
+    "matched_tag_ids": [1, 4, 7],
+    "suggested_new_tags": ["automotive parts", "manufacturing"],
+    "matched_company_type_ids": [2, 3]
+}'''
+
+        # Format the prompt for bulk processing
+        prompt = f"""Based on this company information, provide enriched data in JSON format:
+
+Company Name: {customer['name']}
+Description: {customer['description'] if customer['description'] else 'Not provided'}
+Website: {customer['website'] if customer['website'] else 'Not provided'}
+
+Available Industry Tags:
+{format_tags_for_prompt(available_tags)}
+
+Available Company Types:
+{format_types_for_prompt(company_types)}
+
+Instructions:
+- Match ONLY to existing tags when a close match exists
+- Suggest new tags ONLY if no similar existing tag is available
+- For broad industry categories, prefer existing general tags over specific new ones
+- DO NOT suggest variations of existing tags
+
+Return ONLY a JSON object with these exact fields:
+- estimated_revenue (number in USD)
+- country_code (string, ISO alpha-2)
+- matched_tag_ids (array of existing tag IDs that match)
+- suggested_new_tags (array of strings for new tag suggestions)
+- matched_company_type_ids (array of existing company type IDs that match)
+
+Example response:
+{example}"""
+
+        logging.debug(f"Sending prompt for customer {customer['id']}: {prompt}")
+
+        # Initialize the OpenAI client
+        client = OpenAI()
+
+        # Create the chat completion using the new format
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system",
+                 "content": "You are a business data analyst. Return only valid JSON. Revenue should be a number, not string. Country code must be ISO alpha-2 format (two uppercase letters, e.g., 'US', 'GB'). Do not include any explanation or markdown formatting."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=500,
+            temperature=0.2
+        )
+
+        # Get the content from the new response format
+        content = response.choices[0].message.content.strip()
+        logging.debug(f"Response content for customer {customer['id']}: {content}")
+
+        # Try to parse the JSON
+        try:
+            enrichment_data = json.loads(content)
+            logging.debug(f"Parsed JSON for customer {customer['id']}: {enrichment_data}")
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse JSON for customer {customer['id']}, content: {content}")
+            raise
+
+        validate_bulk_enrichment_data(enrichment_data)
+        return enrichment_data
+
+    except json.JSONDecodeError as e:
+        logging.error(f"JSON parsing error for customer {customer['id']}: {str(e)}")
+        raise
+    except Exception as e:
+        logging.error(f"OpenAI API error for customer {customer['id']}: {str(e)}")
+        raise
+
+def format_tags_for_prompt(tags):
+    """Format tags for the OpenAI prompt"""
+    return "\n".join([f"ID: {tag['id']} - {tag['name']}" for tag in tags])
+
+
+def format_types_for_prompt(types):
+    """Format company types for the OpenAI prompt"""
+    return "\n".join([f"ID: {t['id']} - {t['name']}" for t in types])
+
+
+def validate_enrichment_data(data, available_tags):
+    """Validate the AI-generated enrichment data against available tags"""
+    required_fields = ['estimated_revenue', 'country_code', 'suggested_tag_ids',
+                       'suggested_company_type_ids']  # updated field names
+
+    for field in required_fields:
+        if field not in data:
+            raise ValueError(f"Missing required field: {field}")
+
+    if not isinstance(data['estimated_revenue'], (int, float)):
+        raise ValueError("Revenue must be a number")
+
+    if not isinstance(data['country_code'], str) or len(data['country_code']) != 2:
+        raise ValueError("Invalid country code format")
+
+    if 'fleet_size' in data:
+        if not isinstance(data['fleet_size'], int):
+            raise ValueError("Fleet size must be an integer if provided")
+
+    # Validate tag IDs
+    available_tag_ids = {tag['id'] for tag in available_tags}
+    for tag_id in data['suggested_tag_ids']:
+        if tag_id not in available_tag_ids:
+            raise ValueError(f"Invalid tag ID: {tag_id}")
+
+
+
+def get_enrichment_progress():
+    """Get current enrichment progress stats"""
+    db = get_db_connection()
+    try:
+        return db.execute('''
+            SELECT 
+                (SELECT COUNT(*) FROM customers) as total_customers,
+                COUNT(*) as processed,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as successful,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+                MAX(last_attempt) as last_update
+            FROM customer_enrichment_status
+        ''').fetchone()
+    finally:
+        db.close()
+
+
+def log_enrichment_error(customer_id, error_message):
+    """Log enrichment errors to database"""
+    db = get_db_connection()
+    try:
+        db.execute('''
+            INSERT INTO customer_enrichment_status 
+            (customer_id, status, error_message, last_attempt, attempts)
+            VALUES (?, 'failed', ?, ?, 1)
+            ON CONFLICT(customer_id) 
+            DO UPDATE SET 
+                status = 'failed',
+                error_message = ?,
+                last_attempt = ?,
+                attempts = attempts + 1
+        ''', (customer_id, error_message, datetime.now(),
+              error_message, datetime.now()))
+        db.commit()
+    finally:
+        db.close()
+
+
+def update_enrichment_status(customer_id, status, error_message=None):
+    """Update the status of enrichment for a customer"""
+    db = get_db_connection()
+    try:
+        db.execute('''
+            INSERT INTO customer_enrichment_status 
+                (customer_id, status, last_attempt, error_message, attempts)
+            VALUES (?, ?, ?, ?, 1)
+            ON CONFLICT(customer_id) 
+            DO UPDATE SET 
+                status = ?,
+                last_attempt = ?,
+                error_message = ?,
+                attempts = attempts + 1
+        ''', (
+            customer_id, status, datetime.now(), error_message,
+            status, datetime.now(), error_message
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+
+def store_tag_suggestions(customer_id, suggested_tags):
+    """Store new tag suggestions"""
+    db = get_db_connection()
+    try:
+        for tag in suggested_tags:
+            # Check if this suggestion already exists
+            existing = db.execute('''
+                SELECT id, frequency 
+                FROM ai_tag_suggestions 
+                WHERE customer_id = ? AND suggested_tag = ? AND reviewed = 0
+            ''', (customer_id, tag)).fetchone()
+
+            if existing:
+                # Update frequency if it exists
+                db.execute('''
+                    UPDATE ai_tag_suggestions 
+                    SET frequency = frequency + 1
+                    WHERE id = ?
+                ''', (existing['id'],))
+            else:
+                # Insert new suggestion if it doesn't
+                db.execute('''
+                    INSERT INTO ai_tag_suggestions 
+                        (customer_id, suggested_tag, frequency, reviewed, created_at)
+                    VALUES (?, ?, 1, 0, ?)
+                ''', (customer_id, tag, datetime.now()))
+
+        db.commit()
+    finally:
+        db.close()
+
+def apply_enrichment_updates(customer_id, enrichment_data):
+    """Apply the enrichment updates to the database"""
+    db = get_db_connection()
+    try:
+        # Begin transaction
+        db.execute('BEGIN TRANSACTION')
+
+        # Update main customer data
+        db.execute('''
+            UPDATE customers 
+            SET estimated_revenue = ?,
+                country = ?,
+                updated_at = ?
+            WHERE id = ?
+        ''', (
+            enrichment_data['estimated_revenue'],
+            enrichment_data['country_code'],
+            datetime.now(),
+            customer_id
+        ))
+
+        # Update company types
+        db.execute('DELETE FROM customer_company_types WHERE customer_id = ?', (customer_id,))
+        for type_id in enrichment_data['matched_company_type_ids']:
+            db.execute('''
+                INSERT INTO customer_company_types (customer_id, company_type_id)
+                VALUES (?, ?)
+            ''', (customer_id, type_id))
+
+        # Update industry tags
+        db.execute('DELETE FROM customer_industry_tags WHERE customer_id = ?', (customer_id,))
+        for tag_id in enrichment_data['matched_tag_ids']:
+            db.execute('''
+                INSERT INTO customer_industry_tags (customer_id, tag_id)
+                VALUES (?, ?)
+            ''', (customer_id, tag_id))
+
+        db.execute('COMMIT')
+    except Exception as e:
+        db.execute('ROLLBACK')
+        raise
+    finally:
+        db.close()
+
+
+def start_bulk_enrichment(batch_size=20):
+    """Main controller for bulk enrichment process"""
+    db = get_db_connection()
+    try:
+        # Get pending customers
+        customers = db.execute('''
+            SELECT c.id, c.name, c.description, c.website 
+            FROM customers c
+            LEFT JOIN customer_enrichment_status ces ON c.id = ces.customer_id
+            WHERE ces.status IS NULL 
+               OR ces.status = 'pending'
+            ORDER BY c.id
+            LIMIT ?
+        ''', (batch_size,)).fetchall()
+
+        # Get all existing tags and company types once
+        tags = db.execute('SELECT id, tag as name, description FROM industry_tags').fetchall()
+        company_types = db.execute('SELECT id, type as name FROM company_types').fetchall()
+
+        for customer in customers:
+            try:
+                # Update status to processing
+                update_enrichment_status(customer['id'], 'processing')
+
+                # Process customer
+                enrichment_data = bulk_enrich_customer_data(customer, tags, company_types)
+
+                # Apply updates
+                apply_enrichment_updates(customer['id'], enrichment_data)
+
+                # Store new tag suggestions
+                store_tag_suggestions(customer['id'], enrichment_data['suggested_new_tags'])
+
+                # Mark as completed
+                update_enrichment_status(customer['id'], 'completed')
+
+                # Small delay to respect API rate limits
+                time.sleep(1)
+
+            except Exception as e:
+                logging.error(f"Error processing customer {customer['id']}: {str(e)}")
+                update_enrichment_status(customer['id'], 'failed', error_message=str(e))
+                continue
+
+    finally:
+        db.close()
+
+
+
+
+def extract_quote_info_with_examples(text, examples):
+    system_message = """You are an assistant tasked with extracting specific information from text. 
+    For each item, provide the information in this exact format:
+
+    Part number: <part>
+    Quantity: <quantity>
+    Price: <price>
+    Lead time: <weeks>
+    Manufacturer: <manufacturer>
+
+    Rules:
+    - Each item should be separated by a blank line
+    - Labels must match exactly as shown above
+    - Handle European number formats (using commas as decimal separators)
+    - Remove any currency symbols from prices
+    - For lead times, convert to weeks and only return the number
+    - If any field is not found, still include its label with empty value
+    - Convert any European decimal formatting to standard (dots instead of commas) 
+    """
+
+    user_content = ""
+    if examples and examples[0].get('part'):
+        user_content = "Use these patterns to identify information:\n"
+        for field, value in examples[0].items():
+            if value and field != 'raw_text':
+                user_content += f"{field}: {value}\n"
+        user_content += "\n"
+
+    user_content += f"Extract similar information from this text:\n\n{text}"
+
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_content}
+        ],
+        max_tokens=1500,
+        temperature=0.2,
+    )
+
+    extracted_data = response.choices[0].message.content.strip()
+    print("Raw OpenAI response:", extracted_data)
+    result = parse_extracted_quote_info(extracted_data)
+    print("Parsed result:", result)
+    return result
+
+
+def get_top_customers_for_news(salesperson_id, limit=10):
+    """Get top customers for news checking - by consolidated sales value"""
+    try:
+        db = get_db_connection()
+
+        # Get consolidated customer data using your existing helper functions
+        consolidated_customers = get_consolidated_customer_ids(salesperson_id)
+
+        if not consolidated_customers:
+            return []
+
+        top_customers = []
+
+        # Calculate total sales for each consolidated customer group
+        for main_customer_id, customer_info in consolidated_customers.items():
+            # Get all orders for this customer group (main + associated)
+            orders = get_consolidated_customer_orders(customer_info['all_customer_ids'])
+
+            # Calculate total value
+            total_sales_value = sum(order['total_value'] for order in orders)
+
+            if total_sales_value > 0:  # Only include customers with sales
+                # Get the main customer details
+                customer_query = """
+                    SELECT 
+                        c.id,
+                        c.name,
+                        c.description,
+                        c.country,
+                        c.website,
+                        c.fleet_size
+                    FROM customers c
+                    WHERE c.id = ?
+                """
+
+                customer_row = db.execute(customer_query, (main_customer_id,)).fetchone()
+
+                if customer_row:
+                    customer_dict = dict(customer_row)
+                    customer_dict['total_sales_value'] = total_sales_value
+                    customer_dict['associated_customer_count'] = len(customer_info['all_customer_ids']) - 1
+                    top_customers.append(customer_dict)
+
+        # Sort by total sales value and limit results
+        top_customers.sort(key=lambda x: x['total_sales_value'], reverse=True)
+
+        db.close()
+        return top_customers[:limit]
+
+    except Exception as e:
+        print(f"Error in get_top_customers_for_news: {str(e)}")
+        return []
+    finally:
+        if 'db' in locals():
+            db.close()
+
+
+def fetch_customer_news_perplexity(customer):
+    """Fetch news for a customer using Perplexity API"""
+
+    # Only use environment variables - don't use current_app.config in streaming context
+    # Hardcoded key for production
+    perplexity_key = "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"
+
+
+    print(f"DEBUG: Perplexity key found: {perplexity_key is not None}")
+    if perplexity_key:
+        print(f"DEBUG: Key starts with: {perplexity_key[:10]}...")
+
+    if not perplexity_key:
+        print("ERROR: PERPLEXITY_API_KEY not found in environment variables")
+        return None
+
+    try:
+        client = OpenAI(
+            api_key=perplexity_key,
+            base_url="https://api.perplexity.ai"
+        )
+        print("DEBUG: OpenAI client created successfully")
+
+        # Create focused search query using available customer data
+        company_name = customer['name']
+        description = customer.get('description', '')
+        country_context = customer.get('country', '')
+        website = customer.get('website', '')
+        fleet_size = customer.get('fleet_size')
+
+        # Build search context from available information
+        search_context = f"{company_name}"
+
+        # Add context clues from customer data
+        if description:
+            search_context += f" {description}"
+        if country_context:
+            search_context += f" {country_context}"
+        if fleet_size and fleet_size > 0:
+            search_context += f" fleet vehicles"
+
+        # Try to infer industry from company name and description
+        industry_hints = []
+        if any(word in company_name.lower() for word in ['logistics', 'transport', 'freight', 'shipping']):
+            industry_hints.append("logistics and transportation")
+        if any(word in company_name.lower() for word in ['construction', 'building', 'infrastructure']):
+            industry_hints.append("construction")
+        if any(word in company_name.lower() for word in ['manufacturing', 'industrial', 'factory']):
+            industry_hints.append("manufacturing")
+        if fleet_size and fleet_size > 20:
+            industry_hints.append("fleet operations")
+
+        industry_context = " ".join(industry_hints) if industry_hints else "commercial business"
+
+        system_message = f"""You are a business intelligence analyst. Find recent news and developments about {company_name}, which appears to be involved in {industry_context}.
+
+Focus on:
+- Financial results and business performance
+- New contracts, partnerships, or major deals
+- Strategic initiatives, expansions, or investments
+- Industry trends affecting the company
+- Management changes or corporate announcements
+- Market position or competitive developments
+- Fleet expansion or equipment purchases (if applicable)
+
+Provide 1-3 most relevant and recent news items from the last 3 months. For each item include:
+- Headline (concise, business-focused)
+- 2-sentence summary 
+- Source and publication date
+- Business impact assessment (High/Medium/Low)
+
+Exclude:
+- General industry news not specific to the company
+- Stock price movements only
+- Irrelevant companies with similar names
+- News older than 3 months"""
+
+        user_prompt = f"Find recent business news for: {search_context}"
+
+        print(f"DEBUG: About to call Perplexity API for {company_name}")
+
+        response = client.chat.completions.create(
+            model="sonar-reasoning-pro",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.1
+        )
+
+        print(f"DEBUG: Perplexity API call successful for {company_name}")
+        return response.choices[0].message.content.strip()
+
+    except Exception as e:
+        print(f"Perplexity API error for {customer['name']}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def process_customer_news_chatgpt(customer, raw_news_text):
+    """Process raw Perplexity response with ChatGPT for consistent formatting"""
+    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+    system_message = """CRITICAL: Return ONLY valid JSON. No explanations, no markdown, no extra text.
+
+    Extract news items and return this EXACT format:
+    {"news_items": [{"headline": "...", "summary": "...", "source": "...", "published_date": "YYYY-MM-DD", "business_impact": "High|Medium|Low", "relevance_score": 1-10, "customer_name": "..."}]}
+
+    If no relevant news: {"news_items": []}
+
+    JSON ONLY. NO OTHER TEXT."""
+
+    user_prompt = f"""Customer: {customer['name']}
+Industry: {customer.get('industry', 'Not specified')}
+
+Raw news text to process:
+{raw_news_text}
+
+Format into structured JSON with relevance scoring."""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.1
+        )
+
+        response_text = response.choices[0].message.content.strip()
+
+        # ADD THESE DEBUG LINES:
+        print(f"\n=== ChatGPT Raw Response for {customer['name']} ===")
+        print(f"Response length: {len(response_text)}")
+        print(f"First 200 chars: {response_text[:200]}")
+        print(f"Last 200 chars: {response_text[-200:]}")
+        print("=== End Raw Response ===\n")
+
+        # Parse JSON response
+        news_data = json.loads(response_text)
+
+        # Add customer_id to each news item
+        if 'news_items' in news_data:
+            for item in news_data['news_items']:
+                item['customer_id'] = customer['id']
+                item['customer_name'] = customer['name']
+
+        return news_data
+
+    except json.JSONDecodeError as e:
+        print(f"JSON parsing error for {customer['name']}: {str(e)}")
+        return None
+    except Exception as e:
+        print(f"ChatGPT processing error for {customer['name']}: {str(e)}")
+        return None
+
+
+def get_cache_directory():
+    """Get or create cache directory"""
+    if current_app:
+        cache_dir = os.path.join(current_app.instance_path, 'cache')
+    else:
+        cache_dir = os.path.join(os.getcwd(), 'cache')
+
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
+
+
+def get_cache_key(salesperson_id):
+    """Generate cache key for salesperson"""
+    return f"customer_news_{salesperson_id}"
+
+
+def cache_news(cache_key, data):
+    """Cache news data"""
+    try:
+        cache_dir = get_cache_directory()
+        cache_file = os.path.join(cache_dir, f"{cache_key}.json")
+
+        cache_data = {
+            'cache_date': datetime.now().strftime('%Y-%m-%d'),
+            'cached_at': datetime.now().isoformat(),
+            'data': data
+        }
+
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+        print(f"Cached news data for {cache_key}")
+
+    except Exception as e:
+        print(f"Cache write error for {cache_key}: {str(e)}")
+
+
+def get_cached_news(cache_key):
+    """Get cached news if still valid (same day)"""
+    try:
+        cache_dir = get_cache_directory()
+        cache_file = os.path.join(cache_dir, f"{cache_key}.json")
+
+        if os.path.exists(cache_file):
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cached_data = json.load(f)
+
+            # Check if cache is from today
+            cache_date = cached_data.get('cache_date')
+            today = datetime.now().strftime('%Y-%m-%d')
+
+            if cache_date == today:
+                print(f"Using cached news for {cache_key}")
+                # Include the cached_at timestamp in the returned data
+                result = cached_data['data'].copy()
+                result['last_checked'] = cached_data.get('cached_at')  # Add this line
+                return result
+            else:
+                print(f"Cache expired for {cache_key} (cache: {cache_date}, today: {today})")
+                return None
+
+        return None
+
+    except Exception as e:
+        print(f"Cache read error for {cache_key}: {str(e)}")
+        return None
+
+def cleanup_old_cache_files():
+    """Remove cache files older than 7 days"""
+    try:
+        cache_dir = get_cache_directory()
+        cutoff_date = datetime.now() - timedelta(days=7)
+
+        for filename in os.listdir(cache_dir):
+            if filename.startswith('customer_news_') and filename.endswith('.json'):
+                file_path = os.path.join(cache_dir, filename)
+                file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+
+                if file_time < cutoff_date:
+                    os.remove(file_path)
+                    print(f"Removed old cache file: {filename}")
+
+    except Exception as e:
+        print(f"Cache cleanup error: {str(e)}")
+

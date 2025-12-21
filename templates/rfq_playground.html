@@ -1,0 +1,1281 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+
+    <div class="card mb-3">
+  <div class="card-header bg-secondary text-white">
+    <h5 class="mb-0">Supplier Comparison</h5>
+  </div>
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-4">
+        <select id="supplierSelector" class="form-select">
+          <option value="">Select a supplier...</option>
+          {% for supplier in suppliers %}
+            <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <button id="addSupplierColumn" class="btn btn-primary">
+          <i class="fas fa-plus"></i> Add Column
+        </button>
+      </div>
+      <div class="col-md-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="compareMode">
+          <label class="form-check-label" for="compareMode">Compare with History</label>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="btn-group">
+          <button id="saveConfiguration" class="btn btn-outline-secondary btn-sm">
+            <i class="fas fa-save"></i> Save Configuration
+          </button>
+          <button id="resetWorkingData" class="btn btn-outline-danger btn-sm">
+            <i class="fas fa-undo"></i> Reset
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <div class="d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">RFQ Lines with History</h5>
+                <div>
+                    <button class="btn btn-sm btn-light me-2" id="expandAllBtn" type="button">Expand All</button>
+                    <button class="btn btn-sm btn-light" id="collapseAllBtn" type="button">Collapse All</button>
+                </div>
+
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-bordered table-sm">
+  <table id="rfqTable" class="table table-bordered table-sm">
+  <thead class="table-light">
+    <tr>
+      <!-- Fixed columns -->
+      <th class="text-center">Line #</th>
+      <th>Part Number</th>
+      <th>Qty</th>
+      <th>Price</th>
+      <!-- New Margin Column -->
+      <th>Margin</th>
+
+      <!-- This will mark where dynamic supplier columns should be inserted -->
+      <th id="supplierColumnsStart" class="d-none"></th>
+
+      <!-- History columns -->
+      <th class="text-center bg-info text-white history-col" data-type="po">
+        <div class="d-flex justify-content-between align-items-center">
+          Purchase Orders
+          <button class="btn btn-sm btn-light toggle-col" data-target="po">
+            <i class="fas fa-expand"></i>
+          </button>
+        </div>
+      </th>
+                            <th class="text-center bg-success text-white history-col" data-type="offer">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    Offers
+                                    <button class="btn btn-sm btn-light toggle-col" data-target="offer">
+                                        <i class="fas fa-expand"></i>
+                                    </button>
+                                </div>
+                            </th>
+                            <th class="text-center bg-warning text-white history-col" data-type="rfq">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    RFQs
+                                    <button class="btn btn-sm btn-light toggle-col" data-target="rfq">
+                                        <i class="fas fa-expand"></i>
+                                    </button>
+                                </div>
+                            </th>
+                            <th class="text-center bg-danger text-white history-col" data-type="so">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    Sales Orders
+                                    <button class="btn btn-sm btn-light toggle-col" data-target="so">
+                                        <i class="fas fa-expand"></i>
+                                    </button>
+                                </div>
+                            </th>
+                        </tr>
+                    </thead>
+                     <tbody>
+      {% for line in rfq_lines %}
+    <tr data-line-id="{{ line.id }}" data-part-number="{{ line.base_part_number }}">
+      <!-- Fixed data -->
+      <td class="text-center">{{ line.line_number }}</td>
+      <td>{{ line.part_number }}</td>
+      <td>{{ line.quantity }}</td>
+      <td>{{ line.price }}</td>
+      <!-- New Margin Cell -->
+      <td class="margin-cell">
+        <div class="input-group input-group-sm">
+          <input type="number" class="form-control form-control-sm margin-input" data-line-id="{{ line.id }}" min="0" max="100" placeholder="%" value="30">
+          <span class="input-group-text">%</span>
+        </div>
+        <div class="selling-price-display text-end text-primary mt-1"></div>
+      </td>
+
+      <!-- Consistent insertion point in each row -->
+      <td class="supplier-columns-start d-none"></td>
+
+      <!-- History cells -->
+      <td class="p-0 history-cell" data-type="po">
+        <!-- PO history content -->
+
+                                <div class="collapsed-view bg-info text-white p-1">
+                                    {{ line.purchase_history|length }} PO Records
+                                </div>
+                                <div class="expanded-view d-none">
+                                    <table class="table table-sm m-0 table-bordered border-info">
+                                        <thead class="bg-info text-white">
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Qty</th>
+                                                <th>Price</th>
+                                                <th>Supplier</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for po in line.purchase_history %}
+                                            <tr>
+                                                <td>{{ po.date_issued }}</td>
+                                                <td>{{ po.quantity }}</td>
+                                                <td>{{ po.price }}</td>
+                                                <td>{{ po.supplier_name }}</td>
+                                            </tr>
+                                            {% else %}
+                                            <tr>
+                                                <td colspan="4" class="text-center">No records</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+
+                            <!-- Offer History -->
+                            <td class="p-0 history-cell" data-type="offer">
+                                <div class="collapsed-view bg-success text-white p-1">
+                                    {{ line.offer_history|length }} Offer Records
+                                </div>
+                                <div class="expanded-view d-none">
+                                    <table class="table table-sm m-0 table-bordered border-success">
+                                        <thead class="bg-success text-white">
+                                            <tr>
+                                                <th>Valid To</th>
+                                                <th>Qty</th>
+                                                <th>Price</th>
+                                                <th>Supplier</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for offer in line.offer_history %}
+                                            <tr>
+                                                <td>{{ offer.valid_to }}</td>
+                                                <td>{{ offer.quantity }}</td>
+                                                <td>{{ offer.price }}</td>
+                                                <td>{{ offer.supplier_name }}</td>
+                                            </tr>
+                                            {% else %}
+                                            <tr>
+                                                <td colspan="4" class="text-center">No records</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+
+                            <!-- RFQ History -->
+                            <td class="p-0 history-cell" data-type="rfq">
+                                <div class="collapsed-view bg-warning text-dark p-1">
+                                    {{ line.rfq_history|length }} RFQ Records
+                                </div>
+                                <div class="expanded-view d-none">
+                                    <table class="table table-sm m-0 table-bordered border-warning">
+                                        <thead class="bg-warning text-dark">
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Qty</th>
+                                                <th>Price</th>
+                                                <th>Customer</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for rfq_item in line.rfq_history %}
+                                            <tr>
+                                                <td>{{ rfq_item.entered_date }}</td>
+                                                <td>{{ rfq_item.quantity }}</td>
+                                                <td>{{ rfq_item.price }}</td>
+                                                <td>{{ rfq_item.customer_name }}</td>
+                                            </tr>
+                                            {% else %}
+                                            <tr>
+                                                <td colspan="4" class="text-center">No records</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+
+                            <!-- Sales Order History -->
+                            <td class="p-0 history-cell" data-type="so">
+                                <div class="collapsed-view bg-danger text-white p-1">
+                                    {{ line.sales_history|length }} SO Records
+                                </div>
+                                <div class="expanded-view d-none">
+                                    <table class="table table-sm m-0 table-bordered border-danger">
+                                        <thead class="bg-danger text-white">
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Qty</th>
+                                                <th>Price</th>
+                                                <th>Customer</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for so in line.sales_history %}
+                                            <tr>
+                                                <td>{{ so.date_entered }}</td>
+                                                <td>{{ so.quantity }}</td>
+                                                <td>{{ so.price }}</td>
+                                                <td>{{ so.customer_name }}</td>
+                                            </tr>
+                                            {% else %}
+                                            <tr>
+                                                <td colspan="4" class="text-center">No records</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="mt-3">
+        <a href="{{ url_for('rfqs.edit_rfq', rfq_id=rfq.id) }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to RFQ
+        </a>
+    </div>
+</div>
+
+<style>
+    /* Make the tables more compact */
+    .table-sm td, .table-sm th {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+
+    /* Ensure proper borders between nested tables */
+    .table-bordered {
+        border-collapse: separate;
+    }
+
+    /* Style for collapsed cells */
+    .collapsed-view {
+        text-align: center;
+        font-weight: bold;
+        cursor: pointer;
+    }
+
+    /* Adjust collapsed cell width */
+    .history-col {
+        width: 100px;
+    }
+
+    /* Add hover effect */
+    .collapsed-view:hover {
+        opacity: 0.9;
+    }
+    /* Styling for supplier columns */
+.supplier-cell {
+    background-color: #f8f9fa; /* Light gray background */
+    border-left: 2px solid #007bff; /* Blue left border */
+    padding: 8px !important; /* Override table-sm padding */
+}
+
+/* Make inputs more compact */
+.supplier-cell .input-group-sm {
+    font-size: 0.8rem;
+}
+
+.supplier-cell .form-control-sm {
+    height: calc(1.5em + 0.5rem + 2px);
+    padding: 0.25rem 0.5rem;
+}
+
+/* Highlight line value */
+.line-value-display {
+    color: #0056b3;
+    font-size: 0.85rem;
+}
+
+/* Column header styling */
+th.supplier-column {
+    background-color: #e7f1ff !important;
+    position: relative;
+}
+/* Add these CSS styles to your existing <style> block */
+
+/* No Bid styling */
+.supplier-cell.no-bid {
+    background-color: #f8d7da; /* Light red background */
+    border-left: 2px solid #dc3545; /* Red left border */
+}
+
+/* Checkbox styling */
+.form-check-input.no-bid-checkbox {
+    cursor: pointer;
+}
+
+.form-check-label {
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+/* Disabled inputs styling for no-bid items */
+.supplier-cell.no-bid .inputs-container {
+    opacity: 0.5;
+}
+
+/* Ensure the "No Bid" text stands out */
+.supplier-cell.no-bid .line-value-display {
+    font-style: italic;
+    color: #dc3545 !important;
+}
+
+/* Add distinct styling to "best price" cells */
+.supplier-cell.best-price {
+    background-color: #d4edda; /* Light green background */
+    border-left: 2px solid #28a745; /* Green left border */
+}
+
+/* Make sure best price text is clearly visible */
+.supplier-cell .line-value-display.text-success {
+    color: #28a745 !important;
+    font-weight: bold;
+}
+
+/* Add this CSS rule to your existing <style> block to ensure history cells don't display inputs */
+.history-cell input,
+.history-cell .input-group,
+.history-cell .form-check {
+    display: none !important;
+}
+
+/* Also add this rule to ensure history cells have read-only appearance */
+.history-cell .expanded-view table {
+    background-color: #f8f9fa;
+    pointer-events: auto; /* Allow clicking for scrolling */
+}
+
+.history-cell .expanded-view td {
+    background-color: white;
+}
+
+/* New styles for duty and shipment fields */
+.duty-shipment-container {
+    border-top: 1px dashed #ccc;
+    margin-top: 8px;
+    padding-top: 8px;
+}
+
+.duty-shipment-container .input-group-sm {
+    margin-bottom: 4px;
+}
+
+/* Style for the selected supplier */
+.supplier-cell.selected-supplier {
+    background-color: #e8f4ff;
+    border-left: 3px solid #0d6efd;
+    border: 2px solid #0d6efd;
+}
+
+.supplier-selected-indicator {
+    color: #0d6efd;
+    font-weight: bold;
+    margin-top: 4px;
+    font-size: 0.8rem;
+}
+
+/* Margin column styling */
+.margin-cell {
+    background-color: #f8f9fa;
+}
+
+.selling-price-display {
+    font-size: 0.85rem;
+    font-weight: bold;
+}
+
+/* Selection radio styling */
+.supplier-selection-radio {
+    margin-right: 5px;
+}
+/* Better separation for duty & shipment fields */
+.duty-shipment-container {
+    border-top: 2px dashed #aaa;
+    margin-top: 12px;
+    padding-top: 8px;
+    background-color: #f0f7ff; /* Light blue background */
+}
+
+.duty-shipment-container .input-group-text {
+    background-color: #e0eaff; /* Different color for labels */
+    font-weight: bold;
+}
+
+/* Header text for duty-shipment section */
+.duty-shipment-container::before {
+    content: "Additional Costs";
+    display: block;
+    font-size: 0.75rem;
+    color: #666;
+    margin-bottom: 4px;
+    text-align: center;
+}
+</style>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Toggle individual cells when clicking on the collapsed view
+        document.querySelectorAll('.collapsed-view').forEach(function(element) {
+            element.addEventListener('click', function() {
+                const cell = this.closest('.history-cell');
+                toggleCell(cell);
+            });
+        });
+
+        // Toggle entire columns
+        document.querySelectorAll('.toggle-col').forEach(function(button) {
+            button.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const type = this.getAttribute('data-target');
+                const isExpanded = this.querySelector('i').classList.contains('fa-compress');
+
+                document.querySelectorAll(`.history-cell[data-type="${type}"]`).forEach(function(cell) {
+                    if (isExpanded) {
+                        // Collapse
+                        cell.querySelector('.collapsed-view').classList.remove('d-none');
+                        cell.querySelector('.expanded-view').classList.add('d-none');
+                    } else {
+                        // Expand
+                        cell.querySelector('.collapsed-view').classList.add('d-none');
+                        cell.querySelector('.expanded-view').classList.remove('d-none');
+                    }
+                });
+
+                // Toggle icon
+                if (isExpanded) {
+                    this.querySelector('i').classList.replace('fa-compress', 'fa-expand');
+                } else {
+                    this.querySelector('i').classList.replace('fa-expand', 'fa-compress');
+                }
+            });
+        });
+
+        // Expand all button
+        document.getElementById('expandAllBtn').addEventListener('click', function() {
+            document.querySelectorAll('.history-cell').forEach(function(cell) {
+                cell.querySelector('.collapsed-view').classList.add('d-none');
+                cell.querySelector('.expanded-view').classList.remove('d-none');
+            });
+
+            document.querySelectorAll('.toggle-col i').forEach(function(icon) {
+                icon.classList.replace('fa-expand', 'fa-compress');
+            });
+        });
+
+        // Collapse all button
+        document.getElementById('collapseAllBtn').addEventListener('click', function() {
+            document.querySelectorAll('.history-cell').forEach(function(cell) {
+                cell.querySelector('.collapsed-view').classList.remove('d-none');
+                cell.querySelector('.expanded-view').classList.add('d-none');
+            });
+
+            document.querySelectorAll('.toggle-col i').forEach(function(icon) {
+                icon.classList.replace('fa-compress', 'fa-expand');
+            });
+        });
+
+        function toggleCell(cell) {
+            const collapsedView = cell.querySelector('.collapsed-view');
+            const expandedView = cell.querySelector('.expanded-view');
+
+            if (collapsedView.classList.contains('d-none')) {
+                // Collapse
+                collapsedView.classList.remove('d-none');
+                expandedView.classList.add('d-none');
+            } else {
+                // Expand
+                collapsedView.classList.add('d-none');
+                expandedView.classList.remove('d-none');
+            }
+        }
+    });
+document.addEventListener('DOMContentLoaded', function() {
+// Store working data as a JavaScript object
+const workingData = {
+    supplierColumns: [],
+    lineData: {}
+};
+
+// Add supplier column
+document.getElementById('addSupplierColumn').addEventListener('click', function() {
+    const select = document.getElementById('supplierSelector');
+    const supplierId = select.value;
+    const supplierName = select.options[select.selectedIndex].text;
+
+    if (supplierId && !workingData.supplierColumns.includes(supplierId)) {
+        // Add to our tracking array
+        workingData.supplierColumns.push(supplierId);
+
+        // Add column header
+        addSupplierColumnHeader(supplierId, supplierName);
+
+        // Add cells for each row
+        document.querySelectorAll('#rfqTable tbody tr').forEach(row => {
+            const lineId = row.getAttribute('data-line-id');
+            const partNumber = row.getAttribute('data-part-number');
+
+            // Initialize data structure if needed
+            if (!workingData.lineData[lineId]) {
+                workingData.lineData[lineId] = {
+                    selectedSupplier: null,
+                    margin: 30 // Default margin of 30%
+                };
+            }
+            if (!workingData.lineData[lineId][supplierId]) {
+                workingData.lineData[lineId][supplierId] = {
+                    price: '',
+                    quantity: '',
+                    lineValue: '',
+                    noBid: false,
+                    duty: '', // New field for duty
+                    shipment: '' // New field for shipment
+                };
+            }
+
+            // Add the cell with inputs
+            addSupplierCell(row, lineId, supplierId);
+        });
+
+        // Reset the selector
+        select.value = '';
+    }
+});
+
+// Also update addSupplierColumnHeader to insert columns correctly
+function addSupplierColumnHeader(supplierId, supplierName) {
+    const th = document.createElement('th');
+    th.className = 'supplier-column bg-light';
+    th.setAttribute('data-supplier-id', supplierId);
+
+    // Create header content with remove button
+    const headerContent = document.createElement('div');
+    headerContent.className = 'd-flex justify-content-between align-items-center';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = supplierName;
+    headerContent.appendChild(nameSpan);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'btn btn-sm btn-outline-danger';
+    removeBtn.innerHTML = '<i class="fas fa-times"></i>';
+    removeBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        removeSupplierColumn(supplierId);
+    });
+    headerContent.appendChild(removeBtn);
+
+    th.appendChild(headerContent);
+
+    // UPDATED: Find the start marker that must exist in the header row
+    const startElement = document.getElementById('supplierColumnsStart');
+
+    if (startElement) {
+        // Insert immediately before the marker
+        startElement.parentNode.insertBefore(th, startElement);
+    } else {
+        console.error('Could not find supplierColumnsStart element');
+        // Fallback: insert before the first history column
+        const firstHistoryCol = document.querySelector('th.history-col');
+        if (firstHistoryCol) {
+            firstHistoryCol.parentNode.insertBefore(th, firstHistoryCol);
+        } else {
+            console.error('Could not find history columns');
+            // Last resort: append to the row
+            document.querySelector('#rfqTable thead tr').appendChild(th);
+        }
+    }
+}
+
+// Updated addSupplierCell function with duty and shipment fields, and supplier selection
+function addSupplierCell(row, lineId, supplierId) {
+    const data = workingData.lineData[lineId][supplierId];
+    const td = document.createElement('td');
+    td.className = 'supplier-cell';
+    td.setAttribute('data-supplier-id', supplierId);
+    td.setAttribute('data-line-id', lineId);
+
+    // Add supplier selection radio
+    const selectionDiv = document.createElement('div');
+    selectionDiv.className = 'form-check mb-2';
+
+    const selectionRadio = document.createElement('input');
+    selectionRadio.type = 'radio';
+    selectionRadio.name = `supplier-selection-${lineId}`;
+    selectionRadio.className = 'form-check-input supplier-selection-radio';
+    selectionRadio.id = `select-supplier-${lineId}-${supplierId}`;
+
+    // Check if this supplier is already selected
+    if (workingData.lineData[lineId].selectedSupplier === supplierId) {
+        selectionRadio.checked = true;
+        td.classList.add('selected-supplier');
+    }
+
+    selectionRadio.setAttribute('data-line-id', lineId);
+    selectionRadio.setAttribute('data-supplier-id', supplierId);
+
+    const selectionLabel = document.createElement('label');
+    selectionLabel.className = 'form-check-label';
+    selectionLabel.htmlFor = `select-supplier-${lineId}-${supplierId}`;
+    selectionLabel.textContent = 'Select';
+
+    selectionDiv.appendChild(selectionRadio);
+    selectionDiv.appendChild(selectionLabel);
+
+    td.appendChild(selectionDiv);
+
+    // Create a container for the inputs
+    const inputsContainer = document.createElement('div');
+    inputsContainer.className = 'inputs-container';
+
+    // Create No Bid checkbox
+    const noBidDiv = document.createElement('div');
+    noBidDiv.className = 'form-check mb-2';
+
+    const noBidCheckbox = document.createElement('input');
+    noBidCheckbox.type = 'checkbox';
+    noBidCheckbox.className = 'form-check-input no-bid-checkbox';
+    noBidCheckbox.id = `no-bid-${lineId}-${supplierId}`;
+    noBidCheckbox.checked = data.noBid || false;
+    noBidCheckbox.setAttribute('data-line-id', lineId);
+    noBidCheckbox.setAttribute('data-supplier-id', supplierId);
+
+    const noBidLabel = document.createElement('label');
+    noBidLabel.className = 'form-check-label';
+    noBidLabel.htmlFor = `no-bid-${lineId}-${supplierId}`;
+    noBidLabel.textContent = 'No Bid';
+
+    noBidDiv.appendChild(noBidCheckbox);
+    noBidDiv.appendChild(noBidLabel);
+
+    // Create input group for price
+    const priceGroup = document.createElement('div');
+    priceGroup.className = 'input-group input-group-sm mb-1';
+
+    const priceLabel = document.createElement('span');
+    priceLabel.className = 'input-group-text';
+    priceLabel.textContent = 'Price';
+    priceGroup.appendChild(priceLabel);
+
+    const priceInput = document.createElement('input');
+    priceInput.type = 'number';
+    priceInput.className = 'form-control form-control-sm price-input';
+    priceInput.value = data.price;
+    priceInput.setAttribute('data-line-id', lineId);
+    priceInput.setAttribute('data-supplier-id', supplierId);
+    priceInput.addEventListener('input', function() {
+        const thisLineId = this.getAttribute('data-line-id');
+        const thisSupplierId = this.getAttribute('data-supplier-id');
+        updateLineValue(thisLineId, thisSupplierId);
+    });
+    priceGroup.appendChild(priceInput);
+
+    // Create input group for quantity
+    const qtyGroup = document.createElement('div');
+    qtyGroup.className = 'input-group input-group-sm mb-1';
+
+    const qtyLabel = document.createElement('span');
+    qtyLabel.className = 'input-group-text';
+    qtyLabel.textContent = 'Qty';
+    qtyGroup.appendChild(qtyLabel);
+
+    const qtyInput = document.createElement('input');
+    qtyInput.type = 'number';
+    qtyInput.className = 'form-control form-control-sm qty-input';
+    qtyInput.value = data.quantity;
+    qtyInput.setAttribute('data-line-id', lineId);
+    qtyInput.setAttribute('data-supplier-id', supplierId);
+    qtyInput.addEventListener('input', function() {
+        const thisLineId = this.getAttribute('data-line-id');
+        const thisSupplierId = this.getAttribute('data-supplier-id');
+        updateLineValue(thisLineId, thisSupplierId);
+    });
+    qtyGroup.appendChild(qtyInput);
+
+    // Line value display
+    const lineValueDiv = document.createElement('div');
+    lineValueDiv.className = 'line-value-display text-end fw-bold mt-1';
+    const formattedValue = data.lineValue ? `£${parseFloat(data.lineValue).toFixed(2)}` : '—';
+    lineValueDiv.textContent = `Total: ${formattedValue}`;
+
+    // Create container for duty and shipment inputs
+    const dutyShipmentContainer = document.createElement('div');
+    dutyShipmentContainer.className = 'duty-shipment-container';
+
+    // Create input group for duty
+    const dutyGroup = document.createElement('div');
+    dutyGroup.className = 'input-group input-group-sm mb-1';
+
+    const dutyLabel = document.createElement('span');
+    dutyLabel.className = 'input-group-text';
+    dutyLabel.textContent = 'Duty';
+    dutyGroup.appendChild(dutyLabel);
+
+    const dutyInput = document.createElement('input');
+    dutyInput.type = 'number';
+    dutyInput.className = 'form-control form-control-sm duty-input';
+    dutyInput.value = data.duty;
+    dutyInput.setAttribute('data-line-id', lineId);
+    dutyInput.setAttribute('data-supplier-id', supplierId);
+    dutyInput.addEventListener('input', function() {
+        const thisLineId = this.getAttribute('data-line-id');
+        const thisSupplierId = this.getAttribute('data-supplier-id');
+        // Update duty value in data structure
+        workingData.lineData[thisLineId][thisSupplierId].duty = this.value;
+        // If this is the selected supplier, update the margin calculation
+        if (workingData.lineData[thisLineId].selectedSupplier === thisSupplierId) {
+            updateMarginCalculation(thisLineId);
+        }
+    });
+    dutyGroup.appendChild(dutyInput);
+
+    // Create input group for shipment
+    const shipmentGroup = document.createElement('div');
+    shipmentGroup.className = 'input-group input-group-sm mb-1';
+
+    const shipmentLabel = document.createElement('span');
+    shipmentLabel.className = 'input-group-text';
+    shipmentLabel.textContent = 'Ship';
+    shipmentGroup.appendChild(shipmentLabel);
+
+    const shipmentInput = document.createElement('input');
+    shipmentInput.type = 'number';
+    shipmentInput.className = 'form-control form-control-sm shipment-input';
+    shipmentInput.value = data.shipment;
+    shipmentInput.setAttribute('data-line-id', lineId);
+    shipmentInput.setAttribute('data-supplier-id', supplierId);
+    shipmentInput.addEventListener('input', function() {
+        const thisLineId = this.getAttribute('data-line-id');
+        const thisSupplierId = this.getAttribute('data-supplier-id');
+        // Update shipment value in data structure
+        workingData.lineData[thisLineId][thisSupplierId].shipment = this.value;
+        // If this is the selected supplier, update the margin calculation
+        if (workingData.lineData[thisLineId].selectedSupplier === thisSupplierId) {
+            updateMarginCalculation(thisLineId);
+        }
+    });
+    shipmentGroup.appendChild(shipmentInput);
+
+    // Add event listener to selection radio button
+    selectionRadio.addEventListener('change', function() {
+        const thisLineId = this.getAttribute('data-line-id');
+        const thisSupplierId = this.getAttribute('data-supplier-id');
+
+        if (this.checked) {
+            // Update the selected supplier in the data structure
+            workingData.lineData[thisLineId].selectedSupplier = thisSupplierId;
+
+            // Update UI to show selection
+            document.querySelectorAll(`td[data-line-id="${thisLineId}"]`).forEach(cell => {
+                if (cell.hasAttribute('data-supplier-id')) {
+                    // Remove selected class from all cells in this row
+                    cell.classList.remove('selected-supplier');
+
+                    // Remove any existing selected indicator
+                    const existingIndicator = cell.querySelector('.supplier-selected-indicator');
+                    if (existingIndicator) {
+                        existingIndicator.remove();
+                    }
+                }
+            });
+
+            // Add selected class to this cell
+            td.classList.add('selected-supplier');
+
+            // Add selected indicator
+            const selectedIndicator = document.createElement('div');
+            selectedIndicator.className = 'supplier-selected-indicator';
+            selectedIndicator.innerHTML = '<i class="fas fa-check-circle"></i> Selected';
+            td.appendChild(selectedIndicator);
+
+            // Update the margin calculation with this supplier's data
+            updateMarginCalculation(thisLineId);
+        }
+    });
+
+    // Add event listener to the No Bid checkbox
+    noBidCheckbox.addEventListener('change', function() {
+        const thisLineId = this.getAttribute('data-line-id');
+        const thisSupplierId = this.getAttribute('data-supplier-id');
+        const isNoBid = this.checked;
+
+        // Update the data structure
+        workingData.lineData[thisLineId][thisSupplierId].noBid = isNoBid;
+
+        // Update the UI
+        updateNoBidStatus(thisLineId, thisSupplierId, isNoBid);
+
+        // If this was the selected supplier and now it's no-bid, unselect it
+        if (isNoBid && workingData.lineData[thisLineId].selectedSupplier === thisSupplierId) {
+            workingData.lineData[thisLineId].selectedSupplier = null;
+            td.classList.remove('selected-supplier');
+
+            // Remove any existing selected indicator
+            const existingIndicator = td.querySelector('.supplier-selected-indicator');
+            if (existingIndicator) {
+                existingIndicator.remove();
+            }
+
+            // Clear the margin calculation
+            updateMarginCalculation(thisLineId);
+        }
+    });
+
+    // Append all elements to the cell
+    td.appendChild(noBidDiv);
+    td.appendChild(inputsContainer);
+
+    // Add price and qty groups to the inputs container
+    inputsContainer.appendChild(priceGroup);
+    inputsContainer.appendChild(qtyGroup);
+    inputsContainer.appendChild(lineValueDiv);
+
+    // Add duty and shipment fields
+    dutyShipmentContainer.appendChild(dutyGroup);
+    dutyShipmentContainer.appendChild(shipmentGroup);
+    inputsContainer.appendChild(dutyShipmentContainer);
+
+    // Apply initial no-bid status if it exists
+    if (data.noBid) {
+        updateNoBidStatus(lineId, supplierId, true);
+    }
+
+    // UPDATED INSERTION LOGIC:
+    // Find the supplier-columns-start cell, which must exist in each row
+// UPDATED INSERTION LOGIC:
+    // Find the supplier-columns-start cell, which must exist in each row
+   const markerCell = row.querySelector('.supplier-columns-start');
+    const firstHistoryCell = row.querySelector('.history-cell');
+
+    if (markerCell) {
+        // Insert immediately before the marker cell
+        row.insertBefore(td, markerCell);
+    } else if (firstHistoryCell) {
+        // Insert before the first history cell (any type)
+        row.insertBefore(td, firstHistoryCell);
+    } else {
+        // Last resort: append to the row
+        row.appendChild(td);
+    }
+}
+
+
+// Update function to calculate and display margin-based selling price
+function updateMarginCalculation(lineId) {
+    // Get the margin input value
+    const marginInput = document.querySelector(`.margin-input[data-line-id="${lineId}"]`);
+    const sellingPriceDisplay = document.querySelector(`tr[data-line-id="${lineId}"] .selling-price-display`);
+
+    if (!marginInput || !sellingPriceDisplay) {
+        return;
+    }
+
+    const marginPercent = parseFloat(marginInput.value) || 0;
+
+    // Fix: Check if lineData[lineId] exists before accessing selectedSupplier
+    if (!workingData.lineData[lineId]) {
+        workingData.lineData[lineId] = { selectedSupplier: null, margin: marginPercent };
+        sellingPriceDisplay.textContent = '';
+        return;
+    }
+
+    const selectedSupplierId = workingData.lineData[lineId].selectedSupplier;
+
+    // If no supplier is selected, clear the display
+    if (!selectedSupplierId) {
+        sellingPriceDisplay.textContent = '';
+        return;
+    }
+
+    // Get the selected supplier's data
+    const supplierData = workingData.lineData[lineId][selectedSupplierId];
+
+    if (!supplierData || supplierData.noBid) {
+        sellingPriceDisplay.textContent = '';
+        return;
+    }
+
+    // Calculate base cost (price * quantity)
+    const price = parseFloat(supplierData.price) || 0;
+    const qty = parseFloat(supplierData.quantity) || 0;
+    const baseCost = price * qty;
+
+    // Add duty and shipment
+    const duty = parseFloat(supplierData.duty) || 0;
+    const shipment = parseFloat(supplierData.shipment) || 0;
+    const totalCost = baseCost + duty + shipment;
+
+    // Calculate selling price using the requested formula (division by factor)
+    // For example, with 30% margin, divide by 0.7 (1 - 0.3)
+    let sellingPrice = 0;
+    if (marginPercent < 100) {
+        sellingPrice = totalCost / (1 - (marginPercent / 100));
+    }
+
+    // Update the display
+    if (sellingPrice > 0) {
+        sellingPriceDisplay.textContent = `Selling Price: £${sellingPrice.toFixed(2)}`;
+    } else {
+        sellingPriceDisplay.textContent = '';
+    }
+}
+
+// New function to update the UI for no-bid status
+function updateNoBidStatus(lineId, supplierId, isNoBid) {
+    const cell = document.querySelector(`td[data-supplier-id="${supplierId}"][data-line-id="${lineId}"]`);
+
+    if (!cell) {
+        console.error(`Could not find cell for lineId: ${lineId}, supplierId: ${supplierId}`);
+        return;
+    }
+
+    const inputsContainer = cell.querySelector('.inputs-container');
+    const priceInput = cell.querySelector('.price-input');
+    const qtyInput = cell.querySelector('.qty-input');
+    const dutyInput = cell.querySelector('.duty-input');
+    const shipmentInput = cell.querySelector('.shipment-input');
+    const selectionRadio = cell.querySelector('.supplier-selection-radio');
+
+    if (isNoBid) {
+        // Apply no-bid styling
+        cell.classList.add('no-bid');
+        inputsContainer.classList.add('opacity-50');
+
+        // Disable inputs
+        priceInput.disabled = true;
+        qtyInput.disabled = true;
+        dutyInput.disabled = true;
+        shipmentInput.disabled = true;
+        selectionRadio.disabled = true;
+
+        // Update line value display
+        const lineValueDisplay = cell.querySelector('.line-value-display');
+        lineValueDisplay.textContent = 'No Bid';
+        lineValueDisplay.classList.add('text-danger');
+        lineValueDisplay.classList.remove('text-success');
+    } else {
+        // Remove no-bid styling
+        cell.classList.remove('no-bid');
+        inputsContainer.classList.remove('opacity-50');
+
+        // Enable inputs
+        priceInput.disabled = false;
+        qtyInput.disabled = false;
+        dutyInput.disabled = false;
+        shipmentInput.disabled = false;
+        selectionRadio.disabled = false;
+
+        // Restore line value display
+        updateLineValue(lineId, supplierId);
+    }
+
+    // Update best price highlighting since this line's status changed
+    highlightBestPrice(lineId);
+}
+
+// Add to the existing updateLineValue function to handle no-bid status
+function updateLineValue(lineId, supplierId) {
+    // Find the specific cell using both line and supplier IDs
+    const cell = document.querySelector(`td[data-supplier-id="${supplierId}"][data-line-id="${lineId}"]`);
+
+    if (!cell) {
+        console.error(`Could not find cell for lineId: ${lineId}, supplierId: ${supplierId}`);
+        return;
+    }
+
+    // Check if this is a no-bid item
+    if (workingData.lineData[lineId][supplierId].noBid) {
+        const lineValueDisplay = cell.querySelector('.line-value-display');
+        if (lineValueDisplay) {
+            lineValueDisplay.textContent = 'No Bid';
+            lineValueDisplay.classList.add('text-danger');
+            lineValueDisplay.classList.remove('text-success');
+        }
+        return;
+    }
+
+    const priceInput = cell.querySelector('.price-input');
+    const qtyInput = cell.querySelector('.qty-input');
+    const lineValueDisplay = cell.querySelector('.line-value-display');
+
+    const price = parseFloat(priceInput.value) || 0;
+    const qty = parseFloat(qtyInput.value) || 0;
+    const lineValue = price * qty;
+
+    // Format in pounds with the £ symbol and 2 decimal places
+    const formattedValue = lineValue ? `£${lineValue.toFixed(2)}` : '—';
+
+    // Update the display
+    lineValueDisplay.textContent = `Total: ${formattedValue}`;
+    lineValueDisplay.classList.remove('text-danger');
+
+    // Update our data structure
+    if (!workingData.lineData[lineId]) {
+        workingData.lineData[lineId] = {};
+    }
+    if (!workingData.lineData[lineId][supplierId]) {
+        workingData.lineData[lineId][supplierId] = {};
+    }
+
+    workingData.lineData[lineId][supplierId].price = priceInput.value;
+    workingData.lineData[lineId][supplierId].quantity = qtyInput.value;
+    workingData.lineData[lineId][supplierId].lineValue = lineValue;
+
+    // If this is the selected supplier, update the margin calculation
+    if (workingData.lineData[lineId].selectedSupplier === supplierId) {
+        updateMarginCalculation(lineId);
+    }
+
+    // After updating this supplier's value, find the best price for this line
+    highlightBestPrice(lineId);
+}
+
+// Update highlightBestPrice function to skip no-bid items
+function highlightBestPrice(lineId) {
+    // Reset all highlights for this line first
+    document.querySelectorAll(`td[data-line-id="${lineId}"]`).forEach(cell => {
+        cell.classList.remove('best-price');
+        const valueDisplay = cell.querySelector('.line-value-display');
+        if (valueDisplay && !valueDisplay.textContent.includes('No Bid')) {
+            valueDisplay.classList.remove('text-success');
+        }
+    });
+
+    // Find all supplier cells for this line
+    const supplierCells = document.querySelectorAll(`td[data-line-id="${lineId}"][data-supplier-id]`);
+
+    // If we have at least one supplier with a value
+    if (supplierCells.length > 0) {
+        let lowestValue = Infinity;
+        let bestCell = null;
+
+        // Find the lowest value, excluding no-bid items
+        supplierCells.forEach(cell => {
+            const supplierId = cell.getAttribute('data-supplier-id');
+            const lineData = workingData.lineData[lineId][supplierId];
+
+            // Skip no-bid items
+            if (lineData && !lineData.noBid) {
+                // Only consider cells with actual values
+                if (lineData.lineValue > 0) {
+                    if (lineData.lineValue < lowestValue) {
+                        lowestValue = lineData.lineValue;
+                        bestCell = cell;
+                    }
+                }
+            }
+        });
+
+        // Highlight the best cell
+        if (bestCell && lowestValue !== Infinity) {
+            bestCell.classList.add('best-price');
+            const valueDisplay = bestCell.querySelector('.line-value-display');
+            if (valueDisplay) {
+                valueDisplay.classList.add('text-success');
+            }
+        }
+    }
+}
+
+// Add this function to update all line best prices at once
+function updateAllBestPrices() {
+    // Get all unique line IDs
+    const lineIds = new Set();
+    document.querySelectorAll('#rfqTable tbody tr').forEach(row => {
+        const lineId = row.getAttribute('data-line-id');
+        if (lineId) {
+            lineIds.add(lineId);
+        }
+    });
+
+    // Update best price for each line
+    lineIds.forEach(lineId => {
+        highlightBestPrice(lineId);
+    });
+}
+
+// Update removeSupplierColumn to also update best prices after removing a column
+function removeSupplierColumn(supplierId) {
+    // Remove header
+    document.querySelector(`th[data-supplier-id="${supplierId}"]`).remove();
+
+    // Get all line IDs affected before removing cells
+    const affectedLineIds = new Set();
+    document.querySelectorAll(`td[data-supplier-id="${supplierId}"]`).forEach(cell => {
+        const lineId = cell.getAttribute('data-line-id');
+        if (lineId) {
+            affectedLineIds.add(lineId);
+
+            // Check if this was the selected supplier for this line
+            if (workingData.lineData[lineId] && workingData.lineData[lineId].selectedSupplier === supplierId) {
+                // Reset the selected supplier
+                workingData.lineData[lineId].selectedSupplier = null;
+                // Update the margin calculation
+                updateMarginCalculation(lineId);
+            }
+        }
+        cell.remove();
+    });
+
+    // Update our data structure
+    const index = workingData.supplierColumns.indexOf(supplierId);
+    if (index !== -1) {
+        workingData.supplierColumns.splice(index, 1);
+    }
+
+    // Update best prices for affected lines
+    affectedLineIds.forEach(lineId => {
+        highlightBestPrice(lineId);
+    });
+}
+
+// Toggle compare mode
+document.getElementById('compareMode').addEventListener('change', function() {
+    const historyColumns = document.querySelectorAll('.history-col');
+    if (this.checked) {
+        // Show relevant history columns
+        historyColumns.forEach(col => {
+            if (col.getAttribute('data-type') === 'offer') {
+                col.classList.remove('d-none');
+            } else {
+                col.classList.add('d-none');
+            }
+        });
+
+        // Show offer history cells
+        document.querySelectorAll('.history-cell').forEach(cell => {
+            if (cell.getAttribute('data-type') === 'offer') {
+                cell.classList.remove('d-none');
+            } else {
+                cell.classList.add('d-none');
+            }
+        });
+    } else {
+        // Reset visibility
+        historyColumns.forEach(col => {
+            col.classList.remove('d-none');
+        });
+        document.querySelectorAll('.history-cell').forEach(cell => {
+            cell.classList.remove('d-none');
+        });
+    }
+});
+
+// Reset button handler
+document.getElementById('resetWorkingData').addEventListener('click', function() {
+    if (confirm('Are you sure you want to reset all working data?')) {
+        // Remove all supplier columns
+        workingData.supplierColumns.forEach(supplierId => {
+            removeSupplierColumn(supplierId);
+        });
+
+        // Clear data structure
+        workingData.supplierColumns = [];
+        workingData.lineData = {};
+    }
+});
+
+// Initialize margin inputs
+document.addEventListener('DOMContentLoaded', function() {
+    // Set default margin values and attach event listeners
+    document.querySelectorAll('.margin-input').forEach(input => {
+        const lineId = input.getAttribute('data-line-id');
+
+        // Set default value from data structure if it exists
+        if (workingData.lineData[lineId] && workingData.lineData[lineId].margin) {
+            input.value = workingData.lineData[lineId].margin;
+        } else {
+            // Otherwise use 30% as default
+            input.value = 30;
+
+            // Initialize in data structure
+            if (!workingData.lineData[lineId]) {
+                workingData.lineData[lineId] = {};
+            }
+            workingData.lineData[lineId].margin = 30;
+        }
+
+        // Add event listener
+        input.addEventListener('input', function() {
+            const thisLineId = this.getAttribute('data-line-id');
+            // Update margin in data structure
+            workingData.lineData[thisLineId].margin = parseFloat(this.value) || 0;
+            // Update calculation
+            updateMarginCalculation(thisLineId);
+        });
+    });
+});
+
+// Save configuration button
+document.getElementById('saveConfiguration').addEventListener('click', function() {
+    // This would typically send data to the server via AJAX
+    // For now, we'll just show what would be saved
+    console.log('Saving configuration:', workingData);
+
+    // Example of sending to server
+    /*
+    fetch('/rfqs/save_working_data', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(workingData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        alert('Configuration saved successfully!');
+    })
+    .catch(error => {
+        console.error('Error saving configuration:', error);
+        alert('Error saving configuration.');
+    });
+    */
+});
+
+// Add this line to initialize all margin calculations when the page loads
+document.querySelectorAll('#rfqTable tbody tr').forEach(row => {
+    const lineId = row.getAttribute('data-line-id');
+    if (lineId) {
+        updateMarginCalculation(lineId);
+    }
+});
+
+});
+</script>
+{% endblock %}

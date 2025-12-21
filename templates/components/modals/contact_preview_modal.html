@@ -1,0 +1,360 @@
+<!-- Contact Preview Modal -->
+<div class="modal fade" id="contactPreviewModal" tabindex="-1" aria-labelledby="contactPreviewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="d-flex align-items-center w-100">
+                    <div class="flex-grow-1">
+                        <h5 class="modal-title" id="contactPreviewModalLabel">
+                            <span id="contact-modal-name">Contact Details</span>
+                        </h5>
+                        <div class="text-muted small" id="contact-modal-customer"></div>
+                    </div>
+                    <div class="me-3">
+                        <span class="badge" id="contact-modal-status" style="font-size: 0.875rem;"></span>
+                    </div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Contact Information Section -->
+                <div class="contact-details-section mb-4">
+    <h6 class="fw-bold mb-3">Contact Information</h6>
+    <div class="row g-3">
+        <!-- Timezone field -->
+        <div class="col-md-6" id="contact-timezone-container" style="display: none;">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-clock text-muted me-2"></i>
+                <div>
+                    <small class="text-muted d-block">Local Time</small>
+                    <span id="contact-timezone-display" class="timezone-field">--:--:-- (Loading...)</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6" id="contact-email-container" style="display: none;">
+                            <div class="d-flex align-items-center">
+                                <i class="bi bi-envelope text-muted me-2"></i>
+                                <div>
+                                    <small class="text-muted d-block">Email</small>
+                                    <a href="#" id="contact-modal-email"></a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6" id="contact-phone-container" style="display: none;">
+                            <div class="d-flex align-items-center">
+                                <i class="bi bi-telephone text-muted me-2"></i>
+                                <div>
+                                    <small class="text-muted d-block">Phone</small>
+                                    <a href="#" id="contact-modal-phone"></a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6" id="contact-job-title-container" style="display: none;">
+                            <div class="d-flex align-items-center">
+                                <i class="bi bi-briefcase text-muted me-2"></i>
+                                <div>
+                                    <small class="text-muted d-block">Job Title</small>
+                                    <span id="contact-modal-job-title"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Two Column Layout -->
+                <div class="row">
+                    <!-- Left Column - Log Communication Form -->
+                    <div class="col-md-6">
+                        <div id="log-communication-form">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h6 class="fw-bold mb-0">Log New Communication</h6>
+                            </div>
+                            <form id="communication-form">
+                                <input type="hidden" id="comm-contact-id" name="contact_id">
+                                <input type="hidden" id="comm-customer-id" name="customer_id">
+                                <input type="hidden" id="comm-salesperson-id" name="salesperson_id">
+
+                                <div class="mb-3">
+                                    <label for="comm-type" class="form-label">Type</label>
+                                    <select class="form-select" id="comm-type" name="update_type" required>
+                                        <option value="">Select type...</option>
+                                        <option value="phone">Phone Call</option>
+                                        <option value="email">Email</option>
+                                        <option value="meeting">Meeting</option>
+                                        <option value="generic">Other</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="comm-notes" class="form-label">Notes</label>
+                                    <!-- Preset Response Buttons -->
+                                    <div class="mb-2">
+                                        <small class="text-muted d-block mb-1">Quick responses:</small>
+                                        <div class="btn-group btn-group-sm" role="group">
+                                            <button type="button" class="btn btn-danger preset-response-btn" data-response="<i class='bi bi-x-circle-fill text-danger'></i> No answer">
+                                                <i class="bi bi-x-circle-fill"></i> No answer
+                                            </button>
+                                            <button type="button" class="btn btn-info preset-response-btn" data-response="<i class='bi bi-file-earmark-text-fill text-info'></i> RFQ received">
+                                                <i class="bi bi-file-earmark-text-fill"></i> RFQ received
+                                            </button>
+                                            <button type="button" class="btn btn-success preset-response-btn" data-response="<i class='bi bi-cart-check-fill text-success'></i> Order received">
+                                                <i class="bi bi-cart-check-fill"></i> Order received
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <textarea class="form-control" id="comm-notes" name="update_text" rows="4" autofocus></textarea>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="comm-date" class="form-label">Date</label>
+                                            <input type="date" class="form-control" id="comm-date" name="update_date" required>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="comm-time" class="form-label">Time</label>
+                                            <input type="time" class="form-control" id="comm-time" name="update_time">
+                                            <div class="form-text">Optional - defaults to current time</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="d-flex gap-2">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="bi bi-check-circle me-1"></i> Save Communication
+                                    </button>
+                                    <button type="button" class="btn btn-secondary" id="cancel-communication-btn">
+                                        Clear
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Right Column - Communication History -->
+                    <div class="col-md-6">
+                        <div class="communication-history-section" id="communication-history-section">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h6 class="fw-bold mb-0">Communication History</h6>
+                            </div>
+
+                            <!-- Communication List -->
+                            <div id="communication-history-list">
+                                <div class="text-center text-muted py-4">
+                                    <div class="spinner-border spinner-border-sm" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    <p class="mt-2 mb-0">Loading communication history...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Update the modal footer in contactPreviewModal -->
+<div class="modal-footer">
+  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+  <button type="button" class="btn btn-outline-primary" id="edit-from-preview-btn">
+    <i class="bi bi-pencil me-1"></i> Edit Contact
+  </button>
+  <a href="#" id="view-full-contact-btn" class="btn btn-primary" target="_blank">
+    <i class="bi bi-arrow-up-right-square me-1"></i> View Full Contact
+  </a>
+</div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Contact Preview Modal Styles */
+
+/* Contact Preview Modal Styles */
+#contactPreviewModal .contact-details-section {
+    background-color: #f8f9fa;
+    padding: 1.25rem;
+    border-radius: 0.5rem;
+    border: 1px solid #e9ecef;
+}
+
+#contactPreviewModal .contact-details-section .col-md-6 {
+    display: flex;
+    align-items: start;
+}
+
+#contactPreviewModal .contact-details-section a {
+    color: #0d6efd;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+#contactPreviewModal .contact-details-section a:hover {
+    text-decoration: underline;
+}
+
+#contactPreviewModal .communication-history-section {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+#contactPreviewModal .communication-item {
+    border-left: 3px solid #dee2e6;
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+    background-color: #f8f9fa;
+    border-radius: 0.25rem;
+    transition: all 0.2s;
+}
+
+#contactPreviewModal .communication-item:hover {
+    border-left-color: #0d6efd;
+    background-color: #f1f3f5;
+}
+
+#contactPreviewModal .communication-item.type-phone {
+    border-left-color: #0dcaf0;
+}
+
+#contactPreviewModal .communication-item.type-email {
+    border-left-color: #198754;
+}
+
+#contactPreviewModal .communication-item.type-meeting {
+    border-left-color: #ffc107;
+}
+
+#contactPreviewModal .communication-item.type-other {
+    border-left-color: #6c757d;
+}
+
+#contactPreviewModal .communication-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+#contactPreviewModal .communication-type {
+    font-weight: 600;
+    color: #495057;
+    font-size: 0.875rem;
+}
+
+#contactPreviewModal .communication-type i {
+    margin-right: 0.25rem;
+}
+
+#contactPreviewModal .communication-date {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+#contactPreviewModal .communication-notes {
+    color: #212529;
+    margin-bottom: 0.5rem;
+    white-space: pre-wrap;
+    line-height: 1.5;
+}
+
+#contactPreviewModal .communication-salesperson {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+#contactPreviewModal #log-communication-form {
+    background-color: #f8f9fa;
+    padding: 1.25rem;
+    border-radius: 0.5rem;
+    border: 1px solid #e9ecef;
+}
+
+#contactPreviewModal #log-communication-form .form-label {
+    font-weight: 600;
+    color: #495057;
+    font-size: 0.875rem;
+}
+
+/* Preset response button styles */
+#contactPreviewModal .preset-response-btn {
+    transition: all 0.2s ease;
+}
+
+#contactPreviewModal .preset-response-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+#contactPreviewModal .preset-response-btn.active {
+    font-weight: 600;
+}
+
+/* Simplified Timezone Field */
+.timezone-field {
+    color: #e91e63;
+    font-family: 'Courier New', Courier, monospace;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+</style>
+
+<!-- Add this AFTER the contactPreviewModal in your document -->
+
+<!-- Edit Contact Modal (nested within preview flow) -->
+<div class="modal fade" id="editContactFromPreviewModal" tabindex="-1" aria-labelledby="editContactFromPreviewLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="editContactFromPreviewLabel">Edit Contact</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="contact-edit-from-preview-form">
+          <input type="hidden" id="edit_preview_contact_id">
+
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label for="edit_preview_first_name" class="form-label">First Name *</label>
+              <input type="text" id="edit_preview_first_name" class="form-control" required>
+            </div>
+            <div class="col-md-6">
+              <label for="edit_preview_second_name" class="form-label">Last Name</label>
+              <input type="text" id="edit_preview_second_name" class="form-control">
+            </div>
+            <div class="col-12">
+              <label for="edit_preview_email" class="form-label">Email *</label>
+              <input type="email" id="edit_preview_email" class="form-control" required>
+            </div>
+            <div class="col-md-6">
+              <label for="edit_preview_phone" class="form-label">Phone</label>
+              <input type="text" id="edit_preview_phone" class="form-control">
+            </div>
+            <div class="col-md-6">
+              <label for="edit_preview_status" class="form-label">Status</label>
+              <select id="edit_preview_status" class="form-select">
+                <!-- Options loaded dynamically -->
+              </select>
+            </div>
+            <div class="col-12">
+              <label for="edit_preview_job_title" class="form-label">Job Title</label>
+              <input type="text" id="edit_preview_job_title" class="form-control">
+            </div>
+            <div class="col-12">
+              <label for="edit_preview_timezone" class="form-label">Timezone</label>
+              <select id="edit_preview_timezone" class="form-select">
+                <option value="">Loading timezones...</option>
+              </select>
+              <small class="text-muted" id="preview-timezone-hint"></small>
+            </div>
+          </div>
+          <div id="edit-preview-messages" class="alert d-none mt-3"></div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="save-preview-contact-btn">Save Changes</button>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- Combined Category Addition and Bulk Assign Card -->
+<div class="card mb-3">
+  <div class="card-header">
+    <h5 class="card-title mb-0">Manage Categories</h5>
+  </div>
+  <div class="card-body">
+    <!-- Add New Category Form -->
+    <div class="mb-4">
+      <h6 class="mb-3">Add New Category</h6>
+      <form id="add-category-form" class="d-flex align-items-center flex-wrap gap-2">
+        <input type="text" id="new_category_name" name="category_name" class="form-control me-2" style="width: 200px;" placeholder="Category Name" required>
+        <input type="text" id="new_category_description" name="description" class="form-control me-2" style="width: 300px;" placeholder="Description (optional)">
+        <button type="submit" class="btn btn-primary">Add Category</button>
+      </form>
+    </div>
+
+    <!-- Bulk Assign Category (Collapsible Section) -->
+    <div class="mt-4">
+      <button type="button" class="btn btn-secondary mb-3" id="toggleBulkAssign">
+        Bulk Assign Category
+      </button>
+
+      <div id="bulkAssignSection" style="display: none;">
+        <h6 class="mb-3">Bulk Assign Category</h6>
+        <form id="bulk-category-form">
+          <div class="row g-3 align-items-end">
+            <div class="col-md-5">
+              <label for="part-prefix" class="form-label">Parts Beginning With</label>
+              <input type="text" class="form-control" id="part-prefix" placeholder="e.g., D38999" required>
+            </div>
+            <div class="col-md-5">
+              <label for="bulk-category" class="form-label">Assign to Category</label>
+              <select class="form-select" id="bulk-category" required>
+                <option value="">Select a category</option>
+                {% for category in categories %}
+                  <option value="{{ category.category_id }}">{{ category.category_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
+              <button type="submit" class="btn btn-primary w-100 mb-2">Assign</button>
+              <button type="button" class="btn btn-secondary w-100" id="cancelBulkAssign">Cancel</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Rest of your original Part Numbers card remains unchanged -->
+<div class="card">
+<div class="card-header d-flex justify-content-between align-items-center flex-nowrap">
+  <h5 class="card-title mb-0">Part Numbers</h5>
+  <div class="d-flex flex-nowrap ms-auto align-items-center">
+    <select id="category-filter" class="form-select form-select-sm me-2" style="width: 200px;">
+      <option value="">All Categories</option>
+      {% for category in categories %}
+        <option value="{{ category.category_id }}">{{ category.category_name }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" id="new_part_number" name="part_number" class="form-control form-control-sm me-2" style="width: 200px;" placeholder="Part Number" required>
+    <button type="submit" form="add-part-form" class="btn btn-primary btn-sm" style="white-space: nowrap;">Add Part</button>
+  </div>
+</div>
+
+  <div class="card-body p-0">
+    <table id="parts-table" class="table table-striped table-hover">
+      <thead>
+        <tr>
+          <th>
+            <input type="text" id="part-number-filter" class="form-control form-control-sm" placeholder="Filter by Part Number">
+            <br>
+            Part Number
+          </th>
+          <th>Base Part Number</th>
+          <th>System Part Number</th>
+          <th>Category</th>
+          <th>Associated Manufacturers</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for part in part_numbers %}
+        <tr data-id="{{ part.base_part_number }}" data-category="{{ part.category_id|default('') }}" class="clickable-row" style="cursor: pointer;">
+          <td>{{ part.part_number }}</td>
+          <td>{{ part.base_part_number }}</td>
+          <td>{{ part.system_part_number }}</td>
+          <td>{{ part.category_name|default('Uncategorized') }}</td>
+          <td>
+            {% for manufacturer in part.associated_manufacturers %}
+              {{ manufacturer.name }}{% if not loop.last %}, {% endif %}
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="d-flex justify-content-between mt-3">
+      {% if page > 1 %}
+        <a href="{{ url_for('parts.parts', page=page-1) }}" class="btn btn-secondary">Previous</a>
+      {% endif %}
+      <span>Page {{ page }} of {{ total_pages }}</span>
+      {% if page < total_pages %}
+        <a href="{{ url_for('parts.parts', page=page+1) }}" class="btn btn-secondary">Next</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+$(document).ready(function() {
+    // Make table rows clickable and redirect to the view part number page
+    $('.clickable-row').on('click', function() {
+        var base_part_number = $(this).data('id');
+        window.location.href = "{{ url_for('parts.view_part_number', base_part_number='') }}" + base_part_number;
+    });
+
+    // Filter functionality for part number
+    $('#part-number-filter').on('input', function() {
+        var filterValue = $(this).val().toLowerCase();
+        var categoryFilter = $('#category-filter').val();
+        filterTable(filterValue, categoryFilter);
+    });
+
+    // Filter functionality for category
+    $('#category-filter').on('change', function() {
+        var categoryFilter = $(this).val();
+        var partNumberFilter = $('#part-number-filter').val().toLowerCase();
+        filterTable(partNumberFilter, categoryFilter);
+    });
+
+    // Combined filter function
+    function filterTable(partNumberFilter, categoryFilter) {
+        $('#parts-table tbody tr').filter(function() {
+            var partNumberMatch = $(this).find('td:first').text().toLowerCase().indexOf(partNumberFilter) > -1;
+            var categoryMatch = !categoryFilter || $(this).data('category') == categoryFilter;
+            $(this).toggle(partNumberMatch && categoryMatch);
+        });
+    }
+
+    // Add category form submission
+    $('#add-category-form').on('submit', function(e) {
+        e.preventDefault();
+        var categoryName = $('#new_category_name').val();
+        var description = $('#new_category_description').val();
+
+        $.ajax({
+            url: "{{ url_for('parts.create_category') }}",
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                category_name: categoryName,
+                description: description
+            }),
+            success: function(response) {
+                if (response.success) {
+                    $('#category-filter').append(
+                        `<option value="${response.category.category_id}">${response.category.category_name}</option>`
+                    );
+                    $('#new_category_name').val('');
+                    $('#new_category_description').val('');
+                    alert('Category added successfully!');
+                } else {
+                    alert('Error: ' + response.message);
+                }
+            },
+            error: function(xhr) {
+                alert('Error adding category: ' + xhr.responseText);
+            }
+        });
+    });
+
+    // Toggle the bulk assign form
+    $('#toggleBulkAssign').on('click', function() {
+        $('#bulkAssignSection').slideDown();
+    });
+
+    // Hide the form when cancel is clicked
+    $('#cancelBulkAssign').on('click', function() {
+        $('#bulkAssignSection').slideUp();
+    });
+
+    // Bulk category assignment
+    $('#bulk-category-form').on('submit', function(e) {
+        e.preventDefault();
+        var prefix = $('#part-prefix').val();
+        var categoryId = $('#bulk-category').val();
+
+        $.ajax({
+            url: "{{ url_for('parts.bulk_assign_category') }}",
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                prefix: prefix,
+                category_id: categoryId
+            }),
+            success: function(response) {
+                if (response.success) {
+                    // Update visible rows' categories
+                    $('#parts-table tbody tr').each(function() {
+                        var partNumber = $(this).find('td:first').text();
+                        if (partNumber.startsWith(prefix)) {
+                            $(this).data('category', categoryId);
+                            var categoryName = $('#bulk-category option:selected').text();
+                            $(this).find('td:eq(3)').text(categoryName);
+                        }
+                    });
+
+                    // Hide the form instead of closing a modal
+                    $('#bulkAssignSection').slideUp();
+
+                    // Clear the form
+                    $('#part-prefix').val('');
+                    $('#bulk-category').val('');
+
+                    alert(`Assigned category to ${response.affected_rows} parts`);
+                } else {
+                    alert('Error: ' + response.message);
+                }
+            },
+            error: function(xhr) {
+                alert('Error assigning category: ' + xhr.responseText);
+            }
+        });
+    });
+});
+</script>
+<style>#bulkAssignSection {
+  transition: all 0.3s ease; /* Smooth show/hide animation */
+  background-color: #f8f9fa; /* Light background for contrast */
+  padding: 15px;
+  border-radius: 5px;
+  margin-top: 10px;
+}
+
+.card-body h6 {
+  font-weight: 500;
+  color: #333;
+}
+
+.form-label {
+  font-weight: 500;
+}
+
+.btn-secondary, .btn-primary {
+  white-space: nowrap; /* Prevent button text from wrapping */
+}</style>
+{% endblock %}

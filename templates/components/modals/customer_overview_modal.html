@@ -1,0 +1,739 @@
+<!-- Customer Overview Modal -->
+<!-- Chart.js Library -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<div class="modal fade" id="customerOverviewModal" tabindex="-1" aria-labelledby="customerOverviewModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="customerOverviewModalLabel">
+          <span id="overviewCustomerName"></span> - Overview
+        </h5>
+        <div class="d-flex align-items-center gap-3">
+          <button type="button" class="btn btn-link text-muted p-0" id="editCustomerBtn" title="Edit Customer">
+            <i class="bi bi-pencil fs-5"></i>
+          </button>
+          <button type="button" class="btn btn-link text-muted p-0" id="addOverviewUpdateBtn" title="Add Update">
+            <i class="bi bi-plus-circle fs-5"></i>
+          </button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <!-- Loading State -->
+        <div id="overviewLoading" class="text-center py-5">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+          <p class="mt-3 text-muted">Loading customer overview...</p>
+        </div>
+
+        <!-- Content (hidden until loaded) -->
+        <div id="overviewContent" class="d-none">
+          <!-- Key Metrics Row -->
+          <div class="row mb-4">
+            <div class="col-md-3">
+              <div class="card text-center h-100">
+                <div class="card-body">
+                  <h6 class="card-subtitle mb-2 text-muted">Last Purchase</h6>
+                  <h4 class="card-title mb-1" id="lastPurchaseDate">-</h4>
+                  <p class="card-text text-muted small" id="lastPurchaseValue">-</p>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="card text-center h-100">
+                <div class="card-body">
+                  <h6 class="card-subtitle mb-2 text-muted">Lifetime Value</h6>
+                  <h4 class="card-title text-success" id="lifetimeValue">-</h4>
+                  <p class="card-text text-muted small" id="totalOrders">-</p>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="card text-center h-100">
+                <div class="card-body">
+                  <h6 class="card-subtitle mb-2 text-muted">Avg Order Value</h6>
+                  <h4 class="card-title text-primary" id="avgOrderValue">-</h4>
+                  <p class="card-text text-muted small">Per order</p>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="card text-center h-100">
+                <div class="card-body">
+                  <h6 class="card-subtitle mb-2 text-muted">Last Contact</h6>
+                  <h4 class="card-title mb-1" id="lastContactDate">-</h4>
+                  <p class="card-text text-muted small" id="lastContactType">-</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Yearly Spend Chart -->
+          <div class="row mb-4">
+            <div class="col-md-8">
+              <div class="card">
+                <div class="card-header">
+                  <h6 class="mb-0">Annual Spending</h6>
+                </div>
+                <div class="card-body">
+                  <canvas id="yearlySpendChart" style="height: 250px;"></canvas>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="card h-100">
+                <div class="card-header">
+                  <h6 class="mb-0">Spending Breakdown</h6>
+                </div>
+                <div class="card-body">
+                  <div id="yearlySpendTable" class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+                    <!-- Table will be inserted here -->
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contacts & Recent Activity -->
+          <div class="row mb-4">
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                  <h6 class="mb-0">Contacts</h6>
+                  <span class="badge bg-primary" id="contactsCount">0</span>
+                </div>
+                <div class="card-body">
+                  <div id="contactsList">
+                    <!-- Contacts will be inserted here -->
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-header">
+                  <h6 class="mb-0">Recent Activity</h6>
+                </div>
+                <div class="card-body">
+                  <div id="recentActivityList">
+                    <!-- Activity will be inserted here -->
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Error State -->
+        <div id="overviewError" class="d-none">
+          <div class="alert alert-danger">
+            <i class="bi bi-exclamation-triangle"></i>
+            Failed to load customer overview. Please try again.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Overview Update Modal (Unique from main page modal) -->
+<div class="modal fade" id="overviewUpdateModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Add Customer Update</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="overviewUpdateForm" method="post">
+          <input type="hidden" name="customer_id" id="overviewUpdateCustomerId">
+
+          <div class="mb-3">
+            <label for="overviewUpdateCustomerName" class="form-label">Customer</label>
+            <input type="text" class="form-control" id="overviewUpdateCustomerName" readonly>
+          </div>
+
+          <div class="mb-3">
+            <label for="overviewUpdateType" class="form-label">Update Type</label>
+            <select class="form-select" id="overviewUpdateType" name="update_type" required>
+              <option value="generic">General Update</option>
+              <option value="email">Email Communication</option>
+              <option value="phone">Phone Communication</option>
+              <option value="meeting">Meeting</option>
+            </select>
+          </div>
+
+          <!-- Contact selection - shows when communication type is selected -->
+          <div class="mb-3" id="overviewContactSelection" style="display: none;">
+            <label for="overviewContactId" class="form-label">Contact (Optional)</label>
+            <select class="form-select" id="overviewContactId" name="contact_id">
+              <option value="">Select a contact...</option>
+              <!-- Will be populated by JavaScript based on customer -->
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label for="overviewUpdateText" class="form-label">
+              <span id="overviewUpdateTextLabel">Update Details</span>
+              <small class="text-muted" id="overviewUpdateTextHint"></small>
+            </label>
+            <textarea class="form-control" id="overviewUpdateText" name="update_text" rows="3"></textarea>
+          </div>
+
+          <div class="d-grid">
+            <button type="submit" class="btn btn-primary">Save Update</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+class CustomerOverviewModal {
+  constructor() {
+    this.modal = document.getElementById('customerOverviewModal');
+    this.customerId = null;
+    this.customerName = null;
+    this.chart = null;
+    this.yearlyDataFull = []; // Store full data including monthly breakdown
+
+    // Initialize Bootstrap modals
+    this.bsModal = new bootstrap.Modal(this.modal);
+    this.updateModal = new bootstrap.Modal(document.getElementById('overviewUpdateModal'));
+
+    // Bind event listeners
+    this.bindEvents();
+  }
+
+  bindEvents() {
+    // Quick action buttons
+    document.getElementById('editCustomerBtn')?.addEventListener('click', () => {
+      if (this.customerId) {
+        window.location.href = `/customers/${this.customerId}/edit`;
+      }
+    });
+
+    document.getElementById('addOverviewUpdateBtn')?.addEventListener('click', () => {
+      this.openUpdateModal();
+    });
+
+    // Setup update form handlers
+    this.setupUpdateForm();
+  }
+
+  setupUpdateForm() {
+    const updateForm = document.getElementById('overviewUpdateForm');
+    const updateType = document.getElementById('overviewUpdateType');
+
+    // Handle update type changes
+    if (updateType) {
+      updateType.addEventListener('change', () => {
+        this.handleUpdateTypeChange();
+      });
+    }
+
+    // Handle form submission
+    if (updateForm) {
+      updateForm.addEventListener('submit', (e) => {
+        this.handleUpdateSubmit(e);
+      });
+    }
+  }
+
+  handleUpdateTypeChange() {
+    const selectedType = document.getElementById('overviewUpdateType').value;
+    const contactSelection = document.getElementById('overviewContactSelection');
+    const updateText = document.getElementById('overviewUpdateText');
+    const updateTextLabel = document.getElementById('overviewUpdateTextLabel');
+    const updateTextHint = document.getElementById('overviewUpdateTextHint');
+
+    if (selectedType === 'generic') {
+      if (contactSelection) contactSelection.style.display = 'none';
+      if (updateText) updateText.required = true;
+      if (updateTextLabel) updateTextLabel.textContent = 'Update Details';
+      if (updateTextHint) updateTextHint.textContent = '';
+    } else {
+      if (contactSelection) contactSelection.style.display = 'block';
+      if (updateText) updateText.required = false;
+      if (updateTextLabel) updateTextLabel.textContent = 'Communication Notes';
+      if (updateTextHint) updateTextHint.textContent = '(Optional - will auto-generate if left blank)';
+    }
+  }
+
+  openUpdateModal() {
+    if (!this.customerId) return;
+
+    // Populate form fields
+    document.getElementById('overviewUpdateCustomerId').value = this.customerId;
+    document.getElementById('overviewUpdateCustomerName').value = this.customerName || 'Customer';
+
+    // Reset form
+    document.getElementById('overviewUpdateType').value = 'generic';
+    document.getElementById('overviewContactSelection').style.display = 'none';
+    document.getElementById('overviewUpdateText').value = '';
+    document.getElementById('overviewUpdateText').required = true;
+    document.getElementById('overviewContactId').value = '';
+    document.getElementById('overviewUpdateTextLabel').textContent = 'Update Details';
+    document.getElementById('overviewUpdateTextHint').textContent = '';
+
+    // Load customer contacts
+    this.loadCustomerContacts(this.customerId);
+
+    // Show update modal
+    this.updateModal.show();
+  }
+
+  loadCustomerContacts(customerId) {
+    const contactId = document.getElementById('overviewContactId');
+    if (!contactId) return;
+
+    fetch(`/customers/${customerId}/contacts/api`)
+      .then(response => response.json())
+      .then(data => {
+        contactId.innerHTML = '<option value="">Select a contact...</option>';
+        if (data.success && data.contacts) {
+          data.contacts.forEach(contact => {
+            const option = document.createElement('option');
+            option.value = contact.id;
+            option.textContent = `${contact.name} (${contact.email || contact.phone || 'No contact info'})`;
+            contactId.appendChild(option);
+          });
+        }
+      })
+      .catch(error => {
+        console.error('Error loading contacts:', error);
+      });
+  }
+
+  handleUpdateSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    const customerId = formData.get('customer_id');
+
+    const actionUrl = `/customers/${customerId}/add_update`;
+
+    fetch(actionUrl, {
+      method: 'POST',
+      body: formData,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // Close update modal
+          this.updateModal.hide();
+
+          // Reset form
+          form.reset();
+          document.getElementById('overviewUpdateType').value = 'generic';
+          document.getElementById('overviewContactSelection').style.display = 'none';
+          document.getElementById('overviewUpdateText').required = true;
+
+          // Show success message
+          this.showToast('Update added successfully', 'success');
+
+          // Refresh overview data
+          this.show(this.customerId);
+        } else {
+          this.showToast(data.error || 'Failed to add update', 'danger');
+        }
+      })
+      .catch(error => {
+        console.error('Error submitting update:', error);
+        this.showToast('Failed to submit update', 'danger');
+      });
+  }
+
+  showToast(message, type) {
+    const toast = document.createElement('div');
+    toast.className = 'toast show position-fixed bottom-0 end-0 m-3';
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+      <div class="toast-header bg-${type} text-white">
+        <i class="bi bi-${type === 'success' ? 'check-circle' : 'exclamation-triangle'} me-2"></i>
+        <strong class="me-auto">${type === 'success' ? 'Success' : 'Error'}</strong>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+      </div>
+      <div class="toast-body">
+        ${message}
+      </div>
+    `;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+      if (toast.parentNode) {
+        toast.remove();
+      }
+    }, 5000);
+  }
+
+  async show(customerId) {
+    this.customerId = customerId;
+
+    // Show modal
+    this.bsModal.show();
+
+    // Show loading state
+    document.getElementById('overviewLoading').classList.remove('d-none');
+    document.getElementById('overviewContent').classList.add('d-none');
+    document.getElementById('overviewError').classList.add('d-none');
+
+    try {
+      // Fetch overview data
+      const response = await fetch(`/customers/${customerId}/overview`);
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch overview data');
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        this.renderOverview(data.data);
+      } else {
+        throw new Error(data.error || 'Unknown error');
+      }
+    } catch (error) {
+      console.error('Error loading overview:', error);
+      this.showError();
+    }
+  }
+
+  renderOverview(data) {
+    // Hide loading, show content
+    document.getElementById('overviewLoading').classList.add('d-none');
+    document.getElementById('overviewContent').classList.remove('d-none');
+
+    // Set customer name
+    this.customerName = data.customer_name || 'Customer';
+    document.getElementById('overviewCustomerName').textContent = this.customerName;
+
+    // Last Purchase
+    if (data.last_purchase) {
+      document.getElementById('lastPurchaseDate').textContent =
+        new Date(data.last_purchase.date).toLocaleDateString();
+      document.getElementById('lastPurchaseValue').textContent =
+        this.formatCurrency(data.last_purchase.value);
+    } else {
+      document.getElementById('lastPurchaseDate').textContent = 'No orders yet';
+      document.getElementById('lastPurchaseValue').textContent = '';
+    }
+
+    // Lifetime Value
+    document.getElementById('lifetimeValue').textContent =
+      this.formatCurrency(data.lifetime_value || 0);
+    document.getElementById('totalOrders').textContent =
+      `${data.total_orders || 0} orders`;
+
+    // Average Order Value
+    document.getElementById('avgOrderValue').textContent =
+      this.formatCurrency(data.avg_order_value || 0);
+
+    // Last Contact
+    if (data.last_contact) {
+      document.getElementById('lastContactDate').textContent =
+        new Date(data.last_contact.date).toLocaleDateString();
+      document.getElementById('lastContactType').textContent =
+        data.last_contact.type || 'Update';
+    } else {
+      document.getElementById('lastContactDate').textContent = 'No contact';
+      document.getElementById('lastContactType').textContent = '';
+    }
+
+    // Render yearly spend chart
+    this.renderYearlySpendChart(data.yearly_spend || []);
+
+    // Render yearly spend table
+    this.renderYearlySpendTable(data.yearly_spend || []);
+
+    // Render contacts
+    this.renderContacts(data.contacts || []);
+
+    // Render recent activity
+    this.renderRecentActivity(data.recent_activity || []);
+  }
+
+  renderYearlySpendChart(yearlyData) {
+    const canvas = document.getElementById('yearlySpendChart');
+    const ctx = canvas.getContext('2d');
+
+    // Destroy existing chart if any
+    if (this.chart) {
+      this.chart.destroy();
+    }
+
+    // Sort data in ascending order (oldest to newest)
+    const sortedData = [...yearlyData].sort((a, b) => a.year - b.year);
+
+    // Store full data for tooltip access
+    this.yearlyDataFull = sortedData;
+
+    // Prepare data
+    const labels = sortedData.map(item => item.year);
+    const values = sortedData.map(item => item.total);
+
+    this.chart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Annual Spend',
+          data: values,
+          backgroundColor: 'rgba(94, 188, 103, 0.6)',
+          borderColor: 'rgba(94, 188, 103, 1)',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip: {
+            callbacks: {
+              title: (context) => {
+                return `${context[0].label} - Annual Total`;
+              },
+              label: (context) => {
+                return `Total: ${this.formatCurrency(context.parsed.y)}`;
+              },
+              afterLabel: (context) => {
+                // Get monthly breakdown for this year
+                const yearData = this.yearlyDataFull[context.dataIndex];
+                if (yearData && yearData.monthly_breakdown) {
+                  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+                  const lines = ['\nMonthly Breakdown:'];
+                  yearData.monthly_breakdown.forEach((amount, index) => {
+                    if (amount > 0) {
+                      lines.push(`${monthNames[index]}: ${this.formatCurrency(amount)}`);
+                    }
+                  });
+
+                  return lines.length > 1 ? lines : [];
+                }
+                return [];
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: (value) => {
+                return this.formatCurrency(value, true);
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  renderYearlySpendTable(yearlyData) {
+    const container = document.getElementById('yearlySpendTable');
+
+    if (yearlyData.length === 0) {
+      container.innerHTML = '<p class="text-muted text-center">No data available</p>';
+      return;
+    }
+
+    // Sort data in ascending order (oldest to newest)
+    const sortedData = [...yearlyData].sort((a, b) => a.year - b.year);
+
+    const tableHtml = `
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr>
+            <th>Year</th>
+            <th class="text-end">Spend</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sortedData.map(item => `
+            <tr>
+              <td>${item.year}</td>
+              <td class="text-end">${this.formatCurrency(item.total)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+
+    container.innerHTML = tableHtml;
+  }
+
+  renderContacts(contacts) {
+    const container = document.getElementById('contactsList');
+    const countBadge = document.getElementById('contactsCount');
+
+    countBadge.textContent = contacts.length;
+
+    if (contacts.length === 0) {
+      container.innerHTML = '<p class="text-muted text-center">No contacts available</p>';
+      return;
+    }
+
+    const html = `
+      <div class="list-group list-group-flush">
+        ${contacts.map(contact => `
+          <div class="list-group-item px-0">
+            <div class="d-flex justify-content-between align-items-start">
+              <div class="flex-grow-1">
+                <h6 class="mb-1">${contact.name}</h6>
+                ${contact.title ? `<p class="mb-1 small text-muted">${contact.title}</p>` : ''}
+                <div class="small">
+                  ${contact.email ? `<div><i class="bi bi-envelope me-1"></i>${contact.email}</div>` : ''}
+                  ${contact.phone ? `<div><i class="bi bi-telephone me-1"></i>${contact.phone}</div>` : ''}
+                </div>
+              </div>
+              ${contact.is_primary ? '<span class="badge bg-primary">Primary</span>' : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  renderRecentActivity(activities) {
+    const container = document.getElementById('recentActivityList');
+
+    if (activities.length === 0) {
+      container.innerHTML = '<p class="text-muted text-center">No recent activity</p>';
+      return;
+    }
+
+    const html = `
+      <div class="list-group list-group-flush">
+        ${activities.map(activity => {
+          const icon = this.getActivityIcon(activity.type);
+          const date = new Date(activity.date).toLocaleDateString();
+
+          return `
+            <div class="list-group-item px-0">
+              <div class="d-flex align-items-start">
+                <div class="me-3">
+                  <i class="bi ${icon} fs-5"></i>
+                </div>
+                <div class="flex-grow-1">
+                  <div class="d-flex justify-content-between">
+                    <h6 class="mb-1">${activity.description}</h6>
+                    <small class="text-muted">${date}</small>
+                  </div>
+                  ${activity.details ? `<p class="mb-0 small text-muted">${activity.details}</p>` : ''}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+
+    container.innerHTML = html;
+  }
+
+  getActivityIcon(type) {
+    const icons = {
+      'email': 'bi-envelope-fill',
+      'phone': 'bi-telephone-fill',
+      'order': 'bi-bag-fill',
+      'rfq': 'bi-file-text-fill',
+      'meeting': 'bi-calendar-event-fill',
+      'update': 'bi-chat-left-text-fill'
+    };
+    return icons[type] || 'bi-circle-fill';
+  }
+
+  formatCurrency(value, short = false) {
+    if (value === null || value === undefined) return '-';
+
+    const formatted = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(value);
+
+    if (short && value >= 1000) {
+      if (value >= 1000000) {
+        return '$' + (value / 1000000).toFixed(1) + 'M';
+      }
+      return '$' + (value / 1000).toFixed(0) + 'K';
+    }
+
+    return formatted;
+  }
+
+  showError() {
+    document.getElementById('overviewLoading').classList.add('d-none');
+    document.getElementById('overviewContent').classList.add('d-none');
+    document.getElementById('overviewError').classList.remove('d-none');
+  }
+}
+
+// Initialize globally
+window.customerOverviewModal = new CustomerOverviewModal();
+
+// Example usage:
+// window.customerOverviewModal.show(123);
+</script>
+
+<style>
+#customerOverviewModal .card {
+  border: none;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+#customerOverviewModal .card-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
+  font-weight: 600;
+}
+
+#customerOverviewModal .list-group-item {
+  border-left: none;
+  border-right: none;
+}
+
+#customerOverviewModal .list-group-item:first-child {
+  border-top: none;
+}
+
+#customerOverviewModal .list-group-item:last-child {
+  border-bottom: none;
+}
+
+#customerOverviewModal h4 {
+  font-size: 1.75rem;
+  font-weight: 600;
+}
+
+/* Styling for header action icons */
+#customerOverviewModal .modal-header .btn-link {
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+#customerOverviewModal .modal-header .btn-link:hover {
+  color: #0d6efd !important;
+}
+
+#customerOverviewModal .modal-header .btn-link:focus {
+  box-shadow: none;
+}
+
+/* Toast positioning to avoid conflicts */
+.toast {
+  z-index: 9999;
+}
+</style>

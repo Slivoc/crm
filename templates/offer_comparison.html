@@ -1,0 +1,1593 @@
+{% extends 'base.html' %}
+
+{% block title %}Compare Offers for RFQ #{{ rfq.id }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h2>Compare Offers for RFQ #{{ rfq.id }}</h2>
+
+    <div class="alert alert-info">
+        <p><strong>Instructions:</strong> Select the best offer for each RFQ line. The delivery costs will be amortized across the selected lines from each supplier.</p>
+    </div>
+    
+    <form method="POST" id="compareForm" onsubmit="return validateForm()">
+        <!-- Hidden supplier settings data -->
+        <div style="display: none;">
+            {% for supplier in suppliers %}
+            <div id="supplier_settings_{{ supplier.id }}"
+                 data-delivery-cost="{{ supplier.delivery_cost }}"
+                 data-min-line-value="{{ supplier.minimum_line_value }}">
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Supplier Settings Table -->
+        <div class="card mb-4">
+            <div class="card-header bg-light">
+                <h5>Supplier Settings</h5>
+                <p class="text-muted mb-0">Configure settings for selected suppliers (will update as you select offers below)</p>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered" id="supplierSettingsTable">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Supplier</th>
+                                <th>Delivery Cost</th>
+                                <th>Minimum Line Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr id="noSuppliersRow">
+                                <td colspan="3" class="text-center">
+                                    No suppliers selected yet. Select offers below to configure supplier settings.
+                                </td>
+                            </tr>
+                            <!-- Will be populated by JavaScript when offers are selected -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- RFQ Lines Table -->
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">RFQ Lines</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-hover" id="rfqLinesTable">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Line #</th>
+                                <th>Part Number</th>
+                                <th>Manufacturer</th>
+                                <th>Quantity</th>
+                                <th>Selected Supplier</th>
+                                <th>Price</th>
+                                <th>Extended</th>
+                                <th>Lead Time</th>
+                                <th>Delivery Cost</th>
+                                <th>Delivery/Piece</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for line in rfq_lines %}
+                            <tr class="rfq-line-row {% if line.offer_id and line.below_min %}table-warning{% endif %}"
+                                data-line-id="{{ line.id }}"
+                                data-line-number="{{ line.line_number }}"
+                                data-part-number="{{ line.part_number }}"
+                                data-manufacturer="{{ line.manufacturer_name or 'Unknown Manufacturer' }}"
+                                data-quantity="{{ line.quantity }}">
+                                <td>{{ line.line_number }}</td>
+                                <td>{{ line.part_number }}</td>
+                                <td>{{ line.manufacturer_name or 'Unknown Manufacturer' }}</td>
+                                <td>{{ line.quantity }}</td>
+                                <td class="selected-supplier-cell" id="selected_supplier_{{ line.id }}">
+                                    {% if line.offer_id %}
+                                        {% for offer in line.available_offers %}
+                                            {% if offer.offer_id == line.offer_id %}
+                                                {{ offer.supplier_name }}
+                                            {% endif %}
+                                        {% endfor %}
+                                    {% else %}
+                                        <span class="text-muted">None selected</span>
+                                    {% endif %}
+                                </td>
+                                <td class="selected-price-cell text-end" id="selected_price_{{ line.id }}">
+                                    {% if line.offer_id %}
+                                        {% for offer in line.available_offers %}
+                                            {% if offer.offer_id == line.offer_id %}
+                                                {{ offer.price }}
+                                            {% endif %}
+                                        {% endfor %}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td class="selected-extended-cell text-end" id="selected_extended_{{ line.id }}">
+                                    {% if line.offer_id %}
+                                        {% for offer in line.available_offers %}
+                                            {% if offer.offer_id == line.offer_id %}
+                                                {{ "%.2f"|format(offer.extended_price) }}
+                                            {% endif %}
+                                        {% endfor %}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td class="selected-leadtime-cell" id="selected_leadtime_{{ line.id }}">
+                                    {% if line.offer_id %}
+                                        {% for offer in line.available_offers %}
+                                            {% if offer.offer_id == line.offer_id %}
+                                                {{ offer.lead_time }} days
+                                            {% endif %}
+                                        {% endfor %}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td class="selected-delivery-cost-cell text-end" id="selected_delivery_cost_{{ line.id }}">
+                                    {% if line.offer_id %}
+                                        <span class="delivery-cost-calculation">-</span>
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td class="selected-delivery-piece-cell text-end" id="selected_delivery_piece_{{ line.id }}">
+                                    {% if line.offer_id %}
+                                        <span class="delivery-piece-calculation">-</span>
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <button type="button" class="btn btn-sm btn-primary compare-offers-btn"
+                                            data-line-id="{{ line.id }}"
+                                            data-bs-toggle="offcanvas"
+                                            data-bs-target="#offersCanvas">
+                                        Compare Offers
+                                        <span class="badge bg-light text-dark ms-1">{{ line.available_offers|length }}</span>
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary Section -->
+        <div class="card mb-4">
+            <div class="card-header bg-light">
+                <h5>Summary</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">Selected Items</div>
+                            <div class="card-body">
+                                <table class="table table-sm" id="selectionSummary">
+                                    <thead>
+                                        <tr>
+                                            <th>Supplier</th>
+                                            <th>Lines</th>
+                                            <th>Total</th>
+                                            <th>Delivery</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Will be populated by JavaScript -->
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <th colspan="2">Grand Total</th>
+                                            <th id="grandTotal">0.00</th>
+                                            <th></th>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="alert alert-warning" id="missingSelectionsAlert" style="display: none;">
+                            <strong>Warning:</strong> Not all lines have an offer selected.
+                        </div>
+                        <div class="alert alert-danger" id="minValueAlert" style="display: none;">
+                            <strong>Warning:</strong> Some selected offers are below the supplier's minimum line value.
+                        </div>
+                        <!-- Add this button to the compare_offers.html template -->
+<!-- Place it in the Summary Section's right column, before the "Cancel" and "Apply Selected Offers" buttons -->
+
+<div class="d-flex justify-content-end mt-3">
+    <button type="button" class="btn btn-success me-2"
+            data-bs-toggle="offcanvas"
+            data-bs-target="#addOfferCanvas">
+        <i class="fas fa-plus-circle"></i> Add New Offer
+    </button>
+    <a href="{{ url_for('rfqs.edit_rfq', rfq_id=rfq.id) }}" class="btn btn-secondary me-2">Cancel</a>
+    <button type="submit" class="btn btn-primary">Apply Selected Offers</button>
+</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hidden inputs to store selected offers -->
+        <div id="selectedOffersContainer">
+            <!-- Will be populated via JavaScript when offers are selected -->
+        </div>
+    </form>
+</div>
+
+<!-- Updated Offcanvas with improved width and layout -->
+<div class="offcanvas offcanvas-end wider-canvas" tabindex="-1" id="offersCanvas" aria-labelledby="offersCanvasLabel">
+    <div class="offcanvas-header bg-primary text-white">
+        <h5 class="offcanvas-title" id="offersCanvasLabel">Compare Offers</h5>
+        <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body">
+        <div class="spinner-border text-primary" role="status" id="offersLoadingSpinner">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+
+        <div id="offersContent" style="display: none;">
+            <div class="card mb-3">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0" id="offersLineInfo">Line Information</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <strong>Part Number:</strong> <span id="offersPart"></span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Manufacturer:</strong> <span id="offersManufacturer"></span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Quantity:</strong> <span id="offersQuantity"></span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Line #:</strong> <span id="offersLineNumber"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Key metrics summary -->
+            <div class="row mb-3">
+                <div class="col-md-12">
+                    <div class="alert alert-info">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div><strong>Selected:</strong> <span id="selectedOfferName">None</span></div>
+                            <div><strong>Total Price:</strong> <span id="selectedOfferTotal">$0.00</span></div>
+                            <div><strong>Per-piece Price:</strong> <span id="selectedOfferPerPiece">$0.00</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover" id="offersTable">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Select</th>
+                            <th>Supplier</th>
+                            <th>Valid Until</th>
+                            <th>Ref #</th>
+                            <th class="text-end">Unit Price</th>
+                            <th class="text-end">Extended</th>
+                            <th class="text-end">Per-piece</th>
+                            <th>Lead Time</th>
+                            <th class="text-end">Delivery Cost</th>
+                            <th class="text-end">Delivery/Piece</th>
+                            <th class="text-end">Min Value</th>
+                            <th>Min Met?</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Will be populated via JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="alert alert-warning" id="minValueWarning" style="display: none;">
+                <strong>Warning:</strong> The selected offer is below the supplier's minimum line value.
+                <div class="mt-2" id="minValueDetails"></div>
+            </div>
+        </div>
+    </div>
+    <div class="offcanvas-footer p-3 border-top">
+        <div class="d-flex justify-content-between">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="offcanvas">Close</button>
+            <button type="button" class="btn btn-primary" id="applyOfferSelectionBtn">Apply Selection</button>
+        </div>
+    </div>
+</div>
+
+
+<!-- Modal for quantity adjustment -->
+<div class="modal fade" id="adjustQuantityModal" tabindex="-1" aria-labelledby="adjustQuantityModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="adjustQuantityModalLabel">Adjust Quantity</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>The selected offer is below the supplier's minimum line value. Would you like to adjust the quantity?</p>
+                <div id="adjustQuantityForm">
+                    <input type="hidden" id="adjustLineId" name="line_id">
+                    <div class="mb-3">
+                        <label for="newQuantity" class="form-label">New Quantity</label>
+                        <input type="number" class="form-control" id="newQuantity" name="quantity" min="1">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirmAdjustment">Confirm Adjustment</button>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Add Offer Offcanvas -->
+<div class="offcanvas offcanvas-end wider-canvas" tabindex="-1" id="addOfferCanvas" aria-labelledby="addOfferCanvasLabel">
+    <div class="offcanvas-header bg-success text-white">
+        <h5 class="offcanvas-title" id="addOfferCanvasLabel">Add New Offer</h5>
+        <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body">
+        <form id="addOfferForm" method="POST">
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <div class="form-group mb-3">
+                        <label for="supplier_id" class="form-label">Select Supplier</label>
+                        <select class="form-select" id="supplier_id" name="supplier_id" required>
+                            <option value="">-- Select Supplier --</option>
+                            {% for supplier in suppliers %}
+                            <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label for="valid_to" class="form-label">Valid Until</label>
+                        <input type="date" class="form-control" id="valid_to" name="valid_to"
+                               value="{{ default_valid_to }}">
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="form-group mb-3">
+                        <label for="supplier_reference" class="form-label">Supplier Reference</label>
+                        <input type="text" class="form-control" id="supplier_reference" name="supplier_reference"
+                               placeholder="Quote or Offer #">
+                    </div>
+                    <div class="form-group mb-3">
+                        <label for="currency_id" class="form-label">Currency</label>
+                        <select class="form-select" id="currency_id" name="currency_id">
+                            <option value="">Default for supplier</option>
+                            {% for currency in currencies %}
+                            <option value="{{ currency.id }}">{{ currency.currency_code }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">RFQ Lines</h5>
+                    <p class="text-muted mb-0">Enter pricing information for required parts</p>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-hover" id="addOfferLinesTable">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 5%;">Line #</th>
+                                    <th style="width: 20%;">Part Number</th>
+                                    <th style="width: 20%;">Manufacturer</th>
+                                    <th style="width: 10%;">Qty Needed</th>
+                                    <th style="width: 15%;">Price</th>
+                                    <th style="width: 10%;">MOQ</th>
+                                    <th style="width: 10%;">Lead Time</th>
+                                    <th style="width: 10%;">Include</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for line in rfq_lines %}
+                                <tr data-line-id="{{ line.id }}">
+                                    <td>{{ line.line_number }}</td>
+                                    <td>{{ line.part_number }}</td>
+                                    <td>{{ line.manufacturer_name or 'Unknown' }}</td>
+                                    <td>{{ line.quantity }}</td>
+                                    <td>
+                                        <input type="number" class="form-control line-price"
+                                               name="price_{{ line.id }}" step="0.0001" min="0">
+                                    </td>
+                                    <td>
+                                        <input type="number" class="form-control line-moq"
+                                               name="moq_{{ line.id }}" min="1">
+                                    </td>
+                                    <td>
+                                        <input type="number" class="form-control line-leadtime"
+                                               name="leadtime_{{ line.id }}" min="0">
+                                    </td>
+                                    <td>
+                                        <div class="form-check">
+                                            <input class="form-check-input line-include" type="checkbox"
+                                                   id="include_{{ line.id }}" name="include_{{ line.id }}" checked>
+                                            <label class="form-check-label" for="include_{{ line.id }}"></label>
+                                        </div>
+                                        <input type="hidden" name="base_part_number_{{ line.id }}"
+                                               value="{{ line.base_part_number }}">
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header bg-light">
+                            <h5 class="mb-0">Additional Options</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" id="rohs" name="rohs">
+                                        <label class="form-check-label" for="rohs">RoHS Compliant</label>
+                                    </div>
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" id="coc" name="coc">
+                                        <label class="form-check-label" for="coc">COC Available</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-group mb-3">
+                                        <label for="datecode" class="form-label">Date Code</label>
+                                        <input type="text" class="form-control" id="datecode" name="datecode">
+                                    </div>
+                                    <div class="form-group mb-3">
+                                        <label for="packaging" class="form-label">Packaging</label>
+                                        <input type="text" class="form-control" id="packaging" name="packaging">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header bg-light">
+                            <h5 class="mb-0">Summary</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <p><strong>Total Lines:</strong> <span id="totalLinesCount">0</span></p>
+                                    <p><strong>Lines with Pricing:</strong> <span id="pricedLinesCount">0</span></p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Total Value:</strong> <span id="totalOfferValue">0.00</span></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <input type="hidden" name="rfq_id" value="{{ rfq.id }}">
+            <input type="hidden" name="offer_type" value="manual">
+        </form>
+    </div>
+    <div class="offcanvas-footer p-3 border-top">
+        <div class="d-flex justify-content-between">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="offcanvas">Cancel</button>
+            <button type="button" class="btn btn-success" id="submitOfferBtn">Create Offer</button>
+        </div>
+    </div>
+</div>
+<!-- Store all RFQ line data in a hidden element for JavaScript access -->
+<div id="rfqLinesData" style="display: none;"
+     data-rfq-lines="{{ rfq_lines|tojson }}"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Prevent form submission when pressing Enter inside an input/select/textarea
+function validateForm() {
+    const active = document.activeElement;
+    if (
+        active &&
+        ['INPUT','SELECT','TEXTAREA'].includes(active.tagName) &&
+        active.form &&
+        active.form.id === 'compareForm'
+    ) {
+        console.log('Preventing form submission from input field');
+        active.blur();
+        return false;
+    }
+    return true;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log("Initializing redesigned offer comparison page...");
+
+    // --- Data model ---
+    const rfqLinesData = {};
+    let currentLineId = null;
+
+    {% for line in rfq_lines %}
+    rfqLinesData[{{ line.id }}] = {
+        id: {{ line.id }},
+        lineNumber: {{ line.line_number }},
+        partNumber: "{{ line.part_number }}",
+        manufacturer: "{{ line.manufacturer_name or 'Unknown Manufacturer' }}",
+        quantity: {{ line.quantity }},
+        selectedOfferId: {{ line.offer_id or 'null' }},
+        offers: [
+            {% for offer in line.available_offers %}
+            {
+                offerId: {{ offer.offer_id }},
+                supplierId: {{ offer.supplier_id }},
+                supplierName: "{{ offer.supplier_name }}",
+                validTo: "{{ offer.valid_to }}",
+                supplierReference: "{{ offer.supplier_reference }}",
+                price: {{ offer.price }},
+                extendedPrice: {{ offer.extended_price }},
+                leadTime: {{ offer.lead_time }},
+                deliveryCost: {{ offer.delivery_cost }},
+                minLineValue: {{ offer.min_line_value }},
+                belowMin: {{ "true" if offer.below_min else "false" }},
+                minQuantity: {{ offer.min_quantity or 0 }}
+            }{% if not loop.last %},{% endif %}
+            {% endfor %}
+        ]
+    };
+    {% endfor %}
+
+    // --- Prevent Enter key from submitting the form ---
+    document.querySelectorAll('#compareForm input, #compareForm select, #compareForm textarea')
+        .forEach(input => {
+            input.addEventListener('keydown', e => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    input.blur();
+                    return false;
+                }
+            });
+        });
+function showOffersForLine(lineId) {
+    currentLineId = lineId;
+    const lineData = rfqLinesData[lineId];
+    if (!lineData) return;
+
+    document.getElementById('offersLineInfo').textContent = `Line #${lineData.lineNumber}`;
+    document.getElementById('offersPart').textContent = lineData.partNumber;
+    document.getElementById('offersManufacturer').textContent = lineData.manufacturer;
+    document.getElementById('offersQuantity').textContent = lineData.quantity;
+
+    const offersTableBody = document.querySelector('#offersTable tbody');
+    offersTableBody.innerHTML = ''; // Clear old rows
+
+    if (lineData.offers && lineData.offers.length > 0) {
+        const sortedOffers = [...lineData.offers].sort((a, b) => a.price - b.price);
+
+        for (const offer of sortedOffers) {
+            const extendedPrice = offer.price * lineData.quantity;
+            const belowMin = offer.belowMin ? 'Yes' : 'No';
+            const selected = offer.offerId === lineData.selectedOfferId;
+
+            const tr = document.createElement('tr');
+            if (selected) tr.classList.add('table-success');
+            if (offer.belowMin) tr.classList.add('table-warning');
+
+            tr.innerHTML = `
+                <td><input type="radio" name="offer_${lineId}" value="${offer.offerId}|${offer.supplierId}" ${selected ? 'checked' : ''} data-below-min="${offer.belowMin}"></td>
+                <td>${offer.supplierName}</td>
+                <td>${offer.validTo}</td>
+                <td>${offer.supplierReference}</td>
+                <td class="text-end">${offer.price.toFixed(4)}</td>
+                <td class="text-end">${extendedPrice.toFixed(2)}</td>
+                <td class="text-end">${(extendedPrice / lineData.quantity).toFixed(4)}</td>
+                <td>${offer.leadTime} days</td>
+                <td class="text-end">${offer.deliveryCost.toFixed(2)}</td>
+                <td class="text-end">${(offer.deliveryCost / lineData.quantity).toFixed(4)}</td>
+                <td class="text-end">${offer.minLineValue.toFixed(2)}</td>
+                <td>${belowMin}</td>
+                <td>
+                    ${offer.belowMin && offer.minQuantity ? `
+                        <button class="btn btn-sm btn-warning adjust-quantity"
+                                data-line-id="${lineId}"
+                                data-min-quantity="${offer.minQuantity}">
+                            Adjust Qty
+                        </button>` : ''}
+                </td>
+            `;
+
+            offersTableBody.appendChild(tr);
+        }
+
+        // Inject quick adjust button if necessary
+        const sel = document.querySelector(`#offersTable input[name="offer_${lineId}"]:checked`);
+        if (sel && sel.getAttribute('data-below-min') === 'true') {
+            const offerId = sel.value.split('|')[0];
+            const offer = lineData.offers.find(o => o.offerId == offerId);
+            if (offer && offer.minQuantity) {
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-warning quick-adjust-btn mt-2';
+                btn.setAttribute('data-line-id', lineId);
+                btn.setAttribute('data-min-quantity', offer.minQuantity);
+                btn.innerHTML = `<i class="fas fa-sync-alt"></i> Quick Adjust to ${offer.minQuantity}`;
+
+                const details = document.getElementById('minValueDetails');
+                if (details) {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'text-center mt-3';
+                    wrapper.appendChild(btn);
+                    details.innerHTML = ''; // clear existing
+                    details.appendChild(wrapper);
+                }
+            }
+        }
+    } else {
+        offersTableBody.innerHTML = '<tr><td colspan="13" class="text-center">No offers available.</td></tr>';
+    }
+
+    document.getElementById('offersLoadingSpinner').style.display = 'none';
+    document.getElementById('offersContent').style.display = 'block';
+}
+
+    // --- “Compare Offers” buttons ---
+    document.querySelectorAll('.compare-offers-btn').forEach(button => {
+        button.addEventListener('click', () => {
+            const lineId = button.getAttribute('data-line-id');
+            showOffersForLine(lineId);
+        });
+    });
+
+    // --- “Apply Selection” button in offcanvas ---
+    document.getElementById('applyOfferSelectionBtn').addEventListener('click', () => {
+        if (!currentLineId) return;
+        const radio = document.querySelector(`#offersTable input[name="offer_${currentLineId}"]:checked`);
+        if (!radio) return;
+
+        const [offerId, supplierId] = radio.value.split('|');
+        const lineData = rfqLinesData[currentLineId];
+        lineData.selectedOfferId = parseInt(offerId, 10);
+
+        // Update main table display
+        const selOffer = lineData.offers.find(o => o.offerId == offerId);
+        if (selOffer) {
+            document.getElementById(`selected_supplier_${currentLineId}`).textContent = selOffer.supplierName;
+            document.getElementById(`selected_price_${currentLineId}`).textContent = selOffer.price;
+            document.getElementById(`selected_extended_${currentLineId}`)
+                .textContent = selOffer.extendedPrice.toFixed(2);
+            document.getElementById(`selected_leadtime_${currentLineId}`)
+                .textContent = `${selOffer.leadTime} days`;
+        }
+
+        // Hidden input for form submission
+        let hid = document.getElementById(`hidden_selection_${currentLineId}`);
+        if (!hid) {
+            hid = document.createElement('input');
+            hid.type = 'hidden';
+            hid.id = `hidden_selection_${currentLineId}`;
+            hid.name = `line_${currentLineId}`;
+            document.getElementById('selectedOffersContainer').appendChild(hid);
+        }
+        hid.value = `${offerId}|${supplierId}`;
+
+        // Close offcanvas
+        bootstrap.Offcanvas.getInstance(document.getElementById('offersCanvas')).hide();
+
+        // Refresh styling & summary
+        updateSummary();
+        const mainRow = document.querySelector(`.rfq-line-row[data-line-id="${currentLineId}"]`);
+        if (mainRow && selOffer) {
+            selOffer.belowMin
+                ? mainRow.classList.add('table-warning')
+                : mainRow.classList.remove('table-warning');
+        }
+    });
+
+    // --- “Adjust Qty” buttons in the offcanvas table ---
+    document.getElementById('offersContent').addEventListener('click', e => {
+        if (e.target.classList.contains('adjust-quantity')) {
+            const lineId = e.target.getAttribute('data-line-id');
+            const minQty = e.target.getAttribute('data-min-quantity');
+            document.getElementById('adjustLineId').value = lineId;
+            document.getElementById('newQuantity').value = minQty;
+            new bootstrap.Modal(document.getElementById('adjustQuantityModal')).show();
+        }
+    });
+
+    // --- Confirm Adjustment modal button ---
+    document.getElementById('confirmAdjustment').addEventListener('click', () => {
+        const lineId = document.getElementById('adjustLineId').value;
+        const newQty = document.getElementById('newQuantity').value;
+
+        fetch(`/rfq_lines/${lineId}/update_quantity`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({quantity: newQty})
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) location.reload();
+            else alert('Error updating quantity: ' + data.error);
+        })
+        .catch(err => {
+            console.error(err);
+            alert('An error occurred while updating the quantity');
+        });
+
+        bootstrap.Modal.getInstance(document.getElementById('adjustQuantityModal')).hide();
+    });
+
+    // --- Inject “Auto‑Adjust to Minimum” into the modal ---
+    (function() {
+        const modal = document.getElementById('adjustQuantityModal');
+        if (!modal) return;
+        const body = modal.querySelector('.modal-body');
+        if (!body) return;
+
+        const div = document.createElement('div');
+        div.className = 'mt-3 border-top pt-3';
+        div.innerHTML = `
+            <p class="text-muted">Quick action:</p>
+            <button type="button" class="btn btn-success w-100" id="autoAdjustQuantity">
+                <i class="fas fa-magic"></i> Auto‑Adjust to Minimum Required Quantity
+            </button>
+            <div class="text-muted small mt-2">
+                This will set the quantity to the minimum required by the supplier.
+            </div>
+        `;
+        body.appendChild(div);
+
+        document.getElementById('autoAdjustQuantity').addEventListener('click', () => {
+            const minQ = document.getElementById('newQuantity').value;
+            document.getElementById('newQuantity').value = minQ;
+            document.getElementById('confirmAdjustment').click();
+        });
+    })();
+
+    // --- In‑warning “Quick‑Adjust” button handler ---
+    document.getElementById('minValueWarning').addEventListener('click', e => {
+        if (!e.target.classList.contains('quick-adjust-btn')) return;
+        const lineId = e.target.getAttribute('data-line-id');
+        const q = e.target.getAttribute('data-min-quantity');
+        if (!confirm(`Automatically adjust quantity to ${q}?`)) return;
+
+        fetch(`/rfq_lines/${lineId}/update_quantity`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({quantity: q})
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) location.reload();
+            else alert('Error updating quantity: ' + data.error);
+        })
+        .catch(err => {
+            console.error(err);
+            alert('An error occurred while updating the quantity');
+        });
+    });
+
+    // --- Override showOffersForLine to inject quick‑adjust button ---
+    const originalShowOffersForLine = window.showOffersForLine;
+    window.showOffersForLine = function(lineId) {
+        originalShowOffersForLine(lineId);
+        setTimeout(() => {
+            const sel = document.querySelector(`#offersTable input[name="offer_${lineId}"]:checked`);
+            if (!sel || sel.getAttribute('data-below-min') !== 'true') return;
+            const offerId = sel.value.split('|')[0];
+            const offer = rfqLinesData[lineId].offers.find(o => o.offerId == offerId);
+            if (!offer || !offer.minQuantity) return;
+
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-warning quick-adjust-btn mt-2';
+            btn.setAttribute('data-line-id', lineId);
+            btn.setAttribute('data-min-quantity', offer.minQuantity);
+            btn.innerHTML = `<i class="fas fa-sync-alt"></i> Quick Adjust to ${offer.minQuantity}`;
+
+            const details = document.getElementById('minValueDetails');
+            if (details) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'text-center mt-3';
+                wrapper.appendChild(btn);
+                details.appendChild(wrapper);
+            }
+        }, 350);
+    };
+
+    // --- Main‑table quick‑adjust buttons ---
+    function addQuickAdjustToMainTable() {
+        document.querySelectorAll('.rfq-line-row.table-warning').forEach(row => {
+            const lineId = row.getAttribute('data-line-id');
+            const data = rfqLinesData[lineId];
+            if (!data || !data.selectedOfferId) return;
+            const offer = data.offers.find(o => o.offerId === data.selectedOfferId);
+            if (!offer || !offer.minQuantity) return;
+            if (row.querySelector('.quick-adjust-main-btn')) return;
+
+            const cell = row.querySelector('td:last-child');
+            if (!cell) return;
+
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-sm btn-warning quick-adjust-main-btn ms-2';
+            btn.setAttribute('data-line-id', lineId);
+            btn.setAttribute('data-min-quantity', offer.minQuantity);
+            btn.textContent = `Adjust to Min (${offer.minQuantity})`;
+
+            btn.addEventListener('click', e => {
+                e.preventDefault(); e.stopPropagation();
+                const q = btn.getAttribute('data-min-quantity');
+                if (!confirm(`Automatically adjust quantity to ${q}?`)) return;
+                fetch(`/rfq_lines/${lineId}/update_quantity`, {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({quantity: q})
+                })
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) location.reload();
+                    else alert('Error updating quantity: ' + d.error);
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert('An error occurred while updating the quantity');
+                });
+            });
+
+            cell.appendChild(btn);
+        });
+    }
+
+    // --- Wrap updateSummary so it re‑injects main‑table buttons ---
+    const originalUpdateSummary = window.updateSummary;
+    window.updateSummary = function() {
+        originalUpdateSummary();
+        addQuickAdjustToMainTable();
+    };
+
+    // --- Kick off initial enhancements ---
+    setTimeout(addQuickAdjustToMainTable, 500);
+    updateSummary();
+
+    // --- Helper functions (inside DOMContentLoaded so they have access to rfqLinesData/currentLineId) ---
+
+    function formatCurrency(val) {
+        return '$' + parseFloat(val).toFixed(val >= 1 ? 2 : 4);
+    }
+
+    function initImprovedOffCanvas() {
+        const tbl = document.getElementById('offersTable');
+        if (!tbl) return;
+        const headers = tbl.querySelectorAll('th');
+        headers.forEach((th,i) => {
+            if (i===0 || i===headers.length-1) return;
+            th.style.cursor = 'pointer';
+            th.addEventListener('click', () => sortOffersTable(i));
+            const text = th.textContent.trim();
+            th.innerHTML = `${text} <span class="sort-indicator"></span>`;
+        });
+    }
+
+    function sortOffersTable(col) {
+        const tbl = document.getElementById('offersTable');
+        const tbody = tbl.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.length<=1 && rows[0].querySelectorAll('td')[0].colSpan>1) return;
+        const hdr = tbl.querySelectorAll('th')[col];
+        const asc = hdr.getAttribute('data-sort') !== 'asc';
+        tbl.querySelectorAll('th').forEach(h => {
+            h.setAttribute('data-sort','');
+            h.querySelector('.sort-indicator').textContent = '';
+        });
+        hdr.setAttribute('data-sort', asc ? 'asc' : 'desc');
+        hdr.querySelector('.sort-indicator').textContent = asc ? ' ↑' : ' ↓';
+        rows.sort((a,b) => {
+            let aText = a.querySelectorAll('td')[col].textContent.trim();
+            let bText = b.querySelectorAll('td')[col].textContent.trim();
+            if (aText.startsWith('$') && bText.startsWith('$')) {
+                const na = parseFloat(aText.replace(/[$,]/g,'')),
+                      nb = parseFloat(bText.replace(/[$,]/g,''));
+                return asc ? na-nb : nb-na;
+            }
+            if (!isNaN(aText) && !isNaN(bText)) {
+                return asc ? aText-bText : bText-aText;
+            }
+            return asc ? aText.localeCompare(bText) : bText.localeCompare(aText);
+        });
+        rows.forEach(r => tbody.appendChild(r));
+    }
+
+    function calculatePriceDifference(base, compare) {
+        if (!base || base===0) return null;
+        return ((compare-base)/base*100).toFixed(2) + '%';
+    }
+
+    function getDeliveryCostPerLineForSupplier(supplierId) {
+        let count=0, cost=0;
+        const inp = document.getElementById(`delivery_cost_${supplierId}`);
+        if (inp) cost = parseFloat(inp.value) || 0;
+        else {
+            for (const lid in rfqLinesData) {
+                const found = rfqLinesData[lid].offers.find(o => o.supplierId==supplierId);
+                if (found) { cost = found.deliveryCost; break; }
+            }
+        }
+        for (const lid in rfqLinesData) {
+            const ld = rfqLinesData[lid];
+            if (ld.selectedOfferId && ld.offers.find(o => o.offerId===ld.selectedOfferId && o.supplierId==supplierId)) {
+                count++;
+            }
+        }
+        return count>0 ? cost/count : cost;
+    }
+
+    function updateSummary() {
+        console.log("Updating summary and supplier settings...");
+        const summary={}, supData={}, delCosts={}, minVals={};
+        let grand=0, allSel=true, belowMin=false;
+        for (const lid in rfqLinesData) {
+            const ld = rfqLinesData[lid];
+            if (!ld.selectedOfferId) { allSel=false; continue; }
+            const sel = ld.offers.find(o => o.offerId===ld.selectedOfferId);
+            if (!sel) continue;
+            const sid = sel.supplierId, lt = sel.price*ld.quantity;
+            if (!summary[sid]) {
+                summary[sid]={name:sel.supplierName,lines:0,total:0,delivery:0};
+                supData[sid]={id:sid,name:sel.supplierName,deliveryCost:sel.deliveryCost,minLineValue:sel.minLineValue};
+            }
+            summary[sid].lines++;
+            summary[sid].total += lt;
+            if (sel.belowMin) belowMin=true;
+        }
+        updateSupplierSettings(supData);
+        document.querySelectorAll('.delivery-cost').forEach(i => {
+            delCosts[i.getAttribute('data-supplier-id')] = parseFloat(i.value)||0;
+        });
+        document.querySelectorAll('.min-line-value').forEach(i => {
+            minVals[i.getAttribute('data-supplier-id')] = parseFloat(i.value)||0;
+        });
+        for (const sid in summary) summary[sid].delivery = delCosts[sid]||0;
+        const totalLines = Object.keys(rfqLinesData).length;
+        const selLines = Object.values(rfqLinesData).filter(ld => ld.selectedOfferId).length;
+        allSel = selLines === totalLines;
+        let html='';
+        for (const sid in summary) {
+            const d = summary[sid];
+            const perLine = d.lines>0 ? d.delivery/d.lines : 0;
+            grand += d.total + d.delivery;
+            html += `
+                <tr>
+                    <td>${d.name}</td>
+                    <td>${d.lines}</td>
+                    <td>${d.total.toFixed(2)}</td>
+                    <td>${d.delivery.toFixed(2)} <small>(${perLine.toFixed(2)}/line)</small></td>
+                </tr>`;
+            if (currentLineId) {
+                document.querySelectorAll(`.delivery-cost-line[data-supplier-id="${sid}"]`)
+                    .forEach(c => c.textContent = perLine.toFixed(2));
+                document.querySelectorAll(`.delivery-cost-piece[data-supplier-id="${sid}"]`)
+                    .forEach(c => {
+                        const ld = rfqLinesData[currentLineId];
+                        c.textContent = ld.quantity>0 ? (perLine/ld.quantity).toFixed(2) : '0.00';
+                    });
+            }
+            for (const lid in rfqLinesData) {
+                const ld = rfqLinesData[lid];
+                if (ld.selectedOfferId && ld.offers.find(o => o.offerId===ld.selectedOfferId && o.supplierId==sid)) {
+                    const dc = document.getElementById(`selected_delivery_cost_${lid}`);
+                    const dp = document.getElementById(`selected_delivery_piece_${lid}`);
+                    if (dc) dc.textContent = perLine.toFixed(2);
+                    if (dp && ld.quantity>0) dp.textContent = (perLine/ld.quantity).toFixed(2);
+                }
+            }
+        }
+        document.querySelector('#selectionSummary tbody').innerHTML = html ||
+            '<tr><td colspan="4" class="text-center">No offers selected</td></tr>';
+        document.getElementById('grandTotal').textContent = grand.toFixed(2);
+        document.getElementById('missingSelectionsAlert').style.display = allSel ? 'none' : 'block';
+        document.getElementById('minValueAlert').style.display = belowMin ? 'block' : 'none';
+        updateOfferMinimumValues(minVals);
+    }
+
+    function updateSupplierSettings(supData) {
+        console.log("Updating supplier settings table...");
+        const tb = document.querySelector('#supplierSettingsTable tbody');
+        if (Object.keys(supData).length === 0) {
+            tb.innerHTML = '<tr id="noSuppliersRow"><td colspan="3" class="text-center">No suppliers selected yet. Select offers below to configure supplier settings.</td></tr>';
+            return;
+        }
+        const noRow = document.getElementById('noSuppliersRow');
+        if (noRow) noRow.remove();
+        for (const sid in supData) {
+            const s = supData[sid];
+            let row = document.getElementById(`supplier_row_${sid}`);
+            if (!row) {
+                row = document.createElement('tr');
+                row.id = `supplier_row_${sid}`;
+                row.innerHTML = `
+                    <td>${s.name}</td>
+                    <td><input type="number" class="form-control delivery-cost" data-supplier-id="${sid}" value="${s.deliveryCost||0}" min="0" step="0.01"></td>
+                    <td><input type="number" class="form-control min-line-value" data-supplier-id="${sid}" value="${s.minLineValue||0}" min="0" step="0.01"></td>
+                `;
+                tb.appendChild(row);
+                const dc = row.querySelector('.delivery-cost');
+                const mv = row.querySelector('.min-line-value');
+                [dc, mv].forEach(inp => {
+                    inp.addEventListener('keydown', e => {
+                        if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+                    });
+                });
+                dc.addEventListener('input', () => {
+                    for (const lid in rfqLinesData) {
+                        rfqLinesData[lid].offers.forEach(o => {
+                            if (o.supplierId == sid) o.deliveryCost = parseFloat(dc.value)||0;
+                        });
+                    }
+                    updateSummary();
+                });
+                mv.addEventListener('input', () => {
+                    for (const lid in rfqLinesData) {
+                        rfqLinesData[lid].offers.forEach(o => {
+                            if (o.supplierId == sid) {
+                                o.minLineValue = parseFloat(mv.value)||0;
+                                o.belowMin = o.minLineValue>0 && (o.price*rfqLinesData[lid].quantity)<o.minLineValue;
+                                if (o.belowMin && o.price>0) o.minQuantity = Math.ceil(o.minLineValue/o.price);
+                            }
+                        });
+                    }
+                    updateSummary();
+                    if (currentLineId) showOffersForLine(currentLineId);
+                });
+            }
+        }
+        document.querySelectorAll('#supplierSettingsTable tbody tr').forEach(r => {
+            if (r.id.startsWith('supplier_row_')) {
+                const sid = r.id.split('_').pop();
+                if (!supData[sid]) r.remove();
+            }
+        });
+    }
+
+    function updateOfferMinimumValues(minVals) {
+        console.log("Updating offer minimum values...");
+        for (const lid in rfqLinesData) {
+            const ld = rfqLinesData[lid];
+            ld.offers.forEach(o => {
+                o.minLineValue = minVals[o.supplierId]||0;
+                o.belowMin = o.minLineValue>0 && (o.price*ld.quantity)<o.minLineValue;
+                if (o.belowMin && o.price>0) o.minQuantity = Math.ceil(o.minLineValue/o.price);
+            });
+            if (ld.selectedOfferId) {
+                const sel = ld.offers.find(o => o.offerId===ld.selectedOfferId);
+                const row = document.querySelector(`.rfq-line-row[data-line-id="${lid}"]`);
+                if (row && sel) {
+                    sel.belowMin
+                        ? row.classList.add('table-warning')
+                        : row.classList.remove('table-warning');
+                }
+            }
+        }
+    }
+});
+
+// Add Offer functionality
+document.addEventListener('DOMContentLoaded', function() {
+    // Add a button to the main interface
+    const addButtonHTML = `
+        <button type="button" class="btn btn-success mb-3"
+                data-bs-toggle="offcanvas"
+                data-bs-target="#addOfferCanvas">
+            <i class="fas fa-plus-circle"></i> Add New Offer
+        </button>
+    `;
+
+    // Add button next to the "Apply Selected Offers" button
+    const actionArea = document.querySelector('.d-flex.justify-content-end.mt-3');
+    if (actionArea) {
+        actionArea.insertAdjacentHTML('afterbegin', addButtonHTML);
+    }
+
+    // Calculate summary values when inputs change
+ // Replace the existing updateOfferSummary function with this enhanced version
+function updateOfferSummary() {
+    const table = document.getElementById('addOfferLinesTable');
+    if (!table) return;
+
+    const rows = table.querySelectorAll('tbody tr');
+    let totalLines = 0;
+    let pricedLines = 0;
+    let totalValue = 0;
+
+    rows.forEach(row => {
+        const lineId = row.getAttribute('data-line-id');
+        const includeCheckbox = document.getElementById(`include_${lineId}`);
+        const priceInput = row.querySelector('.line-price');
+        const quantityText = row.cells[3].textContent.trim();
+        const quantity = parseInt(quantityText, 10);
+
+        // Automatically set include checkbox based on price input
+        if (priceInput && includeCheckbox) {
+            const hasPrice = priceInput.value && !isNaN(parseFloat(priceInput.value)) && parseFloat(priceInput.value) > 0;
+            includeCheckbox.checked = hasPrice;
+        }
+
+        if (includeCheckbox && includeCheckbox.checked) {
+            totalLines++;
+
+            if (priceInput && priceInput.value && !isNaN(parseFloat(priceInput.value))) {
+                pricedLines++;
+                const lineValue = parseFloat(priceInput.value) * quantity;
+                totalValue += lineValue;
+            }
+        }
+    });
+
+    document.getElementById('totalLinesCount').textContent = totalLines;
+    document.getElementById('pricedLinesCount').textContent = pricedLines;
+    document.getElementById('totalOfferValue').textContent = totalValue.toFixed(2);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const priceInputs = document.querySelectorAll('#addOfferLinesTable .line-price');
+
+    priceInputs.forEach(input => {
+        // Update checkbox state when price changes
+        input.addEventListener('input', function() {
+            const row = this.closest('tr');
+            const lineId = row.getAttribute('data-line-id');
+            const includeCheckbox = document.getElementById(`include_${lineId}`);
+
+            if (includeCheckbox) {
+                const hasPrice = this.value && !isNaN(parseFloat(this.value)) && parseFloat(this.value) > 0;
+                includeCheckbox.checked = hasPrice;
+                updateOfferSummary();
+            }
+        });
+    });
+});
+
+    // Attach event listeners to form elements
+    const addOfferForm = document.getElementById('addOfferForm');
+    if (addOfferForm) {
+        const priceInputs = addOfferForm.querySelectorAll('.line-price');
+        const includeCheckboxes = addOfferForm.querySelectorAll('.line-include');
+
+        priceInputs.forEach(input => {
+            input.addEventListener('input', updateOfferSummary);
+        });
+
+        includeCheckboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', updateOfferSummary);
+        });
+
+// Modify the submit button event listener to ignore lines without prices
+document.getElementById('submitOfferBtn').addEventListener('click', async function() {
+    try {
+        // Disable the button to prevent multiple submissions
+        this.disabled = true;
+        this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Creating...';
+
+        const form = document.getElementById('addOfferForm');
+        const formData = new FormData(form);
+
+        // Validate required fields
+        const supplierId = formData.get('supplier_id');
+        if (!supplierId) {
+            alert('Please select a supplier');
+            this.disabled = false;
+            this.innerHTML = 'Create Offer';
+            return;
+        }
+
+        // Check if at least one line has a price
+        let hasValidLine = false;
+        const rows = document.querySelectorAll('#addOfferLinesTable tbody tr');
+
+        rows.forEach(row => {
+            const lineId = row.getAttribute('data-line-id');
+            const priceInput = row.querySelector('.line-price');
+
+            if (priceInput && priceInput.value && parseFloat(priceInput.value) > 0) {
+                hasValidLine = true;
+
+                // Auto-update the include checkbox to match price
+                const includeCheckbox = document.getElementById(`include_${lineId}`);
+                if (includeCheckbox) {
+                    includeCheckbox.checked = true;
+                }
+            } else {
+                // Ensure lines without prices are not included
+                const includeCheckbox = document.getElementById(`include_${lineId}`);
+                if (includeCheckbox) {
+                    includeCheckbox.checked = false;
+                }
+            }
+        });
+
+        if (!hasValidLine) {
+            alert('Please enter at least one valid price');
+            this.disabled = false;
+            this.innerHTML = 'Create Offer';
+            return;
+        }
+
+        // First create the offer with 3 retries
+        let offerResponse, offerData, offerId;
+        let retries = 3;
+
+        while (retries > 0) {
+            try {
+                offerResponse = await fetch('/offers/api/new', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (offerResponse.ok) {
+                    offerData = await offerResponse.json();
+                    offerId = offerData.offer_id;
+                    break; // Success, exit retry loop
+                } else {
+                    const errorText = await offerResponse.text();
+                    console.error("Server error:", errorText);
+                    retries--;
+
+                    if (retries === 0) {
+                        throw new Error(`Failed to create offer after multiple attempts: ${errorText}`);
+                    }
+
+                    // Wait a bit before retrying (exponential backoff)
+                    await new Promise(resolve => setTimeout(resolve, (4 - retries) * 1000));
+                }
+            } catch (err) {
+                retries--;
+                if (retries === 0) throw err;
+                await new Promise(resolve => setTimeout(resolve, (4 - retries) * 1000));
+            }
+        }
+
+        // Proceed with adding offer lines
+        if (offerId) {
+            const offerLines = [];
+
+rows.forEach(row => {
+    const lineId = row.getAttribute('data-line-id');
+    const includeCheckbox = document.getElementById(`include_${lineId}`);
+
+    if (includeCheckbox && includeCheckbox.checked) {
+        const basePart = formData.get(`base_part_number_${lineId}`);
+        const price = formData.get(`price_${lineId}`);
+        const moq = formData.get(`moq_${lineId}`);
+        const leadTime = formData.get(`leadtime_${lineId}`);
+
+        // Get part number from the table row - this is required
+        const partNumber = row.cells[1].textContent.trim();
+
+        if (basePart && price && parseFloat(price) > 0) {
+            offerLines.push({
+                base_part_number: basePart,
+                requested_base_part_number: basePart,
+                part_number: partNumber,  // Required by backend
+                line_number: offerLines.length + 1,
+                price: parseFloat(price),
+                quantity: parseInt(moq) || 1,
+                lead_time: parseInt(leadTime) || 0
+            });
+        }
+    }
+});
+
+            if (offerLines.length > 0) {
+                try {
+                    const payload = { lines: offerLines };
+
+                    const linesResponse = await fetch(`/offers/${offerId}/add_lines`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!linesResponse.ok) {
+                        const errorText = await linesResponse.text();
+                        throw new Error(`Failed to add offer lines: ${errorText}`);
+                    }
+
+                    // Success - refresh the page
+                    alert('Offer created successfully!');
+                    window.location.reload();
+                } catch (error) {
+                    console.error('Error adding offer lines:', error);
+                    alert('Error adding offer lines: ' + error.message);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error creating offer:', error);
+        alert('Error creating offer: ' + error.message);
+    } finally {
+        // Re-enable the button
+        this.disabled = false;
+        this.innerHTML = 'Create Offer';
+    }
+});
+}
+
+    // Initialize summary on load
+    updateOfferSummary();
+
+    // Add bulk actions for pricing
+    const bulkActionsHTML = `
+        <div class="mb-3 mt-2">
+            <div class="row g-2">
+                <div class="col-auto">
+                    <div class="input-group">
+                        <span class="input-group-text">Set All Prices +</span>
+                        <input type="number" class="form-control" id="bulkPricePercentage"
+                               placeholder="%" min="0" max="100" step="1" style="width: 80px;">
+                        <span class="input-group-text">%</span>
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <div class="input-group">
+                        <span class="input-group-text">Set All MOQ</span>
+                        <input type="number" class="form-control" id="bulkMoq"
+                               placeholder="MOQ" min="1" step="1" style="width: 100px;">
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <div class="input-group">
+                        <span class="input-group-text">Set All Lead Time</span>
+                        <input type="number" class="form-control" id="bulkLeadTime"
+                               placeholder="Days" min="0" step="1" style="width: 100px;">
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <button class="btn btn-outline-primary" id="applyBulkSettings">Apply</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const tableHeader = document.querySelector('#addOfferLinesTable')?.closest('.card-body');
+    if (tableHeader) {
+        tableHeader.insertAdjacentHTML('afterbegin', bulkActionsHTML);
+    }
+
+    // Apply bulk settings
+    document.getElementById('applyBulkSettings')?.addEventListener('click', function() {
+        const percentageInput = document.getElementById('bulkPricePercentage');
+        const moqInput = document.getElementById('bulkMoq');
+        const leadTimeInput = document.getElementById('bulkLeadTime');
+
+        const percentage = percentageInput && percentageInput.value ? parseFloat(percentageInput.value) : null;
+        const moq = moqInput && moqInput.value ? parseInt(moqInput.value) : null;
+        const leadTime = leadTimeInput && leadTimeInput.value ? parseInt(leadTimeInput.value) : null;
+
+        const rows = document.querySelectorAll('#addOfferLinesTable tbody tr');
+
+        rows.forEach(row => {
+            const lineId = row.getAttribute('data-line-id');
+            const includeCheckbox = document.getElementById(`include_${lineId}`);
+
+            if (includeCheckbox && includeCheckbox.checked) {
+                // Apply price markup if provided
+                if (percentage !== null && !isNaN(percentage)) {
+                    const basePrice = parseFloat(row.cells[4].querySelector('input').value) || 0;
+                    if (basePrice > 0) {
+                        const markup = 1 + (percentage / 100);
+                        row.cells[4].querySelector('input').value = (basePrice * markup).toFixed(4);
+                    }
+                }
+
+                // Apply MOQ if provided
+                if (moq !== null && !isNaN(moq)) {
+                    row.cells[5].querySelector('input').value = moq;
+                }
+
+                // Apply lead time if provided
+                if (leadTime !== null && !isNaN(leadTime)) {
+                    row.cells[6].querySelector('input').value = leadTime;
+                }
+            }
+        });
+
+        updateOfferSummary();
+    });
+
+    // Optional: Add filter functionality
+    const filterHTML = `
+        <div class="form-group mb-3">
+            <label for="lineFilter" class="form-label">Filter Lines:</label>
+            <input type="text" class="form-control" id="lineFilter" placeholder="Search by part number...">
+        </div>
+    `;
+
+    const cardHeader = document.querySelector('#addOfferLinesTable')?.closest('.card').querySelector('.card-header');
+    if (cardHeader) {
+        cardHeader.insertAdjacentHTML('beforeend', filterHTML);
+    }
+
+    // Filter lines in table
+    document.getElementById('lineFilter')?.addEventListener('input', function() {
+        const filterText = this.value.toLowerCase();
+        const rows = document.querySelectorAll('#addOfferLinesTable tbody tr');
+
+        rows.forEach(row => {
+            const partNumber = row.cells[1].textContent.toLowerCase();
+            const manufacturer = row.cells[2].textContent.toLowerCase();
+
+            if (partNumber.includes(filterText) || manufacturer.includes(filterText)) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+    });
+});
+</script>
+
+<style>
+    /* Make the offcanvas wider */
+    .wider-canvas {
+        width: 85% !important;
+        max-width: 1200px;
+    }
+
+    /* Improve table readability */
+    #offersTable th, #offersTable td {
+        padding: 0.5rem;
+        vertical-align: middle;
+    }
+
+    /* Highlight row hover more clearly */
+    #offersTable tbody tr:hover {
+        background-color: rgba(0, 123, 255, 0.1);
+    }
+
+    /* Highlight the selected row more prominently */
+    #offersTable tbody tr.table-success {
+        background-color: rgba(40, 167, 69, 0.2);
+    }
+
+    /* Highlight below minimum value rows */
+    #offersTable tbody tr.table-warning {
+        background-color: rgba(255, 193, 7, 0.2);
+    }
+
+    /* Make price columns easier to read */
+    .text-end {
+        font-family: monospace;
+        font-weight: 500;
+    }
+
+    /* Add separator between price and non-price columns */
+    #offersTable th:nth-child(5), #offersTable td:nth-child(5),
+    #offersTable th:nth-child(6), #offersTable td:nth-child(6),
+    #offersTable th:nth-child(7), #offersTable td:nth-child(7) {
+        border-right: 2px solid #dee2e6;
+    }
+
+    #offersTable th:nth-child(9), #offersTable td:nth-child(9),
+    #offersTable th:nth-child(10), #offersTable td:nth-child(10),
+    #offersTable th:nth-child(11), #offersTable td:nth-child(11) {
+        border-right: 2px solid #dee2e6;
+    }
+/* CSS for the Add Offer feature */
+
+/* Make sure the offcanvas is wide enough */
+#addOfferCanvas.wider-canvas {
+    width: 90% !important;
+    max-width: 1400px;
+}
+
+/* Styling for the Add Offer form */
+#addOfferForm .form-control,
+#addOfferForm .form-select {
+    border-radius: 4px;
+}
+
+/* Input field styles */
+#addOfferLinesTable .form-control {
+    padding: 0.375rem 0.5rem;
+    font-size: 0.9rem;
+}
+
+/* Improve table readability */
+#addOfferLinesTable th,
+#addOfferLinesTable td {
+    padding: 0.5rem;
+    vertical-align: middle;
+}
+
+/* Highlight rows on hover */
+#addOfferLinesTable tbody tr:hover {
+    background-color: rgba(0, 123, 255, 0.05);
+}
+
+/* Filter area */
+#lineFilter {
+    max-width: 300px;
+    margin-top: 0.5rem;
+}
+
+/* Make price columns easier to read */
+#addOfferLinesTable .line-price,
+#addOfferLinesTable .line-moq,
+#addOfferLinesTable .line-leadtime {
+    font-family: monospace;
+    text-align: right;
+}
+
+/* Ensure checkboxes are centered and visible */
+#addOfferLinesTable .form-check {
+    display: flex;
+    justify-content: center;
+}
+
+/* Style the summary section */
+#totalOfferValue {
+    font-weight: bold;
+    font-size: 1.2rem;
+    color: #198754; /* Bootstrap success color */
+}
+
+/* Style the submit button */
+#submitOfferBtn {
+    font-weight: 500;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+}
+
+/* Styling for bulk actions */
+.bulk-actions {
+    background-color: #f8f9fa;
+    padding: 0.75rem;
+    border-radius: 4px;
+    border: 1px solid #dee2e6;
+    margin-bottom: 1rem;
+}
+
+/* Animation for successful operations */
+@keyframes highlight {
+    from { background-color: rgba(25, 135, 84, 0.2); }
+    to { background-color: transparent; }
+}
+
+.highlight-success {
+    animation: highlight 1.5s ease-out;
+}
+
+/* Responsive adjustments */
+@media (max-width: 992px) {
+    #addOfferCanvas.wider-canvas {
+        width: 100% !important;
+    }
+
+    .bulk-actions .row {
+        flex-direction: column;
+    }
+
+    .bulk-actions .col-auto {
+        margin-bottom: 0.5rem;
+    }
+}
+</style>
+{% endblock %}

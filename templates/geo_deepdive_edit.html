@@ -1,0 +1,361 @@
+<!-- templates/geo_deepdive_edit.html -->
+{% extends "base.html" %}
+
+{% block title %}Edit: {{ deepdive.title }}{% endblock %}
+
+{% block head %}
+<!-- Markdown editor specific CSS -->
+<style>
+    /* Markdown Editor Styles - scoped to avoid conflicts */
+    .markdown-editor-container {
+    border: none;
+    border-radius: 0;
+    background: white;
+}
+
+    .markdown-editor-tabs {
+        border-bottom: 1px solid #dee2e6;
+        background-color: #f8f9fa;
+        margin-bottom: 0;
+    }
+
+    .markdown-editor-tabs .nav-link {
+        border: none !important;
+        border-radius: 0 !important;
+        color: #6c757d;
+        font-size: 0.875rem;
+        padding: 0.75rem 1rem;
+        background: transparent !important;
+    }
+
+    .markdown-editor-tabs .nav-link.active {
+        background-color: white !important;
+        color: #0d6efd !important;
+        border-bottom: 2px solid #0d6efd !important;
+    }
+
+    .markdown-editor-content {
+        min-height: 800px !important;
+    }
+
+    .markdown-editor-textarea {
+        border: none !important;
+        resize: vertical;
+        min-height: 800px !important;
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-size: 14px;
+        line-height: 1.5;
+        box-shadow: none !important;
+    }
+
+    .markdown-editor-textarea:focus {
+        outline: none !important;
+        box-shadow: none !important;
+        border: none !important;
+    }
+
+    .markdown-editor-preview {
+        padding: 1rem;
+        min-height: 400px;
+        background-color: white;
+        overflow-y: auto;
+    }
+
+    .markdown-editor-toolbar {
+        background-color: #f8f9fa;
+        border-bottom: 1px solid #dee2e6;
+        padding: 0.5rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+
+    .markdown-editor-toolbar .btn {
+        font-size: 0.875rem !important;
+        padding: 0.25rem 0.5rem !important;
+        border: 1px solid #dee2e6 !important;
+        background: white !important;
+        color: #495057 !important;
+        border-radius: 0.25rem !important;
+    }
+
+    .markdown-editor-toolbar .btn:hover {
+        background: #e9ecef !important;
+        border-color: #adb5bd !important;
+    }
+
+    .markdown-editor-toolbar .btn-group {
+        display: flex;
+        margin-right: 0.25rem;
+    }
+
+    .markdown-editor-toolbar .btn-group .btn {
+        border-radius: 0 !important;
+        margin-right: 0 !important;
+    }
+
+    .markdown-editor-toolbar .btn-group .btn:first-child {
+        border-top-left-radius: 0.25rem !important;
+        border-bottom-left-radius: 0.25rem !important;
+    }
+
+    .markdown-editor-toolbar .btn-group .btn:last-child {
+        border-top-right-radius: 0.25rem !important;
+        border-bottom-right-radius: 0.25rem !important;
+    }
+
+    /* Preview content styling */
+    .markdown-editor-preview h1, .markdown-editor-preview h2, .markdown-editor-preview h3,
+    .markdown-editor-preview h4, .markdown-editor-preview h5, .markdown-editor-preview h6 {
+        margin-top: 1.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .markdown-editor-preview h1 { font-size: 2rem; }
+    .markdown-editor-preview h2 { font-size: 1.75rem; }
+    .markdown-editor-preview h3 { font-size: 1.5rem; }
+    .markdown-editor-preview h4 { font-size: 1.25rem; }
+    .markdown-editor-preview h5 { font-size: 1.1rem; }
+    .markdown-editor-preview h6 { font-size: 1rem; }
+
+    .markdown-editor-preview blockquote {
+        border-left: 4px solid #dee2e6;
+        padding-left: 1rem;
+        margin: 1rem 0;
+        color: #6c757d;
+    }
+
+    .markdown-editor-preview code {
+        background-color: #f8f9fa;
+        padding: 0.125rem 0.25rem;
+        border-radius: 0.25rem;
+        font-size: 0.875em;
+    }
+
+    .markdown-editor-preview pre {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.375rem;
+        overflow-x: auto;
+    }
+
+    .markdown-editor-preview pre code {
+        background: none;
+        padding: 0;
+    }
+
+    .markdown-editor-preview table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 1rem 0;
+    }
+
+    .markdown-editor-preview table th,
+    .markdown-editor-preview table td {
+        border: 1px solid #dee2e6;
+        padding: 0.5rem;
+        text-align: left;
+    }
+
+    .markdown-editor-preview table th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2 class="fw-bold mb-1">Edit Deep Dive</h2>
+                <a href="{{ url_for('geo_deepdive.view_deepdive', deepdive_id=deepdive.id) }}" class="btn btn-secondary">
+                    <i class="fas fa-arrow-left"></i> Back
+                </a>
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('geo_deepdive.update_deepdive_route', deepdive_id=deepdive.id) }}">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group mb-3">
+                                    <label>Country</label>
+                                    <input type="text" class="form-control" value="{{ deepdive.country }}" readonly>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group mb-3">
+                                    <label>Focus Area</label>
+                                    <input type="text" class="form-control" value="{{ deepdive.tag_description or 'Unknown' }}" readonly>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label for="title">Title <span class="text-danger">*</span></label>
+                            <input type="text" name="title" id="title" class="form-control"
+                                   value="{{ deepdive.title }}" required>
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label for="content">Content <span class="text-danger">*</span></label>
+
+                            <div class="markdown-editor-container">
+                                <!-- Tabs -->
+                                <ul class="nav nav-tabs markdown-editor-tabs" role="tablist">
+                                    <li class="nav-item" role="presentation">
+                                        <button class="nav-link active" id="markdown-write-tab" data-bs-toggle="tab"
+                                                data-bs-target="#markdown-write" type="button" role="tab">
+                                            <i class="fas fa-edit"></i> Write
+                                        </button>
+                                    </li>
+                                    <li class="nav-item" role="presentation">
+                                        <button class="nav-link" id="markdown-preview-tab" data-bs-toggle="tab"
+                                                data-bs-target="#markdown-preview" type="button" role="tab">
+                                            <i class="fas fa-eye"></i> Preview
+                                        </button>
+                                    </li>
+                                </ul>
+
+                                <!-- Toolbar (only shown in write mode) -->
+                                <div class="markdown-editor-toolbar" id="markdown-editor-toolbar">
+                                    <button type="button" class="btn btn-sm" onclick="insertMarkdownText('**', '**', 'Bold text')" title="Bold">
+                                        <i class="fas fa-bold"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm" onclick="insertMarkdownText('*', '*', 'Italic text')" title="Italic">
+                                        <i class="fas fa-italic"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm" onclick="insertMarkdownText('`', '`', 'code')" title="Code">
+                                        <i class="fas fa-code"></i>
+                                    </button>
+                                    <div class="btn-group">
+                                        <button type="button" class="btn btn-sm" onclick="insertMarkdownText('# ', '', 'Heading')" title="H1">
+                                            H1
+                                        </button>
+                                        <button type="button" class="btn btn-sm" onclick="insertMarkdownText('## ', '', 'Heading')" title="H2">
+                                            H2
+                                        </button>
+                                        <button type="button" class="btn btn-sm" onclick="insertMarkdownText('### ', '', 'Heading')" title="H3">
+                                            H3
+                                        </button>
+                                    </div>
+                                    <button type="button" class="btn btn-sm" onclick="insertMarkdownText('> ', '', 'Quote')" title="Quote">
+                                        <i class="fas fa-quote-right"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm" onclick="insertMarkdownText('- ', '', 'List item')" title="List">
+                                        <i class="fas fa-list-ul"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm" onclick="insertMarkdownText('[', '](url)', 'Link text')" title="Link">
+                                        <i class="fas fa-link"></i>
+                                    </button>
+                                </div>
+
+                                <!-- Tab content -->
+                                <div class="tab-content markdown-editor-content">
+                                    <div class="tab-pane fade show active" id="markdown-write" role="tabpanel">
+                                        <textarea name="content" id="content" class="form-control markdown-editor-textarea"
+                                                  placeholder="Write your content in Markdown..." required>{{ deepdive.content }}</textarea>
+                                    </div>
+                                    <div class="tab-pane fade" id="markdown-preview" role="tabpanel">
+                                        <div class="markdown-editor-preview" id="markdown-preview-content">
+                                            <!-- Preview content will be inserted here -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Save Changes
+                            </button>
+                            <a href="{{ url_for('geo_deepdive.view_deepdive', deepdive_id=deepdive.id) }}"
+                               class="btn btn-secondary">Cancel</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Wait for marked.js to be available
+    if (typeof marked === 'undefined') {
+        console.error('marked.js is not loaded');
+        return;
+    }
+
+    const textarea = document.getElementById('content');
+    const previewContent = document.getElementById('markdown-preview-content');
+    const toolbar = document.getElementById('markdown-editor-toolbar');
+    const writeTab = document.getElementById('markdown-write-tab');
+    const previewTab = document.getElementById('markdown-preview-tab');
+
+    if (!textarea || !previewContent || !toolbar) {
+        console.error('Markdown editor elements not found');
+        return;
+    }
+
+    // Configure marked options
+    marked.setOptions({
+        breaks: true,
+        gfm: true
+    });
+
+    // Update preview when switching to preview tab
+    previewTab.addEventListener('click', function() {
+        setTimeout(() => {
+            updateMarkdownPreview();
+            toolbar.style.display = 'none';
+        }, 100);
+    });
+
+    // Show toolbar when switching to write tab
+    writeTab.addEventListener('click', function() {
+        setTimeout(() => {
+            toolbar.style.display = 'flex';
+        }, 100);
+    });
+
+    function updateMarkdownPreview() {
+        try {
+            const markdownText = textarea.value;
+            const htmlContent = marked.parse(markdownText);
+            previewContent.innerHTML = htmlContent;
+        } catch (error) {
+            console.error('Error parsing markdown:', error);
+            previewContent.innerHTML = '<p class="text-danger">Error rendering preview</p>';
+        }
+    }
+
+    // Global function for toolbar buttons
+    window.insertMarkdownText = function(before, after, placeholder) {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const selectedText = textarea.value.substring(start, end);
+        const textToInsert = selectedText || placeholder;
+
+        const newText = before + textToInsert + after;
+
+        textarea.setRangeText(newText, start, end, 'end');
+        textarea.focus();
+
+        // If we inserted placeholder text, select it
+        if (!selectedText && placeholder) {
+            textarea.setSelectionRange(start + before.length, start + before.length + placeholder.length);
+        }
+    };
+
+    // Initialize preview on page load
+    updateMarkdownPreview();
+});
+</script>
+{% endblock %}

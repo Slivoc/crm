@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Import Purchase Orders from ERP</h2>
+    
+    <div class="card mt-4">
+        <div class="card-body">
+            <form method="POST" enctype="multipart/form-data" action="{{ url_for('purchase_orders.import_erp_purchase_orders') }}">
+                <div class="mb-3">
+                    <label for="file" class="form-label">Upload CSV File</label>
+                    <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
+                    <div class="form-text">Select the Purchase Order export file from your ERP system</div>
+                </div>
+                <button type="submit" class="btn btn-primary">Import Purchase Orders</button>
+                <a href="{{ url_for('purchase_orders.list_purchase_orders') }}" class="btn btn-secondary">Cancel</a>
+            </form>
+        </div>
+    </div>
+
+    <div class="alert alert-info mt-4">
+        <h5>Instructions:</h5>
+        <ul>
+            <li>Export Purchase Orders from your ERP system as CSV (comma-delimited)</li>
+            <li>The system will automatically create suppliers if they don't exist</li>
+            <li>Multiple lines for the same PO number will be grouped together</li>
+            <li>Part numbers will be added to the system automatically</li>
+            <li>Expected columns:
+                <ul class="mt-2">
+                    <li><strong>PO Number</strong> - Purchase order reference</li>
+                    <li><strong>Supplier Code</strong> - Supplier identifier or name</li>
+                    <li><strong>Date Issued</strong> - PO issue date</li>
+                    <li><strong>Line Number</strong> - Line item number</li>
+                    <li><strong>Part Number</strong> - Part/product number</li>
+                    <li><strong>Quantity</strong> - Order quantity</li>
+                    <li><strong>Unit Price</strong> - Price per unit</li>
+                    <li><strong>Ship Date</strong> - Expected ship date</li>
+                    <li><strong>Currency</strong> - Currency code (e.g., USD, GBP)</li>
+                    <li><strong>Payment Terms</strong> - Payment terms (optional)</li>
+                    <li><strong>Incoterms</strong> - Delivery terms (optional)</li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+
+    <div class="alert alert-warning mt-3">
+        <h5>Important Notes:</h5>
+        <ul class="mb-0">
+            <li>Column names must match exactly as shown above (case-sensitive)</li>
+            <li>If a column is not present in your CSV, update the COLUMN_MAPPINGS in the Python code</li>
+            <li>Dates can be in various formats: YYYY-MM-DD, DD/MM/YYYY, MM/DD/YYYY</li>
+            <li>Duplicate PO numbers will be skipped - only new POs will be created</li>
+        </ul>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-header">
+            <h5>Sample CSV Format</h5>
+        </div>
+        <div class="card-body">
+            <pre class="bg-light p-3">PO Number,Supplier Code,Date Issued,Line Number,Part Number,Quantity,Unit Price,Ship Date,Currency,Payment Terms,Incoterms
+PO-2024-001,ACME CORP,2024-11-01,1,ABC-123,10,150.00,2024-11-15,USD,Net 30,FOB
+PO-2024-001,ACME CORP,2024-11-01,2,XYZ-456,5,200.00,2024-11-15,USD,Net 30,FOB
+PO-2024-002,WIDGET LTD,2024-11-02,1,PART-789,20,75.50,2024-11-20,GBP,Net 60,CIF</pre>
+        </div>
+    </div>
+</div>
+{% endblock %}

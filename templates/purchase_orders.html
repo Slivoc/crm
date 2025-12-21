@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+    <!-- Cardified Create New Purchase Order Section -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">Create New Purchase Order</h5>
+        </div>
+        <div class="card-body">
+            <form action="{{ url_for('purchase_orders.create_purchase_order') }}" method="POST">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="supplier">Supplier:</label>
+                        <select name="supplier_id" id="supplier" class="form-control" required>
+                            <option value="">Select Supplier</option>
+                            {% for supplier in suppliers %}
+                                <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="button-container mt-3">
+                    <button type="submit" class="btn btn-primary">Create Purchase Order</button>
+                    <a href="{{ url_for('purchase_orders.purchase_suggestions') }}" class="btn btn-primary">Show Purchase Suggestions</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Summary Card -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">Purchase Orders Summary</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="stat-card">
+                        <h6 class="stat-title">Total Purchase Orders Value</h6>
+                        <p class="stat-value">{{ total_value }}</p>
+                    </div>
+                </div>
+                <div class="col-md-6 text-md-right">
+                    <div class="stat-card">
+                        <h6 class="stat-title">Showing</h6>
+                        <p class="stat-value">{{ purchase_orders|length }} of {{ total_pages * 20 }} purchase orders</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cardified Existing Purchase Orders Section -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0">Recent Purchase Orders</h5>
+        </div>
+
+        <div class="card-body table-container p-0">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Order Ref</th>
+                        <th>Supplier</th>
+                        <th>Date Issued</th>
+                        <th>Total Value</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in purchase_orders %}
+                    <tr>
+                        <td>{{ order.purchase_order_ref }}</td>
+                        <td>{{ order.supplier_name }}</td>
+                        <td>{{ order.date_issued }}</td>
+                        <td>{{ order.total_value }}</td>
+                        <td>{{ order.status_name }}</td>
+                        <td>
+                            <a href="{{ url_for('purchase_orders.edit_purchase_order', purchase_order_id=order.id) }}" class="btn btn-sm btn-link">Edit</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="card-footer">
+            <nav aria-label="Purchase orders pagination">
+                <ul class="pagination justify-content-center mb-0">
+                    <li class="page-item {% if page == 1 %}disabled{% endif %}">
+                        <a class="page-link" href="{{ url_for('purchase_orders.list_purchase_orders', page=page-1) }}" tabindex="-1">Previous</a>
+                    </li>
+
+                    {% for p in range(1, total_pages + 1) %}
+                        {% if p >= page - 2 and p <= page + 2 %}
+                            <li class="page-item {% if p == page %}active{% endif %}">
+                                <a class="page-link" href="{{ url_for('purchase_orders.list_purchase_orders', page=p) }}">{{ p }}</a>
+                            </li>
+                        {% endif %}
+                    {% endfor %}
+
+                    <li class="page-item {% if page == total_pages %}disabled{% endif %}">
+                        <a class="page-link" href="{{ url_for('purchase_orders.list_purchase_orders', page=page+1) }}">Next</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+    </div>
+
+{% endblock %}

@@ -1,0 +1,659 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+
+    <!-- Create New Sales Order Section -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title">
+                <i class="bi bi-bag-plus me-2"></i>
+                Create New Sales Order
+            </h5>
+        </div>
+        <div class="card-body">
+            <form action="{{ url_for('sales_orders.list_sales_orders') }}" method="post" class="row g-3">
+                <div class="col-md-6">
+                    <label for="customer_id" class="form-label">Customer:</label>
+                    <select id="customer_id" name="customer_id" class="form-select" required>
+                        <option value="">Select Customer</option>
+                        {% for customer in customers %}
+                            <option value="{{ customer.id }}">{{ customer.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label for="customer_po_ref" class="form-label">Customer PO Reference:</label>
+                    <input type="text" id="customer_po_ref" name="customer_po_ref" class="form-control" required>
+                </div>
+                <div class="col-12">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle me-1"></i>
+                        Create Sales Order
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Existing Sales Orders Section -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0">
+                <i class="bi bi-cart3 me-2"></i>
+                Sales Orders
+            </h5>
+            <div>
+                <a href="{{ url_for('sales_orders.calendar_view') }}" class="btn btn-primary">
+                    <i class="bi bi-calendar3 me-1"></i>
+                    Calendar View
+                </a>
+            </div>
+        </div>
+
+        <!-- Filters Section -->
+        <div class="card-body border-bottom">
+            <form id="filterForm" method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label for="filter_customer" class="form-label">Customer</label>
+                    <select id="filter_customer" name="customer_id" class="form-select">
+                        <option value="">All Customers</option>
+                        {% for customer in customers %}
+                            <option value="{{ customer.id }}" {% if filters.customer_id == customer.id %}selected{% endif %}>
+                                {{ customer.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-3">
+                    <label for="filter_salesperson" class="form-label">Salesperson</label>
+                    <select id="filter_salesperson" name="salesperson_id" class="form-select">
+                        <option value="">All Salespeople</option>
+                        {% for salesperson in salespeople %}
+                            <option value="{{ salesperson.id }}" {% if filters.salesperson_id == salesperson.id %}selected{% endif %}>
+                                {{ salesperson.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-3">
+                    <label for="filter_status" class="form-label">Status</label>
+                    <select id="filter_status" name="status_id" class="form-select">
+                        <option value="">All Statuses</option>
+                        {% for status in statuses %}
+                            <option value="{{ status.id }}" {% if filters.status_id == status.id %}selected{% endif %}>
+                                {{ status.status_name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-3">
+                    <label for="filter_search" class="form-label">Search</label>
+                    <input type="text" id="filter_search" name="search" class="form-control"
+                           placeholder="Order ref, PO ref, customer..." value="{{ filters.search }}">
+                </div>
+
+                <div class="col-md-3">
+                    <label for="filter_date_from" class="form-label">Date From</label>
+                    <input type="date" id="filter_date_from" name="date_from" class="form-control"
+                           value="{{ filters.date_from }}">
+                </div>
+
+                <div class="col-md-3">
+                    <label for="filter_date_to" class="form-label">Date To</label>
+                    <input type="date" id="filter_date_to" name="date_to" class="form-control"
+                           value="{{ filters.date_to }}">
+                </div>
+
+                <div class="col-12">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="show_mismatches"
+                               name="show_mismatches" value="true"
+                               {% if filters.show_mismatches %}checked{% endif %}>
+                        <label class="form-check-label" for="show_mismatches">
+                            <i class="bi bi-exclamation-triangle text-danger me-1"></i>
+                            <strong>Show only salesperson mismatches</strong>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="col-12">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-funnel me-1"></i> Apply Filters
+                    </button>
+                    <a href="{{ url_for('sales_orders.list_sales_orders') }}" class="btn btn-secondary">
+                        <i class="bi bi-x-circle me-1"></i> Clear Filters
+                    </a>
+                    <span class="text-muted ms-3">
+                        Showing {{ pagination.start_record }}-{{ pagination.end_record }} of {{ pagination.total_records }} orders
+                    </span>
+                </div>
+            </form>
+        </div>
+
+        <!-- Bulk Salesperson Assignment Section -->
+        {% if orders_by_customer and (filters.show_mismatches or filters.customer_id or filters.date_from or filters.date_to) %}
+        <div class="card-body border-bottom bg-light">
+            <h6 class="mb-3">
+                <i class="bi bi-people-fill me-2"></i>
+                Bulk Assign Salesperson by Customer
+                <small class="text-muted">(for visible orders)</small>
+            </h6>
+            <div class="table-responsive">
+                <table class="table table-sm table-striped mb-0">
+                    <thead>
+                        <tr>
+                            <th>Customer</th>
+                            <th>Default Salesperson</th>
+                            <th>Orders Shown</th>
+                            <th>Mismatches</th>
+                            <th>Assign To</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for customer_id, info in orders_by_customer.items() %}
+                        <tr>
+                            <td><strong>{{ info.customer_name }}</strong></td>
+                            <td>
+                                {% if info.customer_salesperson_name %}
+                                    <span class="badge bg-info">{{ info.customer_salesperson_name }}</span>
+                                {% else %}
+                                    <span class="text-muted">None</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ info.order_count }}</td>
+                            <td>
+                                {% if info.mismatch_count > 0 %}
+                                    <span class="badge bg-danger">{{ info.mismatch_count }}</span>
+                                {% else %}
+                                    <span class="text-success">0</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <select class="form-select form-select-sm bulk-salesperson-select"
+                                        data-customer-id="{{ customer_id }}"
+                                        data-order-ids="{{ info.order_ids|join(',') }}">
+                                    <option value="">Not Assigned</option>
+                                    {% for salesperson in salespeople %}
+                                        <option value="{{ salesperson.id }}"
+                                                {% if info.customer_salesperson_id == salesperson.id %}selected{% endif %}>
+                                            {{ salesperson.name }}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-success bulk-assign-btn"
+                                        data-customer-id="{{ customer_id }}">
+                                    <i class="bi bi-check-circle me-1"></i>
+                                    Apply to {{ info.order_count }} order{{ 's' if info.order_count != 1 else '' }}
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="alert alert-info mt-3 mb-0">
+                <i class="bi bi-info-circle me-2"></i>
+                <strong>Note:</strong> This will update the salesperson for all orders shown on this page for each customer.
+                Use date filters to limit updates to specific time periods.
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="card-body table-container p-0">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>
+                                <a href="#" class="sort-link" data-sort="sales_order_ref">
+                                    Order Ref
+                                    {% if filters.sort_by == 'sales_order_ref' %}
+                                        <i class="bi bi-arrow-{{ 'down' if filters.sort_order == 'desc' else 'up' }}"></i>
+                                    {% endif %}
+                                </a>
+                            </th>
+                            <th>
+                                <a href="#" class="sort-link" data-sort="customer_name">
+                                    Customer
+                                    {% if filters.sort_by == 'customer_name' %}
+                                        <i class="bi bi-arrow-{{ 'down' if filters.sort_order == 'desc' else 'up' }}"></i>
+                                    {% endif %}
+                                </a>
+                            </th>
+                            <th>Salesperson</th>
+                            <th>Customer PO Ref</th>
+                            <th>
+                                <a href="#" class="sort-link" data-sort="date_entered">
+                                    Date Entered
+                                    {% if filters.sort_by == 'date_entered' %}
+                                        <i class="bi bi-arrow-{{ 'down' if filters.sort_order == 'desc' else 'up' }}"></i>
+                                    {% endif %}
+                                </a>
+                            </th>
+                            <th>Total Value</th>
+                            <th>
+                                <a href="#" class="sort-link" data-sort="status_name">
+                                    Status
+                                    {% if filters.sort_by == 'status_name' %}
+                                        <i class="bi bi-arrow-{{ 'down' if filters.sort_order == 'desc' else 'up' }}"></i>
+                                    {% endif %}
+                                </a>
+                            </th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in sales_orders %}
+                        <tr>
+                            <td><strong>{{ order.sales_order_ref }}</strong></td>
+                            <td>
+                                {{ order.customer_name }}
+                                {% if order.customer_salesperson_name %}
+                                <br>
+                                <small class="text-muted">
+                                    <i class="bi bi-person-badge"></i> {{ order.customer_salesperson_name }}
+                                </small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <select class="form-select form-select-sm salesperson-select
+                                        {% if order.customer_salesperson_id and order.salesperson_id != order.customer_salesperson_id %}mismatch{% endif %}"
+                                        data-order-id="{{ order.id }}"
+                                        data-original-value="{{ order.salesperson_id or '' }}"
+                                        data-customer-salesperson="{{ order.customer_salesperson_id or '' }}">
+                                    <option value="">Not Assigned</option>
+                                    {% for salesperson in salespeople %}
+                                        <option value="{{ salesperson.id }}"
+                                                {% if order.salesperson_id == salesperson.id %}selected{% endif %}>
+                                            {{ salesperson.name }}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                                {% if order.customer_salesperson_id and order.salesperson_id != order.customer_salesperson_id %}
+                                <small class="text-danger d-block mt-1">
+                                    <i class="bi bi-exclamation-triangle-fill"></i> Mismatch
+                                </small>
+                                {% endif %}
+                            </td>
+                            <td>{{ order.customer_po_ref }}</td>
+                            <td>{{ order.date_entered }}</td>
+                            <td>{{ order.total_value }}</td>
+                            <td>
+                                <span class="badge badge-{{
+                                    'success' if order.status_name == 'Completed' else
+                                    'warning' if order.status_name == 'In Progress' else
+                                    'info' if order.status_name == 'New' else
+                                    'secondary'
+                                }}">
+                                    {{ order.status_name }}
+                                </span>
+                            </td>
+                            <td>
+                                <div class="btn-group">
+                                    <a href="{{ url_for('sales_orders.edit_sales_order', sales_order_id=order.id) }}" class="btn btn-sm btn-primary">
+                                        <i class="bi bi-pencil-fill me-1"></i> Edit
+                                    </a>
+                                    <a href="#" class="btn btn-sm btn-info modal-button" data-bs-toggle="modal" data-bs-target="#orderHealthModal" data-sales-order-id="{{ order.id }}">
+                                        <i class="bi bi-activity me-1"></i> Order Health
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        {% if pagination.total_pages > 1 %}
+        <div class="card-footer">
+            <nav aria-label="Sales orders pagination">
+                <ul class="pagination justify-content-center mb-0">
+                    <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                        <a class="page-link" href="#" data-page="{{ pagination.prev_page }}">Previous</a>
+                    </li>
+
+                    {% for page_num in range(1, pagination.total_pages + 1) %}
+                        {% if page_num == 1 or page_num == pagination.total_pages or (page_num >= pagination.page - 2 and page_num <= pagination.page + 2) %}
+                            <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+                                <a class="page-link" href="#" data-page="{{ page_num }}">{{ page_num }}</a>
+                            </li>
+                        {% elif page_num == pagination.page - 3 or page_num == pagination.page + 3 %}
+                            <li class="page-item disabled"><span class="page-link">...</span></li>
+                        {% endif %}
+                    {% endfor %}
+
+                    <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                        <a class="page-link" href="#" data-page="{{ pagination.next_page }}">Next</a>
+                    </li>
+                </ul>
+            </nav>
+
+            <div class="text-center mt-2">
+                <select id="perPageSelect" class="form-select form-select-sm d-inline-block w-auto">
+                    <option value="10" {% if filters.per_page == 10 %}selected{% endif %}>10 per page</option>
+                    <option value="25" {% if filters.per_page == 25 %}selected{% endif %}>25 per page</option>
+                    <option value="50" {% if filters.per_page == 50 %}selected{% endif %}>50 per page</option>
+                    <option value="100" {% if filters.per_page == 100 %}selected{% endif %}>100 per page</option>
+                </select>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Order Health Modal -->
+    <div class="modal fade" id="orderHealthModal" tabindex="-1" aria-labelledby="orderHealthModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-clipboard-check me-2"></i>
+                        Order Health for Sales Order #<span id="salesOrderRef"></span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Line Number</th>
+                                    <th>Part Number</th>
+                                    <th>Acknowledged to Customer</th>
+                                    <th>PO Line Placed</th>
+                                    <th>PO Line Acknowledged</th>
+                                    <th>PO Delivery Date on Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orderHealthTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<style>
+.salesperson-select {
+    min-width: 150px;
+    border: 2px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.salesperson-select.changed {
+    border-color: #ffc107;
+    background-color: #fff3cd;
+}
+
+.salesperson-select.saving {
+    border-color: #0d6efd;
+    opacity: 0.7;
+}
+
+.salesperson-select.saved {
+    border-color: #198754;
+    background-color: #d1e7dd;
+}
+
+.salesperson-select.error {
+    border-color: #dc3545;
+    background-color: #f8d7da;
+}
+
+.sort-link {
+    color: inherit;
+    text-decoration: none;
+}
+
+.sort-link:hover {
+    color: #0d6efd;
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const modal = document.getElementById("orderHealthModal");
+  const closeBtn = document.querySelector(".btn-close");
+
+  // Handle Bulk Salesperson Assignment
+  document.querySelectorAll('.bulk-assign-btn').forEach(button => {
+    button.addEventListener('click', async function() {
+      const customerId = this.getAttribute('data-customer-id');
+      const select = document.querySelector(`.bulk-salesperson-select[data-customer-id="${customerId}"]`);
+      const orderIds = select.getAttribute('data-order-ids').split(',').map(id => parseInt(id));
+      const salespersonId = select.value;
+
+      if (!confirm(`Are you sure you want to update ${orderIds.length} order(s) for this customer?`)) {
+        return;
+      }
+
+      this.disabled = true;
+      this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Updating...';
+
+      try {
+        const response = await fetch('/sales_orders/bulk_update_salesperson', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            order_ids: orderIds,
+            salesperson_id: salespersonId || null
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to update orders');
+        }
+
+        const result = await response.json();
+
+        this.innerHTML = '<i class="bi bi-check-circle me-1"></i>Updated!';
+        this.classList.remove('btn-success');
+        this.classList.add('btn-primary');
+
+        // Reload page to show updated data
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+
+      } catch (error) {
+        console.error('Error updating orders:', error);
+        this.disabled = false;
+        this.innerHTML = '<i class="bi bi-check-circle me-1"></i>Apply';
+        alert('Failed to update orders. Please try again.');
+      }
+    });
+  });
+
+  // Handle Order Health Modal
+  document.querySelectorAll('.modal-button').forEach(button => {
+    button.onclick = async function() {
+      const salesOrderId = this.getAttribute("data-sales-order-id");
+
+      const salesOrderRef = await getSalesOrderRef(salesOrderId);
+      document.getElementById("salesOrderRef").textContent = salesOrderRef;
+
+      const salesOrderLines = await fetchOrderHealth(salesOrderId);
+      const tbody = document.getElementById("orderHealthTableBody");
+      tbody.innerHTML = '';
+
+      salesOrderLines.forEach(line => {
+        const row = `<tr>
+          <td>${line.line_number}</td>
+          <td>${line.base_part_number}</td>
+          <td>${line.acknowledged_to_customer ? '<span class="text-success">✔</span>' : '<span class="text-danger">✘</span>'}</td>
+          <td>${line.po_line_placed ? '<span class="text-success">✔</span>' : '<span class="text-danger">✘</span>'}</td>
+          <td>${line.po_line_acknowledged ? '<span class="text-success">✔</span>' : '<span class="text-danger">✘</span>'}</td>
+          <td>${line.po_delivery_on_time ? '<span class="text-success">✔</span>' : '<span class="text-danger">✘</span>'}</td>
+        </tr>`;
+        tbody.insertAdjacentHTML('beforeend', row);
+      });
+    };
+  });
+
+  if (closeBtn) {
+    closeBtn.onclick = function() {
+      const bsModal = bootstrap.Modal.getInstance(modal);
+      if (bsModal) {
+        bsModal.hide();
+      }
+    };
+  }
+
+  // Handle Salesperson Changes
+  document.querySelectorAll('.salesperson-select').forEach(select => {
+    select.addEventListener('change', async function() {
+      const orderId = this.getAttribute('data-order-id');
+      const salespersonId = this.value;
+      const originalValue = this.getAttribute('data-original-value');
+
+      this.classList.remove('saved', 'error');
+      this.classList.add('changed', 'saving');
+
+      try {
+        const response = await fetch(`/sales_orders/${orderId}/update_salesperson`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ salesperson_id: salespersonId || null })
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to update salesperson');
+        }
+
+        this.classList.remove('changed', 'saving');
+        this.classList.add('saved');
+        this.setAttribute('data-original-value', salespersonId);
+
+        setTimeout(() => {
+          this.classList.remove('saved');
+        }, 2000);
+
+      } catch (error) {
+        console.error('Error updating salesperson:', error);
+        this.classList.remove('changed', 'saving');
+        this.classList.add('error');
+        this.value = originalValue;
+        alert('Failed to update salesperson. Please try again.');
+
+        setTimeout(() => {
+          this.classList.remove('error');
+        }, 3000);
+      }
+    });
+  });
+
+  // Handle pagination and sorting without page refresh
+  function buildUrl(params) {
+    const url = new URL(window.location.href);
+    Object.keys(params).forEach(key => {
+      if (params[key] !== null && params[key] !== '') {
+        url.searchParams.set(key, params[key]);
+      } else {
+        url.searchParams.delete(key);
+      }
+    });
+    return url.toString();
+  }
+
+  function getCurrentFilters() {
+    const url = new URL(window.location.href);
+    return {
+        customer_id: url.searchParams.get('customer_id') || '',
+        salesperson_id: url.searchParams.get('salesperson_id') || '',
+        status_id: url.searchParams.get('status_id') || '',
+        search: url.searchParams.get('search') || '',
+        sort_by: url.searchParams.get('sort_by') || 'id',
+        sort_order: url.searchParams.get('sort_order') || 'desc',
+        per_page: url.searchParams.get('per_page') || '25',
+        show_mismatches: url.searchParams.get('show_mismatches') || '',
+        date_from: url.searchParams.get('date_from') || '',
+        date_to: url.searchParams.get('date_to') || ''
+    };
+}
+
+  // Handle pagination clicks
+  document.querySelectorAll('.page-link').forEach(link => {
+    link.addEventListener('click', function(e) {
+      e.preventDefault();
+      const page = this.getAttribute('data-page');
+      if (page && !this.parentElement.classList.contains('disabled')) {
+        const filters = getCurrentFilters();
+        filters.page = page;
+        window.location.href = buildUrl(filters);
+      }
+    });
+  });
+
+  // Handle per-page change
+  const perPageSelect = document.getElementById('perPageSelect');
+  if (perPageSelect) {
+    perPageSelect.addEventListener('change', function() {
+      const filters = getCurrentFilters();
+      filters.per_page = this.value;
+      filters.page = 1; // Reset to first page
+      window.location.href = buildUrl(filters);
+    });
+  }
+
+  // Handle sorting
+  document.querySelectorAll('.sort-link').forEach(link => {
+    link.addEventListener('click', function(e) {
+      e.preventDefault();
+      const sortBy = this.getAttribute('data-sort');
+      const filters = getCurrentFilters();
+
+      // Toggle sort order if clicking same column
+      if (filters.sort_by === sortBy) {
+        filters.sort_order = filters.sort_order === 'asc' ? 'desc' : 'asc';
+      } else {
+        filters.sort_by = sortBy;
+        filters.sort_order = 'asc';
+      }
+
+      filters.page = 1; // Reset to first page
+      window.location.href = buildUrl(filters);
+    });
+  });
+});
+
+async function getSalesOrderRef(salesOrderId) {
+  try {
+    const response = await fetch(`/sales_orders/${salesOrderId}/reference`);
+    if (!response.ok) {
+      throw new Error("Failed to fetch sales order reference");
+    }
+    return await response.text();
+  } catch (error) {
+    console.error("Error fetching sales order reference:", error);
+    return "Unknown Reference";
+  }
+}
+
+async function fetchOrderHealth(salesOrderId) {
+  try {
+    const response = await fetch(`/sales_orders/${salesOrderId}/order_health`);
+    if (!response.ok) {
+      throw new Error("Failed to fetch order health data");
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Error fetching order health:", error);
+    return [];
+  }
+}
+</script>
+{% endblock %}

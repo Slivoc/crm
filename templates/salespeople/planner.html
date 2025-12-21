@@ -1,0 +1,901 @@
+{% extends base_template %}
+
+{% block title %}Monthly Planner - {{ salesperson.name }}{% endblock %}
+
+{% block head %}
+{{ super() }}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.1/chart.min.js"></script>
+<style>
+    /* Sparkline Container */
+    .chart-container {
+        position: relative;
+        height: 50px;
+        width: 140px;
+        cursor: pointer; /* Indicates clickable */
+        transition: transform 0.2s;
+    }
+    .chart-container:hover {
+        transform: scale(1.05); /* Subtle zoom effect */
+    }
+
+    /* Table Styling */
+    .target-input {
+        width: 120px;
+        text-align: right;
+        font-weight: bold;
+    }
+
+    .notes-input {
+        width: 100%;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-size: 0.9rem;
+        transition: border-color 0.2s;
+    }
+    .notes-input:focus {
+        border-color: #86b7fe;
+        outline: 0;
+    }
+
+    /* Status Badges */
+    .calc-badge {
+        font-size: 0.7rem;
+        padding: 4px 6px;
+        border-radius: 4px;
+        background-color: #e9ecef;
+        color: #495057;
+        white-space: nowrap;
+    }
+    .calc-badge.momentum { background-color: #d1e7dd; color: #0f5132; }
+    .calc-badge.recovery { background-color: #fff3cd; color: #664d03; }
+    .calc-badge.manual { background-color: #cff4fc; color: #055160; }
+
+    .save-status {
+        font-size: 0.8rem;
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+    .save-status.show { opacity: 1; }
+
+    /* Add inside the <style> block */
+@keyframes softHighlight {
+    0% { background-color: #f0f8ff; } /* Very pale AliceBlue */
+    50% { background-color: #f0f8ff; }
+    100% { background-color: transparent; }
+}
+
+.new-row-fade {
+    animation: softHighlight 2s ease-out forwards;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4 align-items-center">
+        <div class="col-md-6">
+    <h2 class="fw-bold mb-1">
+        Target Planner
+        <span id="headerMonthDisplay" class="text-primary fw-normal ms-2" style="font-size: 0.7em;"></span>
+    </h2>
+    <p class="text-muted mb-0">Planning for {{ salesperson.name }}</p>
+</div>
+        <div class="col-md-6 text-md-end">
+            <div class="d-inline-flex align-items-center gap-3">
+                <div class="input-group">
+                    <span class="input-group-text bg-white"><i class="bi bi-calendar-event"></i></span>
+                    <input type="month" id="planningMonth" class="form-control" value="{{ default_month }}">
+                </div>
+
+                <a href="{{ url_for('salespeople.dashboard') }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card border-primary h-100 shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-primary fw-bold text-uppercase small ls-1 mb-2">My Monthly Goal</h6>
+                    <div class="input-group input-group-lg mb-2">
+                        <span class="input-group-text bg-primary text-white border-primary">£</span>
+                        <input type="number"
+                               id="monthlyGoalInput"
+                               class="form-control fw-bold text-primary border-primary"
+                               placeholder="0"
+                               onchange="saveMonthlyGoal()">
+                    </div>
+                    <small class="text-muted" id="goalSaveStatus">Set your target for the month</small>
+                </div>
+            </div>
+        </div>
+
+<div class="col-md-4">
+            <div class="card bg-light h-100 border-0 shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-muted fw-bold text-uppercase small ls-1 mb-2">Performance</h6>
+                    <div class="d-flex align-items-end gap-2 mb-2">
+                        <h2 class="mb-0 fw-bold text-dark" id="actualTotalDisplay">£0</h2>
+                        <small class="text-muted mb-1"> / <span id="totalTargetDisplay">£0</span> Plan</small>
+                    </div>
+
+                    <div class="progress mt-2" style="height: 6px;">
+                        <div id="planProgressBar" class="progress-bar bg-primary" role="progressbar" style="width: 0%"></div>
+                    </div>
+                    <div class="d-flex justify-content-between mt-1">
+                        <small class="text-muted" id="percentCompleteDisplay">0% of plan</small>
+                        <small class="fw-bold" id="planGapDisplay"></small>
+                    </div>
+                </div>
+            </div>
+        </div>
+<div class="col-md-4">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-muted fw-bold text-uppercase small ls-1 mb-3">Composition</h6>
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span><i class="bi bi-star-fill text-info me-2"></i>New Business</span>
+                        <span class="fw-bold" id="newTargetDisplay">£0</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span><i class="bi bi-graph-up-arrow text-success me-2"></i>Growth Ops</span>
+                        <span class="fw-bold" id="oppTargetDisplay">£0</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-exclamation-triangle text-warning me-2"></i>Recovery</span>
+                        <span class="fw-bold" id="recTargetDisplay">£0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="loader" class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Analyzing 2-year history and calculating momentum...</p>
+    </div>
+
+    <div id="plannerContent" style="display: none;">
+
+                <div class="card mb-4 shadow-sm">
+            <div class="card-header bg-light py-3">
+                <h5 class="mb-0 text-muted"><i class="bi bi-person-add me-2"></i>Manually Add Target</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 align-items-center">
+                    <div class="col-md-9">
+                        <label for="manualCustomerSelect" class="form-label visually-hidden">Select Customer</label>
+                        <select class="form-select" id="manualCustomerSelect">
+                            <option value="" disabled selected>Select a customer to add a plan...</option>
+                        </select>
+                        <small class="text-muted mt-1 d-block" id="manualAddMessage"></small>
+                    </div>
+                    <div class="col-md-3">
+                        <button class="btn btn-primary w-100" id="addManualTargetBtn">
+                            <i class="bi bi-plus-circle me-1"></i> Add Target
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4 shadow-sm">
+            <div class="card-header bg-white py-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0 text-success"><i class="bi bi-graph-up-arrow me-2"></i>Growth Opportunities</h5>
+                    <span class="badge bg-success bg-opacity-10 text-success">Active Customers</span>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+<thead class="table-light">
+    <tr>
+        <th width="25%">Customer</th>
+        <th width="15%">Trend</th>
+        <th width="15%">Calculation Logic</th>
+        <th width="20%" class="text-end">Actual / Target (£)</th>
+        <th width="25%">Strategy</th>
+    </tr>
+</thead>
+                    <tbody id="opportunitiesTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card mb-4 shadow-sm border-info">
+            <div class="card-header bg-info bg-opacity-10 py-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0 text-dark"><i class="bi bi-star-fill text-info me-2"></i>New Customer Wins</h5>
+                    <span class="badge bg-info text-dark">First order < 3 months ago</span>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+<thead class="table-light">
+    <tr>
+        <th width="25%">Customer</th>
+        <th width="15%">Recent Trend</th>
+        <th width="15%">First Order</th>
+        <th width="20%" class="text-end">Actual / Target (£)</th>
+        <th width="25%">Growth Strategy</th>
+    </tr>
+</thead>
+                    <tbody id="newCustomersTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+      <div class="card mb-5 shadow-sm border-warning">
+    <div class="card-header bg-warning bg-opacity-10 py-3">
+        <div class="d-flex justify-content-between align-items-center">
+            <h5 class="mb-0 text-dark"><i class="bi bi-exclamation-triangle me-2"></i>Recovery Candidates</h5>
+            <span class="badge bg-warning text-dark">Lapsed Customers</span>
+        </div>
+    </div>
+    <div class="card-body bg-warning bg-opacity-10 border-bottom">
+        <small><i class="bi bi-info-circle me-1"></i> Customers who were <strong>active earlier this year</strong> but have stopped ordering in the last 3 months.</small>
+    </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+<thead class="table-light">
+    <tr>
+        <th width="25%">Customer</th>
+        <th width="15%">2-Year Trend</th>
+        <th width="15%">Risk Factor</th>
+        <th width="20%" class="text-end">Actual / Target (£)</th>
+        <th width="25%">Re-engagement Plan</th>
+    </tr>
+</thead>
+                    <tbody id="recoveryTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+<div class="card mb-5 shadow-sm border-warning">
+            </div>
+
+
+    </div> </div>
+
+<div class="modal fade" id="bigChartModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="bigChartTitle">Sales Trend</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div style="height: 400px; width: 100%;">
+                    <canvas id="bigChartCanvas"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const SALESPERSON_ID = {{ salesperson.id }};
+    const monthInput = document.getElementById('planningMonth');
+    let chartInstances = [];
+    let bigChartInstance = null;
+    let chart_labels = [];
+    let lastPlannerData = null;
+
+ document.addEventListener('DOMContentLoaded', () => {
+    // 1. FORCE Current Month (Overriding backend default)
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0'); // Ensures '05' not '5'
+
+    // Explicitly set the value to current YYYY-MM
+    monthInput.value = `${year}-${month}`;
+
+    // 2. Initialize Header Display
+    updateHeaderDisplay();
+
+    // 3. Load Main Data
+    loadPlannerData();
+
+    // 4. Load Dropdown Data
+    loadUnassignedCustomers();
+
+    // 5. Setup Month Change Listeners
+    monthInput.addEventListener('change', () => {
+        updateHeaderDisplay();
+        loadPlannerData();
+        loadUnassignedCustomers();
+    });
+
+    // 6. Setup Manual Add Button
+    const addBtn = document.getElementById('addManualTargetBtn');
+    if(addBtn) {
+        addBtn.addEventListener('click', addManualCustomer);
+    }
+});
+
+    // --- NEW: Helper Function to Format Date for Header ---
+    function updateHeaderDisplay() {
+        const val = monthInput.value;
+        const displayEl = document.getElementById('headerMonthDisplay');
+
+        if (val) {
+            // Split manually to avoid timezone issues with new Date(string)
+            const [year, month] = val.split('-');
+            const dateObj = new Date(parseInt(year), parseInt(month) - 1, 1);
+
+            // Format: "October 2023"
+            const dateStr = dateObj.toLocaleDateString('en-GB', {
+                month: 'long',
+                year: 'numeric'
+            });
+
+            displayEl.textContent = `— ${dateStr}`;
+        } else {
+            displayEl.textContent = '';
+        }
+    }
+
+    // A. New Function to Fetch and Populate Dropdown
+async function loadUnassignedCustomers() {
+    const month = monthInput.value;
+    const select = document.getElementById('manualCustomerSelect');
+    const message = document.getElementById('manualAddMessage');
+    const addButton = document.getElementById('addManualTargetBtn');
+    let excludeIds = [];
+
+    if (lastPlannerData) {
+        ['new_customers', 'top_opportunities', 'recovery_candidates'].forEach(section => {
+            const items = lastPlannerData[section] || [];
+            items.forEach(item => {
+                if (item && typeof item.id !== 'undefined') {
+                    excludeIds.push(item.id);
+                }
+            });
+        });
+    }
+
+    select.innerHTML = '<option value="" disabled selected>Loading customers...</option>';
+    addButton.disabled = true;
+
+    try {
+        const excludeParam = excludeIds.length ? `&exclude_ids=${encodeURIComponent(excludeIds.join(','))}` : '';
+        const response = await fetch(`/salespeople/${SALESPERSON_ID}/planner/unassigned_customers?month=${month}${excludeParam}`);
+        const data = await response.json();
+
+        if (data.success && data.customers.length > 0) {
+            select.innerHTML = '<option value="" disabled selected>Select a customer to add a plan...</option>';
+            data.customers.forEach(customer => {
+                const option = document.createElement('option');
+                option.value = customer.id;
+                option.textContent = customer.name;
+                select.appendChild(option);
+            });
+            addButton.disabled = false;
+            message.textContent = `Showing ${data.customers.length} unassigned customers, sorted by historical spend.`;
+        } else {
+            select.innerHTML = '<option value="" disabled selected>No unassigned customers found.</option>';
+            message.textContent = 'All customers with significant spend are already on your plan.';
+            addButton.disabled = true;
+        }
+    } catch (e) {
+        select.innerHTML = '<option value="" disabled selected>Error loading customers.</option>';
+        message.textContent = 'Error loading unassigned customer list.';
+        addButton.disabled = true;
+        console.error("Error loading unassigned customers:", e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadPlannerData();
+    // NEW: Load unassigned customers on page load
+    loadUnassignedCustomers();
+
+    monthInput.addEventListener('change', () => {
+        loadPlannerData();
+        // NEW: Reload unassigned list when month changes
+        loadUnassignedCustomers();
+    });
+
+    // NEW: Add event listener for the manual add button
+    document.getElementById('addManualTargetBtn').addEventListener('click', addManualCustomer);
+});
+
+    function loadPlannerData() {
+        const month = monthInput.value;
+        if(!month) return;
+
+        document.getElementById('loader').style.display = 'block';
+        document.getElementById('plannerContent').style.display = 'none';
+
+        // Clean up old charts
+        chartInstances.forEach(chart => chart.destroy());
+        chartInstances = [];
+
+        fetch(`/salespeople/${SALESPERSON_ID}/planner/data?month=${month}`)
+            .then(response => response.json())
+            .then(data => {
+                if(data.success) {
+                    lastPlannerData = data;
+                    renderPlanner(data);
+                    loadUnassignedCustomers();
+                } else {
+                    alert('Error loading data: ' + data.error);
+                }
+            })
+            .catch(err => console.error(err))
+            .finally(() => {
+                document.getElementById('loader').style.display = 'none';
+                document.getElementById('plannerContent').style.display = 'block';
+            });
+    }
+
+function renderPlanner(data) {
+        // 1. Update Totals
+        const totalPlan = data.totals.opportunity_target + data.totals.recovery_potential + (data.totals.new_business || 0);
+        const totalActual = data.totals.total_actuals || 0;
+
+        // --- FIX STARTS HERE ---
+        // Update the GLOBAL variable immediately (do not use 'const' here)
+        chart_labels = data.chart_labels;
+        // --- FIX ENDS HERE ---
+
+        document.getElementById('totalTargetDisplay').textContent = formatCurrency(totalPlan);
+        document.getElementById('actualTotalDisplay').textContent = formatCurrency(totalActual);
+
+        document.getElementById('oppTargetDisplay').textContent = formatCurrency(data.totals.opportunity_target);
+        document.getElementById('recTargetDisplay').textContent = formatCurrency(data.totals.recovery_potential);
+        document.getElementById('newTargetDisplay').textContent = formatCurrency(data.totals.new_business || 0);
+
+        document.getElementById('monthlyGoalInput').value = data.monthly_goal || '';
+
+        // Update Performance Bar (Actual vs Plan)
+        updatePerformanceBar(totalActual, totalPlan);
+
+        // 2. Render Tables
+        // Note: We use the 'chart_labels' variable we updated above
+
+        // --- NEW CUSTOMERS ---
+        const newBody = document.getElementById('newCustomersTableBody');
+        newBody.innerHTML = '';
+        if(!data.new_customers || data.new_customers.length === 0) {
+            newBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No new customers found.</td></tr>';
+        } else {
+            data.new_customers.forEach(customer => {
+                newBody.appendChild(createRowHTML(customer, chart_labels, '#0dcaf0'));
+                initSparkline(`chart-${customer.id}`, chart_labels, customer.chart_data, '#0dcaf0', customer.name);
+            });
+        }
+
+        // --- OPPORTUNITIES ---
+        const oppBody = document.getElementById('opportunitiesTableBody');
+        oppBody.innerHTML = '';
+        if(data.top_opportunities.length === 0) {
+            oppBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No active opportunities.</td></tr>';
+        } else {
+            data.top_opportunities.forEach(customer => {
+                oppBody.appendChild(createRowHTML(customer, chart_labels, '#198754'));
+                initSparkline(`chart-${customer.id}`, chart_labels, customer.chart_data, '#198754', customer.name);
+            });
+        }
+
+        // --- RECOVERY ---
+        const recBody = document.getElementById('recoveryTableBody');
+        recBody.innerHTML = '';
+        if(data.recovery_candidates.length === 0) {
+            recBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No immediate risks.</td></tr>';
+        } else {
+            data.recovery_candidates.forEach(customer => {
+                recBody.appendChild(createRowHTML(customer, chart_labels, '#dc3545', true));
+                initSparkline(`chart-${customer.id}`, chart_labels, customer.chart_data, '#dc3545', customer.name);
+            });
+        }
+    }
+
+    // New helper for the summary card progress bar
+    function updatePerformanceBar(actual, plan) {
+        const progressBar = document.getElementById('planProgressBar');
+        const percentDisplay = document.getElementById('percentCompleteDisplay');
+        const gapDisplay = document.getElementById('planGapDisplay');
+
+        let percent = 0;
+        if (plan > 0) percent = Math.min((actual / plan) * 100, 100);
+
+        progressBar.style.width = percent + '%';
+        percentDisplay.textContent = Math.round(percent) + '% of plan';
+
+        // Color coding
+        if (percent >= 100) {
+            progressBar.classList.remove('bg-primary');
+            progressBar.classList.add('bg-success');
+        } else {
+            progressBar.classList.add('bg-primary');
+            progressBar.classList.remove('bg-success');
+        }
+
+        // Gap
+        const diff = actual - plan;
+        if (diff >= 0) {
+            gapDisplay.textContent = `+${formatCurrency(diff)}`;
+            gapDisplay.className = "small fw-bold text-success";
+        } else {
+            gapDisplay.textContent = `${formatCurrency(diff)}`;
+            gapDisplay.className = "small fw-bold text-muted";
+        }
+    }
+
+   function createRowHTML(customer, labels, chartColor, isRecovery = false) {
+    const row = document.createElement('tr');
+
+    // Logic column content
+    let logicHtml = '';
+    if(isRecovery) {
+        logicHtml = `<span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25"><i class="bi bi-arrow-down"></i> ${customer.risk_alert || 'Spending Drop'}</span>`;
+    } else if (customer.calc_method === 'New Account Growth') {
+        logicHtml = `<small class="text-muted"><i class="bi bi-calendar-check me-1"></i>${customer.first_order_date}</small>`;
+    } else {
+        logicHtml = `<div class="d-flex flex-column gap-1">${getLogicBadge(customer)}<small class="text-muted" style="font-size: 0.75rem;">Avg: £${customer.recent_average.toLocaleString()}/mo</small></div>`;
+    }
+
+    // Logic for Actual Sales Display
+    let actualClass = "text-muted";
+    if (customer.actual_sales > 0) actualClass = "text-dark";
+    if (customer.actual_sales >= customer.target && customer.target > 0) actualClass = "text-success fw-bold";
+
+    row.innerHTML = `
+        <td>
+            <div class="fw-bold">${customer.name}</div>
+            ${customer.associated_count > 1 ? '<small class="text-muted"><i class="bi bi-diagram-2"></i> Grouped</small>' : ''}
+        </td>
+        <td>
+            <div class="chart-container" title="Click to enlarge">
+                <canvas id="chart-${customer.id}"></canvas>
+            </div>
+        </td>
+        <td>${logicHtml}</td>
+        <td class="text-end">
+            <div class="mb-2">
+                <span class="${actualClass}">${formatCurrency(customer.actual_sales)}</span>
+                ${customer.target > 0 ? `<span class="text-muted ms-1" style="font-size: 0.75rem;">(${Math.round((customer.actual_sales/customer.target)*100)}%)</span>` : ''}
+            </div>
+
+            ${customer.target > 0 ? `
+            <div class="progress mb-2" style="height: 8px;">
+                <div class="progress-bar"
+                     style="width: ${Math.min((customer.actual_sales/customer.target)*100, 100)}%; background-color: ${chartColor};"
+                     role="progressbar"></div>
+            </div>` : ''}
+
+            <div class="input-group input-group-sm">
+                <span class="input-group-text bg-white border-end-0">£</span>
+                <input type="number"
+                       class="form-control form-control-sm target-input border-start-0"
+                       value="${customer.target}"
+                       data-customer-id="${customer.id}"
+                       onchange="handleSave(this, 'amount')">
+            </div>
+            <small class="save-status text-success d-block mt-1" id="status-amount-${customer.id}">Saved</small>
+        </td>
+        <td>
+            <input type="text"
+                   class="notes-input"
+                   placeholder="Plan..."
+                   value="${customer.notes}"
+                   data-customer-id="${customer.id}"
+                   onblur="handleSave(this, 'notes')">
+        </td>
+    `;
+    return row;
+}
+
+    function getLogicBadge(customer) {
+        if(customer.is_locked) return `<span class="calc-badge manual"><i class="bi bi-lock-fill me-1"></i>Manual Override</span>`;
+        if(customer.calc_method.includes('Momentum')) return `<span class="calc-badge momentum"><i class="bi bi-lightning-charge-fill me-1"></i>${customer.calc_method}</span>`;
+        return `<span class="calc-badge recovery">${customer.calc_method}</span>`;
+    }
+
+    // UPDATED: Now accepts customerName and adds click listener
+    function initSparkline(canvasId, labels, dataPoints, color, customerName) {
+        const canvas = document.getElementById(canvasId);
+
+        // Add click listener to the canvas element
+        canvas.onclick = function() {
+            showBigChart(customerName, labels, dataPoints, color);
+        };
+
+        const ctx = canvas.getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: dataPoints,
+                    borderColor: color,
+                    borderWidth: 2,
+                    backgroundColor: color + '20',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    pointHoverRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { enabled: false } }, // Tooltips off for sparkline
+                scales: {
+                    x: { display: false },
+                    y: { display: false, min: 0 }
+                },
+                layout: { padding: 0 }
+            }
+        });
+        chartInstances.push(chart);
+    }
+
+    // C. Function to Add the New Row
+function addManualCustomer() {
+    const select = document.getElementById('manualCustomerSelect');
+    const customerId = select.value;
+    // Get name, removing the " (Spent...)" part
+    const rawName = select.options[select.selectedIndex].textContent;
+    const customerName = rawName.split(' (Hist.')[0].split(' (Spent')[0];
+
+    if (!customerId) return;
+
+    // 1. Create dummy object for immediate UI rendering
+    const newCustomer = {
+        id: customerId,
+        name: customerName,
+        target: 0,
+        actual_sales: 0,
+        recent_average: 0,
+        chart_data: Array(24).fill(0),
+        notes: '',
+        calc_method: 'Manual Target', // Visual label
+        is_locked: true,
+        associated_count: 1,
+        first_order_date: null
+    };
+
+    // 2. Add to UI (The existing logic)
+    const oppBody = document.getElementById('opportunitiesTableBody');
+    const newRow = createRowHTML(newCustomer, [], '#198754', false);
+
+    newRow.classList.add('new-row-fade');
+
+    if (oppBody.firstChild && oppBody.firstChild.tagName === 'TR' && !oppBody.innerHTML.includes('No active')) {
+        oppBody.prepend(newRow);
+    } else {
+        oppBody.innerHTML = '';
+        oppBody.appendChild(newRow);
+    }
+
+    // Initialize Sparkline
+    initSparkline(`chart-${newCustomer.id}`, chart_labels, newCustomer.chart_data, '#198754', newCustomer.name);
+
+    // 3. Remove from dropdown
+    select.remove(select.selectedIndex);
+    select.value = '';
+
+    // 4. Update Message
+    const message = document.getElementById('manualAddMessage');
+    message.textContent = `Added ${customerName}. Saving to database...`;
+    message.classList.add('text-primary');
+
+    // --- CRITICAL STEP: SAVE TO DATABASE IMMEDIATELY ---
+    // We send a request to save a target of 0. This creates the record in the DB.
+    fetch('/salespeople/save_monthly_target', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            salesperson_id: SALESPERSON_ID,
+            customer_id: customerId,
+            month: monthInput.value,
+            amount: 0, // Default to 0
+            notes: 'Manual Addition' // Optional default note
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if(data.success) {
+            message.textContent = `Successfully added ${customerName} to your plan.`;
+            message.classList.remove('text-primary');
+            message.classList.add('text-success');
+
+            // Show the "Saved" text in the table cell
+            const statusEl = document.getElementById(`status-amount-${customerId}`);
+            if(statusEl) {
+                statusEl.classList.add('show');
+                setTimeout(() => statusEl.classList.remove('show'), 2000);
+            }
+        }
+    });
+
+    setTimeout(() => {
+        message.classList.remove('text-success');
+        message.textContent = `Showing ${select.options.length - 1} unassigned customers.`;
+    }, 3000);
+}
+
+    // NEW: Function to render the Big Chart in Modal
+    function showBigChart(name, labels, dataPoints, color) {
+        document.getElementById('bigChartTitle').textContent = `${name} - 24 Month Trend`;
+
+        const modal = new bootstrap.Modal(document.getElementById('bigChartModal'));
+        modal.show();
+
+        // Wait for modal to show before rendering chart (Chart.js sizing needs visible canvas)
+        const canvas = document.getElementById('bigChartCanvas');
+        const ctx = canvas.getContext('2d');
+
+        if (bigChartInstance) {
+            bigChartInstance.destroy();
+        }
+
+        bigChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Sales (£)',
+                    data: dataPoints,
+                    borderColor: color,
+                    backgroundColor: color + '20',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function(context) {
+                                return '£' + context.parsed.y.toLocaleString();
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) { return '£' + value.toLocaleString(); }
+                        }
+                    },
+                    x: {
+                        grid: { display: false }
+                    }
+                }
+            }
+        });
+    }
+
+    // Save and Progress Logic (Unchanged)
+    function handleSave(inputElement, type) {
+        const customerId = inputElement.dataset.customerId;
+        const month = monthInput.value;
+        const value = inputElement.value;
+
+        const payload = {
+            salesperson_id: SALESPERSON_ID,
+            customer_id: customerId,
+            month: month,
+            [type]: value
+        };
+
+        // When saving notes only, also send the current target so the backend
+        // doesn't overwrite it with 0 when no amount was provided.
+        if (type === 'notes') {
+            const targetInput = document.querySelector(`.target-input[data-customer-id="${customerId}"]`);
+            if (targetInput) {
+                payload.amount = targetInput.value;
+            }
+        }
+
+        fetch('/salespeople/save_monthly_target', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(res => res.json())
+        .then(data => {
+            if(data.success) {
+                showSaveStatus(inputElement);
+                if (type === 'amount') updateLocalTotal();
+            }
+        });
+    }
+
+    function updateLocalTotal() {
+        let total = 0;
+        document.querySelectorAll('.target-input').forEach(input => {
+            total += parseFloat(input.value || 0);
+        });
+        document.getElementById('totalTargetDisplay').textContent = formatCurrency(total);
+        updatePlanProgress();
+    }
+
+    function showSaveStatus(element) {
+        const cell = element.closest('td');
+        const status = cell.querySelector('.save-status');
+        if(status) {
+            status.classList.add('show');
+            setTimeout(() => status.classList.remove('show'), 2000);
+        }
+    }
+
+    function formatCurrency(val) {
+        return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', maximumFractionDigits: 0 }).format(val);
+    }
+
+    function saveMonthlyGoal() {
+        const goalInput = document.getElementById('monthlyGoalInput');
+        const month = monthInput.value;
+        const amount = goalInput.value;
+        const statusEl = document.getElementById('goalSaveStatus');
+
+        fetch('/salespeople/save_monthly_goal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                salesperson_id: SALESPERSON_ID,
+                month: month,
+                goal_amount: amount
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if(data.success) {
+                statusEl.textContent = "Goal saved successfully!";
+                statusEl.classList.add('text-success');
+                setTimeout(() => {
+                    statusEl.textContent = "Set your target for the month";
+                    statusEl.classList.remove('text-success');
+                }, 2000);
+                updatePlanProgress();
+            }
+        });
+    }
+
+    function updatePlanProgress() {
+        const goal = parseFloat(document.getElementById('monthlyGoalInput').value) || 0;
+        const planTotalStr = document.getElementById('totalTargetDisplay').textContent;
+        const planTotal = parseFloat(planTotalStr.replace(/[^0-9.-]+/g,"")) || 0;
+
+        const progressBar = document.getElementById('planProgressBar');
+        const gapDisplay = document.getElementById('planGapDisplay');
+
+        if (goal > 0) {
+            const percent = Math.min((planTotal / goal) * 100, 100);
+            progressBar.style.width = percent + '%';
+
+            const gap = planTotal - goal;
+            if (gap >= 0) {
+                progressBar.classList.remove('bg-warning');
+                progressBar.classList.add('bg-success');
+                gapDisplay.textContent = `+${formatCurrency(gap)} surplus`;
+                gapDisplay.className = "small fw-bold text-success";
+            } else {
+                progressBar.classList.remove('bg-success');
+                progressBar.classList.add('bg-warning');
+                gapDisplay.textContent = `${formatCurrency(gap)} gap`;
+                gapDisplay.className = "small fw-bold text-danger";
+            }
+        } else {
+            progressBar.style.width = '0%';
+            gapDisplay.textContent = '';
+        }
+    }
+</script>
+{% endblock %}

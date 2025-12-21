@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card shadow p-3 border-0">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Import excel excess list</strong>
+        <!-- Move Save Changes button into the header -->
+        <button id="save-btn" class="btn btn-primary">Import lines</button>
+    </div>
+    <div class="card-body p-2">
+        <div class="table-responsive">
+            <div id="part-numbers-table"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+
+    <style>
+    /* Ensure the dropdown div and table have the same grid width */
+    #column-mapping {
+        display: grid;
+        grid-template-columns: 50px repeat(auto-fit, minmax(150px, 1fr)); /* Added first column for row numbers */
+        gap: 10px;
+        margin-bottom: 0; /* Remove margin between dropdowns and table */
+    }
+
+    #column-mapping .dummy-column {
+        visibility: hidden; /* Placeholder for row numbers */
+    }
+
+    #column-mapping select {
+        width: 100%;
+    }
+
+    /* Ensure Handsontable takes up full width below the dropdowns */
+    #handsontable-container {
+        width: 100%;
+        margin-top: 10px;
+    }
+    </style>
+
+    <body>
+    <!-- Column Mapping Dropdowns -->
+    <div id="column-mapping"></div>
+    <div class="dummy-column"></div>
+    <!-- Handsontable container for excess list data -->
+    <div id="handsontable-container" style="margin-top: 20px;"></div>
+
+
+    <script>
+                // Inject excess_stock_list_id from Flask and ensure it's an integer
+    const excessStockListId = {{ excess_stock_list_id | default(0) | int }};
+
+    console.log("Excess Stock List ID:", excessStockListId);  // Debugging
+
+    // Data passed from the backend
+    const fileData = {{ file_data | tojson }};
+    const columns = {{ columns | tojson }};  // These are generic column names like 'Column 0', 'Column 1', etc.
+
+    // List of available database fields for excess lists
+    const dbFields = ['base_part_number', 'quantity', 'date_code', 'manufacturer'];
+
+    // Create dropdowns for each column
+    const mappingDiv = document.getElementById('column-mapping');
+    const dummyDiv = document.createElement('div');
+    dummyDiv.classList.add('dummy-column');  // Create the dummy column to align
+    mappingDiv.appendChild(dummyDiv);  // Add the dummy column to the mapping div
+
+    // Loop to create dropdowns
+    columns.forEach((col, index) => {
+        const select = document.createElement('select');
+        select.setAttribute('data-column-index', index);
+        select.classList.add('form-select'); // Add Bootstrap 5 form-select class
+
+        dbFields.forEach(field => {
+            const option = document.createElement('option');
+            option.value = field;
+            option.innerText = field;
+            select.appendChild(option);
+        });
+
+        // Append the dropdown to the mapping div
+        mappingDiv.appendChild(select);
+    });
+
+    // Initialize Handsontable with the raw file data (moved outside the loop)
+    const container = document.getElementById('handsontable-container');
+    const hot = new Handsontable(container, {
+        data: fileData,
+        colHeaders: columns,
+        rowHeaders: true,
+        filters: true,
+        dropdownMenu: true,
+        columnSorting: true,
+        contextMenu: true,  // Enable Handsontable's context menu
+        width: '100%',
+        stretchH: 'all',  // Ensure table stretches across the container
+        colWidths: [150, 200, 150, 100],  // Set specific initial widths for each column
+        manualColumnResize: true,  // Allow users to resize columns by dragging
+        licenseKey: 'non-commercial-and-evaluation'
+    });
+
+    // Submit mapping data to the backend when the "Save Changes" button is clicked
+    document.getElementById('save-btn').addEventListener('click', function() {
+        const mapping = {};
+        document.querySelectorAll('#column-mapping select').forEach(select => {
+            const columnIndex = select.getAttribute('data-column-index');
+            const mappedField = select.value;
+            mapping[columnIndex] = mappedField;
+        });
+
+        const data = hot.getData();  // Get Handsontable data
+
+        // Send the mapping, data, and excess_stock_list_id to the backend for processing
+        fetch('/handson/process_excess_list', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                excess_stock_list_id: excessStockListId,  // Include the excess_stock_list_id here
+                data: data,
+                mapping: mapping
+            })
+        }).then(response => response.json())
+          .then(result => {
+              console.log(result);
+          });
+    });
+
+    </script>
+
+    </body>
+    </html>
+{% endblock %}

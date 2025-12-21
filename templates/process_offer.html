@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+
+{% block head %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <h2>Process Supplier Offer</h2>
+
+    <!-- Main Content Area with side-by-side layout -->
+    <div class="row">
+        <!-- Left Side: Example Mappings -->
+        <div class="col-md-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Example Mappings (Optional)</h5>
+                    <p class="text-muted">Provide examples to help AI recognize patterns</p>
+
+                    <div class="mb-2">
+                        <input type="text" class="form-control" id="part-example" placeholder="Part Number">
+                    </div>
+                    <div class="mb-2">
+                        <input type="text" class="form-control" id="quantity-example" placeholder="Quantity">
+                    </div>
+                    <div class="mb-2">
+                        <input type="text" class="form-control" id="price-example" placeholder="Price">
+                    </div>
+                    <div class="mb-2">
+                        <input type="text" class="form-control" id="leadtime-example" placeholder="Lead Time">
+                    </div>
+                    <div class="mb-2">
+                        <input type="text" class="form-control" id="manufacturer-example" placeholder="Manufacturer">
+                    </div>
+                    <button class="btn btn-secondary" onclick="retryProcessing()" id="retry-btn">
+                        <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                        <span class="btn-text">Retry Processing</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Side: Document Preview and Results -->
+        <div class="col-md-9">
+            <!-- Document Preview -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Document Preview</h5>
+
+                    <!-- Tab Navigation -->
+                    <ul class="nav nav-tabs mb-3" role="tablist">
+                        <li class="nav-item">
+                            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#pdf-tab">PDF View</button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#text-tab">Text View</button>
+                        </li>
+                    </ul>
+
+                    <!-- Tab Content -->
+                    <div class="tab-content">
+                        <div class="tab-pane fade show active" id="pdf-tab">
+                            <div id="pdf-viewer" class="overflow-auto" style="height: 600px; border: 1px solid #dee2e6;"></div>
+                        </div>
+                        <div class="tab-pane fade" id="text-tab">
+                            <textarea id="text-preview" class="form-control" style="height: 600px;" readonly>{{ text_content }}</textarea>
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <button class="btn btn-primary" onclick="processText()" id="process-btn">
+                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                            <span class="btn-text">Process Content</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Results Table -->
+            <div id="results-section" class="card mb-4 d-none">
+                <div class="card-body">
+                    <h5 class="card-title">Extracted Information</h5>
+                    <div class="table-responsive">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Part Number</th>
+                                    <th>Quantity</th>
+                                    <th>Price</th>
+                                    <th>Lead Time</th>
+                                    <th>Manufacturer</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-3">
+                        <button class="btn btn-success" onclick="saveResults()">Save All</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<input type="hidden" id="text-content" value="{{ text_content }}">
+{% endblock %}
+
+{% block scripts %}
+<script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // Load PDF on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        const pdfUrl = "{{ pdf_path }}";
+        loadPDF(pdfUrl);
+    });
+
+    async function loadPDF(url) {
+        try {
+            const loadingTask = pdfjsLib.getDocument(url);
+            const pdf = await loadingTask.promise;
+            const page = await pdf.getPage(1);
+
+            const scale = 1.5;
+            const viewport = page.getViewport({scale: scale});
+            const viewer = document.getElementById('pdf-viewer');
+            viewer.innerHTML = '';
+
+            const canvas = document.createElement('canvas');
+            viewer.appendChild(canvas);
+            const context = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            await page.render({
+                canvasContext: context,
+                viewport: viewport
+            }).promise;
+        } catch (error) {
+            console.error('Error loading PDF:', error);
+        }
+    }
+
+    function setButtonLoading(buttonId, loading) {
+        const button = document.getElementById(buttonId);
+        const spinner = button.querySelector('.spinner-border');
+        const btnText = button.querySelector('.btn-text');
+
+        button.disabled = loading;
+        spinner.classList.toggle('d-none', !loading);
+        btnText.style.opacity = loading ? '0.5' : '1';
+    }
+
+    function scrollToResults() {
+        const resultsSection = document.getElementById('results-section');
+        resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    async function processText() {
+        setButtonLoading('process-btn', true);
+
+        const text = document.getElementById('text-content').value;
+        const partExample = document.getElementById('part-example').value.trim();
+        const examples = [];
+
+        if (partExample) {
+            const example = {
+                raw_text: '',
+                part: partExample,
+                quantity: document.getElementById('quantity-example').value.trim(),
+                price: document.getElementById('price-example').value.trim(),
+                leadtime: document.getElementById('leadtime-example').value.trim(),
+                manufacturer: document.getElementById('manufacturer-example').value.trim()
+            };
+            examples.push(example);
+        }
+
+        try {
+            const response = await fetch('/offers/api/process-offer-text', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ text, examples })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                displayResults(data.extracted_lines);
+            } else {
+                alert(data.error);
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('An error occurred while processing the text');
+        } finally {
+            setButtonLoading('process-btn', false);
+        }
+    }
+
+    function displayResults(lines) {
+        const tbody = document.getElementById('results-table-body');
+        tbody.innerHTML = '';
+
+        lines.forEach(line => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><input type="text" class="form-control" value="${line[0] || ''}" /></td>
+                <td><input type="number" class="form-control" value="${line[1] || ''}" /></td>
+                <td><input type="number" class="form-control" value="${line[2] || ''}" step="0.01" /></td>
+                <td><input type="number" class="form-control" value="${line[3] || ''}" /></td>
+                <td><input type="text" class="form-control" value="${line[4] || ''}" /></td>
+                <td>
+                    <button class="btn btn-sm btn-danger" onclick="removeLine(this)">Remove</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        document.getElementById('results-section').classList.remove('d-none');
+        scrollToResults();
+    }
+
+    function removeLine(button) {
+        button.closest('tr').remove();
+    }
+
+    function saveResults() {
+        alert('Save functionality to be implemented');
+    }
+
+    async function retryProcessing() {
+        setButtonLoading('retry-btn', true);
+        try {
+            await processText();
+        } finally {
+            setButtonLoading('retry-btn', false);
+        }
+    }
+const offerId = {{ offer_id }};  // Add this in your template
+
+async function saveResults() {
+    const tbody = document.getElementById('results-table-body');
+    const rows = tbody.getElementsByTagName('tr');
+    const lines = [];
+
+    for (const row of rows) {
+        const inputs = row.getElementsByTagName('input');
+        const line = {
+            part_number: inputs[0].value,
+            quantity: parseFloat(inputs[1].value) || 0,
+            price: parseFloat(inputs[2].value) || 0,
+            lead_time: parseInt(inputs[3].value) || 0,
+            manufacturer: inputs[4].value
+        };
+        lines.push(line);
+    }
+
+    try {
+        const response = await fetch(`/offers/${offerId}/add_lines`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ lines })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert('Offer lines saved successfully');
+            window.location.href = `/offers/offers/${offerId}/edit`;
+        } else {
+            alert('Error saving offer lines: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('An error occurred while saving the offer lines');
+    }
+}
+</script>
+{% endblock %}

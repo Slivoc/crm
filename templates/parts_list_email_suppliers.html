@@ -1,0 +1,934 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.supplier-card {
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    transition: box-shadow 0.2s;
+}
+.supplier-card:hover {
+    box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.1);
+}
+.supplier-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #e9ecef;
+}
+.supplier-name {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #212529;
+}
+.supplier-email {
+    color: #6c757d;
+    font-size: 0.9rem;
+}
+.parts-table {
+    font-size: 0.9rem;
+    margin-top: 1rem;
+}
+.no-email-badge {
+    background: #ffc107;
+    color: #000;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.85rem;
+}
+.part-checkbox {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+    accent-color: #0d6efd;
+    box-shadow: none !important;
+    -webkit-box-shadow: none !important;
+}
+.date-text {
+    color: #6c757d;
+    font-size: 0.875rem;
+}
+
+/* ---------- Status Badge Styles ---------- */
+.badge-sm {
+    font-size: 0.7rem;
+    padding: 0.25rem 0.5rem;
+    margin-right: 0.35rem;
+    margin-bottom: 0.25rem;
+    font-weight: 600;
+    white-space: nowrap;
+    display: inline-block;
+}
+.bg-costed {
+    background: #28a745;
+    color: white;
+}
+.bg-quoted {
+    background: #17a2b8;
+    color: white;
+}
+.bg-sent-this {
+    background: #6610f2;
+    color: white;
+}
+.bg-sent-other {
+    background: #6c757d;
+    color: white;
+}
+.bg-source {
+    background: #fd7e14;
+    color: white;
+}
+.status-cell {
+    white-space: normal;
+    line-height: 1.8;
+}
+
+/* Mode selector tabs */
+.mode-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 0;
+    border-bottom: 2px solid #dee2e6;
+}
+.mode-tab {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-bottom: 3px solid transparent;
+    background: transparent;
+    border-radius: 0;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+    color: #6c757d;
+    position: relative;
+    bottom: -2px;
+}
+.mode-tab.active {
+    background: transparent;
+    color: #0d6efd;
+    border-bottom-color: #0d6efd;
+}
+.mode-tab:hover:not(.active) {
+    color: #495057;
+    background: #f8f9fa;
+}
+
+/* ILS Chunks Modal */
+.chunk-card {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+.chunk-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #dee2e6;
+}
+.chunk-content {
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    padding: 0.75rem;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Header -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="card-title mb-0">
+                    Email Suppliers
+                </h5>
+                <div>
+                    <button class="btn btn-sm btn-outline-primary me-2" id="copyForILSBtn">
+                        📋 Copy for ILS Search
+                    </button>
+                    <button class="btn btn-sm btn-outline-success me-2" id="uploadILSBtn">
+                        📤 Upload ILS
+                    </button>
+                    <input type="file" id="ilsFileInput" accept=".csv" style="display: none;">
+                    <a href="{{ url_for('parts_list.parts_list') }}" class="btn btn-sm btn-outline-secondary">
+                        Back to Parts List
+                    </a>
+                </div>
+            </div>
+
+            <!-- Mode Selector Buttons -->
+            <div class="mode-tabs">
+                <button class="mode-tab {% if mode == 'ils' %}active{% endif %}"
+                        onclick="switchMode('ils')">
+                    📡 ILS Suppliers
+                </button>
+                <button class="mode-tab {% if mode == 'suggested' %}active{% endif %}"
+                        onclick="switchMode('suggested')">
+                    ⭐ Suggested Suppliers
+                </button>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="stat-card text-center">
+                        <div class="stat-value text-primary">{{ suppliers|length }}</div>
+                        <div class="stat-label">Suppliers Found</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="stat-card text-center">
+                        <div class="stat-value text-info">{{ total_parts }}</div>
+                        <div class="stat-label">Parts Analyzed</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="stat-card text-center">
+                        {% if mode == 'ils' %}
+                            <div class="stat-value text-success">{{ days_back }} days</div>
+                            <div class="stat-label">Recency Filter</div>
+                        {% else %}
+                            <div class="stat-value text-warning">Suggested</div>
+                            <div class="stat-label">Source Type</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Filters -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <div class="form-check">
+                        <input type="checkbox" id="filterNoCost" class="form-check-input">
+                        <label for="filterNoCost" class="form-check-label">
+                            Only show parts not yet costed
+                        </label>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="form-check">
+                        <input type="checkbox" id="filterNotContacted" class="form-check-input">
+                        <label for="filterNotContacted" class="form-check-label">
+                            Only show parts not sent to this supplier
+                        </label>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <input type="text"
+                           id="filterPartNumber"
+                           class="form-control form-control-sm"
+                           placeholder="Filter by part number...">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Suppliers List -->
+    {% if suppliers %}
+        {% for supplier in suppliers %}
+        <div class="supplier-card">
+            <div class="supplier-header">
+                <div>
+                    <div class="supplier-name">
+                        {{ supplier.supplier_name }}
+                    </div>
+                    {% if supplier.contact_email %}
+                        <div class="supplier-email">
+                            {{ supplier.contact_email }}
+                        </div>
+                    {% else %}
+                        <div class="supplier-email">
+                            <span class="no-email-badge">No email address</span>
+                        </div>
+                    {% endif %}
+                </div>
+                <div>
+                    {% if supplier.contact_email %}
+                        <button class="btn btn-primary email-supplier-btn"
+                                data-supplier-id="{{ supplier.supplier_id }}"
+                                data-supplier-name="{{ supplier.supplier_name }}"
+                                data-contact-name="{{ supplier.contact_name or '' }}"
+                                data-contact-email="{{ supplier.contact_email }}">
+                            Email Supplier
+                        </button>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Parts Table -->
+            <div>
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <strong class="text-muted">
+                        {{ supplier.parts|length }} part{{ 's' if supplier.parts|length != 1 else '' }} available:
+                    </strong>
+                    <div>
+                        <button class="btn btn-sm btn-outline-primary select-all-btn" data-supplier-id="{{ supplier.supplier_id }}">
+                            Select All
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary deselect-all-btn" data-supplier-id="{{ supplier.supplier_id }}">
+                            Deselect All
+                        </button>
+                    </div>
+                </div>
+
+                <table class="table table-sm table-hover parts-table">
+                    <thead>
+                        <tr>
+                            <th style="width:40px;"></th>
+                            <th>Part Number</th>
+                            <th class="text-center">Qty Needed</th>
+                            {% if mode == 'ils' %}
+                                <th class="text-center">Their Qty</th>
+                                <th>Condition</th>
+                                <th>Listed Date</th>
+                            {% else %}
+                                <th>Source</th>
+                            {% endif %}
+                            <th class="text-center" style="min-width: 180px;">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for part in supplier.parts %}
+                        <tr class="part-row"
+                            data-has-cost="{{ part.has_chosen_cost|lower }}"
+                            data-sent-to-this="{{ part.sent_to_this_supplier|lower }}"
+                            data-part-number="{{ part.part_number }}">
+                            <td>
+                                <input type="checkbox"
+                                       class="part-checkbox"
+                                       data-supplier-id="{{ supplier.supplier_id }}"
+                                       data-part-number="{{ part.part_number }}"
+                                       data-quantity="{{ part.quantity }}"
+                                       data-ils-quantity="{{ part.ils_quantity }}"
+                                       data-condition="{{ part.condition or '' }}"
+                                       data-line-id="{{ part.line_id or '' }}"
+                                       checked>
+                            </td>
+                            <td><strong>{{ part.part_number }}</strong></td>
+                            <td class="text-center"><span class="badge bg-primary">{{ part.quantity }}</span></td>
+                            {% if mode == 'ils' %}
+                                <td class="text-center">{{ part.ils_quantity }}</td>
+                                <td><span class="badge bg-info">{{ part.condition or 'N/A' }}</span></td>
+                                <td>
+                                    {% if part.search_date %}
+                                        <span class="date-text">
+                                            {{ part.search_date.split()[0] if ' ' in part.search_date else part.search_date }}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-muted">Unknown</span>
+                                    {% endif %}
+                                </td>
+                            {% else %}
+                                <td>
+                                    <span class="badge badge-sm bg-source">{{ part.get('source_type', 'manual').upper() }}</span>
+                                </td>
+                            {% endif %}
+                            <td class="text-center status-cell">
+                                {% if part.has_chosen_cost %}
+                                    <span class="badge badge-sm bg-costed">✓ Costed</span>
+                                {% endif %}
+                                {% if part.has_quotes %}
+                                    <span class="badge badge-sm bg-quoted">{{ part.quote_count }} Quote{{ 's' if part.quote_count != 1 else '' }}</span>
+                                {% endif %}
+                                {% if part.sent_to_this_supplier %}
+                                    <span class="badge badge-sm bg-sent-this">✓ Sent to This Supplier</span>
+                                {% elif part.has_email_sent %}
+                                    <span class="badge badge-sm bg-sent-other">Sent to Others</span>
+                                {% endif %}
+                                {% if not (part.has_quotes or part.has_chosen_cost or part.has_email_sent) %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="alert alert-info">
+            {% if mode == 'ils' %}
+                No suppliers found with recent ILS listings (within {{ days_back }} days).
+            {% else %}
+                No suggested suppliers found for these parts.
+            {% endif %}
+            <a href="{{ url_for('parts_list.parts_list') }}">Go back</a> and try analyzing again.
+        </div>
+    {% endif %}
+</div>
+
+<!-- Email Modal -->
+<div class="modal fade" id="supplierEmailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Email Supplier</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="emailPreview">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">To:</label>
+                        <div id="previewRecipient" class="text-muted"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Subject:</label>
+                        <div id="previewSubject"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Body:</label>
+                        <div id="previewBody" class="border rounded p-3 bg-light"></div>
+                    </div>
+                </div>
+                <div id="loadingSpinner" class="text-center d-none">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="copyAndOpenBtn">
+                    Copy & Open Outlook
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ILS Chunks Modal -->
+<div class="modal fade" id="ilsChunksModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">📋 Copy Part Numbers for ILS (24 per chunk)</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <strong>ILS Limitation:</strong> ILS only allows 24 part numbers per search.
+                    Your parts have been divided into chunks of 24. Copy each chunk and search in ILS.
+                </div>
+                <div id="chunksContainer"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // ---- List ID -------------------------------------------------
+    {% if email_data and email_data.get('list_id') %}
+        const currentListId = {{ email_data['list_id'] }};
+    {% else %}
+        const currentListId = null;
+    {% endif %}
+
+    let currentEmailData = null;
+
+    // ---- Mode Switcher --------------------------------------------
+    window.switchMode = function(newMode) {
+        const currentMode = '{{ mode }}';
+        if (newMode === currentMode) return;
+
+        // Reload the page with the new mode parameter
+        const url = new URL(window.location.href);
+        url.searchParams.set('mode', newMode);
+        window.location.href = url.toString();
+    };
+
+    // ---- Select / Deselect All ------------------------------------
+    document.querySelectorAll('.select-all-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const sid = this.dataset.supplierId;
+            document.querySelectorAll(`.part-checkbox[data-supplier-id="${sid}"]`).forEach(cb => {
+                const row = cb.closest('.part-row');
+                if (row.style.display !== 'none') {
+                    cb.checked = true;
+                }
+            });
+        });
+    });
+    document.querySelectorAll('.deselect-all-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const sid = this.dataset.supplierId;
+            document.querySelectorAll(`.part-checkbox[data-supplier-id="${sid}"]`).forEach(cb => cb.checked = false);
+        });
+    });
+
+    // ---- Apply All Filters ----------------------------------------
+    function applyFilters() {
+        const filterNoCostChecked = document.getElementById('filterNoCost').checked;
+        const filterNotContactedChecked = document.getElementById('filterNotContacted').checked;
+        const partNumberFilter = document.getElementById('filterPartNumber').value.trim().toLowerCase();
+
+        document.querySelectorAll('.part-row').forEach(row => {
+            const hasCost = row.dataset.hasCost === 'true';
+            const sentToThis = row.dataset.sentToThis === 'true';
+            const partNumber = row.dataset.partNumber.toLowerCase();
+
+            let hideRow = false;
+
+            // Filter: no cost
+            if (filterNoCostChecked && hasCost) {
+                hideRow = true;
+            }
+
+            // Filter: not contacted this supplier
+            if (filterNotContactedChecked && sentToThis) {
+                hideRow = true;
+            }
+
+            // Filter: part number search
+            if (partNumberFilter && !partNumber.includes(partNumberFilter)) {
+                hideRow = true;
+            }
+
+            row.style.display = hideRow ? 'none' : '';
+        });
+
+        // Hide supplier cards with no visible parts
+        document.querySelectorAll('.supplier-card').forEach(card => {
+            const visibleRows = card.querySelectorAll('.part-row:not([style*="display: none"])');
+            card.style.display = visibleRows.length > 0 ? '' : 'none';
+        });
+    }
+
+    // ---- Filter Event Listeners -----------------------------------
+    document.getElementById('filterNoCost').addEventListener('change', applyFilters);
+    document.getElementById('filterNotContacted').addEventListener('change', applyFilters);
+    document.getElementById('filterPartNumber').addEventListener('input', applyFilters);
+
+    // ---- Copy for ILS Button --------------------------------------
+ document.getElementById('copyForILSBtn').addEventListener('click', function() {
+    {% if email_data and email_data.get('results') %}
+        const emailData = {{ email_data | tojson }};
+        const costedParts = new Set();
+        const uncostedParts = new Set();
+
+        // Separate parts by costed status
+        emailData.results.forEach(part => {
+            if (part.input_part_number) {
+                if (part.has_chosen_cost) {
+                    costedParts.add(part.input_part_number);
+                } else {
+                    uncostedParts.add(part.input_part_number);
+                }
+            }
+        });
+
+        if (costedParts.size === 0 && uncostedParts.size === 0) {
+            alert('No parts found in the list.');
+            return;
+        }
+
+        // Convert to arrays and sort
+        const sortedUncosted = Array.from(uncostedParts).sort();
+        const sortedCosted = Array.from(costedParts).sort();
+
+        // Split into chunks of 24
+        const uncostedChunks = [];
+        for (let i = 0; i < sortedUncosted.length; i += 24) {
+            uncostedChunks.push({
+                parts: sortedUncosted.slice(i, i + 24),
+                type: 'uncosted'
+            });
+        }
+
+        const costedChunks = [];
+        for (let i = 0; i < sortedCosted.length; i += 24) {
+            costedChunks.push({
+                parts: sortedCosted.slice(i, i + 24),
+                type: 'costed'
+            });
+        }
+
+        // Show modal with chunks (uncosted first, then costed)
+        showILSChunksModal([...uncostedChunks, ...costedChunks]);
+    {% else %}
+        alert('No parts data available. Please return to the parts list and try again.');
+    {% endif %}
+});
+
+
+    // ---- Show ILS Chunks Modal ------------------------------------
+  function showILSChunksModal(chunks) {
+    const container = document.getElementById('chunksContainer');
+    container.innerHTML = '';
+
+    // Track section counts
+    let uncostedCount = 0;
+    let costedCount = 0;
+    chunks.forEach(chunk => {
+        if (chunk.type === 'uncosted') uncostedCount++;
+        else costedCount++;
+    });
+
+    // Add section header for uncosted parts (if any)
+    if (uncostedCount > 0) {
+        const uncostedHeader = document.createElement('div');
+        uncostedHeader.className = 'alert alert-warning mb-3';
+        uncostedHeader.innerHTML = `
+            <strong>🔍 Parts NOT Yet Costed</strong> (${uncostedCount} chunk${uncostedCount > 1 ? 's' : ''})
+            <p class="mb-0 mt-1"><small>These parts need pricing - search these first!</small></p>
+        `;
+        container.appendChild(uncostedHeader);
+    }
+
+    // Track current section and chunk number within section
+    let currentSection = null;
+    let uncostedChunkNum = 0;
+    let costedChunkNum = 0;
+
+    chunks.forEach((chunkData, globalIndex) => {
+        // Add section header for costed parts (if transitioning)
+        if (currentSection !== 'costed' && chunkData.type === 'costed') {
+            const costedHeader = document.createElement('div');
+            costedHeader.className = 'alert alert-success mb-3 mt-4';
+            costedHeader.innerHTML = `
+                <strong>✓ Parts Already Costed</strong> (${costedCount} chunk${costedCount > 1 ? 's' : ''})
+                <p class="mb-0 mt-1"><small>These parts already have pricing - optional to re-check</small></p>
+            `;
+            container.appendChild(costedHeader);
+            currentSection = 'costed';
+        }
+        if (currentSection !== 'uncosted' && chunkData.type === 'uncosted') {
+            currentSection = 'uncosted';
+        }
+
+        // Determine chunk number within its section
+        const sectionChunkNum = chunkData.type === 'uncosted' ? ++uncostedChunkNum : ++costedChunkNum;
+        const sectionTotal = chunkData.type === 'uncosted' ? uncostedCount : costedCount;
+
+        const chunkDiv = document.createElement('div');
+        chunkDiv.className = 'chunk-card';
+
+        const chunkText = chunkData.parts.join('\n');
+        const badgeClass = chunkData.type === 'uncosted' ? 'bg-warning text-dark' : 'bg-success';
+        const iconPrefix = chunkData.type === 'uncosted' ? '🔍' : '✓';
+
+        chunkDiv.innerHTML = `
+            <div class="chunk-header">
+                <strong>${iconPrefix} ${chunkData.type === 'uncosted' ? 'Uncosted' : 'Costed'} Chunk ${sectionChunkNum} of ${sectionTotal}</strong>
+                <span class="badge ${badgeClass}">${chunkData.parts.length} parts</span>
+            </div>
+            <div class="chunk-content">${chunkText}</div>
+            <div class="text-end mt-2">
+                <button class="btn btn-sm btn-primary copy-chunk-btn" data-chunk-index="${globalIndex}">
+                    📋 Copy Chunk
+                </button>
+            </div>
+        `;
+
+        container.appendChild(chunkDiv);
+    });
+
+    // Add event listeners to copy buttons
+    document.querySelectorAll('.copy-chunk-btn').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const chunkIndex = parseInt(this.dataset.chunkIndex);
+            const chunkText = chunks[chunkIndex].parts.join('\n');
+
+            try {
+                await navigator.clipboard.writeText(chunkText);
+
+                // Visual feedback
+                const originalHTML = this.innerHTML;
+                this.innerHTML = '✓ Copied!';
+                this.classList.remove('btn-primary');
+                this.classList.add('btn-success');
+
+                setTimeout(() => {
+                    this.innerHTML = originalHTML;
+                    this.classList.remove('btn-success');
+                    this.classList.add('btn-primary');
+                }, 2000);
+            } catch (e) {
+                console.error('Copy failed:', e);
+                alert('Failed to copy. Please copy manually from the text box.');
+            }
+        });
+    });
+
+    // Show modal
+    const modal = new bootstrap.Modal('#ilsChunksModal');
+    modal.show();
+}
+
+    // ---- Upload ILS Button ----------------------------------------
+    document.getElementById('uploadILSBtn').addEventListener('click', function() {
+        document.getElementById('ilsFileInput').click();
+    });
+
+// ---- Handle ILS File Upload -----------------------------------
+document.getElementById('ilsFileInput').addEventListener('change', async function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const uploadBtn = document.getElementById('uploadILSBtn');
+    const originalHTML = uploadBtn.innerHTML;
+    uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Uploading...';
+    uploadBtn.disabled = true;
+
+    try {
+        const response = await fetch('/ils/upload', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(`Successfully uploaded ILS data!\n\n${result.message}\n\nTotal: ${result.stats.total_records} records\nUnique parts: ${result.stats.unique_parts}\nUnique suppliers: ${result.stats.unique_suppliers}`);
+
+            // Re-analyze with new ILS data
+            uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Re-analyzing...';
+
+            {% if email_data and email_data.get('results') %}
+                // Build parts array from the ORIGINAL results (extract part_number, quantity, line_id)
+                const partsToAnalyze = [];
+                const emailDataResults = {{ email_data['results'] | tojson }};
+
+                emailDataResults.forEach(part => {
+                    partsToAnalyze.push({
+                        part_number: part.input_part_number,
+                        quantity: part.quantity || 1,
+                        line_id: part.line_id || null
+                    });
+                });
+
+                // Re-run the analysis with the parts (this will pick up NEW ILS data)
+                const analyzeResponse = await fetch('/parts_list/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        parts: partsToAnalyze
+                    })
+                });
+
+                const analyzeData = await analyzeResponse.json();
+
+                if (analyzeData.success) {
+                    // Post NEW results to email suppliers endpoint
+                    const emailResponse = await fetch('/parts_list/email-suppliers', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            mode: '{{ mode }}',
+                            results: analyzeData.results,
+                            list_id: currentListId
+                        })
+                    });
+
+                    const emailData = await emailResponse.json();
+
+                    if (emailData.success && emailData.redirect) {
+                        window.location.href = emailData.redirect;
+                    } else {
+                        throw new Error(emailData.error || 'Failed to refresh supplier list');
+                    }
+                } else {
+                    throw new Error(analyzeData.message || 'Re-analysis failed');
+                }
+            {% else %}
+                // No original data available - just reload and hope session has something
+                window.location.reload();
+            {% endif %}
+        } else {
+            throw new Error(result.error || 'Upload failed');
+        }
+    } catch (error) {
+        console.error('Upload error:', error);
+        alert('Error: ' + error.message);
+        uploadBtn.innerHTML = originalHTML;
+        uploadBtn.disabled = false;
+    }
+
+    // Reset file input
+    e.target.value = '';
+});
+    // ---- Email Supplier Button ------------------------------------
+    document.querySelectorAll('.email-supplier-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const supplierId = this.dataset.supplierId;
+            const selectedParts = [];
+
+            // Iterate over checked boxes for this supplier
+            document.querySelectorAll(`.part-checkbox[data-supplier-id="${supplierId}"]:checked`).forEach(cb => {
+                const row = cb.closest('.part-row');
+
+                // --- THE FIX: Skip this part if the row is hidden ---
+                if (row.style.display === 'none') {
+                    return;
+                }
+
+                const p = {
+                    part_number: cb.dataset.partNumber,
+                    quantity: cb.dataset.quantity,
+                    ils_quantity: cb.dataset.ilsQuantity,
+                    condition: cb.dataset.condition || ''
+                };
+                const lineId = cb.dataset.lineId;
+                if (lineId) p.line_id = parseInt(lineId);
+                selectedParts.push(p);
+            });
+
+            if (!selectedParts.length) {
+                // Better error message explaining why
+                const hasHidden = document.querySelectorAll(`.part-checkbox[data-supplier-id="${supplierId}"]:checked`).length > 0;
+                if (hasHidden) {
+                    alert('No visible parts selected. Adjust your filters or select visible parts.');
+                } else {
+                    alert('Please select at least one part.');
+                }
+                return;
+            }
+
+            const supplierData = {
+                supplier_id: supplierId,
+                supplier_name: this.dataset.supplierName,
+                contact_name: this.dataset.contactName,
+                contact_email: this.dataset.contactEmail,
+                parts: selectedParts,
+                list_id: currentListId
+            };
+
+            openEmailModal(supplierData);
+        });
+    });
+
+    // ---- Open Modal & Generate Email -------------------------------
+    async function openEmailModal(supplierData) {
+        const modal = new bootstrap.Modal('#supplierEmailModal');
+        const spinner = document.getElementById('loadingSpinner');
+        const preview = document.getElementById('emailPreview');
+
+        spinner.classList.remove('d-none');
+        preview.classList.add('d-none');
+        modal.show();
+
+        try {
+            const resp = await fetch('{{ url_for("parts_list.generate_supplier_email") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(supplierData)
+            });
+            const data = await resp.json();
+
+            if (data.success) {
+                currentEmailData = data;
+                document.getElementById('previewRecipient').textContent =
+                    `${data.recipient_name ? data.recipient_name + ' - ' : ''}${data.recipient_email}`;
+                document.getElementById('previewSubject').textContent = data.subject;
+                document.getElementById('previewBody').innerHTML = data.body_html;
+
+                spinner.classList.add('d-none');
+                preview.classList.remove('d-none');
+            } else {
+                alert('Error: ' + data.error);
+                modal.hide();
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Failed to generate email');
+            modal.hide();
+        }
+    }
+
+    // ---- Copy & Open Outlook + Record -----------------------------
+    document.getElementById('copyAndOpenBtn').addEventListener('click', async function() {
+        if (!currentEmailData) return;
+
+        const btn = this;
+        const origHTML = btn.innerHTML;
+
+        try {
+            // Copy HTML + plain text
+            await navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/html': new Blob([currentEmailData.body_html], {type: 'text/html'}),
+                    'text/plain': new Blob([currentEmailData.body_html.replace(/<[^>]*>/g, '')], {type: 'text/plain'})
+                })
+            ]);
+
+            // Open mailto
+            const mailto = `mailto:${encodeURIComponent(currentEmailData.recipient_email)}?subject=${encodeURIComponent(currentEmailData.subject)}`;
+            window.open(mailto, '_blank');
+
+            // Record each part that has a line_id
+            await recordEmailSent(currentEmailData);
+
+            // Success feedback
+            btn.innerHTML = 'Sent & Recorded!';
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-success');
+            setTimeout(() => {
+                bootstrap.Modal.getInstance('#supplierEmailModal').hide();
+                btn.innerHTML = origHTML;
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-primary');
+            }, 1500);
+        } catch (e) {
+            console.error(e);
+            alert('Copy failed – please copy manually.');
+        }
+    });
+
+    // ---- Record Email Sent (per line) -----------------------------
+    async function recordEmailSent(emailData) {
+        if (!currentListId) return;
+
+        const partsToRecord = (emailData.parts || []).filter(p => p.line_id);
+        if (!partsToRecord.length) return;
+
+        const promises = partsToRecord.map(part => {
+            return fetch(`/parts_list/parts-lists/${currentListId}/lines/${part.line_id}/supplier-emails/add`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    supplier_id: emailData.supplier_id,
+                    email_subject: emailData.subject,
+                    email_body: emailData.body_html,
+                    recipient_email: emailData.recipient_email,
+                    recipient_name: emailData.recipient_name || '',
+                    notes: 'Sent via Email Suppliers page'
+                })
+            });
+        });
+
+        try { await Promise.all(promises); }
+        catch (e) { console.error('Recording failed', e); }
+    }
+});
+</script>
+{% endblock %}

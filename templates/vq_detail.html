@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>VQ: {{ vq.vq_number }}</h2>
+        <a href="{{ url_for('vqs.vqs_list') }}" class="btn btn-secondary">Back to List</a>
+    </div>
+    
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <p><strong>Supplier:</strong> {{ vq.supplier_name }}</p>
+                    <p><strong>Status:</strong> {{ vq.status }}</p>
+                    <p><strong>Currency:</strong> {{ vq.currency_code }}</p>
+                </div>
+                <div class="col-md-6">
+                    <p><strong>Entry Date:</strong> {{ vq.entry_date }}</p>
+                    <p><strong>Expiration:</strong> {{ vq.expiration_date }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <h4>VQ Lines</h4>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Line</th>
+                <th>Part Number</th>
+                <th>Description</th>
+                <th>Condition</th>
+                <th>Qty Requested</th>
+                <th>Qty Quoted</th>
+                <th>Unit Price</th>
+                <th>Total</th>
+                <th>Lead Days</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in vq_lines %}
+            <tr>
+                <td>{{ line.line_number }}</td>
+                <td>{{ line.pn_quoted }}</td>
+                <td>{{ line.description }}</td>
+                <td>{{ line.condition_code }}</td>
+                <td>{{ line.quantity_requested }}</td>
+                <td>{{ line.quantity_quoted }}</td>
+                <td>{{ line.vendor_price }}</td>
+                <td>{{ line.item_total }}</td>
+                <td>{{ line.lead_days }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

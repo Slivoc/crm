@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h3 mb-0">Build Email from Template</h1>
+                <a href="{{ url_for('templates.list_templates') }}" class="btn btn-link">
+                    Back to Templates
+                </a>
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title mb-4">Template: {{ template.name }}</h5>
+                    <p class="text-muted">{{ template.description }}</p>
+
+                    <form method="POST">
+                        <!-- Customer Selection -->
+                        <div class="mb-3">
+                            <label for="customer_id" class="form-label">Select Customer</label>
+                            <select class="form-select select2" id="customer_id" name="customer_id" required>
+                                <option value="">Choose a customer...</option>
+                                {% for customer in customers %}
+                                <option value="{{ customer.id }}">{{ customer.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <!-- Contact Selection -->
+                        <div class="mb-3">
+                            <label for="contact_id" class="form-label">Select Contact</label>
+                            <select class="form-select select2" id="contact_id" name="contact_id" required>
+                                <option value="">Choose a contact...</option>
+                                {% for contact in contacts %}
+                                <option value="{{ contact.id }}" data-customer="{{ contact.customer_id }}">
+                                    {{ contact.name }} - {{ contact.job_title }} ({{ contact.email }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <!-- Preview -->
+                        <div class="mb-3">
+                            <h6>Template Preview</h6>
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <div class="mb-2">
+                                        <strong>Subject:</strong>
+                                        <div class="mt-1">{{ template.subject }}</div>
+                                    </div>
+                                    <div>
+                                        <strong>Body:</strong>
+                                        <div class="mt-1">{{ template.body | nl2br }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Form Actions -->
+                        <div class="d-flex justify-content-end gap-2">
+                            <a href="{{ url_for('templates.list_templates') }}" class="btn btn-secondary">
+                                Cancel
+                            </a>
+                            <button type="submit" name="preview" class="btn btn-primary">
+                                Preview Email
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // Initialize Select2 for both dropdowns
+    $('.select2').select2({
+        theme: 'bootstrap-5',
+        width: '100%',
+        searchable: true,
+        minimumInputLength: 0,
+        placeholder: 'Search...',
+        allowClear: true,
+    });
+
+    // Store all contact options for later filtering
+    const contactSelect = $('#contact_id');
+    const allContacts = contactSelect.find('option').clone();
+
+    // Filter contacts based on selected customer
+    $('#customer_id').on('change', function() {
+        const customerId = this.value;
+
+        // Clear and disable contacts dropdown if no customer selected
+        if (!customerId) {
+            contactSelect.empty().append('<option value="">Choose a contact...</option>');
+            contactSelect.prop('disabled', true);
+            contactSelect.trigger('change');
+            return;
+        }
+
+        // Enable contacts dropdown
+        contactSelect.prop('disabled', false);
+
+        // Reset contacts dropdown with only matching contacts
+        contactSelect.empty().append('<option value="">Choose a contact...</option>');
+
+        allContacts.each(function() {
+            if (this.value === '') return; // Skip the placeholder option
+
+            if ($(this).data('customer') == customerId) {
+                contactSelect.append($(this).clone());
+            }
+        });
+
+        // Trigger change to update Select2
+        contactSelect.trigger('change');
+    });
+});
+</script>
+{% endblock %}

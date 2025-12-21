@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h5 class="card-title mb-0">Suppliers</h5>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('parts_list.view_no_response_suppliers') }}" class="btn btn-outline-secondary btn-sm">
+        Chase no responses
+      </a>
+      <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createSupplierModal">Create Supplier</button>
+    </div>
+  </div>
+
+  <div class="card-body table-container p-0">
+    <table class="table table-hover">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Contact Name</th>
+          <th>Contact Email</th>
+          <th>Contact Phone</th>
+          <th>Buffer</th>
+          <th>Currency</th>
+          <th>Delivery Cost</th>
+          <th>Fornitore</th>
+          <th>Standard Condition</th>
+          <th>Standard Certs</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for supplier in suppliers %}
+        <tr>
+          <td><input type="text" value="{{ supplier.name }}" data-supplier-id="{{ supplier.id }}" data-field="name" class="form-control form-control-sm editable-field"></td>
+          <td><input type="text" value="{{ supplier.contact_name }}" data-supplier-id="{{ supplier.id }}" data-field="contact_name" class="form-control form-control-sm editable-field"></td>
+          <td><input type="email" value="{{ supplier.contact_email }}" data-supplier-id="{{ supplier.id }}" data-field="contact_email" class="form-control form-control-sm editable-field"></td>
+          <td><input type="text" value="{{ supplier.contact_phone }}" data-supplier-id="{{ supplier.id }}" data-field="contact_phone" class="form-control form-control-sm editable-field"></td>
+          <td><input type="number" value="{{ supplier.buffer }}" data-supplier-id="{{ supplier.id }}" data-field="buffer" class="form-control form-control-sm editable-field"></td>
+          <td>
+            <select data-supplier-id="{{ supplier.id }}" data-field="currency" class="form-select form-select-sm editable-field">
+              {% for currency in currencies %}
+              <option value="{{ currency.id }}" {% if currency.id == supplier.currency %}selected{% endif %}>
+                {{ currency.currency_code }}
+              </option>
+              {% endfor %}
+            </select>
+          </td>
+          <td><input type="number" step="0.01" value="{{ supplier.delivery_cost or '' }}" data-supplier-id="{{ supplier.id }}" data-field="delivery_cost" class="form-control form-control-sm editable-field"></td>
+          <td><input type="text" value="{{ supplier.fornitore }}" data-supplier-id="{{ supplier.id }}" data-field="fornitore" class="form-control form-control-sm editable-field"></td>
+          <td><input type="text" value="{{ supplier.standard_condition or '' }}" data-supplier-id="{{ supplier.id }}" data-field="standard_condition" class="form-control form-control-sm editable-field"></td>
+          <td><input type="text" value="{{ supplier.standard_certs or '' }}" data-supplier-id="{{ supplier.id }}" data-field="standard_certs" class="form-control form-control-sm editable-field"></td>
+          <td>
+            <a href="{{ url_for('suppliers.edit_supplier', supplier_id=supplier.id) }}" class="btn btn-sm btn-primary">Edit</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal for creating a new supplier -->
+<div class="modal fade" id="createSupplierModal" tabindex="-1" aria-labelledby="createSupplierModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="createSupplierModalLabel">Create New Supplier</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form action="{{ url_for('suppliers.create_supplier') }}" method="post" id="createSupplierForm">
+          <div class="mb-3">
+            <label for="name" class="form-label">Name</label>
+            <input type="text" id="name" name="name" class="form-control" required>
+          </div>
+          <div class="mb-3">
+    <label for="contact_name" class="form-label">Contact Name</label>
+    <input type="text" id="contact_name" name="first_name" class="form-control" required>
+</div>
+
+          <div class="mb-3">
+            <label for="contact_email" class="form-label">Contact Email</label>
+            <input type="email" id="contact_email" name="contact_email" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label for="contact_phone" class="form-label">Contact Phone</label>
+            <input type="text" id="contact_phone" name="contact_phone" class="form-control">
+          </div>
+          <div class="mb-3">
+            <label for="buffer" class="form-label">Buffer (weeks)</label>
+            <input type="number" id="buffer" name="buffer" class="form-control">
+          </div>
+          <div class="mb-3">
+            <label for="currency" class="form-label">Currency</label>
+            <select id="currency" name="currency" class="form-select" required>
+              {% for currency in currencies %}
+              <option value="{{ currency.id }}">{{ currency.currency_code }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label for="delivery_cost" class="form-label">Delivery Cost</label>
+            <input type="number" step="0.01" id="delivery_cost" name="delivery_cost" class="form-control">
+          </div>
+          <div class="mb-3">
+            <label for="fornitore" class="form-label">Fornitore</label>
+            <input type="text" id="fornitore" name="fornitore" class="form-control">
+          </div>
+          <div class="mb-3">
+            <label for="standard_condition" class="form-label">Standard Condition (e.g. NE, FN, NS)</label>
+            <input type="text" id="standard_condition" name="standard_condition" class="form-control">
+          </div>
+          <div class="mb-3">
+            <label for="standard_certs" class="form-label">Standard Certs (e.g. man certs, 8310-3)</label>
+            <input type="text" id="standard_certs" name="standard_certs" class="form-control">
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="submit" class="btn btn-primary" form="createSupplierForm">Create Supplier</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Store modal instances to prevent conflicts
+const modalInstances = {};
+
+// Fix for the "Cannot read properties of null (reading 'hide')" error
+const originalBootstrapModalHide = bootstrap.Modal.prototype.hide;
+bootstrap.Modal.prototype.hide = function() {
+  try {
+    originalBootstrapModalHide.call(this);
+  } catch (e) {
+    console.warn('Prevented modal error:', e.message);
+    // If the modal element is gone, clean up any remaining backdrop
+    const backdrops = document.querySelectorAll('.modal-backdrop');
+    backdrops.forEach(backdrop => {
+      backdrop.classList.remove('show');
+      setTimeout(() => {
+        backdrop.remove();
+      }, 150);
+    });
+
+    // Reset body classes
+    document.body.classList.remove('modal-open');
+    document.body.style.removeProperty('padding-right');
+    document.body.style.removeProperty('overflow');
+  }
+};
+
+// Safe modal initialization
+function safeInitModal(modalId) {
+  const modalElement = document.getElementById(modalId);
+  if (modalElement && !modalInstances[modalId]) {
+    modalInstances[modalId] = new bootstrap.Modal(modalElement, {
+      backdrop: true,
+      keyboard: true,
+      focus: true
+    });
+
+    // Cleanup when modal is hidden
+    modalElement.addEventListener('hidden.bs.modal', function() {
+      document.body.classList.remove('modal-open');
+      const backdrops = document.querySelectorAll('.modal-backdrop');
+      backdrops.forEach(backdrop => backdrop.remove());
+    });
+  }
+  return modalInstances[modalId];
+}
+
+// Initialize all modals safely
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.modal').forEach(modal => {
+    const modalId = modal.id;
+    if (modalId) {
+      safeInitModal(modalId);
+    }
+  });
+
+  // Override the default behavior of modal trigger buttons
+  document.querySelectorAll('[data-bs-toggle="modal"]').forEach(triggerElement => {
+    const targetModalId = triggerElement.getAttribute('data-bs-target')?.substring(1);
+    if (targetModalId) {
+      triggerElement.addEventListener('click', function(e) {
+        e.preventDefault();
+        const modalInstance = safeInitModal(targetModalId);
+        if (modalInstance) {
+          modalInstance.show();
+        }
+      });
+    }
+  });
+});
+
+// Handle editable field updates
+document.querySelectorAll('.editable-field').forEach(field => {
+  field.addEventListener('change', function() {
+    const supplierId = this.dataset.supplierId;
+    const fieldName = this.dataset.field;
+    const newValue = this.value;
+
+    // Send an AJAX request to update the supplier's field
+    fetch(`/suppliers/update_field/${supplierId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ field: fieldName, value: newValue }),
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        console.log(`${fieldName} updated successfully`);
+      } else {
+        console.error(`Failed to update ${fieldName}`);
+      }
+    })
+    .catch(error => console.error(`Error updating ${fieldName}:`, error));
+  });
+});
+
+// Handle supplier form submission
+document.getElementById('createSupplierForm').addEventListener('submit', function(event) {
+  event.preventDefault(); // Prevent default form submission
+
+  const formData = new FormData(this);
+  const data = {};
+  formData.forEach((value, key) => (data[key] = value));
+
+  fetch(this.action, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      // Close the modal using our safe method
+      if (modalInstances['createSupplierModal']) {
+        modalInstances['createSupplierModal'].hide();
+      } else {
+        // If no instance, just remove backdrop and clean up
+        document.body.classList.remove('modal-open');
+        const backdrops = document.querySelectorAll('.modal-backdrop');
+        backdrops.forEach(backdrop => backdrop.remove());
+      }
+
+      // Wait for modal to close before reload
+      setTimeout(() => {
+        location.reload();
+      }, 300);
+    } else {
+      alert(`Error: ${data.error || 'Unknown error'}`);
+    }
+  })
+  .catch(error => {
+    console.error('Error:', error);
+    alert('An error occurred while creating the supplier. Please try again.');
+  });
+});
+</script>
+{% endblock %}

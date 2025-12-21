@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Quick Quote • {{ list_name }}{% endblock %}
+
+{% block extra_css %}
+<link href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css" rel="stylesheet">
+<style>
+    body { background:#f9fbfc; }
+    .quick-quote-container { max-width: 1400px; }
+
+    #pdf-drop-zone {
+        border: 3px dashed #0d6efd;
+        background: #f8f9ff;
+        transition: all 0.2s;
+        cursor: pointer;
+        border-radius: 0.375rem;
+    }
+
+    #pdf-drop-zone:hover,
+    #pdf-drop-zone.drag-over {
+        border-color: #0b5ed7;
+        background: #e7f0ff;
+        transform: scale(1.01);
+    }
+
+    #quote-lines-table-container {
+        height: 600px;
+        overflow: auto;
+    }
+
+    .ht_master .htCore td.has-quote {
+        background: #d1e7dd !important;
+    }
+
+    .card {
+        border: 1px solid #dee2e6;
+        box-shadow: 0 2px 4px rgba(0,0,0,.05);
+    }
+
+    .card-header {
+        background: #fff;
+        border-bottom: 2px solid #e9ecef;
+        font-weight: 600;
+    }
+
+    .form-label {
+        font-weight: 500;
+        color: #495057;
+        margin-bottom: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid quick-quote-container mt-4 mb-5">
+
+    <!-- Header Card -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                    <h5 class="mb-1">
+                        <i class="bi bi-lightning-charge-fill text-primary me-2"></i>
+                        Quick Quote Entry
+                    </h5>
+                    <p class="text-muted mb-0" style="font-size: 0.9rem;">
+                        List #{{ list_id }} — {{ list_name }}
+                        {% if supplier_name %} — <strong>{{ supplier_name }}</strong>{% endif %}
+                    </p>
+                </div>
+                <a href="{{ url_for('parts_list.parts_list_costing', list_id=list_id) }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left me-1"></i>Back to Costing
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quote Header Fields Card -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">
+                <i class="bi bi-file-text me-2"></i>Quote Information
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Supplier <span class="text-danger">*</span></label>
+                    <select class="form-select form-select-lg" id="quote-supplier-select">
+                        <option value="">– Select supplier –</option>
+                        {% for s in suppliers %}
+                        <option value="{{ s.id }}" {{ 'selected' if s.id == supplier_id }}>{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Quote Reference</label>
+                    <input type="text" class="form-control form-control-lg" id="quote-reference-input"
+                           value="RFQ {{ list_id }}{{ '-' + supplier_id|string if supplier_id else '' }}"
+                           placeholder="e.g. Q12345">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Date</label>
+                    <input type="date" class="form-control form-control-lg" id="quote-date-input"
+                           value="{{ current_date }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Currency</label>
+                    <select class="form-select form-control-lg" id="quote-currency-select">
+                        {% for c in currencies %}
+                        <option value="{{ c.id }}" {{ 'selected' if c.id == 3 }}>{{ c.currency_code }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <!-- PDF Drop Zone -->
+        <div class="col-lg-6">
+            <div class="card h-100" id="pdf-drop-zone">
+                <div class="card-body text-center py-5 d-flex flex-column justify-content-center">
+                    <i class="bi bi-file-earmark-pdf display-3 text-primary mb-3"></i>
+                    <h5 class="mb-2">Drop PDF Quote Here</h5>
+                    <p class="text-muted mb-0">Or click to browse files</p>
+                    <small class="text-muted mt-2">AI will extract quote data automatically</small>
+                    <input type="file" accept=".pdf" id="pdf-upload-input" style="display:none;">
+                </div>
+            </div>
+        </div>
+
+        <!-- Text Extraction -->
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-magic me-2"></i>Paste Supplier Response
+                    </h5>
+                </div>
+                <div class="card-body d-flex flex-column">
+                    <textarea class="form-control flex-grow-1 mb-3" id="supplier-response-text"
+                              rows="10"
+                              placeholder="Paste the supplier's email or quote text here...&#10;&#10;The AI will extract part numbers, prices, lead times, and other relevant data."></textarea>
+                    <button class="btn btn-success btn-lg" id="extract-quote-btn">
+                        <i class="bi bi-stars me-1"></i>Extract Quote with AI
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quote Lines Grid -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">
+                <i class="bi bi-table me-2"></i>Quote Lines
+            </h5>
+            <button class="btn btn-primary btn-lg" id="save-quote-btn">
+                <i class="bi bi-save me-1"></i>Save Quote & Return to Costing
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <div id="quote-lines-table-container"></div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    window.PARTS_LIST_ID = {{ list_id }};
+    window.IS_QUICK_QUOTE = true;
+    {% if supplier_id %}
+    window.PRESELECTED_SUPPLIER_ID = {{ supplier_id }};
+    {% endif %}
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+<script src="{{ url_for('static', filename='js/supplier_quotes.js') }}?v={{ cache_bust }}"></script>
+{% endblock %}

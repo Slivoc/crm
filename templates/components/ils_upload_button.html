@@ -1,0 +1,16 @@
+<!-- Compact ILS Upload Button Component -->
+<div class="ils-upload-btn-wrapper {{ wrapper_class|default('') }}">
+    <button type="button" class="btn btn-info btn-sm ils-upload-trigger" id="{{ button_id|default('ils-upload-btn') }}">
+        <i class="bi bi-cloud-upload me-1"></i>
+        Upload ILS Data
+    </button>
+    <input type="file" id="{{ input_id|default('ils-file-input-compact') }}" accept=".csv" style="display: none;">
+
+    <!-- Optional: Show last upload stats -->
+    <div class="ils-compact-stats mt-2" id="{{ stats_id|default('ils-stats-compact') }}" style="display: none;">
+        <small class="text-success">
+            <i class="bi bi-check-circle-fill me-1"></i>
+            <span class="ils-stats-text"></span>
+        </small>
+    </div>
+</div>

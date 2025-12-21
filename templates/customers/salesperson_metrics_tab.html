@@ -1,0 +1,143 @@
+<!-- Salesperson Metrics Tab Content -->
+<div class="tab-pane fade" id="salesperson-metrics" role="tabpanel">
+  <div class="salesperson-metrics-container">
+    <!-- Period Selection Header -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div>
+        <span class="fw-bold me-2">Time Period:</span>
+        <div class="btn-group">
+          <button type="button" class="btn btn-sm btn-outline-primary period-btn active" data-period="today">Today</button>
+          <button type="button" class="btn btn-sm btn-outline-primary period-btn" data-period="week">This Week</button>
+          <button type="button" class="btn btn-sm btn-outline-primary period-btn" data-period="month">This Month</button>
+          <button type="button" class="btn btn-sm btn-outline-primary period-btn" data-period="year">This Year</button>
+        </div>
+      </div>
+      <button type="button" class="btn btn-sm btn-primary" id="refreshMetricsBtn">
+        <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+      </button>
+    </div>
+
+    <!-- Dashboard Sections -->
+    <div class="row mb-3">
+      <!-- Overview Stats -->
+      <div class="col-md-12">
+        <div class="card shadow-sm mb-3">
+          <div class="card-header py-2 bg-light">
+            <h6 class="mb-0">Performance Snapshot</h6>
+          </div>
+          <div class="card-body p-0">
+            <div class="row g-0">
+              <!-- Orders -->
+              <div class="col-md-3">
+                <div class="p-3 text-center border-end h-100">
+                  <div class="d-flex align-items-center justify-content-center mb-2">
+                    <i class="bi bi-bag-check fs-3 text-primary me-2"></i>
+                    <h3 class="fs-2 mb-0" id="stats-orders">0</h3>
+                  </div>
+                  <h6 class="mb-0">Orders</h6>
+                  <div class="text-muted small mt-1" id="stats-orders-prev">+0% vs previous</div>
+                  <div class="mt-2 fw-bold" id="stats-orders-value">$0</div>
+                </div>
+              </div>
+              <!-- Quotes -->
+              <div class="col-md-3">
+                <div class="p-3 text-center border-end h-100">
+                  <div class="d-flex align-items-center justify-content-center mb-2">
+                    <i class="bi bi-file-earmark-text fs-3 text-success me-2"></i>
+                    <h3 class="fs-2 mb-0" id="stats-quotes">0</h3>
+                  </div>
+                  <h6 class="mb-0">Quotes</h6>
+                  <div class="text-muted small mt-1" id="stats-quotes-prev">+0% vs previous</div>
+                  <div class="mt-2 fw-bold" id="stats-quotes-value">$0</div>
+                </div>
+              </div>
+              <!-- Communications -->
+              <div class="col-md-3">
+                <div class="p-3 text-center border-end h-100">
+                  <div class="d-flex align-items-center justify-content-center mb-2">
+                    <i class="bi bi-chat-dots fs-3 text-info me-2"></i>
+                    <h3 class="fs-2 mb-0" id="stats-comms">0</h3>
+                  </div>
+                  <h6 class="mb-0">Communications</h6>
+                  <div class="text-muted small mt-1" id="stats-comms-prev">+0% vs previous</div>
+                  <div class="mt-2">
+                    <span class="badge bg-primary me-1" id="stats-comms-emails">0 emails</span>
+                    <span class="badge bg-secondary" id="stats-comms-calls">0 calls</span>
+                  </div>
+                </div>
+              </div>
+<!-- Updated Customer Engagement Section -->
+<div class="col-md-3">
+  <div class="p-3 text-center h-100">
+    <div class="d-flex align-items-center justify-content-center mb-2">
+      <i class="bi bi-people fs-3 text-warning me-2"></i>
+      <h3 class="fs-2 mb-0" id="stats-contacts">0</h3>
+    </div>
+    <h6 class="mb-0">Contacts Engaged</h6>
+    <div class="text-muted small mt-1" id="stats-contacts-prev">+0% vs previous</div>
+    <div class="mt-2">
+      <span class="badge bg-success" id="stats-communication-types">0 communications</span>
+    </div>
+  </div>
+</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <!-- Activity Timeline -->
+      <div class="col-md-7">
+        <div class="card shadow-sm mb-3">
+          <div class="card-header py-2 bg-light d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">Recent Activity</h6>
+            <div class="btn-group btn-group-sm">
+              <button type="button" class="btn btn-outline-secondary active activity-filter" data-filter="all">All</button>
+              <button type="button" class="btn btn-outline-secondary activity-filter" data-filter="order">Orders</button>
+              <button type="button" class="btn btn-outline-secondary activity-filter" data-filter="quote">Quotes</button>
+              <button type="button" class="btn btn-outline-secondary activity-filter" data-filter="comm">Comms</button>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <div class="activity-timeline" id="activity-timeline">
+              <div class="text-center py-4 text-muted">
+                <div class="spinner-border spinner-border-sm" role="status">
+                  <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mb-0 mt-2">Loading activity...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Performance Charts -->
+      <div class="col-md-5">
+        <!-- Completion Rate -->
+        <div class="card shadow-sm mb-3">
+          <div class="card-header py-2 bg-light">
+            <h6 class="mb-0">Conversion Funnel</h6>
+          </div>
+          <div class="card-body">
+            <div class="funnel-chart-container">
+              <canvas id="conversionFunnelChart" height="170"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Communication Breakdown -->
+        <div class="card shadow-sm">
+          <div class="card-header py-2 bg-light">
+            <h6 class="mb-0">Communication Methods</h6>
+          </div>
+          <div class="card-body">
+            <div class="comm-chart-container">
+              <canvas id="communicationChart" height="170"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

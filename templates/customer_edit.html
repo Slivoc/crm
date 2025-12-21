@@ -1,0 +1,1304 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="container-fluid mt-4" data-customer-id="{{ customer.id }}">
+ <!-- Main card containing everything -->
+ <div class="card shadow border-0">
+<div class="card-header">
+<div class="d-flex justify-content-between align-items-start">
+    <div>
+        <h4 class="card-title mb-1">
+            <div class="d-flex align-items-center gap-2">
+                {% if customer.logo_url %}
+                <img src="{{ customer.logo_url }}" alt="{{ customer.name }} logo"
+                     style="width: 40px; height: 40px; object-fit: contain;"
+                     onerror="this.style.display='none';">
+                {% endif %}
+                <span class="fi fi-{{ customer.country|lower }} rounded-circle" style="font-size: 1.2em;"></span>
+                <strong>{{ customer.name }}</strong>
+
+               <!-- Association Indicators -->
+<span id="associationIndicators" class="d-flex align-items-center gap-1">
+    <!-- Parent company indicator (crown icon) - NO NAME -->
+    <span id="parentCompanyIndicator" class="d-none" title="Has subsidiaries">
+        <i class="bi bi-gem text-warning" style="font-size: 1.2em;"></i>
+    </span>
+
+    <!-- Subsidiary indicator (link to parent) - WITH NAME -->
+    <span id="subsidiaryIndicator" class="d-none">
+        <a href="#" id="parentCompanyLink" class="text-decoration-none" title="View parent company">
+            <i class="bi bi-diagram-3 text-info" style="font-size: 1.2em;"></i>
+            <small class="text-muted ms-1" id="parentCompanyName"></small>
+        </a>
+    </span>
+</span>
+
+                <button class="btn btn-link p-0"
+                        onclick="toggleWatch(event, {{ customer.id }}, {{ 'true' if customer.get('watch', 0) == 1 else 'false' }})"
+                        title="{{ 'Remove from watch' if customer.get('watch', 0) == 1 else 'Add to watch' }}">
+                    <i class="bi {{ 'bi-eye-fill text-primary' if customer.get('watch', 0) == 1 else 'bi-eye text-muted' }}"></i>
+                </button>
+            </div>
+        </h4>
+        <div class="text-muted small">
+            <i class="bi bi-geo-alt"></i> {{ customer.get('country', '')|country_code_to_name }} &bull;
+            <i class="bi bi-person"></i> {{ customer.salesperson_name }} &bull;
+            <i class="bi bi-building"></i> {{ customer.type }}
+            {% if customer.website %} &bull;
+            <i class="bi bi-globe"></i> <a href="{{ customer.website }}" target="_blank" class="text-muted">{{ customer.website }}</a>
+            {% endif %}
+        </div>
+        <div class="mt-2">
+            {% for tag in customer_tags %}
+                <span class="badge bg-info me-1">{{ tag }}</span>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="text-end">
+        {% if customer.rating %}
+            <div class="text-warning mb-1">
+                {% for i in range(customer.rating) %}⭐{% endfor %}
+            </div>
+        {% endif %}
+        {% if customer.annual_revenue %}
+            <div class="text-muted small">Annual Revenue: {{ customer.annual_revenue | currency }}</div>
+        {% endif %}
+    </div>
+</div>
+</div>
+
+   <div class="card-body p-0">
+     <div class="row g-0">
+       <!-- Full width tabs (no more sidebar) -->
+       <div class="col-12">
+         <div class="p-3">
+           <ul class="nav nav-tabs mb-3">
+             <li class="nav-item">
+               <a class="nav-link active" href="#customer-details" data-bs-toggle="tab">Customer Details</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="#industries-tags" data-bs-toggle="tab">Industries & Tags</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="#addresses" data-bs-toggle="tab">Addresses</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="#contacts" data-bs-toggle="tab">Contacts</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="#notes" data-bs-toggle="tab">Notes</a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="#development" data-bs-toggle="tab">
+                 <i class="bi bi-graph-up-arrow me-1"></i> Development
+               </a>
+             </li>
+             <li class="nav-item">
+               <a class="nav-link" href="#associations" data-bs-toggle="tab">
+                 <i class="bi bi-link-45deg me-1"></i> Associations
+               </a>
+             </li>
+           </ul>
+
+           <div class="tab-content">
+             <!-- Customer Details Tab -->
+             <div class="tab-pane fade show active" id="customer-details" role="tabpanel">
+               <form action="{{ url_for('customers.edit_customer', customer_id=customer.id) }}" method="post" class="horizontal-form">
+                 <div class="mb-3">
+                   <label for="name" class="form-label">Name:</label>
+                   <input type="text" id="name" name="name" class="form-control" value="{{ customer.name }}" required>
+                 </div>
+                 <div class="mb-3">
+                   <label for="primary_contact_id" class="form-label">Primary Contact:</label>
+                   <select id="primary_contact_id" name="primary_contact_id" class="form-select">
+                    <option value="">Select a Primary Contact (Optional)</option>
+                    {% for contact in contacts %}
+                    <option value="{{ contact.id }}" {% if contact.id == customer.primary_contact_id %}selected{% endif %}>
+                      {{ contact.name }}
+                    </option>
+                    {% endfor %}
+                  </select>
+                 </div>
+                 <!-- Hidden field for notes -->
+                 <input type="hidden" id="notes-hidden" name="notes" value="{{ customer.notes or '' }}">
+
+                 <div class="mb-3">
+                   <label for="salesperson_id" class="form-label">Salesperson:</label>
+                   <select id="salesperson_id" name="salesperson_id" class="form-select" required>
+                     <option value="">Select a Salesperson</option>
+                     {% for salesperson in salespeople %}
+                     <option value="{{ salesperson.id }}" {% if salesperson.id == customer.salesperson_id %}selected{% endif %}>
+                       {{ salesperson.name }}
+                     </option>
+                     {% endfor %}
+                   </select>
+                 </div>
+
+                 <div class="mb-3">
+                   <label for="website" class="form-label">Website:</label>
+                   <input type="text" id="website" name="website" class="form-control"
+                          value="{{ customer.website }}" placeholder="https://example.com">
+                 </div>
+
+                 <div class="mb-3">
+                   <label for="system_code" class="form-label">System Code:</label>
+                   <input type="text"
+                          id="system_code"
+                          name="system_code"
+                          class="form-control"
+                          value="{{ customer.get('system_code', '') }}"
+                          placeholder="Enter system code"
+                          {{ 'disabled' if not can_edit }}>
+                   <small class="form-text text-muted">
+                     Internal system identifier for this customer.
+                   </small>
+                 </div>
+
+                 <!-- Simple country input -->
+                 <div class="mb-3">
+                   <label for="customer-country" class="form-label">Country (ISO Code):</label>
+                   <input type="text"
+                          id="customer-country"
+                          name="country"
+                          class="form-control"
+                          value="{{ customer.get('country', '') }}"
+                          placeholder="e.g., US, GB, DE, FR"
+                          maxlength="2"
+                          pattern="[A-Za-z]{2}"
+                          style="text-transform: uppercase;"
+                          {{ 'disabled' if not can_edit }}>
+
+                   <small class="form-text text-muted">
+                     Enter the 2-letter ISO country code (e.g., US for United States, GB for United Kingdom).
+                     Current:
+                     <span id="currentCountryDisplay">
+                       {% if customer.get('country') %}
+                         <span class="fi fi-{{ customer.country|lower }}"></span>
+                         {{ customer.country }} ({{ customer.country|country_code_to_name }})
+                       {% else %}
+                         Not specified
+                       {% endif %}
+                     </span>
+                   </small>
+
+                   <small class="form-text text-muted mt-1">
+                     <a href="https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2" target="_blank" class="text-decoration-none">
+                       <i class="bi bi-info-circle"></i> View ISO country codes
+                     </a>
+                   </small>
+                 </div>
+
+                 <button type="submit" class="btn btn-primary">Update Customer</button>
+                 <button type="button" class="btn btn-info btn-sm"
+                         onclick="showApolloLeadFinder({{ customer['id'] }})">
+                     <i class="bi bi-info-circle"></i> Link company and FIND LEADS!
+                 </button>
+               </form>
+             </div>
+
+             <!-- Industries & Tags Tab -->
+             <div class="tab-pane fade" id="industries-tags" role="tabpanel">
+               <div class="mb-3">
+                 <label for="tagsSearch" class="form-label">Tags (search and manage):</label>
+                 <input type="text"
+                        id="tagsSearch"
+                        class="form-control"
+                        placeholder="Search and manage tags..."
+                        autocomplete="off">
+               </div>
+
+               <!-- Search Results -->
+               <div class="border rounded p-2 mb-3" style="background-color: #f8f9fa;">
+                 <h6>Search Results</h6>
+                 <div id="tagsSearchResults">
+                   <p class="text-muted">Start typing to find tags...</p>
+                 </div>
+               </div>
+
+               <!-- Assigned Tags -->
+               <div>
+                 <h6>Assigned Tags</h6>
+                 <div id="tagsList" class="mt-2">
+                   <p class="text-muted">No tags assigned yet.</p>
+                 </div>
+               </div>
+             </div>
+
+             <!-- Addresses Tab -->
+             <div class="tab-pane fade" id="addresses" role="tabpanel">
+               <div class="row">
+                 <div class="col-md-6">
+                   <h4>Add New Address</h4>
+                   <form action="{{ url_for('customers.add_customer_address', customer_id=customer.id) }}" method="post">
+                     <div class="mb-3">
+                       <label for="address" class="form-label">Address:</label>
+                       <input type="text" id="address" name="address" class="form-control" required>
+                     </div>
+                     <div class="mb-3">
+                       <label for="city" class="form-label">City:</label>
+                       <input type="text" id="city" name="city" class="form-control" required>
+                     </div>
+                     <div class="mb-3">
+                       <label for="postal_code" class="form-label">Postal Code:</label>
+                       <input type="text" id="postal_code" name="postal_code" class="form-control" required>
+                     </div>
+                     <div class="mb-3">
+                       <label for="country" class="form-label">Country:</label>
+                       <input type="text" id="country" name="country" class="form-control" required>
+                     </div>
+                     <button type="submit" class="btn btn-primary">Add Address</button>
+                   </form>
+                 </div>
+
+                 <div class="col-md-6">
+                   <h4>Existing Addresses</h4>
+                   <ul class="list-group">
+                     {% for address in customer_addresses %}
+                     <li class="list-group-item">
+                       {{ address.address }}, {{ address.city }}, {{ address.postal_code }}, {{ address.country }}
+                       <form action="{{ url_for('customers.edit_customer_address', address_id=address.id) }}" method="GET" class="d-inline">
+                         <button type="submit" class="btn btn-sm btn-outline-primary">Edit</button>
+                       </form>
+                     </li>
+                     {% else %}
+                     <li class="list-group-item">No addresses available.</li>
+                     {% endfor %}
+                   </ul>
+                 </div>
+               </div>
+             </div>
+
+             <!-- Contacts Tab Content -->
+             <div class="tab-pane fade" id="contacts" role="tabpanel">
+               {% include 'components/contact_management.html' %}
+             </div>
+
+             <!-- Notes Tab -->
+             <div class="tab-pane fade" id="notes" role="tabpanel">
+                 <div class="mb-3">
+                     <label for="notes-content" class="form-label">Customer Notes:</label>
+                     <textarea id="notes-content" class="form-control" rows="10"
+                               {{ 'disabled' if not can_edit }}>{{ customer.get('notes', '') }}</textarea>
+                     <small class="form-text text-muted">
+                         Add important notes, requirements, or any additional information about this customer.
+                     </small>
+                 </div>
+                 <button type="button" class="btn btn-primary" onclick="saveCustomerDetails()" {{ 'disabled' if not can_edit }}>
+                     Save Notes
+                 </button>
+             </div>
+
+             <!-- Development Tab - Simple Questions & Answers -->
+             <div class="tab-pane fade" id="development" role="tabpanel">
+                 <div class="development-plan">
+                     <div class="mb-4">
+                         <h6>Customer Development Questions</h6>
+                         <small class="text-muted">Answer key questions to track customer development progress</small>
+                     </div>
+
+                     {% if development_plan %}
+                         {% for point in development_plan %}
+                             <div class="mb-4" data-point-id="{{ point.point_id }}">
+                                 <!-- Question -->
+                                 <div class="mb-2">
+                                     <div class="d-flex align-items-start justify-content-between">
+                                         <div class="flex-grow-1">
+                                             <label class="form-label fw-semibold mb-1">
+                                                 {{ point.question }}
+                                                 {% if point.order_index == 1 %}
+                                                     <span class="badge bg-warning text-dark ms-1">Priority</span>
+                                                 {% endif %}
+                                             </label>
+                                             {% if point.description %}
+                                                 <div class="text-muted small">{{ point.description }}</div>
+                                             {% endif %}
+                                         </div>
+                                     </div>
+                                 </div>
+
+                                 <!-- Answer -->
+                                 {% if can_edit %}
+                                     <textarea
+                                         class="form-control mb-2"
+                                         data-point-id="{{ point.point_id }}"
+                                         rows="3"
+                                         placeholder="Enter your answer..."
+                                     >{{ point.answer or '' }}</textarea>
+
+                                     <div class="d-flex gap-2">
+                                         <button type="button"
+                                                 class="btn btn-sm btn-primary save-answer"
+                                                 data-point-id="{{ point.point_id }}">
+                                             Save Answer
+                                         </button>
+
+                                         {% if point.answer %}
+                                             <button type="button"
+                                                     class="btn btn-sm btn-outline-secondary clear-answer"
+                                                     data-point-id="{{ point.point_id }}">
+                                                 Clear
+                                             </button>
+                                         {% endif %}
+                                     </div>
+                                 {% else %}
+                                     {% if point.answer %}
+                                         <div class="mb-2">
+                                             <div class="text-muted small mb-1">Answer:</div>
+                                             <div style="white-space: pre-wrap;">{{ point.answer }}</div>
+                                         </div>
+                                     {% else %}
+                                         <div class="text-muted fst-italic mb-2">No answer provided</div>
+                                     {% endif %}
+                                 {% endif %}
+
+                                 {% if not loop.last %}
+                                     <hr class="my-4">
+                                 {% endif %}
+                             </div>
+                         {% endfor %}
+
+                     {% else %}
+                         <div class="alert alert-info">
+                             <i class="bi bi-info-circle me-2"></i>
+                             No development questions have been configured for this customer type.
+                         </div>
+                     {% endif %}
+                 </div>
+             </div>
+
+             <!-- Associations Tab -->
+             <div class="tab-pane fade" id="associations" role="tabpanel">
+                 <div class="associations-container">
+                     <div class="mb-4">
+                         <h6>Customer Associations</h6>
+                         <small class="text-muted">Link related customers (subsidiaries, parent companies, partners, etc.)</small>
+                     </div>
+
+                     <!-- Add New Association -->
+                     <div class="card mb-4">
+                         <div class="card-header">
+                             <h6 class="mb-0">Add Association</h6>
+                         </div>
+                         <div class="card-body">
+                             <div class="row g-3">
+                                 <div class="col-md-8">
+                                     <label for="associationCustomerSearch" class="form-label">Search Customer</label>
+                                     <input type="text"
+                                            id="associationCustomerSearch"
+                                            class="form-control"
+                                            placeholder="Type to search customers..."
+                                            autocomplete="off">
+                                     <div id="associationSearchResults" class="dropdown-menu w-100"></div>
+                                 </div>
+                                 <div class="col-md-12">
+                                     <label for="associationNotes" class="form-label">Notes (Optional)</label>
+                                     <textarea id="associationNotes"
+                                               class="form-control"
+                                               rows="2"
+                                               placeholder="Describe the relationship..."></textarea>
+                                 </div>
+                                 <div class="col-md-12">
+                                     <button type="button"
+                                             class="btn btn-primary"
+                                             id="addAssociationBtn"
+                                             disabled>
+                                         <i class="bi bi-plus-circle"></i> Add Association
+                                     </button>
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+
+                     <!-- Existing Associations -->
+                     <div class="card">
+                         <div class="card-header d-flex justify-content-between align-items-center">
+                             <h6 class="mb-0">Associated Customers</h6>
+                             <span class="badge bg-secondary" id="associationCount">0</span>
+                         </div>
+                         <div class="card-body">
+                             <div id="associationsList">
+                                 <div class="text-center text-muted py-4">
+                                     <i class="bi bi-link-45deg fs-1"></i>
+                                     <p>No associations yet</p>
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+
+           </div>
+           <!-- End tab-content -->
+         </div>
+         <!-- End tabs container (p-3) -->
+       </div>
+       <!-- End col-12 -->
+     </div>
+     <!-- End row g-0 -->
+   </div>
+   <!-- End card-body -->
+ </div>
+ <!-- End main card -->
+</div>
+<!-- End container-fluid -->
+
+<script>
+let customerId;
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Get customerId from the page
+    customerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
+    console.log('customerId:', customerId);
+
+    // Initialize tag search
+    document.getElementById('tagsSearch').addEventListener('input', async (e) => {
+        const searchTerm = e.target.value.trim();
+
+        if (!searchTerm) {
+            document.getElementById('tagsSearchResults').innerHTML = '<p class="text-muted">Start typing to find tags...</p>';
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/tags?search=${searchTerm}`, {
+                headers: {
+                    'X-API-Key': 'dingleberry'
+                }
+            });
+            if (!response.ok) throw new Error('Failed to fetch tags');
+            const data = await response.json();
+            pageDisplaySearchedTags(data.data || []);
+        } catch (error) {
+            console.error("Error fetching tags:", error);
+            document.getElementById('tagsSearchResults').innerHTML = '<p class="text-danger">Error loading tags.</p>';
+        }
+    });
+
+    pageLoadInitialTags();
+});
+
+function pageDisplaySearchedTags(tags) {
+    const searchResultsContainer = document.getElementById('tagsSearchResults');
+    searchResultsContainer.innerHTML = tags.length
+        ? tags.map(tag => `
+            <button class="btn btn-outline-primary btn-sm me-1 mb-1 tag-select-btn" data-tag-id="${tag.id}" data-tag-name="${tag.name}">
+                ${tag.name} (${tag.customer_count || 0})
+            </button>
+        `).join('')
+        : '<p class="text-muted">No tags found.</p>';
+
+    document.querySelectorAll('.tag-select-btn').forEach(button => {
+        button.addEventListener('click', (e) => {
+            const tagId = e.target.dataset.tagId;
+            const tagName = e.target.dataset.tagName;
+            pageAddTagToAssignedList(tagId, tagName);
+        });
+    });
+}
+
+async function pageAddTagToAssignedList(tagId, tagName) {
+    const customerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
+    if (!customerId) {
+        console.error('No customer ID found');
+        return;
+    }
+
+    const assignedTagsContainer = document.getElementById('tagsList');
+    try {
+        const response = await fetch(`/api/customer/${customerId}/add-tag`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': 'dingleberry'
+            },
+            body: JSON.stringify({ tag_id: tagId })
+        });
+
+        if (!response.ok) throw new Error('Failed to add tag');
+
+        const existingTag = document.querySelector(`#assignedTag-${tagId}`);
+        if (!existingTag) {
+            const noTagsMsg = assignedTagsContainer.querySelector('.text-muted');
+            if (noTagsMsg) noTagsMsg.remove();
+
+            assignedTagsContainer.insertAdjacentHTML('beforeend', `
+                <span id="assignedTag-${tagId}" class="badge bg-info me-1 mb-1" data-tag-id="${tagId}">
+                    ${tagName}
+                    <button class="btn-close btn-close-white btn-sm ms-1"
+                            onclick="window.pageRemoveTag(${tagId})"
+                            aria-label="Remove"></button>
+                </span>
+            `);
+        }
+    } catch (error) {
+        console.error('Error adding tag:', error);
+        alert('Failed to add tag');
+    }
+}
+
+window.pageRemoveTag = async function(tagId) {
+    const customerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
+    if (!customerId) {
+        console.error('No customer ID found');
+        return;
+    }
+
+    if (!tagId && tagId !== 0) {
+        console.error('Invalid tag ID:', tagId);
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/customer/${customerId}/remove-tag/${tagId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-API-Key': 'dingleberry'
+            }
+        });
+
+        if (!response.ok) throw new Error('Failed to remove tag');
+
+        const tagElement = document.getElementById(`assignedTag-${tagId}`);
+        if (tagElement) {
+            tagElement.remove();
+
+            const tagsList = document.getElementById('tagsList');
+            if (!tagsList.querySelector('.badge')) {
+                tagsList.innerHTML = '<p class="text-muted">No tags assigned yet.</p>';
+            }
+        }
+    } catch (error) {
+        console.error('Error removing tag:', error);
+        alert('Failed to remove tag');
+    }
+}
+
+async function pageLoadInitialTags() {
+    const customerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
+    if (!customerId) {
+        console.error('No customer ID found');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/customer-preview/${customerId}/tags`, {
+            headers: {
+                'X-API-Key': 'dingleberry'
+            }
+        });
+        if (!response.ok) throw new Error('Failed to fetch tags');
+        const data = await response.json();
+        const tags = data.data || [];
+
+        const tagsList = document.getElementById('tagsList');
+        if (tags.length > 0) {
+            tagsList.innerHTML = tags.map(tag => `
+                <span id="assignedTag-${tag.id}" class="badge bg-info me-1 mb-1" data-tag-id="${tag.id}">
+                    ${tag.name}
+                    <button class="btn-close btn-close-white btn-sm ms-1"
+                            onclick="window.pageRemoveTag(${tag.id})"
+                            aria-label="Remove"></button>
+                </span>
+            `).join('');
+        } else {
+            tagsList.innerHTML = '<p class="text-muted">No tags assigned yet.</p>';
+        }
+    } catch (error) {
+        console.error('Error loading initial tags:', error);
+        document.getElementById('tagsList').innerHTML = '<p class="text-danger">Error loading tags.</p>';
+    }
+}
+
+async function toggleWatch(event, customerId, currentWatchState) {
+    try {
+        const response = await fetch(`/customers/${customerId}/toggle_watch`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ watch: !currentWatchState })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to update watch status');
+        }
+
+        const button = document.querySelector(`button[onclick*="toggleWatch(event, ${customerId},"]`);
+        const icon = button.getElementsByClassName('bi')[0];
+
+        const newWatchState = !currentWatchState;
+
+        if (newWatchState) {
+            icon.classList.remove('bi-eye', 'text-muted');
+            icon.classList.add('bi-eye-fill', 'text-primary');
+            button.title = 'Remove from watch';
+        } else {
+            icon.classList.remove('bi-eye-fill', 'text-primary');
+            icon.classList.add('bi-eye', 'text-muted');
+            button.title = 'Add to watch';
+        }
+
+        button.setAttribute('onclick', `toggleWatch(event, ${customerId}, ${newWatchState})`);
+
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Failed to update watch status: ' + error.message);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const countryInput = document.getElementById('customer-country');
+  const currentDisplay = document.getElementById('currentCountryDisplay');
+
+  if (countryInput) {
+    countryInput.addEventListener('input', function(e) {
+      this.value = this.value.toUpperCase();
+
+      if (this.value.length === 2 && /^[A-Z]{2}$/.test(this.value)) {
+        const code = this.value.toLowerCase();
+        currentDisplay.innerHTML = `
+          <span class="fi fi-${code}"></span>
+          ${this.value}
+        `;
+      }
+    });
+
+    countryInput.addEventListener('blur', function(e) {
+      const value = this.value.trim().toUpperCase();
+      if (value && !/^[A-Z]{2}$/.test(value)) {
+        this.classList.add('is-invalid');
+        let feedback = this.parentElement.querySelector('.invalid-feedback');
+        if (!feedback) {
+          feedback = document.createElement('div');
+          feedback.className = 'invalid-feedback';
+          this.parentElement.appendChild(feedback);
+        }
+        feedback.textContent = 'Please enter a valid 2-letter country code (e.g., US, GB, DE)';
+      } else {
+        this.classList.remove('is-invalid');
+        const feedback = this.parentElement.querySelector('.invalid-feedback');
+        if (feedback) feedback.remove();
+      }
+    });
+  }
+});
+
+// Development Tab
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.save-answer').forEach(button => {
+        button.addEventListener('click', function() {
+            const pointId = this.getAttribute('data-point-id');
+            const textarea = document.querySelector(`textarea[data-point-id="${pointId}"]`);
+            const answer = textarea.value.trim();
+
+            saveAnswer(pointId, answer, this);
+        });
+    });
+
+    document.querySelectorAll('.clear-answer').forEach(button => {
+        button.addEventListener('click', function() {
+            const pointId = this.getAttribute('data-point-id');
+            const textarea = document.querySelector(`textarea[data-point-id="${pointId}"]`);
+
+            if (confirm('Clear this answer?')) {
+                textarea.value = '';
+                saveAnswer(pointId, '', this);
+            }
+        });
+    });
+});
+
+function saveAnswer(pointId, answer, buttonElement) {
+    const customerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
+
+    if (!customerId) {
+        console.error('No customer ID found');
+        return;
+    }
+
+    const originalText = buttonElement.textContent;
+    buttonElement.textContent = 'Saving...';
+    buttonElement.disabled = true;
+
+    fetch(`/customers/${customerId}/development/answer`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            development_point_id: pointId,
+            answer: answer
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            buttonElement.textContent = 'Saved';
+
+            setTimeout(() => {
+                buttonElement.textContent = originalText;
+                buttonElement.disabled = false;
+            }, 1000);
+
+            const point = document.querySelector(`[data-point-id="${pointId}"]`).closest('.development-point');
+            if (answer.trim()) {
+                point.classList.add('answered');
+            } else {
+                point.classList.remove('answered');
+            }
+
+            updateClearButton(pointId, answer);
+        } else {
+            throw new Error(data.error || 'Failed to save');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        buttonElement.textContent = 'Error';
+
+        setTimeout(() => {
+            buttonElement.textContent = originalText;
+            buttonElement.disabled = false;
+        }, 2000);
+    });
+}
+
+function updateClearButton(pointId, answer) {
+    const clearButton = document.querySelector(`button.clear-answer[data-point-id="${pointId}"]`);
+    const saveButton = document.querySelector(`button.save-answer[data-point-id="${pointId}"]`);
+
+    if (answer.trim() && !clearButton) {
+        const newClearButton = document.createElement('button');
+        newClearButton.type = 'button';
+        newClearButton.className = 'btn btn-sm btn-outline-secondary clear-answer';
+        newClearButton.setAttribute('data-point-id', pointId);
+        newClearButton.textContent = 'Clear';
+
+        newClearButton.addEventListener('click', function() {
+            const textarea = document.querySelector(`textarea[data-point-id="${pointId}"]`);
+            if (confirm('Clear this answer?')) {
+                textarea.value = '';
+                saveAnswer(pointId, '', this);
+            }
+        });
+
+        saveButton.parentNode.insertBefore(newClearButton, saveButton.nextSibling);
+    } else if (!answer.trim() && clearButton) {
+        clearButton.remove();
+    }
+}
+
+// Notes sync
+document.addEventListener('DOMContentLoaded', function() {
+  const mainForm = document.querySelector('#customer-details form');
+  const notesContent = document.getElementById('notes-content');
+  const hiddenNotesField = document.getElementById('notes-hidden');
+
+  if (notesContent && hiddenNotesField && mainForm) {
+    function syncNotesToHiddenField() {
+      hiddenNotesField.value = notesContent.value;
+    }
+
+    notesContent.addEventListener('input', syncNotesToHiddenField);
+    syncNotesToHiddenField();
+
+    mainForm.addEventListener('submit', function(e) {
+      syncNotesToHiddenField();
+    });
+
+    window.saveCustomerDetails = function() {
+      syncNotesToHiddenField();
+      mainForm.submit();
+    };
+  }
+});
+
+// Customer Associations
+document.addEventListener('DOMContentLoaded', function() {
+    initializeAssociations();
+    loadAssociationIndicators();
+});
+
+let selectedAssociationCustomer = null;
+
+function initializeAssociations() {
+    const searchInput = document.getElementById('associationCustomerSearch');
+    const searchResults = document.getElementById('associationSearchResults');
+    const addBtn = document.getElementById('addAssociationBtn');
+    const notesTextarea = document.getElementById('associationNotes');
+
+    if (!searchInput) return;
+
+    let searchTimeout;
+
+    searchInput.addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        const query = this.value.trim();
+
+        if (query.length < 2) {
+            searchResults.classList.remove('show');
+            selectedAssociationCustomer = null;
+            addBtn.disabled = true;
+            return;
+        }
+
+        searchTimeout = setTimeout(() => {
+            searchCustomersForAssociation(query);
+        }, 300);
+    });
+
+    addBtn.addEventListener('click', function() {
+        if (selectedAssociationCustomer) {
+            addAssociation(selectedAssociationCustomer.id, notesTextarea.value);
+        }
+    });
+
+    loadAssociations();
+
+    document.addEventListener('click', function(e) {
+        if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+            searchResults.classList.remove('show');
+        }
+    });
+}
+
+function searchCustomersForAssociation(query) {
+    const searchResults = document.getElementById('associationSearchResults');
+    const currentCustomerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
+
+    fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=10`)
+        .then(response => response.json())
+        .then(customers => {
+            const filteredCustomers = customers.filter(c => c.id != currentCustomerId);
+
+            if (filteredCustomers.length === 0) {
+                searchResults.innerHTML = `
+                    <div class="dropdown-item disabled">
+                        <small class="text-muted">No customers found</small>
+                    </div>
+                `;
+            } else {
+                searchResults.innerHTML = filteredCustomers.map(customer => `
+                    <a href="#" class="dropdown-item association-search-result" data-customer-id="${customer.id}">
+                        <div class="d-flex align-items-center">
+                            ${customer.country ? `<span class="fi fi-${customer.country.toLowerCase()} me-2"></span>` : ''}
+                            <div>
+                                <div class="fw-semibold">${customer.name}</div>
+                                <small class="text-muted">
+                                    ${customer.system_code || 'No code'}
+                                    ${customer.assigned_salesperson_name ? ` • ${customer.assigned_salesperson_name}` : ''}
+                                </small>
+                            </div>
+                        </div>
+                    </a>
+                `).join('');
+
+                document.querySelectorAll('.association-search-result').forEach(item => {
+                    item.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        const customerId = this.getAttribute('data-customer-id');
+                        const customer = filteredCustomers.find(c => c.id == customerId);
+                        selectCustomerForAssociation(customer);
+                    });
+                });
+            }
+
+            searchResults.classList.add('show');
+        })
+        .catch(error => {
+            console.error('Search error:', error);
+            searchResults.innerHTML = `
+                <div class="dropdown-item disabled">
+                    <small class="text-danger">Error searching customers</small>
+                </div>
+            `;
+            searchResults.classList.add('show');
+        });
+}
+
+function selectCustomerForAssociation(customer) {
+    const searchInput = document.getElementById('associationCustomerSearch');
+    const searchResults = document.getElementById('associationSearchResults');
+    const addBtn = document.getElementById('addAssociationBtn');
+
+    selectedAssociationCustomer = customer;
+    searchInput.value = customer.name;
+    searchResults.classList.remove('show');
+    addBtn.disabled = false;
+}
+
+function addAssociation(associatedCustomerId, notes) {
+    const customerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
+    const addBtn = document.getElementById('addAssociationBtn');
+
+    if (!customerId) {
+        console.error('No customer ID found');
+        return;
+    }
+
+    addBtn.disabled = true;
+    addBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Adding...';
+
+    fetch(`/customers/${customerId}/associations/api`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            associated_customer_id: associatedCustomerId,
+            notes: notes
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('associationCustomerSearch').value = '';
+            document.getElementById('associationNotes').value = '';
+            selectedAssociationCustomer = null;
+            addBtn.innerHTML = '<i class="bi bi-plus-circle"></i> Add Association';
+
+            loadAssociations();
+            showToast('Association added successfully', 'success');
+        } else {
+            throw new Error(data.error || 'Failed to add association');
+        }
+    })
+    .catch(error => {
+        console.error('Error adding association:', error);
+        showToast(error.message, 'error');
+        addBtn.disabled = false;
+        addBtn.innerHTML = '<i class="bi bi-plus-circle"></i> Add Association';
+    });
+}
+
+function loadAssociations() {
+    const customerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
+    const listContainer = document.getElementById('associationsList');
+    const countBadge = document.getElementById('associationCount');
+
+    if (!customerId) return;
+
+    fetch(`/customers/${customerId}/associations/api`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.associations.length > 0) {
+                countBadge.textContent = data.associations.length;
+
+                listContainer.innerHTML = `
+                    <div class="list-group list-group-flush">
+                        ${data.associations.map(assoc => `
+                            <div class="list-group-item" data-association-id="${assoc.id}">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <a href="/customers/${assoc.associated_customer_id}"
+                                               class="fw-semibold text-decoration-none me-2"
+                                               target="_blank">
+                                                ${assoc.associated_customer_name}
+                                                <i class="bi bi-box-arrow-up-right small"></i>
+                                            </a>
+                                        </div>
+                                        ${assoc.notes ? `
+                                            <div class="association-notes">
+                                                <small class="text-muted">${assoc.notes}</small>
+                                            </div>
+                                        ` : ''}
+                                        <small class="text-muted">
+                                            <i class="bi bi-calendar-event"></i>
+                                            Added ${new Date(assoc.created_at).toLocaleDateString()}
+                                        </small>
+                                    </div>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-link text-secondary p-1 edit-assoc-btn"
+                                                data-assoc-id="${assoc.id}"
+                                                data-notes="${(assoc.notes || '').replace(/"/g, '&quot;')}"
+                                                title="Edit">
+                                            <i class="bi bi-pencil-circle"></i>
+                                        </button>
+                                        <button class="btn btn-link text-secondary p-1 delete-assoc-btn"
+                                                data-assoc-id="${assoc.id}"
+                                                title="Delete">
+                                            <i class="bi bi-x-circle"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+
+                listContainer.querySelectorAll('.edit-assoc-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const id = this.getAttribute('data-assoc-id');
+                        const notes = this.getAttribute('data-notes');
+                        editAssociation(id, notes);
+                    });
+                });
+
+                listContainer.querySelectorAll('.delete-assoc-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const id = this.getAttribute('data-assoc-id');
+                        deleteAssociation(id);
+                    });
+                });
+
+            } else {
+                countBadge.textContent = '0';
+                listContainer.innerHTML = `
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-link-45deg fs-1"></i>
+                        <p>No associations yet</p>
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading associations:', error);
+            listContainer.innerHTML = `
+                <div class="alert alert-danger">
+                    Error loading associations
+                </div>
+            `;
+        });
+}
+
+function editAssociation(associationId, currentNotes) {
+    const newNotes = prompt('Edit association notes:', currentNotes);
+
+    if (newNotes === null) return;
+
+    const customerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
+
+    fetch(`/customers/${customerId}/associations/${associationId}/api`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ notes: newNotes })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadAssociations();
+            showToast('Association updated', 'success');
+        } else {
+            throw new Error(data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error updating association:', error);
+        showToast('Failed to update association', 'error');
+    });
+}
+
+function deleteAssociation(associationId) {
+    if (!confirm('Are you sure you want to remove this association?')) {
+        return;
+    }
+
+    const customerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
+
+    fetch(`/customers/${customerId}/associations/${associationId}/api`, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadAssociations();
+            showToast('Association removed', 'success');
+        } else {
+            throw new Error(data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error deleting association:', error);
+        showToast('Failed to remove association', 'error');
+    });
+}
+
+function loadAssociationIndicators() {
+    const customerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
+    if (!customerId) return;
+
+    fetch(`/customers/${customerId}/associations/api`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                if (data.has_subsidiaries) {
+                    const parentIndicator = document.getElementById('parentCompanyIndicator');
+                    if (parentIndicator) {
+                        parentIndicator.classList.remove('d-none');
+                        const count = data.associations.length;
+                        const subsidiaryText = count === 1 ? 'subsidiary' : 'subsidiaries';
+                        parentIndicator.setAttribute('title', `Parent company • ${count} ${subsidiaryText}`);
+                    }
+                }
+
+                if (data.has_parent && data.parents.length > 0) {
+                    const subsidiaryIndicator = document.getElementById('subsidiaryIndicator');
+                    const parentLink = document.getElementById('parentCompanyLink');
+                    const parentName = document.getElementById('parentCompanyName');
+
+                    if (subsidiaryIndicator && parentLink && parentName) {
+                        const parent = data.parents[0];
+
+                        subsidiaryIndicator.classList.remove('d-none');
+                        parentLink.href = `/customers/${parent.parent_customer_id}`;
+                        parentLink.setAttribute('title', `Subsidiary of ${parent.parent_customer_name}`);
+                        parentName.textContent = `${parent.parent_customer_name}`;
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error loading association indicators:', error);
+        });
+}
+
+function showToast(message, type = 'success') {
+    const bgClass = type === 'success' ? 'bg-success' :
+                    type === 'error' ? 'bg-danger' :
+                    type === 'warning' ? 'bg-warning' :
+                    'bg-info';
+
+    const toast = document.createElement('div');
+    toast.className = 'toast show position-fixed bottom-0 end-0 m-3';
+    toast.setAttribute('role', 'alert');
+    toast.style.zIndex = '9999';
+    toast.innerHTML = `
+      <div class="toast-header ${bgClass} text-white">
+        <strong class="me-auto">${type.charAt(0).toUpperCase() + type.slice(1)}</strong>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+      </div>
+      <div class="toast-body">${message}</div>
+    `;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.remove();
+    }, 4000);
+}
+</script>
+
+<style>
+/* Simplified Development Tab Styles */
+.development-point {
+    background-color: #fafafa;
+    border: 1px solid #e9ecef !important;
+    transition: border-color 0.2s ease;
+}
+
+.development-point:hover {
+    border-color: #adb5bd !important;
+}
+
+.development-point.answered {
+    border-color: #198754 !important;
+    background-color: #f8fff9;
+}
+
+.development-answer {
+    border: 1px solid #ced4da;
+    resize: vertical;
+    min-height: 80px;
+}
+
+.development-answer:focus {
+    border-color: #86b7fe;
+    outline: 0;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+.save-answer {
+    min-width: 70px;
+}
+
+.development-point:has(.badge.bg-warning) {
+    border-left: 3px solid #ffc107 !important;
+}
+
+@media (max-width: 768px) {
+    .development-point {
+        padding: 1rem !important;
+    }
+
+    .d-flex.gap-2 {
+        flex-direction: column;
+        gap: 0.5rem !important;
+    }
+
+    .btn {
+        width: 100%;
+    }
+}
+
+/* Subtle circular association buttons */
+.edit-assoc-btn,
+.delete-assoc-btn {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    transition: all 0.2s ease;
+    background-color: transparent;
+    border: none;
+}
+
+.edit-assoc-btn i,
+.delete-assoc-btn i {
+    font-size: 1.25rem;
+    color: #6c757d;
+}
+
+.edit-assoc-btn:hover {
+    background-color: rgba(13, 110, 253, 0.1);
+}
+
+.edit-assoc-btn:hover i {
+    color: #0d6efd;
+}
+
+.delete-assoc-btn:hover {
+    background-color: rgba(220, 53, 69, 0.1);
+}
+
+.delete-assoc-btn:hover i {
+    color: #dc3545;
+}
+
+.btn-link.edit-assoc-btn,
+.btn-link.delete-assoc-btn {
+    text-decoration: none !important;
+}
+
+/* Association Indicators */
+#associationIndicators {
+    margin-left: 0.5rem;
+}
+
+#parentCompanyIndicator i {
+    filter: drop-shadow(0 0 2px rgba(25, 135, 84, 0.3));
+}
+
+#subsidiaryIndicator a {
+    transition: all 0.2s ease;
+}
+
+#subsidiaryIndicator a:hover {
+    opacity: 0.8;
+}
+
+#subsidiaryIndicator a:hover #parentCompanyName {
+    text-decoration: underline;
+}
+
+[title] {
+    cursor: help;
+}
+</style>
+
+{% endblock %}

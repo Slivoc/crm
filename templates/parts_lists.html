@@ -1,0 +1,661 @@
+{% extends "base.html" %}
+
+{% block title %}Parts Lists{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row mb-3 align-items-center">
+        <div class="col-md-6">
+            <div>
+                <h2 class="fw-bold mb-1">Parts Lists</h2>
+                <p class="text-muted mb-0">Manage and track customer parts lists</p>
+            </div>
+        </div>
+        <div class="col-md-6 text-end">
+            <div class="d-inline-flex gap-2">
+                <!-- Salesperson Selector Dropdown -->
+                <div class="dropdown">
+                    <button type="button" class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-person-circle"></i>
+                        {% if current_salesperson %}
+                            {{ current_salesperson.name }}
+                        {% else %}
+                            All Salespeople
+                        {% endif %}
+                    </button>
+                    <ul class="dropdown-menu">
+                        {% if current_salesperson %}
+                            <li>
+                                <a class="dropdown-item" href="{{ url_for('parts_list.view_parts_lists') }}">
+                                    <i class="bi bi-people"></i> All Salespeople
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                        {% endif %}
+                        {% if all_salespeople %}
+                            {% for sp in all_salespeople %}
+                                {% if not current_salesperson or sp.id != current_salesperson.id %}
+                                    <li>
+                                        <a class="dropdown-item" href="{{ url_for('parts_list.view_parts_lists', salesperson_id=sp.id) }}">
+                                            <i class="bi bi-person"></i> {{ sp.name }}
+                                            {% if sp.parts_list_count > 0 %}
+                                                <span class="badge bg-secondary ms-2">{{ sp.parts_list_count }}</span>
+                                            {% endif %}
+                                        </a>
+                                    </li>
+                                {% else %}
+                                    <li>
+                                        <span class="dropdown-item active">
+                                            <i class="bi bi-person-check"></i> {{ sp.name }} (Current)
+                                        </span>
+                                    </li>
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
+                    </ul>
+                </div>
+
+                <button type="button" class="btn btn-success" onclick="openTopQuotesModal()">
+                    <i class="bi bi-trophy me-1"></i> Top Quotes
+                </button>
+
+                <!-- New Parts List Button -->
+                <a href="{{ url_for('parts_list.parts_list') }}" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-1"></i> New Parts List
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-6">
+                    <label for="partSearchInput" class="form-label fw-bold">
+                        Search by Part Number
+                    </label>
+                    <div class="d-flex align-items-center gap-2">
+                         <input type="text"
+                                id="partSearchInput"
+                                class="form-control"
+                                placeholder="Type full or partial part number (customer or base)..."
+                                value="{{ initial_part_search or '' }}">
+                        <button class="btn btn-outline-secondary" type="button" onclick="searchPartsListsByPart()">
+                            <i class="bi bi-search"></i> Search
+                        </button>
+                    </div>
+                    <small class="form-text text-muted">
+                        Fuzzy search on customer_part_number and base_part_number across all lists.
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header fw-bold"><i class="bi bi-funnel me-2"></i>Filter Saved Lists</div>
+        <div class="card-body">
+            <div class="row g-3">
+                <!-- Status Tabs -->
+                <div class="col-12">
+                    <label class="form-label">Status</label>
+                    <ul class="nav nav-pills" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <a class="nav-link {% if not selected_status_id %}active{% endif %}"
+                               href="{{ url_for('parts_list.view_parts_lists', customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '') }}">
+                                All Statuses
+                            </a>
+                        </li>
+                        {% for status in statuses %}
+                        <li class="nav-item" role="presentation">
+                            <a class="nav-link {% if status.id|string == selected_status_id|string %}active{% endif %}"
+                               href="{{ url_for('parts_list.view_parts_lists', status_id=status.id, customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '') }}">
+                                {{ status.name }}
+                            </a>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+
+                <!-- Customer Filter -->
+                <div class="col-md-6">
+                    <label for="customerSearchInput" class="form-label">Customer</label>
+                    <div class="d-flex align-items-center gap-2">
+                        <input type="text"
+                               id="customerSearchInput"
+                               class="form-control"
+                               placeholder="Type to filter by customer name..."
+                               autocomplete="off">
+                        <button class="btn btn-outline-secondary" type="button" onclick="clearCustomerSearch()">
+                            <i class="bi bi-x-circle"></i> Clear
+                        </button>
+                    </div>
+                    <small class="text-muted">Live filter on the customer column of the table below.</small>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-3" id="partSearchResultsCard" style="display: none;">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Search Results</span>
+            <small class="text-muted">
+                <span id="partSearchResultsCount">0</span> match(es)
+            </small>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Part Number</th>
+                            <th>Base Part</th>
+                            <th class="text-center">Qty</th>
+                            <th>List</th>
+                            <th>Customer</th>
+                            <th>Status</th>
+                            <th class="text-center">Line #</th>
+                            <th>Created</th>
+                            <th>Modified</th>
+                        </tr>
+                    </thead>
+                    <tbody id="partSearchResultsBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    {% if lists|length == 0 %}
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle"></i> No parts lists found. Create your first one!
+    </div>
+    {% else %}
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle" id="partsListsTable">
+                    <thead>
+    <tr>
+        <th>Name</th>
+        <th>Customer</th>
+        <th>Contact</th>
+        <th>Status</th>
+        <th class="text-center" style="width: 15%;">Lines / Costed</th>
+        <th style="width: 25%;">Preview</th>
+        <th>Created</th>
+        <th>Modified</th>
+        <th class="text-end">Actions</th>
+    </tr>
+</thead>
+                    <tbody>
+                        {% for list in lists %}
+                       <tr style="cursor: pointer;" onclick="window.location='{{ url_for('parts_list.view_parts_list', list_id=list.id) }}';">
+    <td>
+        <span class="text-decoration-none fw-semibold">
+            {{ list.name }}
+        </span>
+    </td>
+    <td>{{ list.customer_name or '-' }}</td>
+    <td>{{ list.contact_name or '-' }}</td>
+    <td>
+        <span class="badge bg-secondary"
+              style="cursor: pointer;"
+              onclick="event.stopPropagation(); cycleStatus({{ list.id }}, this)"
+              title="Click to change status"
+              data-status-id="{{ list.status_id }}">
+            {{ list.status_name or 'Draft' }}
+        </span>
+    </td>
+                            <td class="text-center">
+                                {% set line_count = list.line_count %}
+                                {% set quoted_count = list.quoted_line_count %}
+                                {% set percentage = (quoted_count / line_count) * 100 if line_count > 0 else 0 %}
+
+                                <span class="d-block mb-1">
+                                    <strong class="text-primary">{{ quoted_count }}</strong> / {{ line_count }}
+                                </span>
+                                <div class="progress" style="height: 6px;" title="{{ '%.0f'|format(percentage) }}% Quoted">
+                                    <div class="progress-bar {% if percentage < 50 %}bg-warning{% else %}bg-success{% endif %}"
+                                         role="progressbar"
+                                         style="width: {{ percentage }}%;"
+                                         aria-valuenow="{{ quoted_count }}"
+                                         aria-valuemin="0"
+                                         aria-valuemax="{{ line_count }}">
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <small class="text-muted font-monospace" style="line-height: 1.4;">
+                                    {% if list.preview_parts %}
+                                        {{ list.preview_parts }}
+                                    {% else %}
+                                        <span class="text-muted fst-italic">No parts</span>
+                                    {% endif %}
+                                </small>
+                            </td>
+                            <td>
+                                <small class="text-muted">
+                                    {{ list.date_created.strftime('%Y-%m-%d') if list.date_created else '-' }}
+                                </small>
+                            </td>
+                            <td>
+                                <small class="text-muted">
+                                    {{ list.date_modified.strftime('%Y-%m-%d') if list.date_modified else '-' }}
+                                </small>
+                            </td>
+                            <td class="text-end">
+                                <button type="button"
+                                        class="btn btn-outline-danger btn-sm"
+                                        onclick="event.stopPropagation(); deleteList({{ list.id }}, '{{ list.name|replace("'", "\\'") }}')"
+                                        title="Delete">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Top Quotes Modal -->
+<div class="modal fade" id="topQuotesModal" tabindex="-1" aria-labelledby="topQuotesModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="topQuotesModalLabel">
+                    <i class="bi bi-trophy me-2 text-warning"></i>Top Quotes
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row align-items-center mb-3">
+                    <div class="col-md-6">
+                        <label for="topQuotesStatusFilter" class="form-label fw-semibold mb-1">Filter by Status</label>
+                        <select id="topQuotesStatusFilter" class="form-select form-select-sm">
+                            <option value="">All statuses</option>
+                            {% for status in statuses %}
+                                <option value="{{ status.id }}">{{ status.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6 text-md-end mt-3 mt-md-0">
+                        <span class="badge bg-primary fs-6">
+                            Total Quoted: <span id="topQuotesTotalValue">£0.00</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead>
+                        <tr>
+                            <th>List</th>
+                            <th>Customer</th>
+                            <th>Status</th>
+                            <th class="text-center">Quoted Lines</th>
+                            <th class="text-end">Quoted Value (GBP)</th>
+                            <th class="text-nowrap">Last Updated</th>
+                        </tr>
+                        </thead>
+                        <tbody id="topQuotesTableBody">
+                        <tr>
+                            <td colspan="6" class="text-center text-muted">No data yet</td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Customer filter function
+function filterByCustomer(customerId) {
+    const currentStatus = "{{ selected_status_id or '' }}";
+    const currentSalesperson = "{{ selected_salesperson_id or '' }}";
+    let url = "{{ url_for('parts_list.view_parts_lists') }}";
+    const params = new URLSearchParams();
+
+    if (currentStatus) {
+        params.append('status_id', currentStatus);
+    }
+    if (customerId) {
+        params.append('customer_id', customerId);
+    }
+    if (currentSalesperson) {
+        params.append('salesperson_id', currentSalesperson);
+    }
+
+    if (params.toString()) {
+        url += '?' + params.toString();
+    }
+
+    window.location.href = url;
+}
+
+let partsListDataTable = null;
+
+function applyCustomerTextFilter(term) {
+    const normalized = (term || '').toLowerCase();
+
+    if (partsListDataTable) {
+        partsListDataTable.column(1).search(term, false, true).draw();
+        return;
+    }
+
+    // Fallback if DataTables isn't loaded
+    const table = document.getElementById('partsListsTable');
+    if (!table) return;
+    const rows = table.querySelectorAll('tbody tr');
+    rows.forEach(row => {
+        const customerCell = row.cells[1];
+        const text = customerCell ? customerCell.textContent.toLowerCase() : '';
+        row.style.display = text.includes(normalized) ? '' : 'none';
+    });
+}
+
+function clearCustomerSearch() {
+    const input = document.getElementById('customerSearchInput');
+    if (input) {
+        input.value = '';
+        applyCustomerTextFilter('');
+        input.focus();
+    }
+}
+
+// Cycle status function
+function cycleStatus(listId, badgeElement) {
+    const originalText = badgeElement.textContent;
+    badgeElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    fetch("{{ url_for('parts_list.update_parts_list_status', list_id=0) }}".replace(/0$/, listId), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            badgeElement.textContent = data.new_status_name;
+            badgeElement.setAttribute('data-status-id', data.new_status_id);
+
+            // Add a brief highlight effect
+            badgeElement.classList.add('bg-success');
+            setTimeout(() => {
+                badgeElement.classList.remove('bg-success');
+                badgeElement.classList.add('bg-secondary');
+            }, 500);
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+            badgeElement.textContent = originalText;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error updating status');
+        badgeElement.textContent = originalText;
+    });
+}
+
+function deleteList(listId, listName) {
+    if (!confirm(`Delete parts list "${listName}"?\n\nThis will permanently delete the list and all its lines.`)) return;
+
+    fetch("{{ url_for('parts_list.delete_parts_list', list_id=0) }}".replace('/0/', '/' + listId + '/'), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            window.location.reload();
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error deleting list');
+    });
+}
+
+function searchPartsListsByPart() {
+    const input = document.getElementById('partSearchInput');
+    const q = input.value.trim();
+    if (!q) {
+        alert('Please enter a part number or fragment to search.');
+        input.focus();
+        return;
+    }
+
+    const resultsCard = document.getElementById('partSearchResultsCard');
+    const tbody = document.getElementById('partSearchResultsBody');
+    const countSpan = document.getElementById('partSearchResultsCount');
+
+    resultsCard.style.display = 'block';
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="9" class="text-center text-muted">
+                <span class="spinner-border spinner-border-sm me-2"></span>Searching...
+            </td>
+        </tr>
+    `;
+    countSpan.textContent = '0';
+
+    const searchUrlBase = "{{ url_for('parts_list.search_parts_lists_by_part_number') }}";
+
+    fetch(searchUrlBase + '?q=' + encodeURIComponent(q), {
+        headers: {
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                alert('Error: ' + (data.message || 'Unknown error'));
+                return;
+            }
+
+            tbody.innerHTML = '';
+            countSpan.textContent = data.total_matches || 0;
+
+            if (!data.results || data.results.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="9" class="text-center text-muted">
+                            No matches found for "<strong>${q}</strong>".
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            const baseListUrl = "{{ url_for('parts_list.view_parts_list', list_id=0) }}";
+
+            data.results.forEach(function(row) {
+                const listUrl = baseListUrl.replace(/0$/, row.parts_list_id);
+                const created = row.date_created ? row.date_created.substring(0, 10) : '-';
+                const modified = row.date_modified ? row.date_modified.substring(0, 10) : '-';
+                const customer = row.customer_name || '-';
+                const status = row.status_name || 'Draft';
+
+                const tr = document.createElement('tr');
+
+                tr.innerHTML = ''
+                    + '<td>' + (row.customer_part_number || '') + '</td>'
+                    + '<td>' + (row.base_part_number || '') + '</td>'
+                    + '<td class="text-center">' + (row.quantity || '') + '</td>'
+                    + '<td><a href="' + listUrl + '" class="text-decoration-none">'
+                        + (row.list_name || ('List #' + row.parts_list_id))
+                      + '</a></td>'
+                    + '<td>' + customer + '</td>'
+                    + '<td><span class="badge bg-secondary">' + status + '</span></td>'
+                    + '<td class="text-center">' + (row.line_number || '') + '</td>'
+                    + '<td><small class="text-muted">' + created + '</small></td>'
+                    + '<td><small class="text-muted">' + modified + '</small></td>';
+
+                tbody.appendChild(tr);
+            });
+        })
+        .catch(error => {
+            console.error('Error searching parts lists:', error);
+            alert('Error performing search');
+        });
+}
+
+const topQuotesUrl = "{{ url_for('parts_list.top_parts_list_quotes') }}";
+const topQuotesTableBody = () => document.getElementById('topQuotesTableBody');
+const topQuotesTotalValue = () => document.getElementById('topQuotesTotalValue');
+
+function formatCurrencyGBP(value) {
+    return new Intl.NumberFormat('en-GB', {
+        style: 'currency',
+        currency: 'GBP',
+        minimumFractionDigits: 2
+    }).format(value || 0);
+}
+
+function loadTopQuotes() {
+    const tbody = topQuotesTableBody();
+    const totalEl = topQuotesTotalValue();
+    const statusSelect = document.getElementById('topQuotesStatusFilter');
+    const statusId = statusSelect ? statusSelect.value : '';
+
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="6" class="text-center text-muted">
+                <span class="spinner-border spinner-border-sm me-2"></span>Loading top quotes...
+            </td>
+        </tr>
+    `;
+
+    const params = new URLSearchParams();
+    if (statusId) {
+        params.append('status_id', statusId);
+    }
+
+    fetch(topQuotesUrl + (params.toString() ? `?${params.toString()}` : ''))
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="text-center text-danger">
+                            ${data.message || 'Unable to load top quotes.'}
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            const results = data.results || [];
+            if (results.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="text-center text-muted">No quoted lines found for this filter.</td>
+                    </tr>
+                `;
+                totalEl.textContent = formatCurrencyGBP(0);
+                return;
+            }
+
+            const baseListUrl = "{{ url_for('parts_list.view_parts_list', list_id=0) }}";
+            let totalValue = 0;
+            tbody.innerHTML = '';
+
+            results.forEach(row => {
+                const listUrl = baseListUrl.replace(/0$/, row.id);
+                const quotedValue = row.quoted_value_gbp || 0;
+                totalValue += quotedValue;
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><a href="${listUrl}" class="fw-semibold text-decoration-none">${row.name || 'List #' + row.id}</a></td>
+                    <td>${row.customer_name || '-'}</td>
+                    <td><span class="badge bg-secondary">${row.status_name || 'Draft'}</span></td>
+                    <td class="text-center">${row.quoted_lines || 0}</td>
+                    <td class="text-end">${formatCurrencyGBP(quotedValue)}</td>
+                    <td><small class="text-muted">${row.date_modified ? row.date_modified.substring(0, 10) : '-'}</small></td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            totalEl.textContent = formatCurrencyGBP(totalValue);
+        })
+        .catch(error => {
+            console.error('Error loading top quotes:', error);
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="text-center text-danger">
+                        Error loading data.
+                    </td>
+                </tr>
+            `;
+        });
+}
+
+function openTopQuotesModal() {
+    const modalEl = document.getElementById('topQuotesModal');
+    const statusSelect = document.getElementById('topQuotesStatusFilter');
+
+    if (statusSelect) {
+        statusSelect.value = "{{ selected_status_id or '' }}";
+    }
+
+    loadTopQuotes();
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('partSearchInput');
+    if (searchInput) {
+        searchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                searchPartsListsByPart();
+            }
+        });
+    }
+
+    if (typeof $.fn.DataTable !== 'undefined') {
+        partsListDataTable = $('#partsListsTable').DataTable({
+            order: [[6, 'desc']],
+            pageLength: 25,
+            language: {
+                search: "Search lists:"
+            }
+        });
+    }
+
+    const customerSearchInput = document.getElementById('customerSearchInput');
+    if (customerSearchInput) {
+        customerSearchInput.addEventListener('input', function() {
+            applyCustomerTextFilter(this.value);
+        });
+    }
+
+    const statusSelect = document.getElementById('topQuotesStatusFilter');
+    if (statusSelect) {
+        statusSelect.addEventListener('change', loadTopQuotes);
+    }
+
+    // Auto-run a part search when the page is loaded with ?q=...
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialQuery = urlParams.get('q');
+    if (initialQuery) {
+        const partInput = document.getElementById('partSearchInput');
+        if (partInput) {
+            partInput.value = initialQuery;
+            searchPartsListsByPart();
+        }
+    }
+});
+</script>
+
+{% endblock %}
