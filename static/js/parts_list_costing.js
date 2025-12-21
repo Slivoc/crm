@@ -77,6 +77,8 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    loadEmailedSuppliersForCosting();
+
     // Email ILS Suppliers functionality
     const emailSuppliersBtn = document.getElementById('email-suppliers-btn');
 
@@ -190,6 +192,105 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
 }); // <-- END OF DOMContentLoaded
+
+function loadEmailedSuppliersForCosting() {
+    const listId = window.PARTS_LIST_ID;
+    const selects = document.querySelectorAll('.emailed-supplier-line-select');
+    const headerDropdown = document.getElementById('emailed-suppliers-dropdown');
+    const headerToggle = document.getElementById('emailed-suppliers-toggle');
+    if (!listId) return;
+
+    fetch(`/parts_list/parts-lists/${listId}/emailed-suppliers`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) return;
+            const suppliers = data.suppliers || [];
+
+            if (headerDropdown && headerToggle) {
+                if (suppliers.length === 0) {
+                    headerDropdown.innerHTML = `
+                        <li><h6 class="dropdown-header">Emailed suppliers</h6></li>
+                        <li><span class="dropdown-item-text text-muted">No emailed suppliers</span></li>
+                    `;
+                    headerToggle.disabled = true;
+                } else {
+                    headerDropdown.innerHTML = '<li><h6 class="dropdown-header">Emailed suppliers</h6></li>';
+                    suppliers.forEach(supplier => {
+                        const label = supplier.contact_email
+                            ? `${supplier.supplier_name} (${supplier.contact_email})`
+                            : supplier.supplier_name;
+                        const item = document.createElement('li');
+                        item.innerHTML = `
+                            <a class="dropdown-item" href="/parts_list/parts-lists/${listId}/quick-quote/${supplier.supplier_id}">
+                                ${label}
+                            </a>
+                        `;
+                        headerDropdown.appendChild(item);
+                    });
+                    headerToggle.disabled = false;
+                }
+            }
+
+            if (suppliers.length > 0 && selects.length > 0) {
+                selects.forEach(select => {
+                    select.innerHTML = '<option value="">Emailed suppliers...</option>';
+                    suppliers.forEach(supplier => {
+                        const option = document.createElement('option');
+                        option.value = supplier.supplier_id;
+                        option.textContent = supplier.contact_email
+                            ? `${supplier.supplier_name} (${supplier.contact_email})`
+                            : supplier.supplier_name;
+                        option.dataset.currencyId = supplier.currency_id || '';
+                        select.appendChild(option);
+                    });
+                    select.style.display = '';
+                    select.addEventListener('change', function() {
+                        const supplierId = this.value;
+                        if (!supplierId) return;
+                        const lineId = this.dataset.lineId;
+                        const row = document.querySelector(`tr[data-line-id="${lineId}"]`);
+                        const supplierSelect = row?.querySelector('.supplier-select');
+                        const selectedOption = this.options[this.selectedIndex];
+                        const supplierName = selectedOption ? selectedOption.textContent : '';
+                        const currencyId = selectedOption?.dataset.currencyId;
+                        setSupplierSelectValue(supplierSelect, supplierId, supplierName);
+                        if (currencyId && row) {
+                            const currencySelect = row.querySelector('.currency-select');
+                            if (currencySelect) {
+                                currencySelect.value = currencyId;
+                                currencySelect.dispatchEvent(new Event('change'));
+                            }
+                        }
+                        this.value = '';
+                    });
+                });
+            }
+        })
+        .catch(err => console.error('Error loading emailed suppliers:', err));
+}
+
+function setSupplierSelectValue(selectEl, supplierId, supplierName) {
+    if (!selectEl) return;
+    if (window.jQuery && $(selectEl).data('select2')) {
+        if ($(selectEl).find(`option[value="${supplierId}"]`).length === 0) {
+            const newOption = new Option(supplierName || 'Selected Supplier', supplierId, true, true);
+            $(selectEl).append(newOption);
+        } else {
+            $(selectEl).val(supplierId);
+        }
+        $(selectEl).trigger('change');
+    } else {
+        let opt = selectEl.querySelector(`option[value="${supplierId}"]`);
+        if (!opt) {
+            opt = document.createElement('option');
+            opt.value = supplierId;
+            opt.textContent = supplierName || 'Selected Supplier';
+            selectEl.appendChild(opt);
+        }
+        selectEl.value = supplierId;
+        selectEl.dispatchEvent(new Event('change'));
+    }
+}
 
 function markRowAsModified(row) {
     if (!row) return;

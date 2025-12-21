@@ -192,7 +192,7 @@ def get_supplier_quote_details(list_id, quote_id):
             """
             SELECT 
                 sql.id,
-                sql.parts_list_line_id,
+                COALESCE(sql.parts_list_line_id, pll.id) as parts_list_line_id,
                 sql.quoted_part_number,
                 sql.quantity_quoted,
                 sql.unit_price,
@@ -257,6 +257,8 @@ def update_supplier_quote(list_id, quote_id):
 
         for field in ['quote_reference', 'quote_date', 'currency_id', 'notes']:
             if field in data:
+                if field == 'quote_date' and (data[field] is None or str(data[field]).strip() == ''):
+                    data[field] = None
                 fields.append(f"{field} = ?")
                 params.append(data[field])
 
@@ -1057,11 +1059,34 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
     def _get_line_specific(line_id_value):
         chosen_cost = None
         chosen_supplier_name = None
+        chosen_currency_code = None
+        chosen_currency_symbol = None
         suggested_suppliers_count = 0
         emails_sent_count = 0
+        quoted_price = None
+        quoted_supplier_name = None
+        quoted_currency_code = None
+        quoted_currency_symbol = None
+        contacted_suppliers = []
+        contacted_suppliers_count = 0
+        supplier_quote_count = 0
 
         if not line_id_value:
-            return chosen_cost, chosen_supplier_name, suggested_suppliers_count, emails_sent_count
+            return (
+                chosen_cost,
+                chosen_supplier_name,
+                chosen_currency_code,
+                chosen_currency_symbol,
+                suggested_suppliers_count,
+                emails_sent_count,
+                quoted_price,
+                quoted_supplier_name,
+                quoted_currency_code,
+                quoted_currency_symbol,
+                contacted_suppliers,
+                contacted_suppliers_count,
+                supplier_quote_count
+            )
 
         chosen_info = _execute_with_cursor(cursor, '''
             SELECT 
@@ -1069,7 +1094,8 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
                 pll.chosen_currency_id,
                 pll.chosen_supplier_id,
                 s.name as supplier_name,
-                c.currency_code
+                c.currency_code,
+                c.symbol
             FROM parts_list_lines pll
             LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
             LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
@@ -1079,6 +1105,8 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         if chosen_info:
             chosen_cost = chosen_info['chosen_cost']
             chosen_supplier_name = chosen_info['supplier_name']
+            chosen_currency_code = chosen_info['currency_code']
+            chosen_currency_symbol = chosen_info['symbol']
 
         suggested_count = _execute_with_cursor(cursor, '''
             SELECT COUNT(*) as count
@@ -1094,7 +1122,66 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         ''', (line_id_value,)).fetchone()
         emails_sent_count = email_count['count'] if email_count else 0
 
-        return chosen_cost, chosen_supplier_name, suggested_suppliers_count, emails_sent_count
+        quoted_info = _execute_with_cursor(cursor, '''
+            SELECT
+                cql.quote_price_gbp,
+                cql.quoted_status,
+                cql.is_no_bid
+            FROM customer_quote_lines cql
+            WHERE cql.parts_list_line_id = ?
+              AND cql.quoted_status = 'quoted'
+              AND COALESCE(CAST(cql.is_no_bid AS INTEGER), 0) = 0
+              AND cql.quote_price_gbp IS NOT NULL
+            ORDER BY cql.date_modified DESC, cql.id DESC
+            LIMIT 1
+        ''', (line_id_value,)).fetchone()
+
+        if quoted_info:
+            quoted_price = quoted_info['quote_price_gbp']
+            quoted_supplier_name = None
+            quoted_currency_code = 'GBP'
+            quoted_currency_symbol = '£'
+
+        supplier_quote_info = _execute_with_cursor(cursor, '''
+            SELECT COUNT(*) as count
+            FROM parts_list_supplier_quote_lines
+            WHERE parts_list_line_id = ?
+        ''', (line_id_value,)).fetchone()
+        supplier_quote_count = supplier_quote_info['count'] if supplier_quote_info else 0
+
+        contacted_count = _execute_with_cursor(cursor, '''
+            SELECT COUNT(DISTINCT supplier_id) as count
+            FROM parts_list_line_supplier_emails
+            WHERE parts_list_line_id = ?
+        ''', (line_id_value,)).fetchone()
+        contacted_suppliers_count = contacted_count['count'] if contacted_count else 0
+
+        contacted_rows = _execute_with_cursor(cursor, '''
+            SELECT s.name as supplier_name, MAX(se.date_sent) as last_sent
+            FROM parts_list_line_supplier_emails se
+            JOIN suppliers s ON s.id = se.supplier_id
+            WHERE se.parts_list_line_id = ?
+            GROUP BY s.id, s.name
+            ORDER BY last_sent DESC
+            LIMIT 3
+        ''', (line_id_value,)).fetchall()
+        contacted_suppliers = [row['supplier_name'] for row in contacted_rows or [] if row['supplier_name']]
+
+        return (
+            chosen_cost,
+            chosen_supplier_name,
+            chosen_currency_code,
+            chosen_currency_symbol,
+            suggested_suppliers_count,
+            emails_sent_count,
+            quoted_price,
+            quoted_supplier_name,
+            quoted_currency_code,
+            quoted_currency_symbol,
+            contacted_suppliers,
+            contacted_suppliers_count,
+            supplier_quote_count
+        )
 
     cache_key = (base_part_number, tuple(customer_ids or []))
     if shared_cache is not None and cache_key in shared_cache:
@@ -1112,12 +1199,21 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         else:
             cached_result.pop('wildcard_pattern', None)
 
-        chosen_cost, chosen_supplier_name, suggested_suppliers_count, emails_sent_count = _get_line_specific(line_id)
+        chosen_cost, chosen_supplier_name, chosen_currency_code, chosen_currency_symbol, suggested_suppliers_count, emails_sent_count, quoted_price, quoted_supplier_name, quoted_currency_code, quoted_currency_symbol, contacted_suppliers, contacted_suppliers_count, supplier_quote_count = _get_line_specific(line_id)
         cached_result['chosen_cost'] = chosen_cost
         cached_result['has_chosen_cost'] = bool(chosen_cost is not None)
         cached_result['chosen_supplier_name'] = chosen_supplier_name
+        cached_result['chosen_currency_code'] = chosen_currency_code
+        cached_result['chosen_currency_symbol'] = chosen_currency_symbol
         cached_result['suggested_suppliers_count'] = suggested_suppliers_count
         cached_result['emails_sent_count'] = emails_sent_count
+        cached_result['line_quote_price'] = quoted_price
+        cached_result['line_quote_supplier_name'] = quoted_supplier_name
+        cached_result['line_quote_currency_code'] = quoted_currency_code
+        cached_result['line_quote_currency_symbol'] = quoted_currency_symbol
+        cached_result['line_contacted_suppliers'] = contacted_suppliers
+        cached_result['line_contacted_suppliers_count'] = contacted_suppliers_count
+        cached_result['line_supplier_quote_count'] = supplier_quote_count
         return cached_result
 
     # Get basic part details
@@ -1441,7 +1537,7 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
     ils_latest_search_date = ils_data[0]['search_date'] if ils_data else None
 
     # Chosen cost & email/suggested supplier counts
-    chosen_cost, chosen_supplier_name, suggested_suppliers_count, emails_sent_count = _get_line_specific(line_id)
+    chosen_cost, chosen_supplier_name, chosen_currency_code, chosen_currency_symbol, suggested_suppliers_count, emails_sent_count, quoted_price, quoted_supplier_name, quoted_currency_code, quoted_currency_symbol, contacted_suppliers, contacted_suppliers_count, supplier_quote_count = _get_line_specific(line_id)
 
     # Build main result
     result = {
@@ -1521,8 +1617,17 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         'chosen_cost': chosen_cost,
         'has_chosen_cost': bool(chosen_cost is not None),  # ADD THIS LINE
         'chosen_supplier_name': chosen_supplier_name,
+        'chosen_currency_code': chosen_currency_code,
+        'chosen_currency_symbol': chosen_currency_symbol,
         'suggested_suppliers_count': suggested_suppliers_count,
         'emails_sent_count': emails_sent_count,
+        'line_quote_price': quoted_price,
+        'line_quote_supplier_name': quoted_supplier_name,
+        'line_quote_currency_code': quoted_currency_code,
+        'line_quote_currency_symbol': quoted_currency_symbol,
+        'line_contacted_suppliers': contacted_suppliers,
+        'line_contacted_suppliers_count': contacted_suppliers_count,
+        'line_supplier_quote_count': supplier_quote_count,
     }
 
     if is_wildcard_match:
@@ -1699,12 +1804,16 @@ def parts_list_costing(list_id):
             ('Costing', None)
         ]
 
+
+        open_quote_id = request.args.get('open_quote_id', type=int)
+
         return render_template('parts_list_costing.html',
                                list_id=list_id,
                                list_name=header['name'],
                                lines=[dict(l) for l in lines],
                                suppliers=[dict(s) for s in suppliers],
                                currencies=[dict(c) for c in currencies],
+                               open_quote_id=open_quote_id,
                                total_lines=total_lines,
                                lines_with_cost=lines_with_cost,
                                lines_without_cost=lines_without_cost,
@@ -3139,6 +3248,119 @@ def record_bulk_supplier_emails():
         logging.exception(e)
         return jsonify(success=False, message=str(e)), 500
 
+@parts_list_bp.route('/parts-lists/<int:list_id>/supplier-panel-data', methods=['GET'])
+def get_supplier_panel_data(list_id):
+    """
+    Get comprehensive supplier data for panel view modal.
+    Shows all suppliers contacted, their lines, quote status, and dates.
+    """
+    try:
+        with db_cursor() as cur:
+            # Get all suppliers that have been emailed for this parts list
+            suppliers = _execute_with_cursor(cur, """
+                SELECT DISTINCT
+                    s.id as supplier_id,
+                    s.name as supplier_name,
+                    s.contact_name,
+                    s.contact_email
+                FROM parts_list_line_supplier_emails se
+                JOIN suppliers s ON s.id = se.supplier_id
+                JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
+                WHERE pll.parts_list_id = ?
+                ORDER BY s.name
+            """, (list_id,)).fetchall()
+
+            suppliers_data = []
+
+            for sup in suppliers:
+                supplier_id = sup['supplier_id']
+
+                # Get all lines sent to this supplier with quote status
+                lines = _execute_with_cursor(cur, """
+                    SELECT DISTINCT
+                        pll.id as line_id,
+                        pll.line_number,
+                        pll.customer_part_number,
+                        pll.quantity,
+                        pll.chosen_cost,
+                        se.date_sent,
+                        se.recipient_name,
+                        -- Check if quoted
+                        (SELECT sql.unit_price
+                         FROM parts_list_supplier_quote_lines sql
+                         JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                         WHERE sq.supplier_id = ?
+                           AND sq.parts_list_id = ?
+                           AND sql.parts_list_line_id = pll.id
+                           AND COALESCE(sql.is_no_bid, FALSE) = FALSE
+                           AND sql.unit_price IS NOT NULL
+                         ORDER BY sq.quote_date DESC
+                         LIMIT 1) as quoted_price,
+                        -- Get currency
+                        (SELECT c.currency_code
+                         FROM parts_list_supplier_quote_lines sql
+                         JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                         LEFT JOIN currencies c ON c.id = sq.currency_id
+                         WHERE sq.supplier_id = ?
+                           AND sq.parts_list_id = ?
+                           AND sql.parts_list_line_id = pll.id
+                           AND COALESCE(sql.is_no_bid, FALSE) = FALSE
+                         ORDER BY sq.quote_date DESC
+                         LIMIT 1) as currency_code,
+                        -- Check if no bid
+                        EXISTS(
+                            SELECT 1
+                            FROM parts_list_supplier_quote_lines sql
+                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                            WHERE sq.supplier_id = ?
+                              AND sq.parts_list_id = ?
+                              AND sql.parts_list_line_id = pll.id
+                              AND COALESCE(sql.is_no_bid, FALSE) = TRUE
+                        ) as is_no_bid,
+                        -- Check if line is costed (regardless of supplier)
+                        CASE WHEN pll.chosen_cost IS NOT NULL THEN 1 ELSE 0 END as is_costed
+                    FROM parts_list_line_supplier_emails se
+                    JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
+                    WHERE pll.parts_list_id = ?
+                      AND se.supplier_id = ?
+                    ORDER BY pll.line_number
+                """, (
+                    supplier_id,
+                    list_id,
+                    supplier_id,
+                    list_id,
+                    supplier_id,
+                    list_id,
+                    list_id,
+                    supplier_id
+                )).fetchall()
+
+                # Calculate statistics
+                total_lines = len(lines)
+                quoted_lines = sum(1 for l in lines if l['quoted_price'] is not None)
+                no_bid_lines = sum(1 for l in lines if l['is_no_bid'])
+                awaiting_lines = sum(1 for l in lines if not l['quoted_price'] and not l['is_no_bid'])
+                costed_lines = sum(1 for l in lines if l['is_costed'])
+
+                suppliers_data.append({
+                    'supplier_id': supplier_id,
+                    'supplier_name': sup['supplier_name'],
+                    'contact_name': sup['contact_name'],
+                    'contact_email': sup['contact_email'],
+                    'total_lines': total_lines,
+                    'quoted_lines': quoted_lines,
+                    'no_bid_lines': no_bid_lines,
+                    'awaiting_lines': awaiting_lines,
+                    'costed_lines': costed_lines,
+                    'lines': [dict(l) for l in lines]
+                })
+
+        return jsonify(success=True, suppliers=suppliers_data)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
 @parts_list_bp.route('/parts-lists/<int:list_id>/sourcing', methods=['GET'])
 def parts_list_sourcing(list_id):
     """
@@ -3955,11 +4177,19 @@ def quick_supplier_quote(list_id, supplier_id=None):
 
         # Verify supplier exists if provided
         supplier_name = None
+        existing_quote = None
         if supplier_id:
             supplier = _execute_with_cursor(cur, "SELECT name FROM suppliers WHERE id = ?", (supplier_id,)).fetchone()
             if not supplier:
                 abort(404, "Supplier not found")
             supplier_name = supplier['name']
+            existing_quote = _execute_with_cursor(cur, """
+                SELECT id, quote_reference, quote_date
+                FROM parts_list_supplier_quotes
+                WHERE parts_list_id = ? AND supplier_id = ?
+                ORDER BY (quote_date IS NULL), quote_date DESC, id DESC
+                LIMIT 1
+            """, (list_id, supplier_id)).fetchone()
 
         # Get lines for context + Handsontable WITH quote_requested flag
         if supplier_id:
@@ -3995,18 +4225,45 @@ def quick_supplier_quote(list_id, supplier_id=None):
             """, (list_id,)).fetchall()
 
         # All suppliers + currencies for dropdowns
-        suppliers = _execute_with_cursor(cur, "SELECT id, name FROM suppliers ORDER BY name", fetch=None).fetchall()
-        currencies = _execute_with_cursor(cur, "SELECT id, currency_code FROM currencies", fetch=None).fetchall()
+        suppliers = _execute_with_cursor(cur, "SELECT id, name FROM suppliers ORDER BY name").fetchall()
+        currencies = _execute_with_cursor(cur, "SELECT id, currency_code FROM currencies").fetchall()
 
     return render_template('quick_supplier_quote.html',
                            list_id=list_id,
                            list_name=header['name'],
                            supplier_id=supplier_id,
                            supplier_name=supplier_name,
+                           existing_quote=dict(existing_quote) if existing_quote else None,
                            lines=[dict(l) for l in lines],
                            suppliers=[dict(s) for s in suppliers],
                            currencies=[dict(c) for c in currencies],
                            cache_bust=cache_bust)
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/emailed-suppliers', methods=['GET'])
+def get_emailed_suppliers(list_id):
+    """
+    Return suppliers already emailed for this parts list.
+    """
+    try:
+        with db_cursor() as cur:
+            suppliers = _execute_with_cursor(cur, """
+                SELECT DISTINCT
+                    s.id AS supplier_id,
+                    s.name AS supplier_name,
+                    s.contact_email AS contact_email,
+                    s.currency AS currency_id
+                FROM parts_list_line_supplier_emails se
+                JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
+                JOIN suppliers s ON s.id = se.supplier_id
+                WHERE pll.parts_list_id = ?
+                ORDER BY s.name
+            """, (list_id,)).fetchall()
+
+        return jsonify(success=True, suppliers=[dict(s) for s in suppliers])
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
 
 
 @parts_list_bp.route('/api/parts-lists/<int:list_id>/quick-no-bid', methods=['GET'])

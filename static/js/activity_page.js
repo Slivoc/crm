@@ -410,7 +410,10 @@ class CustomerNewsManager {
     this.customerProgress = new Map();
     this.lastCheckTime = null;
     this.cacheLoaded = false;
+    this.streamCompleted = false;
+    this.streamHadData = false;
     this.initializeEventListeners();
+    this.setConnectionStatus('idle', 'Idle');
   }
 
   getSalespersonId() {
@@ -449,10 +452,12 @@ class CustomerNewsManager {
         this.lastCheckTime = data.last_checked ? new Date(data.last_checked) : null;
         this.updateHeaderMetrics();
         this.displayResults(data);
+        this.setConnectionStatus('ready', 'Cached');
       }
       this.cacheLoaded = true;
     } catch (error) {
       console.error('Error loading cached news:', error);
+      this.setConnectionStatus('error', 'Error');
     }
   }
 
@@ -532,6 +537,10 @@ class CustomerNewsManager {
       const data = await response.json();
 
       if (data.requires_streaming) {
+        if (data.supports_streaming === false) {
+          this.fallbackToSyncRefresh();
+          return;
+        }
         this.startProgressStream();
       } else {
         this.displayResults(data);
@@ -562,6 +571,10 @@ class CustomerNewsManager {
       }
 
       if (data.requires_streaming) {
+        if (data.supports_streaming === false) {
+          this.fallbackToSyncRefresh();
+          return;
+        }
         this.startProgressStream();
       } else {
         this.displayResults(data);
@@ -574,16 +587,34 @@ class CustomerNewsManager {
     }
   }
 
+  async fallbackToSyncRefresh() {
+    this.setConnectionStatus('working', 'Connected');
+    try {
+      const response = await fetch(`/salespeople/${this.salespersonId}/customer_news?force_refresh=true`);
+      const data = await response.json();
+      this.displayResults(data);
+    } catch (error) {
+      console.error('Error checking news:', error);
+      this.showError('Unable to check customer news at this time');
+    } finally {
+      this.isChecking = false;
+    }
+  }
+
   startProgressStream() {
     if (this.eventSource) {
       this.eventSource.close();
     }
 
     const url = `/salespeople/${this.salespersonId}/customer_news?stream=true`;
+    this.streamCompleted = false;
+    this.streamHadData = false;
+    this.setConnectionStatus('working', 'Connected');
     this.eventSource = new EventSource(url);
 
     this.eventSource.onmessage = (event) => {
       try {
+        this.streamHadData = true;
         const data = JSON.parse(event.data);
         this.handleProgressUpdate(data);
       } catch (error) {
@@ -592,6 +623,14 @@ class CustomerNewsManager {
     };
 
     this.eventSource.onerror = (error) => {
+      if (this.streamCompleted || !this.isChecking) {
+        return;
+      }
+      if (!this.streamHadData) {
+        this.eventSource.close();
+        this.fallbackToSyncRefresh();
+        return;
+      }
       console.error('SSE error:', error);
       this.eventSource.close();
       this.showError('Connection lost during news collection');
@@ -700,11 +739,15 @@ class CustomerNewsManager {
 
   updateOverallProgress(completed) {
     const total = this.customers.length;
-    const percentage = Math.round((completed / total) * 100);
+    const safeCompleted = Number.isFinite(completed) ? completed : 0;
+    const safeTotal = Number.isFinite(total) && total > 0 ? total : 0;
+    const percentage = safeTotal ? Math.round((safeCompleted / safeTotal) * 100) : 0;
 
     document.getElementById('newsProgress').style.width = percentage + '%';
-    document.getElementById('progressCounter').textContent = `${completed}/${total}`;
-    document.getElementById('overallProgress').textContent = `${completed} of ${total} customers checked...`;
+    document.getElementById('progressCounter').textContent = `${safeCompleted}/${safeTotal}`;
+    document.getElementById('overallProgress').textContent = safeTotal
+      ? `${safeCompleted} of ${safeTotal} customers checked...`
+      : 'Checking 0 customers for business news...';
   }
 
   completeProgress(data) {
@@ -713,6 +756,7 @@ class CustomerNewsManager {
       this.eventSource = null;
     }
 
+    this.streamCompleted = true;
     document.getElementById('currentActivityBox').style.display = 'none';
     this.newsData = data.news_items || [];
     this.displayResults(data);
@@ -723,6 +767,12 @@ class CustomerNewsManager {
     document.getElementById('newsInitialState').style.display = 'none';
     document.getElementById('newsResults').style.display = 'none';
     document.getElementById('newsLoadingState').style.display = 'block';
+    this.setConnectionStatus('working', 'Connected');
+
+    const loadingMainMessage = document.getElementById('loadingMainMessage');
+    if (loadingMainMessage) {
+      loadingMainMessage.textContent = 'Scanning watched customers for news...';
+    }
 
     document.getElementById('customerProgressList').innerHTML = '';
     document.getElementById('currentActivityBox').style.display = 'none';
@@ -734,13 +784,19 @@ class CustomerNewsManager {
     document.getElementById('newsLoadingState').style.display = 'none';
     document.getElementById('newsResults').style.display = 'block';
 
+    if (data && Array.isArray(data.news_items)) {
+      this.newsData = data.news_items;
+    }
+
     // Use the timestamp from data, or set to now if it's a fresh check
-    if (data.last_checked) {
-      this.lastCheckTime = new Date(data.last_checked);
+    const lastChecked = data.last_checked || data.last_updated;
+    if (lastChecked) {
+      this.lastCheckTime = new Date(lastChecked);
     } else {
       this.lastCheckTime = new Date();
     }
     this.updateHeaderMetrics();
+    this.setConnectionStatus('ready', 'Updated');
 
     const customersWithNews = this.groupNewsByCustomer(this.newsData);
     const hasNews = Object.keys(customersWithNews).length > 0;
@@ -858,6 +914,7 @@ class CustomerNewsManager {
   showError(message) {
     document.getElementById('newsLoadingState').style.display = 'none';
     document.getElementById('newsResults').style.display = 'block';
+    this.setConnectionStatus('error', 'Error');
     document.getElementById('newsPreviewCards').innerHTML = `
       <div class="alert alert-danger">
         <i class="bi bi-exclamation-triangle me-2"></i>
@@ -866,6 +923,21 @@ class CustomerNewsManager {
     `;
     document.getElementById('noNewsFound').style.display = 'none';
     document.getElementById('viewAllNewsBtn').style.display = 'none';
+  }
+
+  setConnectionStatus(status, label) {
+    const indicator = document.getElementById('newsConnectionIndicator');
+    const text = document.getElementById('newsConnectionText');
+    if (!indicator || !text) return;
+
+    indicator.classList.remove(
+      'news-connection--idle',
+      'news-connection--working',
+      'news-connection--ready',
+      'news-connection--error'
+    );
+    indicator.classList.add(`news-connection--${status}`);
+    text.textContent = label;
   }
 
   showCustomerNews(customerName) {
@@ -960,6 +1032,7 @@ document.addEventListener('DOMContentLoaded', function() {
     logActivityTiming('init_start');
     // Initialize news manager
     window.customerNewsManager = new CustomerNewsManager();
+    window.customerNewsManager.loadCachedNews();
     // Call list + comms initialized later to avoid double fetches.
 
     // Chart variables

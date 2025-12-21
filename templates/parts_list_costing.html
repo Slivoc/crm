@@ -213,9 +213,22 @@
     <button id="email-suppliers-btn" class="btn btn-sm btn-success" style="display: none;">
         <i class="bi bi-envelope-at me-1"></i>Email ILS Suppliers
     </button>
-                <button id="manage-supplier-quotes-btn" class="btn btn-sm btn-outline-info">
-                    <i class="bi bi-clipboard-check me-1"></i>Supplier Quotes
-                </button>
+                <div class="btn-group btn-group-sm" role="group">
+                    <button id="manage-supplier-quotes-btn" class="btn btn-sm btn-outline-info">
+                        <i class="bi bi-clipboard-check me-1"></i>Supplier Quotes
+                    </button>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-info dropdown-toggle dropdown-toggle-split"
+                            data-bs-toggle="dropdown"
+                            aria-expanded="false"
+                            id="emailed-suppliers-toggle">
+                        <span class="visually-hidden">Toggle Dropdown</span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end" id="emailed-suppliers-dropdown">
+                        <li><h6 class="dropdown-header">Emailed suppliers</h6></li>
+                        <li><span class="dropdown-item-text text-muted">No emailed suppliers</span></li>
+                    </ul>
+                </div>
 
                 <button id="save-all-costs-btn" class="btn btn-sm btn-primary">
                     <i class="bi bi-save me-1"></i>Save All Changes
@@ -283,6 +296,11 @@
                             {% else %}
                                 <option value="">Select supplier...</option>
                             {% endif %}
+                        </select>
+                        <select class="form-select form-select-sm emailed-supplier-line-select mt-1"
+                                data-line-id="{{ line.id }}"
+                                style="display: none;">
+                            <option value="">Emailed suppliers...</option>
                         </select>
                     </td>
 
@@ -398,6 +416,7 @@
 
 <script>
     window.PARTS_LIST_ID = {{ list_id }};
+    window.OPEN_QUOTE_ID = {{ open_quote_id if open_quote_id else 'null' }};
 
     // Add listener to highlight when chosen qty differs from requested
     document.addEventListener('DOMContentLoaded', function() {
@@ -457,6 +476,9 @@
                                 <label class="form-label">Supplier</label>
                                 <select class="form-select" id="quote-supplier-select" required>
                                     <option value="">Select supplier...</option>
+                                </select>
+                                <select class="form-select form-select-sm mt-2" id="emailed-supplier-select" style="display: none;">
+                                    <option value="">Emailed suppliers...</option>
                                 </select>
                             </div>
                             <div class="col-md-4">

@@ -5,6 +5,7 @@ let quoteLinesData = [];
 let currentSupplierId = window.PRESELECTED_SUPPLIER_ID || null;
 let showSentOnly = false;
 let partNumberFilterValue = '';
+let emailedSuppliersCache = null;
 
 function noBidCheckboxRenderer(instance, td, row, col, prop, value, cellProperties) {
     Handsontable.dom.empty(td);
@@ -109,6 +110,16 @@ document.addEventListener('DOMContentLoaded', function() {
         // Initialize empty quote lines table for quick quote page
         initializeEmptyQuoteLines(currentSupplierId);
     }
+
+    initializeEmailedSupplierSelect();
+
+    if (window.OPEN_QUOTE_ID) {
+        openSupplierQuotesModal();
+        const quoteId = parseInt(window.OPEN_QUOTE_ID);
+        if (Number.isFinite(quoteId)) {
+            setTimeout(() => loadQuoteForEditing(quoteId), 200);
+        }
+    }
 });
 
 // ========== PDF DROP ZONE ==========
@@ -154,12 +165,14 @@ function initializePdfDropZone() {
         }
     });
 
-    ensureQuoteLinesToolbar(container);
+    ensureQuoteLinesToolbar();
     applyVisibilityFilters();
 }
 
 function ensureQuoteLinesToolbar(container) {
-    const parent = container.parentElement;
+    const target = container || document.getElementById('quote-lines-table-container');
+    if (!target) return;
+    const parent = target.parentElement;
     if (!parent) return;
 
     let toolbar = document.getElementById('quote-lines-toolbar');
@@ -178,7 +191,7 @@ function ensureQuoteLinesToolbar(container) {
             </div>
             <small class="text-muted" id="quote-filter-indicator" style="display:none;">Filters active</small>
         `;
-        parent.insertBefore(toolbar, container);
+        parent.insertBefore(toolbar, target);
 
         document.getElementById('toggle-sent-filter-btn').addEventListener('click', function() {
             showSentOnly = !showSentOnly;
@@ -485,7 +498,9 @@ function loadSuppliersForQuote() {
         }
     });
 
-    ensureQuoteLinesToolbar(container);
+    initializeEmailedSupplierSelect();
+
+    ensureQuoteLinesToolbar();
     applyVisibilityFilters();
 }
 
@@ -543,6 +558,8 @@ function initializeQuickQuoteSuppliers() {
         }
     });
 
+    initializeEmailedSupplierSelect();
+
     // Pre-select supplier if provided and fetch its currency
     if (window.PRESELECTED_SUPPLIER_ID) {
         fetch(`/suppliers/api/${window.PRESELECTED_SUPPLIER_ID}`)
@@ -576,6 +593,75 @@ function initializeQuickQuoteSuppliers() {
                 $supplierSelect.val(window.PRESELECTED_SUPPLIER_ID).trigger('change');
             });
     }
+}
+
+function initializeEmailedSupplierSelect() {
+    const emailedSelect = document.getElementById('emailed-supplier-select');
+    if (!emailedSelect || !window.PARTS_LIST_ID) return;
+
+    fetchEmailedSuppliers()
+        .then(suppliers => {
+            if (!suppliers.length) {
+                emailedSelect.style.display = 'none';
+                return;
+            }
+
+            emailedSelect.innerHTML = '<option value="">Emailed suppliers...</option>';
+            suppliers.forEach(supplier => {
+                const option = document.createElement('option');
+                option.value = supplier.supplier_id;
+                option.textContent = supplier.contact_email
+                    ? `${supplier.supplier_name} (${supplier.contact_email})`
+                    : supplier.supplier_name;
+                option.dataset.currencyId = supplier.currency_id || '';
+                emailedSelect.appendChild(option);
+            });
+            emailedSelect.style.display = '';
+        })
+        .catch(err => console.error('Error loading emailed suppliers:', err));
+
+    emailedSelect.onchange = function() {
+        const supplierId = this.value;
+        if (!supplierId) return;
+
+        const selectedOption = this.options[this.selectedIndex];
+        const supplierName = selectedOption ? selectedOption.textContent : '';
+        const currencyId = selectedOption?.dataset.currencyId;
+
+        const supplierSelect = $('#quote-supplier-select');
+        if (supplierSelect.find(`option[value="${supplierId}"]`).length === 0) {
+            const newOption = new Option(supplierName || 'Selected Supplier', supplierId, true, true);
+            supplierSelect.append(newOption);
+        } else {
+            supplierSelect.val(supplierId);
+        }
+        supplierSelect.trigger('change');
+
+        if (currencyId) {
+            const currencySelect = document.getElementById('quote-currency-select');
+            if (currencySelect) {
+                currencySelect.value = currencyId;
+            }
+        }
+
+        if (!currentQuoteId) {
+            currentSupplierId = parseInt(supplierId);
+            initializeEmptyQuoteLines(currentSupplierId);
+        }
+
+        this.value = '';
+    };
+}
+
+function fetchEmailedSuppliers() {
+    if (emailedSuppliersCache) return Promise.resolve(emailedSuppliersCache);
+    return fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/emailed-suppliers`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) return [];
+            emailedSuppliersCache = data.suppliers || [];
+            return emailedSuppliersCache;
+        });
 }
 
 function loadQuoteForEditing(quoteId) {

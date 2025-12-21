@@ -88,6 +88,10 @@
         </h6>
       </button>
       <div class="d-flex align-items-center gap-3 me-3" id="newsHeaderMetrics">
+        <div class="news-connection news-connection--idle" id="newsConnectionIndicator">
+          <span class="news-connection-dot" aria-hidden="true"></span>
+          <small class="text-muted" id="newsConnectionText">Idle</small>
+        </div>
         <small class="text-muted" id="lastCheckMetric" style="display: none;">
           <i class="bi bi-clock-history me-1"></i>
           <span id="lastCheckTime">Never checked</span>
@@ -790,6 +794,45 @@
 
 #newsHeaderMetrics small {
   white-space: nowrap;
+}
+
+.news-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.news-connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #adb5bd;
+  box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.0);
+}
+
+.news-connection--working .news-connection-dot {
+  background: #198754;
+  animation: newsPulse 1.4s ease-out infinite;
+}
+
+.news-connection--ready .news-connection-dot {
+  background: #198754;
+}
+
+.news-connection--error .news-connection-dot {
+  background: #dc3545;
+}
+
+@keyframes newsPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(25, 135, 84, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(25, 135, 84, 0);
+  }
 }
 
 .contact-quick-action-btn {

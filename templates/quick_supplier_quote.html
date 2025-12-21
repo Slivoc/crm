@@ -82,6 +82,23 @@
             </h5>
         </div>
         <div class="card-body">
+            {% if existing_quote %}
+            <div class="alert alert-info d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                    <strong>Existing quote found.</strong>
+                    {% if existing_quote.quote_reference %}
+                        Ref: {{ existing_quote.quote_reference }}
+                    {% endif %}
+                    {% if existing_quote.quote_date %}
+                        | Date: {{ existing_quote.quote_date }}
+                    {% endif %}
+                </div>
+                <a class="btn btn-sm btn-outline-primary"
+                   href="{{ url_for('parts_list.parts_list_costing', list_id=list_id, open_quote_id=existing_quote.id) }}">
+                    Edit Existing Quote
+                </a>
+            </div>
+            {% endif %}
             <div class="row g-3">
                 <div class="col-md-4">
                     <label class="form-label">Supplier <span class="text-danger">*</span></label>
@@ -90,6 +107,9 @@
                         {% for s in suppliers %}
                         <option value="{{ s.id }}" {{ 'selected' if s.id == supplier_id }}>{{ s.name }}</option>
                         {% endfor %}
+                    </select>
+                    <select class="form-select form-select-sm mt-2" id="emailed-supplier-select" style="display: none;">
+                        <option value="">Emailed suppliers...</option>
                     </select>
                 </div>
                 <div class="col-md-3">

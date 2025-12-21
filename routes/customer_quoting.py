@@ -467,6 +467,311 @@ def calculate_delivery_costs(list_id):
         return jsonify(success=False, message=str(e)), 500
 
 
+@customer_quoting_bp.route('/parts-lists/<int:list_id>/customer-quote/line/<int:line_id>/calculate-base-cost', methods=['POST'])
+def calculate_base_cost_line(list_id, line_id):
+    """
+    Calculate and store base cost (GBP) for a single line.
+    """
+    try:
+        with db_cursor(commit=True) as cur:
+            line = _execute_with_cursor(cur, """
+                SELECT 
+                    pll.id,
+                    pll.chosen_supplier_id,
+                    pll.chosen_cost,
+                    pll.chosen_currency_id,
+                    c.exchange_rate_to_base as exchange_rate_to_eur,
+                    cql.id as quote_line_id,
+                    cql.quote_price_gbp,
+                    cql.margin_percent,
+                    cql.delivery_per_line,
+                    cql.quoted_status
+                FROM parts_list_lines pll
+                LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
+                LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                WHERE pll.id = ? AND pll.parts_list_id = ?
+            """, (line_id, list_id)).fetchone()
+
+            if not line:
+                return jsonify(success=False, message="Line not found"), 404
+
+            if line['quoted_status'] == 'quoted':
+                return jsonify(success=True, skipped=True, message="Line is quoted")
+
+            if line['chosen_cost'] is None:
+                return jsonify(success=False, message="No chosen cost set for this line"), 400
+
+            exchange_rate = line['exchange_rate_to_eur'] or 1
+            base_cost_gbp = line['chosen_cost'] / exchange_rate if exchange_rate != 0 else line['chosen_cost']
+
+            update_quote_price = False
+            if line['quote_line_id']:
+                _execute_with_cursor(cur, """
+                    UPDATE customer_quote_lines 
+                    SET base_cost_gbp = ?,
+                        date_modified = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (base_cost_gbp, line['quote_line_id']))
+                quote_price = line['quote_price_gbp']
+                margin_percent = line['margin_percent'] or 0
+                delivery_per_line = line['delivery_per_line'] or 0
+            else:
+                condition, certs = _get_condition_and_certs(cur, line_id, line['chosen_supplier_id'])
+                _execute_with_cursor(cur, """
+                    INSERT INTO customer_quote_lines 
+                    (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line,
+                     margin_percent, quote_price_gbp, quoted_status, standard_condition, standard_certs)
+                    VALUES (?, ?, 0, 0, 0, ?, 'created', ?, ?)
+                """, (line_id, base_cost_gbp, base_cost_gbp, condition, certs))
+                quote_price = base_cost_gbp
+                margin_percent = 0
+                delivery_per_line = 0
+                update_quote_price = True
+
+        return jsonify(
+            success=True,
+            base_cost_gbp=base_cost_gbp,
+            quote_price_gbp=quote_price,
+            margin_percent=margin_percent,
+            delivery_per_line=delivery_per_line,
+            quoted_status=line['quoted_status'] or 'created',
+            update_quote_price=update_quote_price
+        )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@customer_quoting_bp.route('/parts-lists/<int:list_id>/customer-quote/line/<int:line_id>/calculate-delivery', methods=['POST'])
+def calculate_delivery_line(list_id, line_id):
+    """
+    Calculate and store delivery costs for a single line.
+    """
+    try:
+        with db_cursor(commit=True) as cur:
+            line = _execute_with_cursor(cur, """
+                SELECT 
+                    pll.id as parts_list_line_id,
+                    pll.chosen_supplier_id,
+                    pll.quantity,
+                    pll.chosen_qty,
+                    pll.chosen_lead_days,
+                    pll.chosen_cost,
+                    pll.chosen_currency_id,
+                    COALESCE(pll.chosen_qty, pll.quantity) as effective_quantity,
+                    c.exchange_rate_to_base as exchange_rate_to_eur,
+                    s.delivery_cost as supplier_delivery_cost,
+                    s.buffer as supplier_buffer,
+                    cql.id as quote_line_id,
+                    cql.base_cost_gbp,
+                    cql.margin_percent,
+                    cql.quoted_status
+                FROM parts_list_lines pll
+                LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
+                LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
+                LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                WHERE pll.id = ? AND pll.parts_list_id = ?
+            """, (line_id, list_id)).fetchone()
+
+            if not line:
+                return jsonify(success=False, message="Line not found"), 404
+
+            if line['quoted_status'] == 'quoted':
+                return jsonify(success=True, skipped=True, message="Line is quoted")
+
+            supplier_id = line['chosen_supplier_id']
+            if not supplier_id:
+                return jsonify(success=False, message="No supplier selected for this line"), 400
+
+            eligible = _execute_with_cursor(cur, """
+                SELECT COUNT(*) as line_count
+                FROM parts_list_lines pll
+                LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                WHERE pll.parts_list_id = ?
+                  AND pll.chosen_supplier_id = ?
+                  AND COALESCE(pll.chosen_qty, pll.quantity) > 0
+                  AND (cql.quoted_status IS NULL OR cql.quoted_status != 'quoted')
+            """, (list_id, supplier_id)).fetchone()
+
+            line_count = eligible['line_count'] if eligible else 0
+            total_delivery = line['supplier_delivery_cost'] or 0
+
+            delivery_per_line = (total_delivery / line_count) if line_count > 0 and total_delivery > 0 else 0
+            effective_qty = line['effective_quantity'] or 0
+            delivery_per_unit = delivery_per_line / effective_qty if effective_qty > 0 else 0
+
+            supplier_lead_days = line['chosen_lead_days'] or 0
+            supplier_buffer = line['supplier_buffer'] or 0
+            customer_lead_days = supplier_lead_days + supplier_buffer
+
+            if not line['quote_line_id']:
+                chosen_cost = line['chosen_cost'] or 0
+                exchange_rate = line['exchange_rate_to_eur'] or 1
+                base_cost_gbp = chosen_cost / exchange_rate if exchange_rate != 0 else chosen_cost
+                margin = 0
+                quote_price = base_cost_gbp + delivery_per_unit
+                condition, certs = _get_condition_and_certs(cur, line['parts_list_line_id'], supplier_id)
+
+                _execute_with_cursor(cur, """
+                    INSERT INTO customer_quote_lines 
+                    (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line,
+                     margin_percent, quote_price_gbp, lead_days, quoted_status, standard_condition, standard_certs)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'created', ?, ?)
+                """, (
+                    line['parts_list_line_id'],
+                    base_cost_gbp,
+                    delivery_per_unit,
+                    delivery_per_line,
+                    margin,
+                    quote_price,
+                    customer_lead_days,
+                    condition,
+                    certs
+                ))
+            else:
+                base_cost = line['base_cost_gbp'] or 0
+                margin = line['margin_percent'] or 0
+
+                if margin > 0 and margin < 100 and base_cost > 0:
+                    price_before_delivery = base_cost / (1 - margin / 100)
+                else:
+                    price_before_delivery = base_cost
+
+                quote_price = price_before_delivery + delivery_per_unit
+
+                _execute_with_cursor(cur, """
+                    UPDATE customer_quote_lines
+                    SET delivery_per_unit = ?,
+                        delivery_per_line = ?,
+                        lead_days = ?,
+                        quote_price_gbp = ?,
+                        date_modified = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (
+                    delivery_per_unit,
+                    delivery_per_line,
+                    customer_lead_days,
+                    quote_price,
+                    line['quote_line_id']
+                ))
+
+        base_cost_value = line['base_cost_gbp'] if line['quote_line_id'] else base_cost_gbp
+        margin_value = line['margin_percent'] or 0
+
+        return jsonify(
+            success=True,
+            delivery_per_line=delivery_per_line,
+            delivery_per_unit=delivery_per_unit,
+            quote_price_gbp=quote_price,
+            lead_days=customer_lead_days,
+            base_cost_gbp=base_cost_value,
+            margin_percent=margin_value,
+            quoted_status=line['quoted_status'] or 'created'
+        )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@customer_quoting_bp.route('/parts-lists/<int:list_id>/customer-quote/line/<int:line_id>/calculate-margin', methods=['POST'])
+def calculate_margin_line(list_id, line_id):
+    """
+    Calculate and store quote price from the margin percent for a single line.
+    """
+    try:
+        data = request.get_json(force=True)
+        margin_percent = data.get('margin_percent')
+
+        if margin_percent is None:
+            return jsonify(success=False, message="margin_percent is required"), 400
+
+        margin_percent = float(margin_percent)
+        if margin_percent < 0 or margin_percent >= 100:
+            return jsonify(success=False, message="margin_percent must be between 0 and 100"), 400
+
+        with db_cursor(commit=True) as cur:
+            line = _execute_with_cursor(cur, """
+                SELECT 
+                    pll.id,
+                    pll.chosen_cost,
+                    pll.chosen_currency_id,
+                    pll.chosen_supplier_id,
+                    c.exchange_rate_to_base as exchange_rate_to_eur,
+                    cql.id as quote_line_id,
+                    cql.base_cost_gbp,
+                    cql.delivery_per_unit,
+                    cql.delivery_per_line,
+                    cql.quoted_status
+                FROM parts_list_lines pll
+                LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
+                LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                WHERE pll.id = ? AND pll.parts_list_id = ?
+            """, (line_id, list_id)).fetchone()
+
+            if not line:
+                return jsonify(success=False, message="Line not found"), 404
+
+            if line['quoted_status'] == 'quoted':
+                return jsonify(success=True, skipped=True, message="Line is quoted")
+
+            if not line['quote_line_id']:
+                chosen_cost = line['chosen_cost'] or 0
+                exchange_rate = line['exchange_rate_to_eur'] or 1
+                base_cost_gbp = float(chosen_cost / exchange_rate) if exchange_rate != 0 else float(chosen_cost)
+                delivery_per_unit = 0.0
+                delivery_per_line = 0.0
+
+                price_before_delivery = base_cost_gbp / (1 - margin_percent / 100) if margin_percent > 0 else base_cost_gbp
+                quote_price = price_before_delivery + delivery_per_unit
+                condition, certs = _get_condition_and_certs(cur, line_id, line['chosen_supplier_id'])
+
+                _execute_with_cursor(cur, """
+                    INSERT INTO customer_quote_lines 
+                    (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line,
+                     margin_percent, quote_price_gbp, quoted_status, standard_condition, standard_certs)
+                    VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?)
+                """, (
+                    line_id,
+                    base_cost_gbp,
+                    delivery_per_unit,
+                    delivery_per_line,
+                    margin_percent,
+                    quote_price,
+                    condition,
+                    certs
+                ))
+            else:
+                base_cost_gbp = float(line['base_cost_gbp'] or 0)
+                delivery_per_unit = float(line['delivery_per_unit'] or 0)
+                delivery_per_line = float(line['delivery_per_line'] or 0)
+
+                price_before_delivery = base_cost_gbp / (1 - margin_percent / 100) if margin_percent > 0 else base_cost_gbp
+                quote_price = price_before_delivery + delivery_per_unit
+
+                _execute_with_cursor(cur, """
+                    UPDATE customer_quote_lines
+                    SET margin_percent = ?,
+                        quote_price_gbp = ?,
+                        date_modified = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (margin_percent, quote_price, line['quote_line_id']))
+
+        return jsonify(
+            success=True,
+            margin_percent=margin_percent,
+            quote_price_gbp=quote_price,
+            base_cost_gbp=base_cost_gbp,
+            delivery_per_line=delivery_per_line,
+            quoted_status=line['quoted_status'] or 'created'
+        )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
 @customer_quoting_bp.route('/parts-lists/<int:list_id>/customer-quote/bulk-update', methods=['POST'])
 def bulk_update_quote_lines(list_id):
     """

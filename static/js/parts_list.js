@@ -279,6 +279,9 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         <td style="width: 80px; min-width: 80px; text-align: center; font-weight: 600; color: #495057;">
             ${part.quantity || 1}
         </td>
+        <td style="width: 220px; min-width: 220px;">
+            ${buildStatusDisplay(part)}
+        </td>
         <td style="width: 120px; min-width: 120px; cursor: ${part.stock_movement_count > 0 ? 'pointer' : 'default'};"
             class="purchasing-col ${part.stock_movement_count > 0 ? 'clickable-cell' : ''}"
             ${part.stock_movement_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'stock')"` : ''}>
@@ -474,6 +477,14 @@ function formatCurrency(value) {
     return '£' + parseFloat(value).toFixed(2);
 }
 
+function formatCurrencyWithSymbol(value, symbol) {
+    if (value === null || value === undefined || value === '' || isNaN(value)) return '-';
+    const numeric = parseFloat(value);
+    if (isNaN(numeric)) return '-';
+    if (!symbol) return formatCurrency(numeric);
+    return `${symbol}${numeric.toFixed(2)}`;
+}
+
 function formatDate(dateStr) {
     if (!dateStr) return '-';
     try { return new Date(dateStr).toLocaleDateString(); }
@@ -484,6 +495,78 @@ function escapeHtml(text) {
     if (!text) return '';
     const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
     return text.toString().replace(/[&<>"']/g, m => map[m]);
+}
+
+function buildStatusDisplay(part) {
+    const quotedPrice = part.line_quote_price;
+    const supplierQuoteCount = part.line_supplier_quote_count || 0;
+    const supplierQuoteBadge = supplierQuoteCount > 0
+        ? `<div><small class="text-muted">Supplier quotes: ${supplierQuoteCount}</small></div>`
+        : '';
+
+    if (quotedPrice !== null && quotedPrice !== undefined && quotedPrice !== '') {
+        const priceDisplay = formatCurrencyWithSymbol(quotedPrice, part.line_quote_currency_symbol);
+        const supplierDisplay = part.line_quote_supplier_name
+            ? `<div><small class="text-muted">${escapeHtml(part.line_quote_supplier_name)}</small></div>`
+            : '';
+        return `
+            <div>
+                <div style="display: flex; align-items: center; gap: 0.4rem;">
+                    <span class="badge bg-success">Quoted</span>
+                    <span style="font-weight: 600; color: #0d6efd;">${priceDisplay}</span>
+                </div>
+                ${supplierDisplay}
+                ${supplierQuoteBadge}
+            </div>
+        `;
+    }
+
+    const chosenCost = part.chosen_cost;
+    if (chosenCost !== null && chosenCost !== undefined && chosenCost !== '') {
+        const costDisplay = formatCurrencyWithSymbol(chosenCost, part.chosen_currency_symbol);
+        const costSource = part.chosen_supplier_name ? escapeHtml(part.chosen_supplier_name) : 'Manual';
+        const supplierDisplay = `<div><small class="text-muted">${costSource}</small></div>`;
+        return `
+            <div>
+                <div style="display: flex; align-items: center; gap: 0.4rem;">
+                    <span class="badge bg-primary">Costed</span>
+                    <span style="font-weight: 600; color: #0d6efd;">${costDisplay}</span>
+                </div>
+                ${supplierDisplay}
+                ${supplierQuoteBadge}
+            </div>
+        `;
+    }
+
+    if (supplierQuoteCount > 0) {
+        return `
+            <div>
+                <div><span class="badge bg-info text-dark">Supplier Quote</span></div>
+                ${supplierQuoteBadge}
+            </div>
+        `;
+    }
+
+    const contactedNames = part.line_contacted_suppliers || [];
+    const contactedCount = part.line_contacted_suppliers_count || contactedNames.length || 0;
+    if (contactedCount > 0) {
+        const namesHtml = contactedNames.map(name => (
+            `<div><small class="text-muted">${escapeHtml(name)}</small></div>`
+        )).join('');
+        const moreCount = contactedCount - contactedNames.length;
+        const moreHtml = moreCount > 0
+            ? `<div><small class="text-muted">+${moreCount} more</small></div>`
+            : '';
+        return `
+            <div>
+                <div><span class="badge bg-warning text-dark">Contacted</span></div>
+                ${namesHtml}
+                ${moreHtml}
+            </div>
+        `;
+    }
+
+    return '';
 }
 
 function addSuggestedSupplier(lineId, supplierId, supplierName, sourceType, buttonElement) {

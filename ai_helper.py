@@ -797,7 +797,6 @@ def get_top_customers_for_news(salesperson_id, limit=10):
         # Sort by total sales value and limit results
         top_customers.sort(key=lambda x: x['total_sales_value'], reverse=True)
 
-        db.close()
         return top_customers[:limit]
 
     except Exception as e:
@@ -806,6 +805,28 @@ def get_top_customers_for_news(salesperson_id, limit=10):
     finally:
         if 'db' in locals():
             db.close()
+
+
+def get_watched_customers_for_news(salesperson_id, limit=25):
+    """Get watched customers for news checking."""
+    db = get_db_connection()
+    try:
+        rows = db.execute(
+            """
+            SELECT id, name, description, country, website, fleet_size
+            FROM customers
+            WHERE watch = TRUE AND salesperson_id = ?
+            ORDER BY name
+            LIMIT ?
+            """,
+            (salesperson_id, limit)
+        ).fetchall()
+        return [dict(row) for row in rows]
+    except Exception as e:
+        print(f"Error in get_watched_customers_for_news: {str(e)}")
+        return []
+    finally:
+        db.close()
 
 
 def fetch_customer_news_perplexity(customer):
@@ -1051,4 +1072,3 @@ def cleanup_old_cache_files():
 
     except Exception as e:
         print(f"Cache cleanup error: {str(e)}")
-

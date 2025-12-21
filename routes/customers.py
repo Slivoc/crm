@@ -3888,14 +3888,15 @@ def get_projects(customer_id):
 @customers_bp.route('/<int:customer_id>/toggle_watch', methods=['POST'])
 def toggle_watch(customer_id):
     try:
-        data = request.get_json()
-        watch_status = data.get('watch', False)
+        data = request.get_json(silent=True) or {}
+        watch_status = bool(data.get('watch', False))
+        watch_value = watch_status if _using_postgres() else (1 if watch_status else 0)
 
         with db_cursor(commit=True) as cur:
             _execute_with_cursor(
                 cur,
                 "UPDATE customers SET watch = ? WHERE id = ?",
-                (1 if watch_status else 0, customer_id)
+                (watch_value, customer_id)
             )
 
         return jsonify({'success': True, 'watch': watch_status})

@@ -2004,30 +2004,53 @@ def get_contact_communications(contact_id, salesperson_id=None):
     for comm in communications:
         comm_dict = dict(comm)
 
-        # Parse the date string to a datetime object
+        # Parse the date into a datetime object for display/editing
         try:
-            if comm_dict['date']:
-                date_str = comm_dict['date']
+            raw_date = comm_dict.get('date')
 
-                if 'T' in date_str:
-                    try:
-                        comm_dict['date'] = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-                    except ValueError:
-                        try:
-                            comm_dict['date'] = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S')
-                        except ValueError:
-                            comm_dict['date'] = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S.%f')
-                else:
-                    comm_dict['date'] = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
-
-                # Add formatted date for display
-                comm_dict['date_formatted'] = comm_dict['date'].strftime('%b %d, %Y %I:%M %p')
+            if isinstance(raw_date, datetime):
+                parsed_date = raw_date
+            elif isinstance(raw_date, date):
+                parsed_date = datetime.combine(raw_date, datetime.min.time())
+            elif isinstance(raw_date, bytes):
+                parsed_date = None
+                date_str = raw_date.decode('utf-8', errors='ignore')
+            elif raw_date:
+                parsed_date = None
+                date_str = str(raw_date)
             else:
-                comm_dict['date'] = datetime.now()
+                parsed_date = None
+                date_str = None
+
+            if parsed_date is None and date_str:
+                try:
+                    parsed_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                except ValueError:
+                    for fmt in (
+                        '%Y-%m-%d %H:%M:%S',
+                        '%Y-%m-%d %H:%M:%S.%f',
+                        '%Y-%m-%dT%H:%M:%S',
+                        '%Y-%m-%dT%H:%M:%S.%f',
+                        '%Y-%m-%d %H:%M'
+                    ):
+                        try:
+                            parsed_date = datetime.strptime(date_str, fmt)
+                            break
+                        except ValueError:
+                            continue
+
+            if parsed_date:
+                comm_dict['date'] = parsed_date
+                comm_dict['date_formatted'] = parsed_date.strftime('%b %d, %Y %I:%M %p')
+            elif date_str:
+                comm_dict['date'] = None
+                comm_dict['date_formatted'] = date_str
+            else:
+                comm_dict['date'] = None
                 comm_dict['date_formatted'] = "Unknown date"
         except Exception as e:
             print(f"Error parsing date: {e}")
-            comm_dict['date'] = datetime.now()
+            comm_dict['date'] = None
             comm_dict['date_formatted'] = "Unknown date"
 
         result.append(comm_dict)

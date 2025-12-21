@@ -120,19 +120,25 @@ def search_suppliers():
         search_term = f'%{query}%'
 
         suppliers = db_execute('''
-            SELECT DISTINCT s.id, s.name, c.id as currency_id, c.currency_code
-            FROM suppliers s
-            LEFT JOIN currencies c ON s.currency = c.id
-            WHERE s.name LIKE ? COLLATE NOCASE
-            ORDER BY 
-                CASE 
-                    WHEN s.name LIKE ? COLLATE NOCASE THEN 1
-                    WHEN s.name LIKE ? COLLATE NOCASE THEN 2
-                    ELSE 3
-                END,
-                s.name
+            SELECT s.id, s.name, s.currency_id, s.currency_code
+            FROM (
+                SELECT DISTINCT
+                    s.id,
+                    s.name,
+                    c.id as currency_id,
+                    c.currency_code,
+                    CASE
+                        WHEN LOWER(s.name) LIKE LOWER(?) THEN 1
+                        WHEN LOWER(s.name) LIKE LOWER(?) THEN 2
+                        ELSE 3
+                    END as match_rank
+                FROM suppliers s
+                LEFT JOIN currencies c ON s.currency = c.id
+                WHERE LOWER(s.name) LIKE LOWER(?)
+            ) s
+            ORDER BY s.match_rank, s.name
             LIMIT ?
-        ''', (search_term, f'{query}%', f'%{query}%', limit * 2), fetch='all') or []
+        ''', (f'{query}%', f'%{query}%', search_term, limit * 2), fetch='all') or []
 
         scored_suppliers = []
         for supp in suppliers:
@@ -252,7 +258,7 @@ def get_or_create_supplier_mapping(cur, ils_company_name, ils_cage_code):
     _execute_with_cursor(cur, '''
         SELECT id, supplier_id, ils_cage_code, created_date
         FROM ils_supplier_mappings 
-        WHERE ils_company_name = ?
+        WHERE LOWER(ils_company_name) = LOWER(?)
         ORDER BY 
             CASE WHEN ils_cage_code IS NOT NULL THEN 0 ELSE 1 END,
             created_date DESC

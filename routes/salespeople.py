@@ -2,9 +2,9 @@
 import json
 from collections import defaultdict
 from datetime import datetime, date, timedelta
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app, Response
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app, Response, stream_with_context
 from routes.auth import login_required, current_user
-from ai_helper import get_cached_news, get_top_customers_for_news, get_cache_key, cleanup_old_cache_files, fetch_customer_news_perplexity, process_customer_news_chatgpt, cache_news
+from ai_helper import get_cached_news, get_top_customers_for_news, get_watched_customers_for_news, get_cache_key, cleanup_old_cache_files, fetch_customer_news_perplexity, process_customer_news_chatgpt, cache_news
 from models import (get_salespeople, get_all_salespeople_with_contact_counts, get_call_list_contact_ids, add_to_call_list, remove_from_call_list,
     get_call_list_with_communication_status, update_call_list_priority, update_call_list_notes, bulk_add_to_call_list, get_salesperson_recent_communications, get_communication_types_for_salesperson, delete_customer_tag, insert_customer_tags, get_all_tags, insert_customer_tag, get_engagement_settings, get_all_salespeople_with_customer_counts, get_priorities, save_engagement_settings, insert_salesperson, get_active_salespeople, get_engagement_metrics, toggle_salesperson_active, get_customer_contacts_with_communications, update_customer_field_value, get_all_contact_statuses, get_status_counts_for_salesperson, get_tags_by_customer_id, get_salesperson_customers_with_spend, get_salesperson_by_id, get_salesperson_contacts, get_contact_communications, get_salesperson_sales_by_date_range, get_salesperson_monthly_sales, get_accounts_monthly_sales,
                     update_salesperson, delete_salesperson,
@@ -3763,15 +3763,27 @@ def customer_news(salesperson_id):
     if request.args.get('stream') == 'true':
         print("Stream request detected, starting SSE")
         return Response(
-            generate_news_stream(salesperson_id),
+            stream_with_context(generate_news_stream(salesperson_id)),
             mimetype='text/event-stream',
-            headers={'Cache-Control': 'no-cache'}
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no'
+            }
         )
 
     force_refresh = request.args.get('force_refresh') == 'true'
     print(f"force_refresh = {force_refresh}")
 
+    if force_refresh:
+        result = collect_customer_news(salesperson_id)
+        return jsonify({
+            'success': True,
+            **result
+        })
+
     if not force_refresh:
+        server_software = (request.environ.get('SERVER_SOFTWARE') or '').lower()
+        supports_streaming = 'waitress' not in server_software
         cache_key = get_cache_key(salesperson_id)
         print(f"cache_key = {cache_key}")
 
@@ -3784,6 +3796,7 @@ def customer_news(salesperson_id):
             return jsonify({
                 'success': True,
                 'cached': True,
+                'supports_streaming': supports_streaming,
                 **cached_result
             })
         else:
@@ -3792,8 +3805,72 @@ def customer_news(salesperson_id):
     print("Returning requires_streaming")
     return jsonify({
         'success': True,
-        'requires_streaming': True
+        'requires_streaming': True,
+        'supports_streaming': supports_streaming
     })
+
+def collect_customer_news(salesperson_id):
+    """Collect customer news synchronously (non-streaming fallback)."""
+    # Verify salesperson exists
+    salesperson = get_salesperson_by_id(salesperson_id)
+    if not salesperson:
+        return {
+            'news_items': [],
+            'last_updated': datetime.now().isoformat(),
+            'total_customers_checked': 0,
+            'successful_customers': 0,
+            'total_news_items': 0
+        }
+
+    top_customers = get_watched_customers_for_news(salesperson_id, limit=25)
+    if not top_customers:
+        result = {
+            'news_items': [],
+            'last_updated': datetime.now().isoformat(),
+            'total_customers_checked': 0,
+            'successful_customers': 0,
+            'total_news_items': 0
+        }
+        cache_key = get_cache_key(salesperson_id)
+        cache_news(cache_key, result)
+        return result
+
+    all_news_items = []
+    successful_customers = 0
+
+    for customer in top_customers:
+        try:
+            raw_news = fetch_customer_news_perplexity(customer)
+
+            if raw_news:
+                processed_news = process_customer_news_chatgpt(customer, raw_news)
+
+                if processed_news and processed_news.get('news_items'):
+                    all_news_items.extend(processed_news['news_items'])
+                    successful_customers += 1
+
+            import time
+            time.sleep(0.5)
+        except Exception:
+            continue
+
+    all_news_items.sort(
+        key=lambda x: (x.get('relevance_score', 0), x.get('published_date', '')),
+        reverse=True
+    )
+    final_news_items = all_news_items[:20]
+
+    result = {
+        'news_items': final_news_items,
+        'last_updated': datetime.now().isoformat(),
+        'total_customers_checked': len(top_customers),
+        'successful_customers': successful_customers,
+        'total_news_items': len(final_news_items)
+    }
+
+    cache_key = get_cache_key(salesperson_id)
+    cache_news(cache_key, result)
+    return result
 
 def generate_news_stream(salesperson_id):
     """Generator for server-sent events during news collection"""
@@ -3805,10 +3882,19 @@ def generate_news_stream(salesperson_id):
             return
 
         # Get top customers
-        top_customers = get_top_customers_for_news(salesperson_id, limit=10)
+        top_customers = get_watched_customers_for_news(salesperson_id, limit=25)
 
         if not top_customers:
-            yield f"data: {json.dumps({'completed': True, 'news_items': [], 'total_customers_checked': 0})}\n\n"
+            result = {
+                'news_items': [],
+                'last_updated': datetime.now().isoformat(),
+                'total_customers_checked': 0,
+                'successful_customers': 0,
+                'total_news_items': 0
+            }
+            cache_key = get_cache_key(salesperson_id)
+            cache_news(cache_key, result)
+            yield f"data: {json.dumps({'status': 'completed', **result})}\n\n"
             return
 
         # Send initial progress

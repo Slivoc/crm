@@ -129,6 +129,16 @@ document.addEventListener('DOMContentLoaded', function() {
             el.disabled = isLocked;
             el.classList.remove('changed-input');
         });
+
+        const calcButtons = [
+            elements.calcBaseBtn,
+            elements.calcDeliveryBtn,
+            elements.calcMarginBtn
+        ];
+        calcButtons.forEach(btn => {
+            if (!btn) return;
+            btn.disabled = isLocked;
+        });
     }
 
     function markUnsaved() {
@@ -190,6 +200,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 marginPercent: row.querySelector('[data-field="margin_percent"]'),
                 quotePriceGbp: row.querySelector('[data-field="quote_price_gbp"]'),
                 deliveryPerUnit: row.querySelector('.delivery-per-unit'),
+                baseCostCell: row.querySelector('.base-cost-gbp'),
                 lineTotalCost: row.querySelector('.line-total-cost'),
                 lineTotalQuote: row.querySelector('.line-total-quote'),
                 isNoBid: row.querySelector('[data-field="is_no_bid"]'),
@@ -198,7 +209,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 leadDays: row.querySelector('[data-field="lead_days"]'),
                 displayPartNumber: row.querySelector('[data-field="display_part_number"]'),
                 standardCondition: row.querySelector('[data-field="standard_condition"]'),
-                standardCerts: row.querySelector('[data-field="standard_certs"]')
+                standardCerts: row.querySelector('[data-field="standard_certs"]'),
+                calcBaseBtn: row.querySelector('.line-calc-btn[data-calc="base"]'),
+                calcDeliveryBtn: row.querySelector('.line-calc-btn[data-calc="delivery"]'),
+                calcMarginBtn: row.querySelector('.line-calc-btn[data-calc="margin"]')
             };
 
             const status = row.dataset.status || 'created';
@@ -315,6 +329,19 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function updateBaseCostCell(elements, baseCostGbp) {
+        if (!elements.baseCostCell) return;
+        const numericBaseCost = toNumber(baseCostGbp);
+        elements.baseCostCell.textContent = `GBP ${numericBaseCost.toFixed(2)}`;
+    }
+
+    function setInputValue(input, value, decimals = 2) {
+        if (!input) return;
+        const numericValue = toNumber(value);
+        input.value = Number.isFinite(numericValue) ? numericValue.toFixed(decimals) : '';
+        input.classList.remove('changed-input');
+    }
+
     // --- 5. THE DELTA UPDATER (O(1) Lag Fix) ---
     function handleRowChange(row, newStatus = null, newIsNoBid = null, skipUnsavedFlag = false) {
         const cached = rowCache.get(row);
@@ -363,6 +390,95 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // --- 6. EVENT LISTENERS ---
+
+    document.getElementById('quoteTableBody').addEventListener('click', async function(e) {
+        const btn = e.target.closest('.line-calc-btn');
+        if (!btn) return;
+
+        const row = btn.closest('tr');
+        if (!row || row.dataset.locked === '1') return;
+
+        const cached = rowCache.get(row);
+        if (!cached) return;
+
+        const lineId = cached.lineData.id;
+        const calcType = btn.dataset.calc;
+
+        let url = '';
+        let payload = null;
+        let quoteUpdateMode = 'always';
+
+        if (calcType === 'base') {
+            url = `/customer-quoting/parts-lists/${LIST_ID}/customer-quote/line/${lineId}/calculate-base-cost`;
+            quoteUpdateMode = 'onFlag';
+        } else if (calcType === 'delivery') {
+            url = `/customer-quoting/parts-lists/${LIST_ID}/customer-quote/line/${lineId}/calculate-delivery`;
+        } else if (calcType === 'margin') {
+            url = `/customer-quoting/parts-lists/${LIST_ID}/customer-quote/line/${lineId}/calculate-margin`;
+            payload = { margin_percent: toNumber(cached.elements.marginPercent.value) };
+        } else {
+            return;
+        }
+
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Working...';
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: payload ? { 'Content-Type': 'application/json' } : {},
+                body: payload ? JSON.stringify(payload) : undefined
+            });
+
+            const result = await response.json();
+            if (!result.success) {
+                alert('Error: ' + (result.message || 'Failed to calculate'));
+                return;
+            }
+            if (result.skipped) {
+                alert(result.message || 'Line is locked');
+                return;
+            }
+
+            if (typeof result.base_cost_gbp !== 'undefined') {
+                cached.lineData.base_cost_gbp = result.base_cost_gbp;
+                updateBaseCostCell(cached.elements, result.base_cost_gbp);
+            }
+
+            if (typeof result.delivery_per_line !== 'undefined') {
+                setInputValue(cached.elements.deliveryPerLine, result.delivery_per_line, 2);
+            }
+
+            if (typeof result.margin_percent !== 'undefined') {
+                setInputValue(cached.elements.marginPercent, result.margin_percent, 1);
+            }
+
+            if (typeof result.quote_price_gbp !== 'undefined') {
+                const shouldUpdateQuote = quoteUpdateMode === 'always' || result.update_quote_price;
+                if (shouldUpdateQuote) {
+                    setInputValue(cached.elements.quotePriceGbp, result.quote_price_gbp, 2);
+                }
+            }
+
+            if (typeof result.lead_days !== 'undefined' && cached.elements.leadDays) {
+                cached.elements.leadDays.value = result.lead_days || '';
+                cached.elements.leadDays.classList.remove('changed-input');
+            }
+
+            if (result.quoted_status) {
+                row.dataset.status = result.quoted_status;
+            }
+
+            handleRowChange(row, null, null, true);
+        } catch (error) {
+            console.error('Line calculation failed:', error);
+            alert('Failed to calculate this line');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    });
 
     // Optimized Click Handler (Status Button)
     document.getElementById('quoteTableBody').addEventListener('click', function(e) {

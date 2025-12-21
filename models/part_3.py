@@ -782,7 +782,7 @@ def get_salesperson_contacts(salesperson_id, search_term='', customer_filter='',
         print(f"Raw contacts from database: {len(contacts)}")
 
         # Convert to list of dictionaries and format dates
-        from datetime import datetime
+        from datetime import datetime, date
         result = []
 
         for contact in contacts:
@@ -791,22 +791,48 @@ def get_salesperson_contacts(salesperson_id, search_term='', customer_filter='',
             # Format the latest communication date and calculate days since last contact
             if contact_dict['latest_communication_date']:
                 try:
-                    date_str = contact_dict['latest_communication_date']
-                    if 'T' in date_str:
-                        try:
-                            dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-                        except ValueError:
-                            try:
-                                dt = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S')
-                            except ValueError:
-                                dt = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S.%f')
-                    else:
-                        dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
+                    raw_date = contact_dict['latest_communication_date']
+                    parsed_date = None
+                    date_str = None
 
-                    contact_dict['latest_communication_date_formatted'] = dt.strftime('%b %d, %Y')
-                    days_since = (datetime.now() - dt).days
-                    contact_dict['days_since_contact'] = days_since
-                except Exception:
+                    if isinstance(raw_date, datetime):
+                        parsed_date = raw_date
+                    elif isinstance(raw_date, date):
+                        parsed_date = datetime.combine(raw_date, datetime.min.time())
+                    elif isinstance(raw_date, bytes):
+                        date_str = raw_date.decode('utf-8', errors='ignore')
+                    else:
+                        date_str = str(raw_date)
+
+                    if parsed_date is None and date_str:
+                        try:
+                            parsed_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                        except ValueError:
+                            for fmt in (
+                                '%Y-%m-%d %H:%M:%S',
+                                '%Y-%m-%d %H:%M:%S.%f',
+                                '%Y-%m-%dT%H:%M:%S',
+                                '%Y-%m-%dT%H:%M:%S.%f',
+                                '%Y-%m-%d %H:%M'
+                            ):
+                                try:
+                                    parsed_date = datetime.strptime(date_str, fmt)
+                                    break
+                                except ValueError:
+                                    continue
+
+                    if parsed_date:
+                        contact_dict['latest_communication_date_formatted'] = parsed_date.strftime('%b %d, %Y')
+                        days_since = (datetime.now() - parsed_date).days
+                        contact_dict['days_since_contact'] = days_since
+                    elif date_str:
+                        contact_dict['latest_communication_date_formatted'] = date_str
+                        contact_dict['days_since_contact'] = None
+                    else:
+                        contact_dict['latest_communication_date_formatted'] = "Unknown date"
+                        contact_dict['days_since_contact'] = None
+                except Exception as e:
+                    print(f"Date parsing error for contact {contact_dict.get('name', 'Unknown')}: {e}")
                     contact_dict['latest_communication_date_formatted'] = "Unknown date"
                     contact_dict['days_since_contact'] = None
             else:

@@ -7,12 +7,11 @@ from flask_login import LoginManager, current_user
 import imaplib
 import os
 import time
-from routes.emails import sync_new_emails
 from routes.rfqs import rfqs_bp, get_rfq_lines
 from routes.customers import customers_bp
 from routes.suppliers import suppliers_bp
 from routes.test_email import test_email_bp
-from routes.salespeople import salespeople_bp
+from routes.salespeople import salespeople_bp, collect_customer_news
 from models import get_salespeople, insert_update, get_updates_by_customer_id, insert_rfq_from_macro, get_all_tags, get_project_by_id, Permission
 from routes.emails import get_company_name_by_email
 from routes.parts import parts_bp
@@ -375,11 +374,27 @@ def test_get_all_tags():
         print(f"Test route error: {e}")
         return str(e), 500
 
-@scheduler.task('interval', id='email_sync', seconds=3600)  # Sync every hour
-def scheduled_sync_emails():
+@scheduler.task('cron', id='news_scan', day_of_week='mon', hour=1, minute=0)
+def scheduled_news_scan():
     with app.app_context():
-        synced_count = sync_new_emails()
-        current_app.logger.info(f"Scheduled Sync: {synced_count} new emails added.")
+        salespeople = get_salespeople() or []
+        for salesperson in salespeople:
+            salesperson_id = salesperson.get('id')
+            if not salesperson_id:
+                continue
+            try:
+                result = collect_customer_news(salesperson_id)
+                current_app.logger.info(
+                    "Scheduled News Scan: salesperson_id=%s total=%s",
+                    salesperson_id,
+                    result.get('total_news_items', 0)
+                )
+            except Exception as exc:
+                current_app.logger.exception(
+                    "Scheduled News Scan failed: salesperson_id=%s error=%s",
+                    salesperson_id,
+                    exc
+                )
 
 scheduler.init_app(app)
 scheduler.start()
