@@ -182,7 +182,7 @@
         <th>Customer</th>
         <th>Contact</th>
         <th>Status</th>
-        <th class="text-center" style="width: 15%;">Lines / Costed</th>
+        <th class="text-center" style="width: 18%;">Lines / Costed / Quoted</th>
         <th style="width: 25%;">Preview</th>
         <th>Created</th>
         <th>Modified</th>
@@ -210,16 +210,30 @@
     </td>
                             <td class="text-center">
                                 {% set line_count = list.line_count %}
+                                {% set costed_count = list.costed_line_count %}
                                 {% set quoted_count = list.quoted_line_count %}
-                                {% set percentage = (quoted_count / line_count) * 100 if line_count > 0 else 0 %}
+                                {% set costed_percentage = (costed_count / line_count) * 100 if line_count > 0 else 0 %}
+                                {% set quoted_percentage = (quoted_count / line_count) * 100 if line_count > 0 else 0 %}
 
                                 <span class="d-block mb-1">
-                                    <strong class="text-primary">{{ quoted_count }}</strong> / {{ line_count }}
+                                    <strong class="text-primary">{{ costed_count }}</strong> / {{ line_count }} costed
                                 </span>
-                                <div class="progress" style="height: 6px;" title="{{ '%.0f'|format(percentage) }}% Quoted">
-                                    <div class="progress-bar {% if percentage < 50 %}bg-warning{% else %}bg-success{% endif %}"
+                                <span class="d-block mb-2">
+                                    <strong class="text-success">{{ quoted_count }}</strong> / {{ line_count }} quoted
+                                </span>
+                                <div class="progress mb-1" style="height: 6px;" title="{{ '%.0f'|format(costed_percentage) }}% Costed">
+                                    <div class="progress-bar bg-primary"
                                          role="progressbar"
-                                         style="width: {{ percentage }}%;"
+                                         style="width: {{ costed_percentage }}%;"
+                                         aria-valuenow="{{ costed_count }}"
+                                         aria-valuemin="0"
+                                         aria-valuemax="{{ line_count }}">
+                                    </div>
+                                </div>
+                                <div class="progress" style="height: 6px;" title="{{ '%.0f'|format(quoted_percentage) }}% Quoted">
+                                    <div class="progress-bar bg-success"
+                                         role="progressbar"
+                                         style="width: {{ quoted_percentage }}%;"
                                          aria-valuenow="{{ quoted_count }}"
                                          aria-valuemin="0"
                                          aria-valuemax="{{ line_count }}">

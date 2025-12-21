@@ -828,6 +828,12 @@ function renderSupplierPanel(suppliers) {
     let html = '';
     let matchedSuppliers = 0;
 
+    html += `
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="text-muted-sm">Showing awaiting quote lines only</div>
+        </div>
+    `;
+
     suppliers.forEach(sup => {
         const lines = sup.lines || [];
         const filteredLines = lines.filter(line => {
@@ -846,19 +852,23 @@ function renderSupplierPanel(suppliers) {
         const contactInfo = [sup.contact_name, sup.contact_email].filter(Boolean).join(' | ');
 
         html += `
-            <div class="card mb-3">
+            <div class="card mb-3 supplier-panel-card" data-supplier-name="${sup.supplier_name}">
                 <div class="card-header d-flex justify-content-between align-items-start flex-wrap gap-2">
                     <div>
                         <strong>${sup.supplier_name}</strong>
                         ${contactInfo ? `<div class="text-muted-sm">${contactInfo}</div>` : ''}
-                        <div class="text-muted-sm">Filtered: awaiting only</div>
                     </div>
-                    <div class="d-flex flex-wrap gap-1">
-                        <span class="badge bg-secondary">Total ${displayedTotal}</span>
-                        <span class="badge bg-success">Quoted 0</span>
-                        <span class="badge bg-danger">No Bid 0</span>
-                        <span class="badge bg-warning text-dark">Awaiting ${displayedTotal}</span>
-                        <span class="badge bg-info text-dark">Costed 0</span>
+                    <div class="d-flex align-items-center flex-wrap gap-2">
+                        <div class="d-flex flex-wrap gap-1">
+                            <span class="badge bg-secondary">Total ${displayedTotal}</span>
+                            <span class="badge bg-success">Quoted 0</span>
+                            <span class="badge bg-danger">No Bid 0</span>
+                            <span class="badge bg-warning text-dark">Awaiting ${displayedTotal}</span>
+                            <span class="badge bg-info text-dark">Costed 0</span>
+                        </div>
+                        <button class="btn btn-sm btn-outline-primary supplier-panel-copy-supplier">
+                            <i class="bi bi-clipboard me-1"></i>Copy
+                        </button>
                     </div>
                 </div>
                 <div class="card-body p-2">
@@ -890,7 +900,7 @@ function renderSupplierPanel(suppliers) {
                 : '-';
 
             html += `
-                <tr>
+                <tr class="supplier-panel-row">
                     <td>${line.line_number ?? '-'}</td>
                     <td>${line.customer_part_number || '-'}</td>
                     <td>${line.quantity ?? '-'}</td>
@@ -915,6 +925,7 @@ function renderSupplierPanel(suppliers) {
         return '<div class="alert alert-info">No awaiting-quote lines found (costed and no-bid hidden).</div>';
     }
 
+    setTimeout(bindSupplierPanelCopy, 0);
     return html;
 }
 
@@ -924,6 +935,88 @@ function formatPrice(value, currencyCode) {
         return '-';
     }
     return `${currencyCode || 'GBP'} ${amount.toFixed(2)}`;
+}
+
+function bindSupplierPanelCopy() {
+    const copyButtons = document.querySelectorAll('.supplier-panel-copy-supplier');
+    copyButtons.forEach(btn => {
+        if (btn.dataset.bound === '1') {
+            return;
+        }
+        btn.dataset.bound = '1';
+
+        btn.addEventListener('click', function() {
+            const card = btn.closest('.supplier-panel-card');
+            if (!card) {
+                return;
+            }
+
+            const rows = card.querySelectorAll('.supplier-panel-row');
+            if (!rows.length) {
+                return;
+            }
+
+            const header = ['Supplier', '#', 'Part Number', 'Qty', 'Sent', 'Recipient', 'Status', 'Quote'];
+            const lines = [header.join('\t')];
+            const supplierName = card.dataset.supplierName || '';
+
+            rows.forEach(row => {
+                if (row.style.display === 'none') {
+                    return;
+                }
+                const cells = row.querySelectorAll('td');
+                const statusText = cells[5] ? cells[5].textContent.trim().replace(/\s+/g, ' ') : '';
+                const quoteText = cells[6] ? cells[6].textContent.trim() : '';
+
+                lines.push([
+                    supplierName,
+                    cells[0] ? cells[0].textContent.trim() : '',
+                    cells[1] ? cells[1].textContent.trim() : '',
+                    cells[2] ? cells[2].textContent.trim() : '',
+                    cells[3] ? cells[3].textContent.trim() : '',
+                    cells[4] ? cells[4].textContent.trim() : '',
+                    statusText,
+                    quoteText
+                ].join('\t'));
+            });
+
+            copyToClipboard(lines.join('\n'), btn);
+        });
+    });
+}
+
+function copyToClipboard(text, buttonEl) {
+    const setFeedback = () => {
+        if (!buttonEl) return;
+        const original = buttonEl.innerHTML;
+        buttonEl.innerHTML = '<i class="bi bi-check2 me-1"></i>Copied';
+        buttonEl.classList.remove('btn-outline-primary');
+        buttonEl.classList.add('btn-success');
+        setTimeout(() => {
+            buttonEl.innerHTML = original;
+            buttonEl.classList.remove('btn-success');
+            buttonEl.classList.add('btn-outline-primary');
+        }, 1500);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(setFeedback).catch(() => {});
+        return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'absolute';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand('copy');
+        setFeedback();
+    } finally {
+        document.body.removeChild(textarea);
+    }
 }
 
 // Email ILS Suppliers button
@@ -1115,330 +1208,3 @@ if (emailSuggestedBtn) {
     });
 }
 
-// Add this to parts_list_sourcing.js or create a new file
-
-// Supplier Panel Modal functionality
-document.addEventListener('DOMContentLoaded', function() {
-    
-    // Add button to page header (you can trigger this however you want)
-    const supplierPanelBtn = document.getElementById('supplier-panel-btn');
-    if (supplierPanelBtn) {
-        supplierPanelBtn.addEventListener('click', function() {
-            openSupplierPanelModal();
-        });
-    }
-});
-
-function openSupplierPanelModal() {
-    const listId = window.PARTS_LIST_ID;
-    
-    // Show loading modal
-    const modalHtml = `
-        <div class="modal fade" id="supplierPanelModal" tabindex="-1" aria-hidden="true">
-            <div class="modal-dialog modal-xl modal-dialog-scrollable">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Supplier Quote Status Panel</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="text-center py-4">
-                            <div class="spinner-border" role="status"></div>
-                            <p class="mt-2">Loading supplier data...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-    
-    // Remove existing modal if present
-    const existingModal = document.getElementById('supplierPanelModal');
-    if (existingModal) {
-        existingModal.remove();
-    }
-    
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
-    const modal = new bootstrap.Modal(document.getElementById('supplierPanelModal'));
-    modal.show();
-    
-    // Fetch supplier data
-    fetch(`/parts_list/parts-lists/${listId}/supplier-panel-data`)
-        .then(r => r.json())
-        .then(data => {
-            if (data.success) {
-                renderSupplierPanel(data.suppliers);
-            } else {
-                document.querySelector('#supplierPanelModal .modal-body').innerHTML = `
-                    <div class="alert alert-danger">Error loading supplier data: ${data.message || 'Unknown error'}</div>
-                `;
-            }
-        })
-        .catch(err => {
-            document.querySelector('#supplierPanelModal .modal-body').innerHTML = `
-                <div class="alert alert-danger">Error: ${err.message}</div>
-            `;
-        });
-}
-
-function renderSupplierPanel(suppliers) {
-    if (!suppliers || suppliers.length === 0) {
-        document.querySelector('#supplierPanelModal .modal-body').innerHTML = `
-            <div class="alert alert-info">No suppliers have been contacted for this parts list yet.</div>
-        `;
-        return;
-    }
-    
-    let html = `
-        <!-- Filter Controls -->
-        <div class="card mb-3">
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-md-4">
-                        <label class="form-label small fw-semibold">Filter Lines:</label>
-                        <select id="panel-filter-status" class="form-select form-select-sm">
-                            <option value="all">All Lines</option>
-                            <option value="awaiting">Awaiting Quote</option>
-                            <option value="quoted">Quoted</option>
-                            <option value="no-bid">No Bid</option>
-                        </select>
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label small fw-semibold">Hide:</label>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="panel-hide-costed">
-                            <label class="form-check-label" for="panel-hide-costed">
-                                Hide Already Costed Lines
-                            </label>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="panel-hide-no-bid">
-                            <label class="form-check-label" for="panel-hide-no-bid">
-                                Hide No Bid Lines
-                            </label>
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label small fw-semibold">Search:</label>
-                        <input type="text" id="panel-search-part" class="form-control form-control-sm" 
-                               placeholder="Search part number...">
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Suppliers Accordion -->
-        <div class="accordion" id="supplierPanelAccordion">
-    `;
-    
-    suppliers.forEach((supplier, idx) => {
-        const supplierId = supplier.supplier_id;
-        const isExpanded = idx === 0; // Expand first supplier by default
-        
-        html += `
-            <div class="accordion-item supplier-panel-item" data-supplier-id="${supplierId}">
-                <h2 class="accordion-header">
-                    <button class="accordion-button ${isExpanded ? '' : 'collapsed'}" type="button" 
-                            data-bs-toggle="collapse" data-bs-target="#supplier-${supplierId}">
-                        <div class="d-flex justify-content-between align-items-center w-100 me-2">
-                            <div>
-                                <strong>${supplier.supplier_name}</strong>
-                                ${supplier.contact_name ? `<small class="text-muted ms-2">${supplier.contact_name}</small>` : ''}
-                            </div>
-                            <div class="d-flex gap-2">
-                                <span class="badge bg-secondary">${supplier.total_lines} total</span>
-                                ${supplier.quoted_lines > 0 ? `<span class="badge bg-success">${supplier.quoted_lines} quoted</span>` : ''}
-                                ${supplier.awaiting_lines > 0 ? `<span class="badge bg-warning text-dark">${supplier.awaiting_lines} awaiting</span>` : ''}
-                                ${supplier.no_bid_lines > 0 ? `<span class="badge bg-danger">${supplier.no_bid_lines} no bid</span>` : ''}
-                            </div>
-                        </div>
-                    </button>
-                </h2>
-                <div id="supplier-${supplierId}" class="accordion-collapse collapse ${isExpanded ? 'show' : ''}" 
-                     data-bs-parent="#supplierPanelAccordion">
-                    <div class="accordion-body p-0">
-                        <!-- Copy Button -->
-                        <div class="p-3 border-bottom bg-light d-flex justify-content-between align-items-center">
-                            <div>
-                                <strong>Lines:</strong> ${supplier.total_lines}
-                                ${supplier.contact_email ? `<span class="text-muted ms-3">${supplier.contact_email}</span>` : ''}
-                            </div>
-                            <button class="btn btn-sm btn-outline-primary copy-supplier-lines-btn" 
-                                    data-supplier-id="${supplierId}">
-                                <i class="bi bi-clipboard me-1"></i>Copy Lines
-                            </button>
-                        </div>
-                        
-                        <!-- Lines Table -->
-                        <table class="table table-sm table-hover mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width: 50px;">#</th>
-                                    <th>Part Number</th>
-                                    <th style="width: 80px;" class="text-center">Qty</th>
-                                    <th style="width: 120px;">Date Sent</th>
-                                    <th style="width: 150px;">Status</th>
-                                    <th style="width: 120px;" class="text-end">Price</th>
-                                </tr>
-                            </thead>
-                            <tbody class="supplier-lines-tbody" data-supplier-id="${supplierId}">
-        `;
-        
-        supplier.lines.forEach(line => {
-            let statusBadge = '';
-            let statusClass = '';
-            
-            if (line.is_no_bid) {
-                statusBadge = '<span class="badge bg-danger">NO BID</span>';
-                statusClass = 'table-danger';
-            } else if (line.quoted_price !== null) {
-                statusBadge = '<span class="badge bg-success">QUOTED</span>';
-                statusClass = 'table-success';
-            } else {
-                statusBadge = '<span class="badge bg-warning text-dark">AWAITING</span>';
-                statusClass = 'table-warning';
-            }
-            
-            if (line.is_costed) {
-                statusBadge += ' <span class="badge bg-info ms-1">COSTED</span>';
-            }
-            
-            const priceDisplay = line.quoted_price 
-                ? `${line.currency_code || 'GBP'} ${parseFloat(line.quoted_price).toFixed(2)}`
-                : '-';
-            
-            const dateSent = line.date_sent ? new Date(line.date_sent).toLocaleDateString('en-GB') : '-';
-            
-            html += `
-                <tr class="${statusClass} panel-line-row" 
-                    data-supplier-id="${supplierId}"
-                    data-line-id="${line.line_id}"
-                    data-status="${line.is_no_bid ? 'no-bid' : (line.quoted_price ? 'quoted' : 'awaiting')}"
-                    data-is-costed="${line.is_costed ? '1' : '0'}"
-                    data-part-number="${line.customer_part_number}">
-                    <td class="text-center">${line.line_number}</td>
-                    <td><strong>${line.customer_part_number}</strong></td>
-                    <td class="text-center">${line.quantity}</td>
-                    <td><small>${dateSent}</small></td>
-                    <td>${statusBadge}</td>
-                    <td class="text-end">${priceDisplay}</td>
-                </tr>
-            `;
-        });
-        
-        html += `
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        `;
-    });
-    
-    html += '</div>';
-    
-    document.querySelector('#supplierPanelModal .modal-body').innerHTML = html;
-    
-    // Attach event listeners
-    attachPanelEventListeners();
-}
-
-function attachPanelEventListeners() {
-    // Filter listeners
-    const filterStatus = document.getElementById('panel-filter-status');
-    const hideCosted = document.getElementById('panel-hide-costed');
-    const hideNoBid = document.getElementById('panel-hide-no-bid');
-    const searchPart = document.getElementById('panel-search-part');
-    
-    if (filterStatus) filterStatus.addEventListener('change', applyPanelFilters);
-    if (hideCosted) hideCosted.addEventListener('change', applyPanelFilters);
-    if (hideNoBid) hideNoBid.addEventListener('change', applyPanelFilters);
-    if (searchPart) searchPart.addEventListener('input', applyPanelFilters);
-    
-    // Copy button listeners
-    document.querySelectorAll('.copy-supplier-lines-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const supplierId = this.dataset.supplierId;
-            copySupplierLines(supplierId);
-        });
-    });
-}
-
-function applyPanelFilters() {
-    const filterStatus = document.getElementById('panel-filter-status').value;
-    const hideCosted = document.getElementById('panel-hide-costed').checked;
-    const hideNoBid = document.getElementById('panel-hide-no-bid').checked;
-    const searchTerm = document.getElementById('panel-search-part').value.toLowerCase();
-    
-    document.querySelectorAll('.panel-line-row').forEach(row => {
-        let show = true;
-        
-        const status = row.dataset.status;
-        const isCosted = row.dataset.isCosted === '1';
-        const partNumber = row.dataset.partNumber.toLowerCase();
-        
-        // Filter by status
-        if (filterStatus !== 'all' && status !== filterStatus) {
-            show = false;
-        }
-        
-        // Hide costed
-        if (hideCosted && isCosted) {
-            show = false;
-        }
-        
-        // Hide no bid
-        if (hideNoBid && status === 'no-bid') {
-            show = false;
-        }
-        
-        // Search filter
-        if (searchTerm && !partNumber.includes(searchTerm)) {
-            show = false;
-        }
-        
-        row.style.display = show ? '' : 'none';
-    });
-    
-    // Update supplier badges to show filtered counts
-    document.querySelectorAll('.supplier-panel-item').forEach(item => {
-        const supplierId = item.dataset.supplierId;
-        const visibleRows = item.querySelectorAll(`.panel-line-row[data-supplier-id="${supplierId}"]:not([style*="display: none"])`);
-        const totalRows = item.querySelectorAll(`.panel-line-row[data-supplier-id="${supplierId}"]`);
-        
-        // You could update the badge here to show filtered count if desired
-    });
-}
-
-function copySupplierLines(supplierId) {
-    const rows = document.querySelectorAll(`.panel-line-row[data-supplier-id="${supplierId}"]:not([style*="display: none"])`);
-    
-    let copyText = '';
-    rows.forEach(row => {
-        const lineNum = row.querySelector('td:nth-child(1)').textContent;
-        const partNum = row.querySelector('td:nth-child(2)').textContent;
-        const qty = row.querySelector('td:nth-child(3)').textContent;
-        const dateSent = row.querySelector('td:nth-child(4)').textContent;
-        const status = row.querySelector('td:nth-child(5)').textContent;
-        
-        copyText += `${lineNum}\t${partNum}\t${qty}\t${dateSent}\t${status}\n`;
-    });
-    
-    // Copy to clipboard
-    navigator.clipboard.writeText(copyText).then(() => {
-        // Show success feedback
-        const btn = document.querySelector(`.copy-supplier-lines-btn[data-supplier-id="${supplierId}"]`);
-        const originalHtml = btn.innerHTML;
-        btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Copied!';
-        btn.classList.remove('btn-outline-primary');
-        btn.classList.add('btn-success');
-        
-        setTimeout(() => {
-            btn.innerHTML = originalHtml;
-            btn.classList.remove('btn-success');
-            btn.classList.add('btn-outline-primary');
-        }, 2000);
-    }).catch(err => {
-        alert('Failed to copy: ' + err.message);
-    });
-}

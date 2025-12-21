@@ -2469,13 +2469,18 @@ def view_parts_lists():
                    pl.contact_id,
                    pl.salesperson_id,
                    COALESCE(c.name, '') AS customer_name,
-                   COALESCE(ct.name, '') AS contact_name,
-                   pls.name AS status_name,
-                   (SELECT COUNT(*) FROM parts_list_lines pll WHERE pll.parts_list_id = pl.id) AS line_count,
-                   (SELECT COUNT(DISTINCT sql.parts_list_line_id) 
-                    FROM parts_list_supplier_quote_lines sql
-                    JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                    WHERE sq.parts_list_id = pl.id AND sql.is_no_bid = FALSE) AS quoted_line_count
+                 COALESCE(ct.name, '') AS contact_name,
+                 pls.name AS status_name,
+                 (SELECT COUNT(*) FROM parts_list_lines pll WHERE pll.parts_list_id = pl.id) AS line_count,
+                 (SELECT COUNT(*)
+                  FROM parts_list_lines pll
+                  WHERE pll.parts_list_id = pl.id
+                    AND pll.chosen_cost IS NOT NULL) AS costed_line_count,
+                 (SELECT COUNT(DISTINCT pll.id)
+                  FROM parts_list_lines pll
+                  LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                  WHERE pll.parts_list_id = pl.id
+                    AND cql.quoted_status = 'quoted') AS quoted_line_count
             FROM parts_lists pl
             LEFT JOIN customers c ON c.id = pl.customer_id
             LEFT JOIN contacts ct ON ct.id = pl.contact_id
