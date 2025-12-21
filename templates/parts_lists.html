@@ -523,6 +523,7 @@ function searchPartsListsByPart() {
 }
 
 const topQuotesUrl = "{{ url_for('parts_list.top_parts_list_quotes') }}";
+const selectedSalespersonId = "{{ selected_salesperson_id or '' }}";
 const topQuotesTableBody = () => document.getElementById('topQuotesTableBody');
 const topQuotesTotalValue = () => document.getElementById('topQuotesTotalValue');
 
@@ -551,6 +552,9 @@ function loadTopQuotes() {
     const params = new URLSearchParams();
     if (statusId) {
         params.append('status_id', statusId);
+    }
+    if (selectedSalespersonId) {
+        params.append('salesperson_id', selectedSalespersonId);
     }
 
     fetch(topQuotesUrl + (params.toString() ? `?${params.toString()}` : ''))

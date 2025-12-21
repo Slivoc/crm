@@ -2340,15 +2340,29 @@ def top_parts_list_quotes():
     """Return the highest quoted parts lists by total quoted value."""
     try:
         status_id = request.args.get('status_id', type=int)
+        salesperson_id = request.args.get('salesperson_id', type=int)
         limit = request.args.get('limit', type=int) or 10
         limit = max(5, min(limit, 50))  # keep the result set reasonable
 
         where_clauses = []
         params = []
 
+        if not salesperson_id and current_user.is_authenticated:
+            user_salesperson = db_execute(
+                'SELECT legacy_salesperson_id FROM salesperson_user_link WHERE user_id = ?',
+                (current_user.id,),
+                fetch='one',
+            )
+            if user_salesperson:
+                salesperson_id = user_salesperson['legacy_salesperson_id']
+
         if status_id:
             where_clauses.append("pl.status_id = ?")
             params.append(status_id)
+
+        if salesperson_id:
+            where_clauses.append("pl.salesperson_id = ?")
+            params.append(salesperson_id)
 
         where_sql = ""
         if where_clauses:
@@ -2364,17 +2378,17 @@ def top_parts_list_quotes():
                 pl.date_modified,
                 c.name AS customer_name,
                 COUNT(DISTINCT pll.id) AS line_count,
-                COUNT(DISTINCT CASE 
-                    WHEN cql.quoted_status = 'quoted' 
-                         AND cql.is_no_bid = FALSE 
-                         AND cql.quote_price_gbp > 0 
-                    THEN pll.id END) AS quoted_lines,
-                COALESCE(SUM(CASE 
-                    WHEN cql.quoted_status = 'quoted' 
-                         AND cql.is_no_bid = FALSE 
-                         AND cql.quote_price_gbp > 0
-                    THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
-                    ELSE 0 END), 0) AS quoted_value_gbp
+                  COUNT(DISTINCT CASE 
+                      WHEN cql.quoted_status = 'quoted' 
+                           AND COALESCE(cql.is_no_bid::int, 0) = 0
+                           AND cql.quote_price_gbp > 0 
+                      THEN pll.id END) AS quoted_lines,
+                  COALESCE(SUM(CASE 
+                      WHEN cql.quoted_status = 'quoted' 
+                           AND COALESCE(cql.is_no_bid::int, 0) = 0
+                           AND cql.quote_price_gbp > 0
+                      THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                      ELSE 0 END), 0) AS quoted_value_gbp
             FROM parts_lists pl
             LEFT JOIN customers c ON c.id = pl.customer_id
             LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
@@ -2382,12 +2396,12 @@ def top_parts_list_quotes():
             LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
             {where_sql}
             GROUP BY pl.id, pl.name, pl.status_id, pl.date_modified, c.name, pls.name
-            HAVING COALESCE(SUM(CASE 
-                WHEN cql.quoted_status = 'quoted' 
-                     AND cql.is_no_bid = FALSE 
-                     AND cql.quote_price_gbp > 0
-                THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
-                ELSE 0 END), 0) > 0
+              HAVING COALESCE(SUM(CASE 
+                  WHEN cql.quoted_status = 'quoted' 
+                       AND COALESCE(cql.is_no_bid::int, 0) = 0
+                       AND cql.quote_price_gbp > 0
+                  THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                  ELSE 0 END), 0) > 0
             ORDER BY quoted_value_gbp DESC, pl.date_modified DESC
             LIMIT ?
             """,
