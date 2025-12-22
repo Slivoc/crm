@@ -42,6 +42,51 @@ def _to_float(value):
         return value
 
 
+def _sort_date_key(value):
+    """Normalize mixed date/datetime values for consistent sorting."""
+    if value is None:
+        return datetime.min
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    return datetime.min
+
+
+_PORTAL_QUOTE_REQUESTS_HAS_CUSTOMER_REFERENCE = None
+
+
+def _portal_quote_requests_has_customer_reference():
+    """Check once whether customer_reference exists on portal_quote_requests."""
+    global _PORTAL_QUOTE_REQUESTS_HAS_CUSTOMER_REFERENCE
+    if _PORTAL_QUOTE_REQUESTS_HAS_CUSTOMER_REFERENCE is not None:
+        return _PORTAL_QUOTE_REQUESTS_HAS_CUSTOMER_REFERENCE
+
+    has_column = False
+    try:
+        if _using_postgres():
+            result = db_execute("""
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'portal_quote_requests'
+                  AND column_name = 'customer_reference'
+                LIMIT 1
+            """, fetch='one')
+            has_column = bool(result)
+        else:
+            columns = db_execute("PRAGMA table_info(portal_quote_requests)", fetch='all') or []
+            has_column = any(
+                (col.get('name') if isinstance(col, dict) else col['name']) == 'customer_reference'
+                for col in columns
+            )
+    except Exception:
+        has_column = False
+
+    _PORTAL_QUOTE_REQUESTS_HAS_CUSTOMER_REFERENCE = has_column
+    return has_column
+
+
 def _months_ago(reference: date, months: int) -> date:
     if months <= 0:
         return reference
@@ -614,10 +659,16 @@ def analyze_quote():
 
                         chosen = None
                         if price_candidates:
-                            priority_1 = sorted([p for p in price_candidates if p['priority'] == 1],
-                                                key=lambda x: x['date'] or '', reverse=True)
-                            priority_2 = sorted([p for p in price_candidates if p['priority'] == 2],
-                                                key=lambda x: x['date'] or '', reverse=True)
+                            priority_1 = sorted(
+                                [p for p in price_candidates if p['priority'] == 1],
+                                key=lambda x: _sort_date_key(x['date']),
+                                reverse=True
+                            )
+                            priority_2 = sorted(
+                                [p for p in price_candidates if p['priority'] == 2],
+                                key=lambda x: _sort_date_key(x['date']),
+                                reverse=True
+                            )
                             chosen = priority_1[0] if priority_1 else (priority_2[0] if priority_2 else None)
 
                         if chosen:
@@ -698,19 +749,33 @@ def submit_quote_request():
             )).fetchone()
             parts_list_id = parts_list_row['id']
 
-            request_row = _execute_with_cursor(cursor, """
-                INSERT INTO portal_quote_requests
-                (portal_user_id, customer_id, parts_list_id, reference_number, customer_reference, customer_notes)
-                VALUES (?, ?, ?, ?, ?, ?)
-                RETURNING id
-            """, (
-                user['id'],
-                user['customer_id'],
-                parts_list_id,
-                ref_number,
-                customer_reference,
-                notes,
-            )).fetchone()
+            if _portal_quote_requests_has_customer_reference():
+                request_row = _execute_with_cursor(cursor, """
+                    INSERT INTO portal_quote_requests
+                    (portal_user_id, customer_id, parts_list_id, reference_number, customer_reference, customer_notes)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    RETURNING id
+                """, (
+                    user['id'],
+                    user['customer_id'],
+                    parts_list_id,
+                    ref_number,
+                    customer_reference,
+                    notes,
+                )).fetchone()
+            else:
+                request_row = _execute_with_cursor(cursor, """
+                    INSERT INTO portal_quote_requests
+                    (portal_user_id, customer_id, parts_list_id, reference_number, customer_notes)
+                    VALUES (?, ?, ?, ?, ?)
+                    RETURNING id
+                """, (
+                    user['id'],
+                    user['customer_id'],
+                    parts_list_id,
+                    ref_number,
+                    notes,
+                )).fetchone()
             request_id = request_row['id']
 
             for idx, part in enumerate(parts, 1):
@@ -765,11 +830,16 @@ def get_quote_requests():
     try:
         user = request.portal_user
 
-        requests = db_execute("""
+        customer_reference_select = (
+            "pqr.customer_reference"
+            if _portal_quote_requests_has_customer_reference()
+            else "NULL"
+        )
+        requests = db_execute(f"""
             SELECT 
                 pqr.id,
                 pqr.reference_number,
-                pqr.customer_reference,
+                {customer_reference_select} as customer_reference,
                 pqr.status,
                 pqr.date_submitted,
                 pqr.date_processed,
