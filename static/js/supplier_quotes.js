@@ -100,6 +100,13 @@ document.addEventListener('DOMContentLoaded', function() {
         initializePdfDropZone();
     }
 
+    // Set today's date by default
+    const quoteDateInput = document.getElementById('quote-date-input');
+    if (quoteDateInput && !quoteDateInput.value) {
+        const today = new Date().toISOString().split('T')[0];
+        quoteDateInput.value = today;
+    }
+
     // Initialize for quick quote page
     if (window.IS_QUICK_QUOTE) {
         // Load suppliers for the quick quote page

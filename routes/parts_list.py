@@ -5058,7 +5058,7 @@ def apply_quick_no_bid(list_id, supplier_id):
                     _execute_with_cursor(cur, """
                         INSERT INTO parts_list_supplier_quote_lines
                             (supplier_quote_id, parts_list_line_id, is_no_bid)
-                        VALUES (?, ?, 1)
+                        VALUES (?, ?, FALSE)
                     """, (quote_id, lid))
 
         return jsonify(success=True, quote_id=quote_id)
