@@ -68,6 +68,7 @@ from routes.customer_quoting import customer_quoting_bp
 from routes.marketplace import marketplace_bp
 from routes.portal_api import portal_api_bp
 from routes.portal_admin import portal_admin_bp
+from routes.news_email import send_news_email
 from routes.parts_list_ai import parts_list_ai_bp
 
 scheduler = APScheduler()
@@ -376,7 +377,7 @@ def test_get_all_tags():
         print(f"Test route error: {e}")
         return str(e), 500
 
-@scheduler.task('cron', id='news_scan', day_of_week='mon', hour=1, minute=0)
+@scheduler.task('cron', id='news_scan', day_of_week='mon-fri', hour=1, minute=0)
 def scheduled_news_scan():
     with app.app_context():
         salespeople = get_salespeople() or []
@@ -391,6 +392,7 @@ def scheduled_news_scan():
                     salesperson_id,
                     result.get('total_news_items', 0)
                 )
+                send_news_email(salesperson_id, salesperson.get('name'), result)
             except Exception as exc:
                 current_app.logger.exception(
                     "Scheduled News Scan failed: salesperson_id=%s error=%s",

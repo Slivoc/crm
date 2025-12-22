@@ -5,6 +5,7 @@ from datetime import datetime, date, timedelta
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app, Response, stream_with_context
 from routes.auth import login_required, current_user
 from ai_helper import get_cached_news, get_top_customers_for_news, get_watched_customers_for_news, get_cache_key, cleanup_old_cache_files, fetch_customer_news_perplexity, process_customer_news_chatgpt, cache_news
+from routes.news_email import get_news_email_addresses, send_news_email
 from models import (get_salespeople, get_all_salespeople_with_contact_counts, get_call_list_contact_ids, add_to_call_list, remove_from_call_list,
     get_call_list_with_communication_status, update_call_list_priority, update_call_list_notes, bulk_add_to_call_list, get_salesperson_recent_communications, get_communication_types_for_salesperson, delete_customer_tag, insert_customer_tags, get_all_tags, insert_customer_tag, get_engagement_settings, get_all_salespeople_with_customer_counts, get_priorities, save_engagement_settings, insert_salesperson, get_active_salespeople, get_engagement_metrics, toggle_salesperson_active, get_customer_contacts_with_communications, update_customer_field_value, get_all_contact_statuses, get_status_counts_for_salesperson, get_tags_by_customer_id, get_salesperson_customers_with_spend, get_salesperson_by_id, get_salesperson_contacts, get_contact_communications, get_salesperson_sales_by_date_range, get_salesperson_monthly_sales, get_accounts_monthly_sales,
                     update_salesperson, delete_salesperson,
@@ -3776,6 +3777,8 @@ def customer_news(salesperson_id):
 
     if force_refresh:
         result = collect_customer_news(salesperson_id)
+        salesperson = get_salesperson_by_id(salesperson_id)
+        send_news_email(salesperson_id, salesperson.get('name') if salesperson else None, result)
         return jsonify({
             'success': True,
             **result
@@ -3807,6 +3810,33 @@ def customer_news(salesperson_id):
         'success': True,
         'requires_streaming': True,
         'supports_streaming': supports_streaming
+    })
+
+
+@salespeople_bp.route('/<int:salesperson_id>/customer_news/send_email', methods=['POST'])
+@login_required
+def customer_news_send_email(salesperson_id):
+    """Send cached news email without refreshing (testing helper)."""
+    cache_key = get_cache_key(salesperson_id)
+    cached_result = get_cached_news(cache_key)
+    if not cached_result:
+        return jsonify({
+            'success': True,
+            'email_sent': False,
+            'cached': False,
+            'message': 'No cached news available'
+        })
+
+    salesperson = get_salesperson_by_id(salesperson_id)
+    sent = send_news_email(salesperson_id, salesperson.get('name') if salesperson else None, cached_result)
+    addresses = get_news_email_addresses(salesperson_id)
+    return jsonify({
+        'success': True,
+        'email_sent': bool(sent),
+        'cached': True,
+        'from_email': addresses.get('from_email'),
+        'to_email': addresses.get('to_email'),
+        **cached_result
     })
 
 def collect_customer_news(salesperson_id):
@@ -3965,6 +3995,7 @@ def generate_news_stream(salesperson_id):
         cache_news(cache_key, result)
 
         # Send completion
+        send_news_email(salesperson_id, salesperson.get('name') if salesperson else None, result)
         yield f"data: {json.dumps({'status': 'completed', **result})}\n\n"
 
     except Exception as e:
