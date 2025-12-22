@@ -5883,6 +5883,144 @@ def create_from_email():
     except Exception as e:
         logging.exception(f"Error creating list from email: {e}")
         return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_bp.route('/outlook/macro', methods=['POST'])
+def outlook_macro():
+    """
+    Create a parts list from Outlook macro JSON payload (selected text or full body).
+    """
+    data = request.get_json(force=True, silent=True)
+    if data is None:
+        raw_body = request.get_data(cache=False, as_text=True) or ''
+        if raw_body.strip():
+            try:
+                data = json.loads(raw_body)
+            except json.JSONDecodeError:
+                logging.warning("Outlook macro received invalid JSON payload")
+                return jsonify(success=False, message="Invalid JSON payload"), 400
+        else:
+            data = {}
+    subject = data.get('subject') or 'Outlook import'
+    sender = data.get('sender_email') or data.get('sender') or ''
+    selected_text = data.get('selected_text') or ''
+    body_text = data.get('body_text') or ''
+
+    def _clean_body(text: str) -> str:
+        """Remove control chars and collapse whitespace from email bodies."""
+        if not text:
+            return ''
+        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', ' ', text)
+        text = re.sub(r'[^\x09\x0a\x0d\x20-\x7e]', ' ', text)
+        return ' '.join(text.split())
+
+    cleaned_selected = _clean_body(selected_text)
+    cleaned_body = _clean_body(body_text)
+    raw_text = cleaned_selected if cleaned_selected.strip() else cleaned_body
+    if not raw_text.strip():
+        return jsonify(success=False, message="No text provided"), 400
+
+    clean_body = raw_text
+    if len(clean_body) > 20000:
+        logging.info(f"Outlook macro body too long ({len(clean_body)} chars); trimming to 20000")
+        clean_body = clean_body[:20000]
+
+    try:
+        with db_cursor(commit=True) as cur:
+            customer_id = None
+            contact_id = None
+
+            if sender:
+                contact = _execute_with_cursor(cur, """
+                    SELECT c.id as contact_id, c.customer_id
+                    FROM contacts c
+                    WHERE LOWER(c.email) = LOWER(?)
+                    LIMIT 1
+                """, (sender,)).fetchone()
+
+                if contact:
+                    contact_id = contact['contact_id']
+                    customer_id = contact['customer_id']
+                    logging.info(f"Outlook macro matched contact ID {contact_id} with customer ID {customer_id}")
+
+            def _fallback_extract_tabular(text: str):
+                parts = []
+                for raw_line in (text or '').splitlines():
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    if line.lower().startswith('part #') or line.lower().startswith('part number'):
+                        continue
+                    if '\t' in line:
+                        cols = [c.strip() for c in line.split('\t') if c.strip()]
+                        if len(cols) >= 2:
+                            part_number = cols[0]
+                            qty_match = re.search(r'\b(\d+)\b', cols[-1])
+                            qty = int(qty_match.group(1)) if qty_match else 1
+                            parts.append({'part_number': part_number, 'quantity': qty})
+                            continue
+                    match = re.search(r'^\s*([A-Za-z0-9\-]+)\b.*?(\d+)\s*$', line)
+                    if match:
+                        parts.append({'part_number': match.group(1), 'quantity': int(match.group(2))})
+                return parts
+
+            extracted = extract_part_numbers_and_quantities(clean_body) if clean_body.strip() else []
+            if not extracted:
+                extracted = _fallback_extract_tabular(clean_body)
+            logging.info(f"Outlook macro extracted {len(extracted)} parts")
+
+            salesperson_id = 1  # Default
+            if current_user.is_authenticated:
+                sp = _execute_with_cursor(
+                    cur,
+                    "SELECT legacy_salesperson_id FROM salesperson_user_link WHERE user_id = ?",
+                    (current_user.id,)
+                ).fetchone()
+                if sp and sp['legacy_salesperson_id']:
+                    salesperson_id = sp['legacy_salesperson_id']
+
+            list_name = f"Email: {subject[:50]}" if subject else "Outlook Import"
+
+            list_row = _execute_with_cursor(cur, """
+                INSERT INTO parts_lists 
+                    (name, customer_id, contact_id, salesperson_id, status_id, notes, date_created, date_modified)
+                VALUES (?, ?, ?, ?, 1, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id
+            """, (list_name, customer_id, contact_id, salesperson_id)).fetchone()
+
+            list_id = list_row['id'] if list_row else getattr(cur, 'lastrowid', None)
+            logging.info(f"Outlook macro created parts list ID {list_id}")
+
+            if extracted:
+                for idx, part in enumerate(extracted):
+                    _execute_with_cursor(cur, """
+                        INSERT INTO parts_list_lines 
+                        (parts_list_id, line_number, customer_part_number, base_part_number, quantity)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        list_id,
+                        idx + 1,
+                        part['part_number'],
+                        create_base_part_number(part['part_number']),
+                        part.get('quantity', 1)
+                    ))
+                logging.info(f"Outlook macro inserted {len(extracted)} lines")
+            else:
+                logging.info("Outlook macro: no parts extracted")
+
+        redirect_url = url_for('parts_list.view_parts_list', list_id=list_id, _external=True)
+
+        return jsonify({
+            'success': True,
+            'list_id': list_id,
+            'redirect_url': redirect_url,
+            'parts_count': len(extracted),
+            'list_name': list_name
+        })
+
+    except Exception as e:
+        logging.exception(f"Error creating list from Outlook macro: {e}")
+        return jsonify(success=False, message=str(e)), 500
     
 @parts_list_bp.route('/debug-routes')
 def debug_routes():
