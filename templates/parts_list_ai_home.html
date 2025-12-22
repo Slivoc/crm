@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block title %}AI Parts List Analysis{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h2><i class="fas fa-robot"></i> AI Parts List Analysis</h2>
+            <p class="text-muted">Select a parts list to generate comprehensive AI-powered sourcing and costing analysis</p>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="GET" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Status</label>
+                    <select name="status_id" class="form-select" onchange="this.form.submit()">
+                        <option value="">All Statuses</option>
+                        {% for status in statuses %}
+                        <option value="{{ status.id }}" {% if status.id == selected_status_id %}selected{% endif %}>
+                            {{ status.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Customer</label>
+                    <select name="customer_id" class="form-select" onchange="this.form.submit()">
+                        <option value="">All Customers</option>
+                        {% for customer in customers %}
+                        <option value="{{ customer.id }}" {% if customer.id == selected_customer_id %}selected{% endif %}>
+                            {{ customer.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <a href="{{ url_for('parts_list_ai.ai_home') }}" class="btn btn-secondary">Clear Filters</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card border-primary">
+                <div class="card-body">
+                    <h6 class="text-muted mb-1">Total Lists</h6>
+                    <h3 class="mb-0">{{ lists|length }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-success">
+                <div class="card-body">
+                    <h6 class="text-muted mb-1">Fully Costed</h6>
+                    <h3 class="mb-0">{{ lists|selectattr('line_count', 'eq', 'costed_lines')|list|length }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-warning">
+                <div class="card-body">
+                    <h6 class="text-muted mb-1">Partially Costed</h6>
+                    <h3 class="mb-0">{{ lists|rejectattr('costed_lines', 'eq', 0)|rejectattr('line_count', 'eq', 'costed_lines')|list|length }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-danger">
+                <div class="card-body">
+                    <h6 class="text-muted mb-1">Need Costing</h6>
+                    <h3 class="mb-0">{{ lists|selectattr('costed_lines', 'eq', 0)|list|length }}</h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Parts Lists Table -->
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">Parts Lists ({{ lists|length }})</h5>
+        </div>
+        <div class="card-body p-0">
+            {% if lists %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>List Name</th>
+                            <th>Customer</th>
+                            <th>Status</th>
+                            <th>Lines</th>
+                            <th>Costed</th>
+                            <th>Quoted</th>
+                            <th>Progress</th>
+                            <th>Modified</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for list in lists %}
+                        <tr>
+                            <td>
+                                <strong>{{ list.name }}</strong>
+                                {% if list.contact_name %}
+                                <br><small class="text-muted">{{ list.contact_name }}</small>
+                                {% endif %}
+                            </td>
+                            <td>{{ list.customer_name or '-' }}</td>
+                            <td>
+                                <span class="badge bg-secondary">{{ list.status_name }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge bg-info">{{ list.line_count }}</span>
+                            </td>
+                            <td class="text-center">
+                                {% if list.costed_lines == list.line_count %}
+                                <span class="badge bg-success">{{ list.costed_lines }}</span>
+                                {% elif list.costed_lines > 0 %}
+                                <span class="badge bg-warning">{{ list.costed_lines }}</span>
+                                {% else %}
+                                <span class="badge bg-danger">0</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if list.quoted_lines > 0 %}
+                                <span class="badge bg-success">{{ list.quoted_lines }}</span>
+                                {% else %}
+                                <span class="badge bg-secondary">0</span>
+                                {% endif %}
+                            </td>
+                            <td style="min-width: 150px;">
+                                {% set progress = (list.costed_lines / list.line_count) * 100 if list.line_count > 0 else 0 %}
+                                <div class="progress" style="height: 20px;">
+                                    <div class="progress-bar {% if progress == 100 %}bg-success{% elif progress > 50 %}bg-warning{% else %}bg-danger{% endif %}"
+                                         role="progressbar"
+                                         style="width: {{ progress }}%">
+                                        {{ "%.0f"|format(progress) }}%
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <small>
+                                    {% if list.date_modified %}
+                                        {{ list.date_modified.strftime('%Y-%m-%d') }}
+                                    {% elif list.date_created %}
+                                        {{ list.date_created.strftime('%Y-%m-%d') }}
+                                    {% endif %}
+                                </small>
+                            </td>
+                            <td>
+                                <a href="{{ url_for('parts_list_ai.analyze_parts_list', list_id=list.id) }}" 
+                                   class="btn btn-primary btn-sm">
+                                    <i class="fas fa-robot"></i> Analyze
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="p-5 text-center text-muted">
+                <i class="fas fa-inbox fa-3x mb-3"></i>
+                <p>No parts lists found matching your filters</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<style>
+.card {
+    box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
+}
+
+.table-hover tbody tr:hover {
+    background-color: rgba(0,0,0,0.02);
+}
+
+.progress {
+    background-color: #e9ecef;
+}
+</style>
+{% endblock %}

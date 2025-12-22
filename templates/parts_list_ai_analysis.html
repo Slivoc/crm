@@ -1,0 +1,313 @@
+{% extends "base.html" %}
+
+{% block title %}AI Analysis - {{ header.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <h2><i class="fas fa-robot"></i> AI Analysis: {{ header.name }}</h2>
+            <p class="text-muted">
+                Customer: <strong>{{ header.customer_name or 'Not specified' }}</strong> |
+                Status: <strong>{{ header.status_name }}</strong> |
+                Lines: <strong>{{ lines|length }}</strong>
+            </p>
+        </div>
+        <div class="col-auto">
+            <a href="{{ url_for('parts_list_ai.ai_home') }}" class="btn btn-secondary">
+                <i class="fas fa-arrow-left"></i> Back to List
+            </a>
+            <a href="{{ url_for('parts_list.view_parts_list', list_id=list_id) }}" class="btn btn-outline-primary">
+                <i class="fas fa-eye"></i> View Parts List
+            </a>
+        </div>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="row mb-4">
+        {% set costed = lines|selectattr('chosen_cost')|list|length %}
+        {% set in_stock = lines|selectattr('stock_available')|list|length %}
+        {% set quoted = lines|selectattr('supplier_quote_count')|list|length %}
+        {% set contacted = lines|selectattr('suppliers_contacted')|list|length %}
+
+        <div class="col-md-3">
+            <div class="card border-primary">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-1">Total Lines</h6>
+                    <h2 class="mb-0">{{ lines|length }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-success">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-1">Costed</h6>
+                    <h2 class="mb-0">{{ costed }}</h2>
+                    <small class="text-muted">{{ "%.0f"|format((costed / lines|length * 100) if lines|length > 0 else 0) }}%</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-info">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-1">In Stock</h6>
+                    <h2 class="mb-0">{{ in_stock }}</h2>
+                    <small class="text-muted">Available qty ≥ requested</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-warning">
+                <div class="card-body text-center">
+                    <h6 class="text-muted mb-1">Quoted</h6>
+                    <h2 class="mb-0">{{ quoted }}</h2>
+                    <small class="text-muted">Supplier responses received</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Generate Analysis Button -->
+    <div class="card mb-4">
+        <div class="card-body text-center">
+            <button id="generateAnalysis" class="btn btn-primary btn-lg">
+                <i class="fas fa-magic"></i> Generate AI Analysis
+            </button>
+            <p class="text-muted mt-2 mb-0">
+                <small>This will analyze sourcing status, pricing opportunities, timeline risks, and provide actionable recommendations</small>
+            </p>
+        </div>
+    </div>
+
+    <!-- Analysis Results (hidden until generated) -->
+    <div id="analysisResults" style="display: none;">
+        <div class="card">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-chart-line"></i> Analysis Results</h5>
+                <button id="regenerateAnalysis" class="btn btn-sm btn-light">
+                    <i class="fas fa-sync"></i> Regenerate
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="analysisContent" class="analysis-content">
+                    <!-- AI analysis will be inserted here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" style="display: none;" class="text-center my-5">
+        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="mt-3 text-muted">Analyzing {{ lines|length }} parts across multiple data sources...</p>
+    </div>
+
+    <!-- Line Details (always visible for context) -->
+    <div class="card mt-4">
+        <div class="card-header bg-secondary text-white">
+            <h5 class="mb-0">Line Details</h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Line</th>
+                            <th>Part Number</th>
+                            <th>Qty</th>
+                            <th>Cost</th>
+                            <th>Stock</th>
+                            <th>VQ</th>
+                            <th>Quotes</th>
+                            <th>Contacted</th>
+                            <th>ILS</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in lines %}
+                        <tr>
+                            <td>{{ line.line_number }}</td>
+                            <td>
+                                <strong>{{ line.customer_part_number }}</strong>
+                                {% if line.base_part_number != line.customer_part_number %}
+                                <br><small class="text-muted">{{ line.base_part_number }}</small>
+                                {% endif %}
+                            </td>
+                            <td>{{ line.quantity }}</td>
+                            <td>
+                                {% if line.chosen_cost %}
+                                <span class="badge bg-success">
+                                    {{ line.currency_code or '£' }}{{ "%.2f"|format(line.chosen_cost) }}
+                                </span>
+                                {% if line.chosen_supplier_name %}
+                                <br><small class="text-muted">{{ line.chosen_supplier_name }}</small>
+                                {% endif %}
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if line.stock_available and line.stock_available >= line.quantity %}
+                                <span class="badge bg-success">{{ line.stock_available }}</span>
+                                {% elif line.stock_available and line.stock_available > 0 %}
+                                <span class="badge bg-warning">{{ line.stock_available }}</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if line.vq_count and line.vq_count > 0 %}
+                                <span class="badge bg-info">{{ line.vq_count }}</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if line.supplier_quote_count and line.supplier_quote_count > 0 %}
+                                <span class="badge bg-success">{{ line.supplier_quote_count }}</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if line.suppliers_contacted and line.suppliers_contacted > 0 %}
+                                <span class="badge bg-warning">{{ line.suppliers_contacted }}</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if line.ils_supplier_count and line.ils_supplier_count > 0 %}
+                                <span class="badge bg-info">{{ line.ils_supplier_count }}</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if line.chosen_cost %}
+                                <span class="badge bg-success">Costed</span>
+                                {% elif line.stock_available and line.stock_available >= line.quantity %}
+                                <span class="badge bg-primary">Stock Available</span>
+                                {% elif line.supplier_quote_count and line.supplier_quote_count > 0 %}
+                                <span class="badge bg-info">Quoted</span>
+                                {% elif line.suppliers_contacted and line.suppliers_contacted > 0 %}
+                                <span class="badge bg-warning">Pending</span>
+                                {% else %}
+                                <span class="badge bg-danger">Need Sourcing</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const generateBtn = document.getElementById('generateAnalysis');
+    const regenerateBtn = document.getElementById('regenerateAnalysis');
+    const resultsDiv = document.getElementById('analysisResults');
+    const contentDiv = document.getElementById('analysisContent');
+    const spinner = document.getElementById('loadingSpinner');
+
+    function generateAnalysis() {
+        // Hide results and show spinner
+        resultsDiv.style.display = 'none';
+        spinner.style.display = 'block';
+        generateBtn.disabled = true;
+
+        fetch('/parts-list-ai/api/generate-analysis/{{ list_id }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            spinner.style.display = 'none';
+            generateBtn.disabled = false;
+
+            if (data.success) {
+                // Format the analysis with proper HTML
+                const formattedAnalysis = formatAnalysis(data.analysis);
+                contentDiv.innerHTML = formattedAnalysis;
+                resultsDiv.style.display = 'block';
+
+                // Scroll to results
+                resultsDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } else {
+                alert('Error generating analysis: ' + data.message);
+            }
+        })
+        .catch(error => {
+            spinner.style.display = 'none';
+            generateBtn.disabled = false;
+            alert('Error: ' + error);
+        });
+    }
+
+    function formatAnalysis(text) {
+        // Convert markdown-style formatting to HTML
+        let html = text;
+
+        // Headers
+        html = html.replace(/^### (.+)$/gm, '<h5 class="mt-4 mb-3 text-primary">$1</h5>');
+        html = html.replace(/^## (.+)$/gm, '<h4 class="mt-4 mb-3 text-primary"><strong>$1</strong></h4>');
+        html = html.replace(/^# (.+)$/gm, '<h3 class="mt-4 mb-3 text-primary"><strong>$1</strong></h3>');
+
+        // Bold
+        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+        // Bullet points
+        html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+        html = html.replace(/(<li>.*<\/li>)/s, '<ul class="mb-3">$1</ul>');
+
+        // Line breaks
+        html = html.replace(/\n\n/g, '</p><p>');
+        html = '<p>' + html + '</p>';
+
+        return html;
+    }
+
+    generateBtn.addEventListener('click', generateAnalysis);
+    regenerateBtn.addEventListener('click', generateAnalysis);
+});
+</script>
+
+<style>
+.analysis-content {
+    font-size: 1.05rem;
+    line-height: 1.7;
+}
+
+.analysis-content h3,
+.analysis-content h4,
+.analysis-content h5 {
+    border-bottom: 2px solid #e9ecef;
+    padding-bottom: 0.5rem;
+}
+
+.analysis-content ul {
+    padding-left: 1.5rem;
+}
+
+.analysis-content li {
+    margin-bottom: 0.5rem;
+}
+
+.card {
+    box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
+}
+
+.table-hover tbody tr:hover {
+    background-color: rgba(0,0,0,0.02);
+}
+</style>
+{% endblock %}

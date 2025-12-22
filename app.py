@@ -68,6 +68,7 @@ from routes.customer_quoting import customer_quoting_bp
 from routes.marketplace import marketplace_bp
 from routes.portal_api import portal_api_bp
 from routes.portal_admin import portal_admin_bp
+from routes.parts_list_ai import parts_list_ai_bp
 
 scheduler = APScheduler()
 
@@ -188,6 +189,7 @@ app.register_blueprint(so_import_bp, url_prefix='/so-import')
 app.register_blueprint(ils_bp, url_prefix='/ils')
 app.register_blueprint(customer_quoting_bp, url_prefix='/customer-quoting')
 app.register_blueprint(marketplace_bp, url_prefix='/marketplace')
+app.register_blueprint(parts_list_ai_bp, url_prefix='/parts-list-ai')
 app.secret_key = 'your-secret-key-here'  # Required for sessions
 app.register_blueprint(portal_api_bp)
 app.register_blueprint(portal_admin_bp)

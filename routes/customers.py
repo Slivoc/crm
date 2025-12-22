@@ -2918,6 +2918,7 @@ def filter_customers():
         filter_status = request.args.get('filter_status', '').strip()
         filter_tags = request.args.get('filter_tags', '').strip()
         filter_comments = request.args.get('filter_comments', '').strip()
+        countries = [country for country in request.args.getlist('countries') if country]
         sort_by = request.args.get('sort_by', 'latest_activity')
         order = request.args.get('order', 'DESC').upper()
         filter_watch = request.args.get('filter_watch', '').strip()
@@ -2992,6 +2993,15 @@ def filter_customers():
 
         tags_agg_fn = "STRING_AGG(it.tag, ', ')" if _using_postgres() else "GROUP_CONCAT(it.tag)"
 
+        if _using_postgres():
+            email_date_expr = "e.sent_date::timestamp"
+            rfq_date_expr = "r.entered_date::timestamp"
+            order_date_expr = "so.date_entered::timestamp"
+        else:
+            email_date_expr = "e.sent_date"
+            rfq_date_expr = "r.entered_date"
+            order_date_expr = "so.date_entered"
+
         query = f"""
         WITH RECURSIVE latest_activity AS (
             SELECT customer_id, activity_type, activity_date, description, status, activity_id
@@ -3001,7 +3011,7 @@ def filter_customers():
                     SELECT
                         c.customer_id,
                         'email' as activity_type,
-                        e.sent_date as activity_date,
+                        {email_date_expr} as activity_date,
                         e.subject as description,
                         CASE
                             WHEN LOWER(e.sender_email) IN (SELECT LOWER(email) FROM users) THEN 'outbound'
@@ -3016,7 +3026,7 @@ def filter_customers():
                     SELECT
                         r.customer_id,
                         'rfq' as activity_type,
-                        r.entered_date as activity_date,
+                        {rfq_date_expr} as activity_date,
                         r.customer_ref as description,
                         r.status,
                         r.id as activity_id
@@ -3027,7 +3037,7 @@ def filter_customers():
                     SELECT
                         so.customer_id,
                         'order' as activity_type,
-                        so.date_entered as activity_date,
+                        {order_date_expr} as activity_date,
                         so.sales_order_ref as description,
                         ss.status_name as status,
                         so.id as activity_id
@@ -3097,17 +3107,21 @@ def filter_customers():
         ) cu ON cu.customer_id = c.id AND cu.rn = 1
         LEFT JOIN salespeople s2 ON cu.salesperson_id = s2.id
         {where_fragment}
-        ORDER BY CASE :sort_by
-    WHEN 'id' THEN c.id
-    WHEN 'budget' THEN CAST(COALESCE(c.budget, 0) AS DECIMAL)
-    WHEN 'latest_activity' THEN la.activity_date
-    WHEN 'name' THEN c.name
-    WHEN 'primary_contact' THEN pc.name
-    WHEN 'salesperson' THEN s.name
-    WHEN 'status' THEN cs.status
-    ELSE la.activity_date
-END
- """ + (" DESC" if order == 'DESC' else " ASC") + """
+        ORDER BY
+            CASE WHEN :sort_by = 'id' THEN c.id END
+                """ + (" DESC" if order == 'DESC' else " ASC") + """,
+            CASE WHEN :sort_by = 'budget' THEN CAST(COALESCE(c.budget, 0) AS DECIMAL) END
+                """ + (" DESC" if order == 'DESC' else " ASC") + """,
+            CASE WHEN :sort_by = 'latest_activity' THEN la.activity_date END
+                """ + (" DESC" if order == 'DESC' else " ASC") + """,
+            CASE WHEN :sort_by = 'name' THEN c.name END
+                """ + (" DESC" if order == 'DESC' else " ASC") + """,
+            CASE WHEN :sort_by = 'primary_contact' THEN pc.name END
+                """ + (" DESC" if order == 'DESC' else " ASC") + """,
+            CASE WHEN :sort_by = 'salesperson' THEN s.name END
+                """ + (" DESC" if order == 'DESC' else " ASC") + """,
+            CASE WHEN :sort_by = 'status' THEN cs.status END
+                """ + (" DESC" if order == 'DESC' else " ASC") + """
         LIMIT :limit OFFSET :offset
         """
 
