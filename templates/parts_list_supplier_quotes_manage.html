@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Supplier Quotes - {{ list_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.quote-lines-table {
+    max-height: 70vh;
+    overflow: auto;
+}
+
+.quote-lines-table table {
+    margin-bottom: 0;
+}
+
+.quote-list-item {
+    cursor: pointer;
+}
+
+.quote-list-item.active {
+    background: #e7f1ff;
+    border-color: #9ec5fe;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="card mb-3" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
+        <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
+                    <i class="bi bi-clipboard-check me-2" style="color:#0d6efd;"></i>
+                    Supplier Quotes - {{ list_name }}
+                </h5>
+                <div class="btn-group" role="group">
+                    <a href="{{ url_for('parts_list.parts_list', list_id=list_id) }}"
+                       class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-house-door me-1"></i>Overview
+                    </a>
+                    <a href="{{ url_for('parts_list.parts_list_sourcing', list_id=list_id) }}"
+                       class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-truck me-1"></i>Sourcing
+                    </a>
+                    <a href="{{ url_for('parts_list.parts_list_costing', list_id=list_id) }}"
+                       class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-calculator me-1"></i>Costing
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="supplier-quotes-alerts"></div>
+
+    <div class="row g-3">
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">Quotes</h6>
+                    <button class="btn btn-sm btn-outline-primary" id="refresh-quotes-btn">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                    </button>
+                </div>
+                <div class="card-body" id="quotes-list-container">
+                    <div class="text-muted">Loading quotes...</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0" id="quote-detail-title">Quote Details</h6>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-danger" id="delete-lines-btn" disabled>
+                            <i class="bi bi-trash me-1"></i>Delete Selected Lines
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="quote-detail-placeholder" class="text-muted">
+                        Select a quote to view lines and update the supplier.
+                    </div>
+
+                    <div id="quote-detail-form" style="display:none;">
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Supplier</label>
+                                <select class="form-select" id="quote-supplier-select"></select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Reference</label>
+                                <input class="form-control" id="quote-reference-input" readonly>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Date</label>
+                                <input class="form-control" id="quote-date-input" readonly>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Currency</label>
+                                <input class="form-control" id="quote-currency-input" readonly>
+                            </div>
+                            <div class="col-md-9">
+                                <label class="form-label">Notes</label>
+                                <input class="form-control" id="quote-notes-input" readonly>
+                            </div>
+                        </div>
+                        <button class="btn btn-sm btn-primary" id="save-supplier-btn">
+                            <i class="bi bi-save me-1"></i>Save Supplier
+                        </button>
+
+                        <div class="quote-lines-table mt-3 border rounded">
+                            <table class="table table-sm table-striped align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width:40px;">
+                                            <input type="checkbox" id="select-all-lines">
+                                        </th>
+                                        <th style="width:60px;">Line</th>
+                                        <th>Part Number</th>
+                                        <th>Quoted Part</th>
+                                        <th style="width:80px;">Qty</th>
+                                        <th style="width:120px;">Unit Price</th>
+                                        <th style="width:80px;">No Bid</th>
+                                        <th>Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="quote-lines-body"></tbody>
+                            </table>
+                        </div>
+                        <div class="text-muted mt-2" id="quote-lines-count"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    window.PARTS_LIST_ID = {{ list_id }};
+</script>
+<script src="{{ url_for('static', filename='js/supplier_quotes_manage.js') }}?v={{ cache_bust }}"></script>
+{% endblock %}

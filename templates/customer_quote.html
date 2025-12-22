@@ -693,8 +693,9 @@ async function autoSave() {
 
     // Prepare data for Handsontable
 const tableData = LINES_DATA.map(line => {
+    const requestedPN = (line.requested_part_number || line.customer_part_number || '').toString().trim();
     const hasSupplierDiff = line.supplier_quoted_part_number &&
-                            line.supplier_quoted_part_number !== line.customer_part_number;
+                            line.supplier_quoted_part_number !== requestedPN;
 
     const baseCostGBP = toNumber(line.base_cost_gbp) ||
                        calculateBaseCostGBP(line.chosen_cost, line.chosen_currency_id);
@@ -714,7 +715,9 @@ const tableData = LINES_DATA.map(line => {
     return {
         id: line.id,
         line_number: line.line_number,
-        customer_part_number: line.customer_part_number,
+        customer_part_number: requestedPN,
+        requested_part_number: requestedPN,
+        alt_part_number: line.customer_part_number,
         display_part_number: displayPN,
         supplier_quoted_part_number: line.supplier_quoted_part_number,
         has_supplier_diff: hasSupplierDiff,

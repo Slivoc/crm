@@ -417,11 +417,20 @@
         data-status="{{ line.quoted_status or 'created' }}"
         data-is-no-bid="{{ 1 if line.is_no_bid else 0 }}">
 
-        <td>{{ line.line_number }}</td>
+        <td>
+            <div class="d-flex align-items-center gap-1">
+                <span>{{ line.line_number }}</span>
+                <button class="btn btn-sm btn-outline-secondary duplicate-line-btn"
+                        data-line-id="{{ line.id }}"
+                        title="Add price break">
+                    <i class="bi bi-files"></i>
+                </button>
+            </div>
+        </td>
 
         <td>
-            {{ line.customer_part_number }}
-            {% if line.supplier_quoted_part_number and line.supplier_quoted_part_number != line.customer_part_number %}
+            {{ line.requested_part_number or line.customer_part_number }}
+            {% if line.supplier_quoted_part_number and line.supplier_quoted_part_number != (line.requested_part_number or line.customer_part_number) %}
             <span class="supplier-diff-note">Supplier: {{ line.supplier_quoted_part_number }}</span>
             {% endif %}
         </td>

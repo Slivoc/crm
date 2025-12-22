@@ -2,6 +2,7 @@ from flask import Blueprint, render_template, request, jsonify, url_for, session
 from db import db_cursor, execute as db_execute
 import logging
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 import os
 
 customer_quoting_bp = Blueprint('customer_quoting', __name__)
@@ -43,6 +44,22 @@ def _last_inserted_id(cur):
 
 def _row_to_dict(row):
     return dict(row) if row else None
+
+
+def _parse_decimal(value):
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _to_decimal(value, default):
+    parsed = _parse_decimal(value)
+    return parsed if parsed is not None else default
 
 
 def _get_condition_and_certs(cur, parts_list_line_id, supplier_id):
@@ -116,7 +133,10 @@ def customer_quote(list_id):
                     SELECT 
                         pll.id,
                         pll.line_number,
+                        pll.parent_line_id,
+                        pll.line_type,
                         pll.customer_part_number,
+                        parent.customer_part_number as parent_customer_part_number,
                         pll.base_part_number,
                         pll.quantity,
                         pll.chosen_qty,
@@ -152,14 +172,14 @@ def customer_quote(list_id):
                         (SELECT sql.quoted_part_number 
                          FROM parts_list_supplier_quote_lines sql
                          JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                         WHERE sql.parts_list_line_id = pll.id 
+                         WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
                            AND sq.supplier_id = pll.chosen_supplier_id
                          LIMIT 1) as supplier_quoted_part_number,
                         (
                             SELECT sql.condition_code
                             FROM parts_list_supplier_quote_lines sql
                             JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                            WHERE sql.parts_list_line_id = pll.id
+                            WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
                               AND sql.is_no_bid = FALSE
                               AND sql.condition_code IS NOT NULL
                               AND TRIM(sql.condition_code) != ''
@@ -172,7 +192,7 @@ def customer_quote(list_id):
                             SELECT sql.certifications
                             FROM parts_list_supplier_quote_lines sql
                             JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                            WHERE sql.parts_list_line_id = pll.id
+                            WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
                               AND sql.is_no_bid = FALSE
                               AND sql.certifications IS NOT NULL
                               AND TRIM(sql.certifications) != ''
@@ -192,6 +212,7 @@ def customer_quote(list_id):
                            AND sm.available_quantity > 0) as stock_quantity
 
                     FROM parts_list_lines pll
+                    LEFT JOIN parts_list_lines parent ON parent.id = pll.parent_line_id
                     LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
                     LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
                     LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
@@ -202,6 +223,11 @@ def customer_quote(list_id):
                 # Get BOM guide prices for each line
                 for line in lines:
                     line_dict = dict(line)
+                    line_dict['requested_part_number'] = (
+                        line_dict['parent_customer_part_number']
+                        if line_dict.get('line_type') == 'alternate' and line_dict.get('parent_customer_part_number')
+                        else line_dict.get('customer_part_number')
+                    )
 
                     # Get highest BOM guide price for this part
                     bom_data = _execute_with_cursor(cur, """
@@ -1046,7 +1072,7 @@ def bulk_apply_margin(list_id):
     """
     try:
         data = request.get_json(force=True)
-        margin_percent = data.get('margin_percent')
+        margin_percent = _parse_decimal(data.get('margin_percent'))
         scope = data.get('scope', 'all')  # 'all' or 'empty'
 
         if margin_percent is None or margin_percent < 0 or margin_percent >= 100:
@@ -1085,13 +1111,15 @@ def bulk_apply_margin(list_id):
 
             for line in lines:
                 if not line['quote_line_id']:
-                    chosen_cost = line['chosen_cost'] or 0
-                    exchange_rate = line['exchange_rate_to_eur'] or 1
+                    chosen_cost = _to_decimal(line['chosen_cost'], Decimal('0'))
+                    exchange_rate = _to_decimal(line['exchange_rate_to_eur'], Decimal('1'))
                     base_cost_gbp = chosen_cost / exchange_rate if exchange_rate != 0 else chosen_cost
-                    delivery = 0
+                    delivery = Decimal('0')
 
-                    price_before_delivery = base_cost_gbp / (
-                            1 - margin_percent / 100) if margin_percent > 0 else base_cost_gbp
+                    margin_factor = Decimal('1') - (margin_percent / Decimal('100'))
+                    price_before_delivery = (
+                        base_cost_gbp / margin_factor if margin_percent > 0 else base_cost_gbp
+                    )
                     quote_price = price_before_delivery + delivery
 
                     _execute_with_cursor(cur, """
@@ -1102,10 +1130,13 @@ def bulk_apply_margin(list_id):
                     """, (line['parts_list_line_id'], base_cost_gbp, delivery, 0, margin_percent, quote_price))
                     created_count += 1
                 else:
-                    base_cost = line['base_cost_gbp'] or 0
-                    delivery = line['delivery_per_unit'] or 0
+                    base_cost = _to_decimal(line['base_cost_gbp'], Decimal('0'))
+                    delivery = _to_decimal(line['delivery_per_unit'], Decimal('0'))
 
-                    price_before_delivery = base_cost / (1 - margin_percent / 100) if margin_percent > 0 else base_cost
+                    margin_factor = Decimal('1') - (margin_percent / Decimal('100'))
+                    price_before_delivery = (
+                        base_cost / margin_factor if margin_percent > 0 else base_cost
+                    )
                     quote_price = price_before_delivery + delivery
 
                     _execute_with_cursor(cur, """
@@ -1133,7 +1164,7 @@ def bulk_margin_preview(list_id):
     """
     try:
         data = request.get_json(force=True)
-        margin_percent = data.get('margin_percent')
+        margin_percent = _parse_decimal(data.get('margin_percent'))
         scope = data.get('scope', 'all')
 
         if margin_percent is None or margin_percent < 0 or margin_percent >= 100:
@@ -1180,20 +1211,23 @@ def bulk_margin_preview(list_id):
         for line in lines:
             # Calculate base cost if needed
             if line['quote_line_id']:
-                base_cost = line['base_cost_gbp'] or 0
-                delivery = line['delivery_per_unit'] or 0
+                base_cost = _to_decimal(line['base_cost_gbp'], Decimal('0'))
+                delivery = _to_decimal(line['delivery_per_unit'], Decimal('0'))
             else:
-                chosen_cost = line['chosen_cost'] or 0
-                exchange_rate = line['exchange_rate_to_eur'] or 1
+                chosen_cost = _to_decimal(line['chosen_cost'], Decimal('0'))
+                exchange_rate = _to_decimal(line['exchange_rate_to_eur'], Decimal('1'))
                 base_cost = chosen_cost / exchange_rate if exchange_rate != 0 else chosen_cost
-                delivery = 0
+                delivery = Decimal('0')
 
             # Calculate new price with new margin
-            price_before_delivery = base_cost / (1 - margin_percent / 100) if margin_percent > 0 else base_cost
+            margin_factor = Decimal('1') - (margin_percent / Decimal('100'))
+            price_before_delivery = (
+                base_cost / margin_factor if margin_percent > 0 else base_cost
+            )
             new_price = price_before_delivery + delivery
 
-            old_price = line['old_price'] or 0
-            old_margin = line['old_margin'] or 0
+            old_price = _to_decimal(line['old_price'], Decimal('0'))
+            old_margin = _to_decimal(line['old_margin'], Decimal('0'))
 
             effective_qty = line['effective_quantity']
 
@@ -1227,7 +1261,7 @@ def bulk_margin_apply(list_id):
     """
     try:
         data = request.get_json(force=True)
-        margin_percent = data.get('margin_percent')
+        margin_percent = _parse_decimal(data.get('margin_percent'))
         scope = data.get('scope', 'all')
 
         if margin_percent is None or margin_percent < 0 or margin_percent >= 100:
@@ -1264,13 +1298,15 @@ def bulk_margin_apply(list_id):
 
             for line in lines:
                 if not line['quote_line_id']:
-                    chosen_cost = line['chosen_cost'] or 0
-                    exchange_rate = line['exchange_rate_to_eur'] or 1
+                    chosen_cost = _to_decimal(line['chosen_cost'], Decimal('0'))
+                    exchange_rate = _to_decimal(line['exchange_rate_to_eur'], Decimal('1'))
                     base_cost_gbp = chosen_cost / exchange_rate if exchange_rate != 0 else chosen_cost
-                    delivery = 0
+                    delivery = Decimal('0')
 
-                    price_before_delivery = base_cost_gbp / (
-                            1 - margin_percent / 100) if margin_percent > 0 else base_cost_gbp
+                    margin_factor = Decimal('1') - (margin_percent / Decimal('100'))
+                    price_before_delivery = (
+                        base_cost_gbp / margin_factor if margin_percent > 0 else base_cost_gbp
+                    )
                     quote_price = price_before_delivery + delivery
 
                     _execute_with_cursor(cur, """
@@ -1281,10 +1317,13 @@ def bulk_margin_apply(list_id):
                     """, (line['parts_list_line_id'], base_cost_gbp, delivery, 0, margin_percent, quote_price))
                     created_count += 1
                 else:
-                    base_cost = line['base_cost_gbp'] or 0
-                    delivery = line['delivery_per_unit'] or 0
+                    base_cost = _to_decimal(line['base_cost_gbp'], Decimal('0'))
+                    delivery = _to_decimal(line['delivery_per_unit'], Decimal('0'))
 
-                    price_before_delivery = base_cost / (1 - margin_percent / 100) if margin_percent > 0 else base_cost
+                    margin_factor = Decimal('1') - (margin_percent / Decimal('100'))
+                    price_before_delivery = (
+                        base_cost / margin_factor if margin_percent > 0 else base_cost
+                    )
                     quote_price = price_before_delivery + delivery
 
                     _execute_with_cursor(cur, """
@@ -1328,7 +1367,10 @@ def minimum_line_value_review(list_id):
                 SELECT 
                     pll.id,
                     pll.line_number,
+                    pll.parent_line_id,
+                    pll.line_type,
                     pll.customer_part_number,
+                    parent.customer_part_number as parent_customer_part_number,
                     pll.base_part_number,
                     pll.quantity,
                     pll.chosen_qty,
@@ -1342,6 +1384,7 @@ def minimum_line_value_review(list_id):
                     cql.quoted_status,
                     cql.id as quote_line_id
                 FROM parts_list_lines pll
+                LEFT JOIN parts_list_lines parent ON parent.id = pll.parent_line_id
                 LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
                 LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
                 WHERE pll.parts_list_id = ?
@@ -1587,7 +1630,7 @@ def customer_quote_simple(list_id):
                         SELECT sql.condition_code
                         FROM parts_list_supplier_quote_lines sql
                         JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                        WHERE sql.parts_list_line_id = pll.id
+                        WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
                           AND sql.is_no_bid = FALSE
                           AND sql.condition_code IS NOT NULL
                           AND TRIM(sql.condition_code) != ''
@@ -1600,7 +1643,7 @@ def customer_quote_simple(list_id):
                         SELECT sql.certifications
                         FROM parts_list_supplier_quote_lines sql
                         JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                        WHERE sql.parts_list_line_id = pll.id
+                        WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
                           AND sql.is_no_bid = FALSE
                           AND sql.certifications IS NOT NULL
                           AND TRIM(sql.certifications) != ''
@@ -1612,7 +1655,7 @@ def customer_quote_simple(list_id):
                     (SELECT sql.quoted_part_number 
                      FROM parts_list_supplier_quote_lines sql
                      JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                     WHERE sql.parts_list_line_id = pll.id 
+                     WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
                        AND sq.supplier_id = pll.chosen_supplier_id
                      LIMIT 1) as supplier_quoted_part_number,
                     s.standard_condition AS supplier_standard_condition,
@@ -1632,6 +1675,11 @@ def customer_quote_simple(list_id):
 
             for line in lines:
                 line_dict = dict(line)
+                line_dict['requested_part_number'] = (
+                    line_dict['parent_customer_part_number']
+                    if line_dict.get('line_type') == 'alternate' and line_dict.get('parent_customer_part_number')
+                    else line_dict.get('customer_part_number')
+                )
                 bom_data = _execute_with_cursor(cur, """
                     SELECT bl.guide_price, bh.name as bom_name
                     FROM bom_lines bl

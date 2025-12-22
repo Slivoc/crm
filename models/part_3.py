@@ -667,10 +667,15 @@ def get_salesperson_contacts(salesperson_id, search_term='', customer_filter='',
         # Add customer_ids for the WHERE clause
         params.extend(customer_ids)
 
+        like_operator = "ILIKE" if _using_postgres() else "LIKE"
+
         # Add search filters if provided
         if search_term:
             query_parts.append(
-                "AND (c.name LIKE ? OR c.second_name LIKE ? OR c.email LIKE ? OR c.phone LIKE ? OR c.job_title LIKE ? OR c.notes LIKE ? OR cs.name LIKE ? OR cus.status LIKE ?)")
+                f"AND (c.name {like_operator} ? OR c.second_name {like_operator} ? OR c.email {like_operator} ? "
+                f"OR c.phone {like_operator} ? OR c.job_title {like_operator} ? OR c.notes {like_operator} ? "
+                f"OR cs.name {like_operator} ? OR cus.status {like_operator} ?)"
+            )
             search_pattern = f"%{search_term}%"
             params.extend(
                 [search_pattern, search_pattern, search_pattern, search_pattern, search_pattern, search_pattern,
@@ -678,16 +683,16 @@ def get_salesperson_contacts(salesperson_id, search_term='', customer_filter='',
 
         # Add individual filter parameters
         if name_filter:
-            query_parts.append("AND (c.name LIKE ? OR c.second_name LIKE ?)")
+            query_parts.append(f"AND (c.name {like_operator} ? OR c.second_name {like_operator} ?)")
             name_pattern = f"%{name_filter}%"
             params.extend([name_pattern, name_pattern])
 
         if customer_filter:
-            query_parts.append("AND cu.name LIKE ?")
+            query_parts.append(f"AND cu.name {like_operator} ?")
             params.append(f"%{customer_filter}%")
 
         if job_title_filter:
-            query_parts.append("AND c.job_title LIKE ?")
+            query_parts.append(f"AND c.job_title {like_operator} ?")
             params.append(f"%{job_title_filter}%")
 
         # FIXED: Add status filter - handle both string and list with CASE-INSENSITIVE comparison

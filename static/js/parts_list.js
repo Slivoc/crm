@@ -72,7 +72,7 @@ function displayResults(results) {
 
     let displayIndex = 1;
     results.forEach((part, index) => {
-        const isAlt = part.is_global_alternative || false;
+        const isAlt = part.is_global_alternative || part.line_type === 'alternate';
         const row = createPartRow(part, displayIndex, isAlt, index);
         tbody.appendChild(row);
 
@@ -243,7 +243,20 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         `;
     }
 
-    const isSubLine = part.line_number && (part.line_number % 1 !== 0);
+    const numericLineNumber = Number(part.line_number);
+    const isSubLine = !!part.parent_line_id ||
+        part.line_type === 'alternate' ||
+        part.line_type === 'price_break' ||
+        (Number.isFinite(numericLineNumber) && numericLineNumber % 1 !== 0);
+    const canDuplicate = !!part.line_id && part.line_type !== 'alternate';
+    const duplicateButton = canDuplicate
+        ? `<button class="btn btn-sm btn-outline-secondary duplicate-line-btn"
+                   data-part-index="${actualIndex}"
+                   data-line-id="${part.line_id}"
+                   title="Add price break">
+              <i class="bi bi-files"></i>
+           </button>`
+        : '';
 
     let alternativesDisplay = '-';
     if (!isSubLine && part.global_alternatives && part.global_alternatives.length > 0) {
@@ -264,12 +277,17 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
     tr.innerHTML = `
         <td style="width: 60px; min-width: 60px;">${lineNumberDisplay}</td>
         <td style="width: 200px; min-width: 200px; ${isAlt ? 'padding-left: 1.2rem;' : ''}">
-            ${isAlt ? '<span class="badge bg-primary me-2" style="font-size: 0.6rem; padding: 0.15rem 0.35rem;">ALT</span>' : ''}
-            <strong style="${isAlt ? 'color: #0d6efd; font-size: 0.9rem;' : ''}">
-                ${escapeHtml(isAlt ? (part.input_part_number || part.alt_part_number || part.base_part_number) : part.input_part_number)}
-            </strong>
-            ${!part.found ? '<br><small class="text-danger">Not Found</small>' : ''}
-            ${isAlt && part.parent_base_part_number ? `<br><small class="text-muted" style="font-size: 0.68rem; margin-left: 0.25rem;">For: ${escapeHtml(part.parent_base_part_number)}</small>` : ''}
+            <div class="d-flex align-items-start justify-content-between gap-2">
+                <div>
+                    ${isAlt ? '<span class="badge bg-primary me-2" style="font-size: 0.6rem; padding: 0.15rem 0.35rem;">ALT</span>' : ''}
+                    <strong style="${isAlt ? 'color: #0d6efd; font-size: 0.9rem;' : ''}">
+                        ${escapeHtml(isAlt ? (part.input_part_number || part.alt_part_number || part.base_part_number) : part.input_part_number)}
+                    </strong>
+                    ${!part.found ? '<br><small class="text-danger">Not Found</small>' : ''}
+                    ${isAlt && part.parent_base_part_number ? `<br><small class="text-muted" style="font-size: 0.68rem; margin-left: 0.25rem;">For: ${escapeHtml(part.parent_base_part_number)}</small>` : ''}
+                </div>
+                ${duplicateButton}
+            </div>
         </td>
         <td style="width: 110px; min-width: 110px; text-align: center; cursor: ${!isSubLine && alternativesDisplay !== '-' ? 'pointer' : 'default'};"
             class="${!isSubLine && alternativesDisplay !== '-' ? 'clickable-cell' : ''}"
@@ -1295,7 +1313,9 @@ function addAlternativeToList(basePartNumber, partNumber, parentIndex, buttonEle
                     customer_part_number: partNumber,
                     base_part_number: basePartNumber,
                     quantity: parentPart.quantity || 1,
-                    parent_line_number: Math.floor(parentPart.line_number || 1)
+                    parent_line_id: parentPart.line_id,
+                    parent_line_number: Math.floor(parentPart.line_number || 1),
+                    line_type: 'alternate'
                 }]
             })
         })
@@ -1323,6 +1343,8 @@ function addAlternativeToList(basePartNumber, partNumber, parentIndex, buttonEle
 
                 analyzedPart.is_global_alternative = true;
                 analyzedPart.parent_base_part_number = parentPart.input_part_number;
+                analyzedPart.line_type = 'alternate';
+                analyzedPart.parent_line_id = parentPart.line_id;
 
                 window.allResults.splice(parentIndex + 1, 0, analyzedPart);
 
@@ -1352,6 +1374,8 @@ function addAlternativeToList(basePartNumber, partNumber, parentIndex, buttonEle
             input_part_number: partNumber,
             base_part_number: basePartNumber,
             quantity: parentPart.quantity || 1,
+            line_type: 'alternate',
+            parent_line_id: parentPart.line_id,
             is_global_alternative: true,
             parent_base_part_number: parentPart.input_part_number,
             line_id: null
@@ -1375,6 +1399,8 @@ function addAlternativeToList(basePartNumber, partNumber, parentIndex, buttonEle
                 const analyzedPart = data.results[0];
                 analyzedPart.is_global_alternative = true;
                 analyzedPart.parent_base_part_number = parentPart.input_part_number;
+                analyzedPart.line_type = 'alternate';
+                analyzedPart.parent_line_id = parentPart.line_id;
 
                 window.allResults[parentIndex + 1] = analyzedPart;
                 displayResults(window.allResults);
@@ -1400,6 +1426,98 @@ function addAlternativeToList(basePartNumber, partNumber, parentIndex, buttonEle
             alert('Error adding alternative: ' + error.message);
         });
     }
+}
+
+function duplicateLineForPriceBreak(partIndex, buttonElement) {
+    const originalHtml = buttonElement ? buttonElement.innerHTML : '';
+    if (buttonElement) {
+        buttonElement.disabled = true;
+        buttonElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
+
+    const parentPart = window.allResults[partIndex];
+    if (!parentPart || !parentPart.line_id) {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.innerHTML = originalHtml;
+        }
+        alert('This line must be saved before adding a price break.');
+        return;
+    }
+
+    if (!currentListId) {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.innerHTML = originalHtml;
+        }
+        alert('Please save the parts list before adding price breaks.');
+        return;
+    }
+
+    let duplicateInfo = null;
+    fetch(`/parts_list/parts-lists/${currentListId}/lines/${parentPart.line_id}/duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ line_type: 'price_break' })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                throw new Error(data.message || 'Failed to duplicate line');
+            }
+            duplicateInfo = data;
+            return fetch('/parts_list/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    parts: [{
+                        part_number: parentPart.input_part_number || parentPart.customer_part_number || parentPart.base_part_number,
+                        quantity: parentPart.quantity || 1,
+                        line_id: data.line_id,
+                        line_number: Number(data.line_number)
+                    }]
+                })
+            });
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success || !data.results || data.results.length === 0) {
+                throw new Error('Failed to analyze new line');
+            }
+
+            const analyzedPart = data.results[0];
+            analyzedPart.line_type = duplicateInfo.line_type || 'price_break';
+            analyzedPart.parent_line_id = duplicateInfo.parent_line_id || parentPart.line_id;
+            if (duplicateInfo.line_number !== undefined && duplicateInfo.line_number !== null) {
+                const numericLineNumber = Number(duplicateInfo.line_number);
+                analyzedPart.line_number = Number.isFinite(numericLineNumber) ? numericLineNumber : duplicateInfo.line_number;
+            }
+
+            const parentLineId = analyzedPart.parent_line_id;
+            const parentIndex = window.allResults.findIndex(p => p.line_id === parentLineId);
+            let insertIndex = parentIndex >= 0 ? parentIndex + 1 : partIndex + 1;
+            while (insertIndex < window.allResults.length &&
+                   window.allResults[insertIndex].parent_line_id === parentLineId) {
+                insertIndex += 1;
+            }
+
+            window.allResults.splice(insertIndex, 0, analyzedPart);
+            displayResults(window.allResults);
+
+            if (buttonElement) {
+                buttonElement.disabled = false;
+                buttonElement.innerHTML = originalHtml;
+            }
+            showToast('Added price break line', 'success');
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            if (buttonElement) {
+                buttonElement.disabled = false;
+                buttonElement.innerHTML = originalHtml;
+            }
+            alert('Error adding price break: ' + error.message);
+        });
 }
 
 function showIlsDetailsModal(part) {
@@ -1722,6 +1840,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (window.LOADED_LIST_DATA && window.LOADED_LIST_DATA.header) {
         currentListId = window.LOADED_LIST_DATA.header.id;
+    }
+
+    const partsTableBody = document.getElementById('parts-table-body');
+    if (partsTableBody) {
+        partsTableBody.addEventListener('click', function(event) {
+            const button = event.target.closest('.duplicate-line-btn');
+            if (!button) return;
+            const partIndex = parseInt(button.getAttribute('data-part-index'), 10);
+            if (Number.isNaN(partIndex)) return;
+            duplicateLineForPriceBreak(partIndex, button);
+        });
     }
 
     if (!partsInput && window.LOADED_LIST_DATA && window.LOADED_LIST_DATA.lines) {

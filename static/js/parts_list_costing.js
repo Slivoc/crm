@@ -16,6 +16,14 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+    // Duplicate line as price break
+    document.querySelectorAll('.duplicate-line-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+            const lineId = this.dataset.lineId;
+            duplicateLine(lineId, this);
+        });
+    });
+
     // View quotes for a line
     document.querySelectorAll('.view-quotes-btn').forEach(btn => {
         btn.addEventListener('click', function () {
@@ -394,6 +402,40 @@ function saveLineCost(lineId) {
         showToast('Error: ' + (data.message || 'Unknown error'), 'danger');
     }
 })
+}
+
+function duplicateLine(lineId, button) {
+    const listId = window.PARTS_LIST_ID;
+    if (!listId) {
+        showToast('Error: Parts list ID not found. Please refresh the page.', 'danger');
+        return;
+    }
+
+    const originalHtml = button ? button.innerHTML : '';
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
+
+    fetch(`/parts_list/parts-lists/${listId}/lines/${lineId}/duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ line_type: 'price_break' })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                throw new Error(data.message || 'Failed to duplicate line');
+            }
+            window.location.reload();
+        })
+        .catch(error => {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalHtml;
+            }
+            showToast(error.message || 'Failed to duplicate line', 'danger');
+        });
 }
 
 function saveAllCosts() {

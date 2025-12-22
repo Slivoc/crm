@@ -2868,10 +2868,12 @@ ALTER SEQUENCE public.parts_list_line_suppliers_id_seq OWNED BY public.parts_lis
 CREATE TABLE public.parts_list_lines (
     id integer NOT NULL,
     parts_list_id integer NOT NULL,
-    line_number integer NOT NULL,
+    line_number numeric(10,2) NOT NULL,
     customer_part_number text NOT NULL,
     base_part_number text,
     quantity integer DEFAULT 1 NOT NULL,
+    parent_line_id integer,
+    line_type text DEFAULT 'normal'::text NOT NULL,
     chosen_supplier_id integer,
     chosen_cost numeric,
     chosen_price numeric,

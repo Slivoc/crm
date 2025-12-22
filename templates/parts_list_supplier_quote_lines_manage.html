@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Supplier Quote Lines{% endblock %}
+
+{% block extra_css %}
+<style>
+.filters-card .form-label {
+    font-weight: 600;
+}
+
+.lines-table {
+    max-height: 70vh;
+    overflow: auto;
+}
+
+.lines-table table {
+    margin-bottom: 0;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="card mb-3" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
+        <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
+                    <i class="bi bi-clipboard-data me-2" style="color:#0d6efd;"></i>
+                    Supplier Quote Lines
+                </h5>
+            </div>
+        </div>
+    </div>
+
+    <div id="supplier-quote-lines-alerts"></div>
+
+    <div class="card filters-card mb-3">
+        <div class="card-header">
+            <h6 class="mb-0">Filters</h6>
+        </div>
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-2">
+                    <label class="form-label">Parts List ID</label>
+                    <input type="number" class="form-control" id="filter-list-id" placeholder="All">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Quote ID</label>
+                    <input type="number" class="form-control" id="filter-quote-id" placeholder="All">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Supplier ID</label>
+                    <input type="number" class="form-control" id="filter-supplier-id" placeholder="All">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Part Number</label>
+                    <input type="text" class="form-control" id="filter-part-number" placeholder="Search">
+                </div>
+                <div class="col-md-2 d-grid">
+                    <button class="btn btn-primary" id="apply-filters-btn">
+                        <i class="bi bi-funnel me-1"></i>Apply
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <h6 class="mb-0">Actions</h6>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <select class="form-select" id="reassign-quote-select" style="min-width: 260px;"></select>
+                <button class="btn btn-outline-primary" id="reassign-lines-btn" disabled>
+                    <i class="bi bi-arrow-left-right me-1"></i>Move to Quote
+                </button>
+                <button class="btn btn-outline-danger" id="delete-lines-btn" disabled>
+                    <i class="bi bi-trash me-1"></i>Delete Lines
+                </button>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="lines-table border rounded">
+                <table class="table table-sm table-striped align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width:40px;">
+                                <input type="checkbox" id="select-all-lines">
+                            </th>
+                            <th style="width:90px;">Quote</th>
+                            <th style="width:90px;">List</th>
+                            <th>Supplier</th>
+                            <th>Part #</th>
+                            <th>Quoted #</th>
+                            <th style="width:70px;">Line</th>
+                            <th style="width:80px;">Qty</th>
+                            <th style="width:120px;">Unit Price</th>
+                            <th style="width:80px;">No Bid</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody id="quote-lines-body"></tbody>
+                </table>
+            </div>
+            <div class="text-muted mt-2" id="quote-lines-count"></div>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/supplier_quote_lines_manage.js') }}?v={{ cache_bust }}"></script>
+{% endblock %}

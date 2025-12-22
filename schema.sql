@@ -959,10 +959,13 @@ CREATE TABLE parts_list_line_suppliers (
 CREATE TABLE parts_list_lines (
     id SERIAL PRIMARY KEY,
     parts_list_id INTEGER NOT NULL,
-    line_number INTEGER NOT NULL,
+      line_number NUMERIC(10,2) NOT NULL,
     customer_part_number TEXT NOT NULL,  -- Raw part number as customer provided it
     base_part_number TEXT,  -- Normalized part number for lookups
-    quantity INTEGER NOT NULL DEFAULT 1,
+      quantity INTEGER NOT NULL DEFAULT 1,
+
+      parent_line_id INTEGER,
+      line_type TEXT NOT NULL DEFAULT 'normal',
     
     -- Chosen/selected options (to be populated later)
     chosen_supplier_id INTEGER,
@@ -978,7 +981,8 @@ CREATE TABLE parts_list_lines (
     DATE_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     DATE_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP, chosen_qty INTEGER,
     
-    FOREIGN KEY (parts_list_id) REFERENCES parts_lists(id) ON DELETE CASCADE,
+      FOREIGN KEY (parts_list_id) REFERENCES parts_lists(id) ON DELETE CASCADE,
+      FOREIGN KEY (parent_line_id) REFERENCES parts_list_lines(id) ON DELETE CASCADE,
     FOREIGN KEY (chosen_supplier_id) REFERENCES suppliers(id),
     FOREIGN KEY (chosen_currency_id) REFERENCES currencies(id)
 );

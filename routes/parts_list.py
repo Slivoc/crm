@@ -5,6 +5,7 @@ import logging
 import openai
 from openai import OpenAI
 from datetime import datetime, timedelta, date
+from decimal import Decimal
 import json
 import re
 import copy
@@ -34,6 +35,35 @@ def _execute_with_cursor(cur, query, params=None):
     prepared = query.replace('?', '%s') if os.getenv('DATABASE_URL', '').startswith(('postgres://', 'postgresql://')) else query
     cur.execute(prepared, params or [])
     return cur
+
+
+_ALLOWED_LINE_TYPES = {'normal', 'price_break', 'alternate'}
+
+
+def _normalize_line_type(value, default='normal'):
+    if value is None:
+        return default
+    value = str(value).strip().lower()
+    return value if value in _ALLOWED_LINE_TYPES else None
+
+
+def _next_child_line_number(cur, list_id, parent_id, parent_number):
+    parent_number = Decimal(str(parent_number or 0))
+    last_row = _execute_with_cursor(cur, """
+        SELECT line_number
+        FROM parts_list_lines
+        WHERE parts_list_id = ? AND parent_line_id = ?
+        ORDER BY line_number DESC, id DESC
+        LIMIT 1
+    """, (list_id, parent_id)).fetchone()
+    if last_row:
+        last_number = Decimal(str(last_row['line_number']))
+        next_number = last_number + Decimal('0.1')
+        if next_number <= parent_number:
+            next_number = parent_number + Decimal('0.1')
+    else:
+        next_number = parent_number + Decimal('0.1')
+    return next_number.quantize(Decimal('0.1'))
 
 
 def ensure_no_response_table(cur):
@@ -255,6 +285,22 @@ def update_supplier_quote(list_id, quote_id):
         fields = []
         params = []
 
+        if 'supplier_id' in data:
+            supplier_id = data.get('supplier_id')
+            if not supplier_id:
+                return jsonify(success=False, message="supplier_id is required"), 400
+
+            supplier_exists = db_execute(
+                "SELECT 1 FROM suppliers WHERE id = ?",
+                (supplier_id,),
+                fetch='one',
+            )
+            if not supplier_exists:
+                return jsonify(success=False, message="Supplier not found"), 404
+
+            fields.append("supplier_id = ?")
+            params.append(supplier_id)
+
         for field in ['quote_reference', 'quote_date', 'currency_id', 'notes']:
             if field in data:
                 if field == 'quote_date' and (data[field] is None or str(data[field]).strip() == ''):
@@ -457,6 +503,283 @@ def delete_supplier_quote(list_id, quote_id):
         return jsonify(success=False, message=str(e)), 500
 
 
+@parts_list_bp.route('/parts-lists/<int:list_id>/supplier-quotes/manage', methods=['GET'])
+def manage_supplier_quotes(list_id):
+    """
+    Simple management page for supplier quotes cleanup.
+    """
+    header = db_execute(
+        "SELECT id, name FROM parts_lists WHERE id = ?",
+        (list_id,),
+        fetch='one',
+    )
+    if not header:
+        return "Parts list not found", 404
+
+    cache_bust = datetime.now().strftime('%Y%m%d')
+
+    return render_template(
+        'parts_list_supplier_quotes_manage.html',
+        list_id=list_id,
+        list_name=header['name'],
+        cache_bust=cache_bust,
+    )
+
+
+@parts_list_bp.route('/supplier-quotes/lines/manage', methods=['GET'])
+def manage_supplier_quote_lines():
+    """
+    Global management page for supplier quote lines.
+    """
+    cache_bust = datetime.now().strftime('%Y%m%d')
+    return render_template(
+        'parts_list_supplier_quote_lines_manage.html',
+        cache_bust=cache_bust,
+    )
+
+
+@parts_list_bp.route('/supplier-quotes/search', methods=['GET'])
+def search_supplier_quotes():
+    """
+    Search supplier quotes for selection dropdowns.
+    """
+    try:
+        query = (request.args.get('q') or '').strip().lower()
+        list_id = request.args.get('list_id', type=int)
+        limit = request.args.get('limit', type=int) or 50
+
+        where = []
+        params = []
+
+        if query:
+            like = f"%{query}%"
+            where.append("(LOWER(s.name) LIKE ? OR LOWER(COALESCE(sq.quote_reference, '')) LIKE ?)")
+            params.extend([like, like])
+
+        if list_id:
+            where.append("sq.parts_list_id = ?")
+            params.append(list_id)
+
+        where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+
+        rows = db_execute(
+            f"""
+            SELECT
+                sq.id,
+                sq.quote_reference,
+                sq.quote_date,
+                sq.parts_list_id,
+                pl.name AS list_name,
+                s.name AS supplier_name
+            FROM parts_list_supplier_quotes sq
+            JOIN suppliers s ON s.id = sq.supplier_id
+            JOIN parts_lists pl ON pl.id = sq.parts_list_id
+            {where_clause}
+            ORDER BY sq.date_created DESC
+            LIMIT ?
+            """,
+            (*params, limit),
+            fetch='all',
+        )
+
+        return jsonify(success=True, quotes=[dict(r) for r in rows or []])
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_bp.route('/supplier-quotes/lines/data', methods=['GET'])
+def supplier_quote_lines_data():
+    """
+    Return supplier quote lines with optional filters.
+    """
+    try:
+        list_id = request.args.get('list_id', type=int)
+        quote_id = request.args.get('quote_id', type=int)
+        supplier_id = request.args.get('supplier_id', type=int)
+        part_query = (request.args.get('part_number') or '').strip().lower()
+        limit = request.args.get('limit', type=int) or 500
+        offset = request.args.get('offset', type=int) or 0
+
+        where = []
+        params = []
+
+        if list_id:
+            where.append("sq.parts_list_id = ?")
+            params.append(list_id)
+
+        if quote_id:
+            where.append("sql.supplier_quote_id = ?")
+            params.append(quote_id)
+
+        if supplier_id:
+            where.append("sq.supplier_id = ?")
+            params.append(supplier_id)
+
+        if part_query:
+            like = f"%{part_query}%"
+            where.append("""
+                (
+                    LOWER(COALESCE(pll.customer_part_number, '')) LIKE ?
+                    OR LOWER(COALESCE(pll.base_part_number, '')) LIKE ?
+                    OR LOWER(COALESCE(sql.quoted_part_number, '')) LIKE ?
+                )
+            """)
+            params.extend([like, like, like])
+
+        where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+
+        total_row = db_execute(
+            f"""
+            SELECT COUNT(*) AS total_count
+            FROM parts_list_supplier_quote_lines sql
+            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+            {where_clause}
+            """,
+            params,
+            fetch='one',
+        )
+
+        rows = db_execute(
+            f"""
+            SELECT
+                sql.id,
+                sql.supplier_quote_id,
+                sq.quote_reference,
+                sq.quote_date,
+                sq.parts_list_id,
+                pl.name AS list_name,
+                s.name AS supplier_name,
+                pll.id AS parts_list_line_id,
+                pll.line_number,
+                pll.customer_part_number,
+                pll.base_part_number,
+                sql.quoted_part_number,
+                sql.quantity_quoted,
+                sql.unit_price,
+                sql.lead_time_days,
+                sql.is_no_bid,
+                sql.line_notes,
+                sql.date_created,
+                sql.date_modified
+            FROM parts_list_supplier_quote_lines sql
+            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            JOIN suppliers s ON s.id = sq.supplier_id
+            JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+            JOIN parts_lists pl ON pl.id = sq.parts_list_id
+            {where_clause}
+            ORDER BY sq.date_created DESC, sql.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, limit, offset),
+            fetch='all',
+        )
+
+        return jsonify(
+            success=True,
+            total_count=total_row['total_count'] if total_row else 0,
+            lines=[dict(r) for r in rows or []],
+        )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_bp.route('/supplier-quotes/lines/reassign', methods=['POST'])
+def reassign_supplier_quote_lines():
+    """
+    Move quote lines to a different supplier quote.
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        raw_line_ids = data.get('line_ids') or []
+        new_quote_id = data.get('supplier_quote_id')
+
+        if not raw_line_ids or not new_quote_id:
+            return jsonify(success=False, message="line_ids and supplier_quote_id are required"), 400
+
+        line_ids = []
+        for line_id in raw_line_ids:
+            try:
+                line_ids.append(int(line_id))
+            except (TypeError, ValueError):
+                continue
+
+        if not line_ids:
+            return jsonify(success=False, message="line_ids are required"), 400
+
+        with db_cursor(commit=True) as cur:
+            quote_exists = _execute_with_cursor(
+                cur,
+                "SELECT 1 FROM parts_list_supplier_quotes WHERE id = ?",
+                (new_quote_id,),
+            ).fetchone()
+            if not quote_exists:
+                return jsonify(success=False, message="Quote not found"), 404
+
+            placeholders = ",".join(["?"] * len(line_ids))
+            _execute_with_cursor(
+                cur,
+                f"""
+                UPDATE parts_list_supplier_quote_lines
+                SET supplier_quote_id = ?, date_modified = CURRENT_TIMESTAMP
+                WHERE id IN ({placeholders})
+                """,
+                [new_quote_id, *line_ids],
+            )
+
+            updated_count = cur.rowcount
+
+        return jsonify(success=True, updated_count=updated_count)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_bp.route('/supplier-quotes/lines/delete', methods=['POST'])
+def delete_supplier_quote_lines_global():
+    """
+    Delete supplier quote lines by id.
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        raw_line_ids = data.get('line_ids') or []
+        if not raw_line_ids:
+            return jsonify(success=False, message="line_ids are required"), 400
+
+        line_ids = []
+        for line_id in raw_line_ids:
+            try:
+                line_ids.append(int(line_id))
+            except (TypeError, ValueError):
+                continue
+
+        if not line_ids:
+            return jsonify(success=False, message="line_ids are required"), 400
+
+        with db_cursor(commit=True) as cur:
+            placeholders = ",".join(["?"] * len(line_ids))
+            _execute_with_cursor(
+                cur,
+                f"""
+                DELETE FROM parts_list_supplier_quote_lines
+                WHERE id IN ({placeholders})
+                """,
+                line_ids,
+            )
+            deleted_count = cur.rowcount
+
+        return jsonify(success=True, deleted_count=deleted_count)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
 @parts_list_bp.route('/extract_supplier_quote', methods=['POST'])
 def extract_supplier_quote():
     from flask import request, jsonify
@@ -555,6 +878,21 @@ def _safe_int(value):
         return None
 
 
+def _normalize_optional_text(value):
+    """Normalize optional text fields; treat placeholder 'none' values as None."""
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    if text.lower() in ('none', 'n/a', 'na', 'null', 'nil', '-'):
+        return None
+
+    return text
+
+
 def extract_supplier_quote_data(quote_text, context_parts=""):
     """
     Use OpenAI to extract supplier quote information from text
@@ -579,8 +917,8 @@ Each object should have:
 - quantity: Quantity quoted (integer, default to 1 if not specified)
 - price: Unit price (decimal number, extract just the number)
 - lead_time_days: Lead time in days (integer, null if not specified)
-- condition: Condition code like "NE", "OH", "SV", "AR" (extract if present)
-- certifications: Any certification text mentioned (e.g., "8130-3", "Dual Release", "EASA Form 1")
+- condition: Condition code like "NE", "OH", "SV", "AR" (use null if not specified)
+- certifications: Any certification text mentioned (e.g., "8130-3", "Dual Release", "EASA Form 1") (use null if not specified)
 - is_no_bid: true if supplier declined to quote this part, false otherwise
 - notes: Any additional relevant notes about this line
 
@@ -679,8 +1017,8 @@ Extract all quoted items into a JSON array."""
                 price = _safe_float(item.get('price'))
                 lead_time_days = _safe_int(item.get('lead_time_days'))
 
-                condition = str(item.get('condition', '')).strip() or None
-                certifications = str(item.get('certifications', '')).strip() or None
+                condition = _normalize_optional_text(item.get('condition'))
+                certifications = _normalize_optional_text(item.get('certifications'))
 
                 is_no_bid_raw = item.get('is_no_bid', False)
                 if isinstance(is_no_bid_raw, str):
@@ -1006,7 +1344,7 @@ def analyze_parts_list():
 
                         # Add a sub-line number for wildcard matches (e.g., 1.1, 1.2, etc.)
                         if part.get('line_number'):
-                            sub_line_number = part['line_number'] + (match_idx * 0.1)
+                            sub_line_number = Decimal(str(part['line_number'])) + (Decimal(match_idx) * Decimal('0.1'))
                         else:
                             sub_line_number = None
 
@@ -1056,6 +1394,27 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
     Helper function to look up a single part's data
     Extracted from analyze_parts_list to handle both regular and wildcard searches
     """
+    line_type = None
+    parent_line_id = None
+    parent_customer_part_number = None
+
+    if line_id:
+        line_meta = _execute_with_cursor(cursor, """
+            SELECT
+                pll.line_number,
+                pll.parent_line_id,
+                pll.line_type,
+                parent.customer_part_number AS parent_customer_part_number
+            FROM parts_list_lines pll
+            LEFT JOIN parts_list_lines parent ON parent.id = pll.parent_line_id
+            WHERE pll.id = ?
+        """, (line_id,)).fetchone()
+        if line_meta:
+            parent_line_id = line_meta['parent_line_id']
+            line_type = line_meta['line_type'] or 'normal'
+            parent_customer_part_number = line_meta['parent_customer_part_number']
+            line_number = line_meta['line_number']
+
     def _get_line_specific(line_id_value):
         chosen_cost = None
         chosen_supplier_name = None
@@ -1142,11 +1501,12 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
             quoted_currency_code = 'GBP'
             quoted_currency_symbol = '£'
 
+        quote_line_id = parent_line_id or line_id_value
         supplier_quote_info = _execute_with_cursor(cursor, '''
             SELECT COUNT(*) as count
             FROM parts_list_supplier_quote_lines
             WHERE parts_list_line_id = ?
-        ''', (line_id_value,)).fetchone()
+        ''', (quote_line_id,)).fetchone()
         supplier_quote_count = supplier_quote_info['count'] if supplier_quote_info else 0
 
         contacted_count = _execute_with_cursor(cursor, '''
@@ -1546,6 +1906,8 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         'quantity': quantity,
         'line_id': line_id,
         'line_number': line_number,
+        'line_type': line_type or 'normal',
+        'parent_line_id': parent_line_id,
         'found': bool(part_info),
         'is_wildcard_match': is_wildcard_match,
 
@@ -1639,9 +2001,13 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
             'category_id': part_info['category_id']
         })
 
+    if line_type == 'alternate' and parent_customer_part_number:
+        result['is_global_alternative'] = True
+        result['parent_base_part_number'] = parent_customer_part_number
+
     # === Global Alternatives (only if main part found AND not already an alternative) ===
-    # Check if this part is itself an alternative (has decimal line_number)
-    is_already_alternative = line_number and (line_number % 1 != 0)
+    # Check if this part is itself a child line (alt or price break)
+    is_already_alternative = bool(parent_line_id) or (line_type in {'alternate', 'price_break'}) or (line_number and (line_number % 1 != 0))
 
     if part_info and not is_already_alternative and not is_wildcard_match:
         global_alts = get_global_alternatives(base_part_number)
@@ -1729,14 +2095,14 @@ def parts_list_costing(list_id):
                 (SELECT COUNT(*) 
                  FROM parts_list_line_suggested_suppliers 
                  WHERE parts_list_line_id = pll.id) as suggested_suppliers_count,
-                (SELECT COUNT(*) 
+                (SELECT COUNT(*)
                  FROM parts_list_supplier_quote_lines sql
                  JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                 WHERE sql.parts_list_line_id = pll.id 
+                 WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
                  AND sql.is_no_bid = FALSE) as quotes_count,
                 (SELECT sql.line_notes
                  FROM parts_list_supplier_quote_lines sql
-                 WHERE sql.parts_list_line_id = pll.id
+                 WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
                    AND sql.line_notes IS NOT NULL
                    AND TRIM(sql.line_notes) != ''
                  ORDER BY sql.date_modified DESC, sql.id DESC
@@ -2305,17 +2671,38 @@ def update_line(list_id, line_id):
 # =========================
 
 def _renumber_lines(cursor, parts_list_id):
-    """Ensure line_number is dense 1..N in display order by current line_number then id."""
-    rows = _execute_with_cursor(cursor, """
-        SELECT id FROM parts_list_lines
+    """Renumber parent lines 1..N and keep child lines as decimals (x.y)."""
+    parents = _execute_with_cursor(cursor, """
+        SELECT id
+        FROM parts_list_lines
         WHERE parts_list_id = ?
+          AND parent_line_id IS NULL
         ORDER BY line_number ASC, id ASC
     """, (parts_list_id,)).fetchall()
-    for idx, row in enumerate(rows, start=1):
+
+    for idx, parent in enumerate(parents, start=1):
         _execute_with_cursor(cursor, """
-            UPDATE parts_list_lines SET line_number = ?, date_modified = CURRENT_TIMESTAMP
+            UPDATE parts_list_lines
+            SET line_number = ?, date_modified = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (idx, row['id']))
+        """, (idx, parent['id']))
+
+        children = _execute_with_cursor(cursor, """
+            SELECT id
+            FROM parts_list_lines
+            WHERE parts_list_id = ?
+              AND parent_line_id = ?
+            ORDER BY line_number ASC, id ASC
+        """, (parts_list_id, parent['id'])).fetchall()
+
+        parent_number = Decimal(str(idx))
+        for child_idx, child in enumerate(children, start=1):
+            child_number = (parent_number + (Decimal(child_idx) / Decimal('10'))).quantize(Decimal('0.1'))
+            _execute_with_cursor(cursor, """
+                UPDATE parts_list_lines
+                SET line_number = ?, date_modified = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (child_number, child['id']))
 
 
 @parts_list_bp.route('/parts-lists/statuses', methods=['GET'])
@@ -2646,28 +3033,47 @@ def duplicate_parts_list(list_id):
             """, (new_name, header['customer_id'], header['salesperson_id'], header['status_id'], header['notes'])).fetchone()
             new_id = new_row['id'] if new_row else getattr(cur, 'lastrowid', None)
 
-            # Copy lines
+            # Copy lines (preserve parent/child links)
             lines = _execute_with_cursor(cur, """
-                SELECT line_number, customer_part_number, base_part_number, quantity,
+                SELECT id, line_number, customer_part_number, base_part_number, quantity,
                        chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days,
-                       customer_notes, internal_notes
+                       customer_notes, internal_notes, parent_line_id, line_type
                 FROM parts_list_lines
                 WHERE parts_list_id = ?
                 ORDER BY line_number ASC, id ASC
             """, (list_id,)).fetchall()
 
+            line_id_map = {}
+            pending_parent_links = []
+
             for ln in lines:
-                _execute_with_cursor(cur, """
+                new_line_row = _execute_with_cursor(cur, """
                     INSERT INTO parts_list_lines
                     (parts_list_id, line_number, customer_part_number, base_part_number, quantity,
                      chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days,
-                     customer_notes, internal_notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     customer_notes, internal_notes, parent_line_id, line_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                    RETURNING id
                 """, (
                     new_id, ln['line_number'], ln['customer_part_number'], ln['base_part_number'], ln['quantity'],
                     ln['chosen_supplier_id'], ln['chosen_cost'], ln['chosen_price'], ln['chosen_currency_id'],
-                    ln['chosen_lead_days'], ln['customer_notes'], ln['internal_notes']
-                ))
+                    ln['chosen_lead_days'], ln['customer_notes'], ln['internal_notes'],
+                    ln['line_type'] or 'normal'
+                )).fetchone()
+
+                created_id = new_line_row['id'] if new_line_row else getattr(cur, 'lastrowid', None)
+                line_id_map[ln['id']] = created_id
+                if ln['parent_line_id']:
+                    pending_parent_links.append((created_id, ln['parent_line_id']))
+
+            for new_line_id, old_parent_id in pending_parent_links:
+                new_parent_id = line_id_map.get(old_parent_id)
+                if new_parent_id:
+                    _execute_with_cursor(cur, """
+                        UPDATE parts_list_lines
+                        SET parent_line_id = ?
+                        WHERE id = ?
+                    """, (new_parent_id, new_line_id))
 
         return jsonify(success=True, id=new_id)
     except Exception as e:
@@ -2681,7 +3087,8 @@ def add_lines(list_id):
     Add one or many lines.
     Body JSON:
       lines: [
-        { "customer_part_number": "...", "quantity": 2, "base_part_number": "..."?, "parent_line_number": 1? }
+        { "customer_part_number": "...", "quantity": 2, "base_part_number": "..."?,
+          "parent_line_id": 123?, "parent_line_number": 1?, "line_type": "price_break|alternate|normal"? }
       ]
     If base_part_number absent, it will be created via create_base_part_number().
     If parent_line_number is provided, the new line gets parent_line_number + 0.1, 0.2, etc.
@@ -2707,28 +3114,40 @@ def add_lines(list_id):
                 if not bpn:
                     bpn = create_base_part_number(cpn)
 
+                parent_line_id = item.get('parent_line_id')
                 parent_line_number = item.get('parent_line_number')
+                default_line_type = 'price_break' if (parent_line_id or parent_line_number) else 'normal'
+                line_type = _normalize_line_type(item.get('line_type'), default=default_line_type)
 
-                if parent_line_number:
-                    # This is a sub-line (alternative or price break)
-                    # Find the next decimal increment for this parent
-                    existing_decimals = _execute_with_cursor(cur, """
-                        SELECT line_number FROM parts_list_lines
+                if line_type is None:
+                    return jsonify(success=False, message="Invalid line_type"), 400
+
+                if parent_line_id:
+                    parent_row = _execute_with_cursor(cur, """
+                        SELECT id, line_number
+                        FROM parts_list_lines
+                        WHERE id = ? AND parts_list_id = ?
+                    """, (parent_line_id, list_id)).fetchone()
+                    if not parent_row:
+                        return jsonify(success=False, message="Parent line not found"), 404
+                    parent_line_number = parent_row['line_number']
+                    next_line_number = _next_child_line_number(cur, list_id, parent_line_id, parent_line_number)
+                elif parent_line_number:
+                    parent_row = _execute_with_cursor(cur, """
+                        SELECT id, line_number
+                        FROM parts_list_lines
                         WHERE parts_list_id = ?
-                        AND line_number > ?
-                        AND line_number < ?
-                        ORDER BY line_number DESC
+                          AND line_number = ?
+                          AND parent_line_id IS NULL
+                        ORDER BY id ASC
                         LIMIT 1
-                    """, (list_id, parent_line_number, parent_line_number + 1)).fetchone()
-
-                    if existing_decimals:
-                        # Get the decimal part and increment
-                        last_decimal = existing_decimals['line_number']
-                        decimal_part = round((last_decimal - parent_line_number) * 10) / 10
-                        next_line_number = parent_line_number + decimal_part + 0.1
+                    """, (list_id, parent_line_number)).fetchone()
+                    if parent_row:
+                        parent_line_id = parent_row['id']
+                        parent_line_number = parent_row['line_number']
+                        next_line_number = _next_child_line_number(cur, list_id, parent_line_id, parent_line_number)
                     else:
-                        # First sub-line for this parent
-                        next_line_number = parent_line_number + 0.1
+                        next_line_number = Decimal(str(parent_line_number)) + Decimal('0.1')
                 else:
                     # Regular line - get next whole number
                     last = _execute_with_cursor(cur, """
@@ -2740,11 +3159,119 @@ def add_lines(list_id):
 
                 _execute_with_cursor(cur, """
                     INSERT INTO parts_list_lines
-                    (parts_list_id, line_number, customer_part_number, base_part_number, quantity)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (list_id, next_line_number, cpn, bpn, qty))
+                    (parts_list_id, line_number, customer_part_number, base_part_number, quantity,
+                     parent_line_id, line_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (list_id, next_line_number, cpn, bpn, qty, parent_line_id, line_type))
 
         return jsonify(success=True)
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/supplier-quotes/<int:quote_id>/lines/delete', methods=['POST'])
+def delete_supplier_quote_lines(list_id, quote_id):
+    """
+    Delete one or more supplier quote lines for a quote
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        raw_line_ids = data.get('line_ids') or []
+        if not raw_line_ids:
+            return jsonify(success=False, message="line_ids are required"), 400
+
+        line_ids = []
+        for line_id in raw_line_ids:
+            try:
+                line_ids.append(int(line_id))
+            except (TypeError, ValueError):
+                continue
+
+        if not line_ids:
+            return jsonify(success=False, message="line_ids are required"), 400
+
+        with db_cursor(commit=True) as cur:
+            exists = _execute_with_cursor(
+                cur,
+                "SELECT 1 FROM parts_list_supplier_quotes WHERE id = ? AND parts_list_id = ?",
+                (quote_id, list_id),
+            ).fetchone()
+            if not exists:
+                return jsonify(success=False, message="Quote not found"), 404
+
+            placeholders = ",".join(["?"] * len(line_ids))
+            _execute_with_cursor(
+                cur,
+                f"""
+                DELETE FROM parts_list_supplier_quote_lines
+                WHERE supplier_quote_id = ?
+                  AND id IN ({placeholders})
+                """,
+                [quote_id, *line_ids],
+            )
+
+            deleted_count = cur.rowcount
+
+        return jsonify(success=True, deleted_count=deleted_count)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/lines/<int:line_id>/duplicate', methods=['POST'])
+def duplicate_line(list_id, line_id):
+    """
+    Duplicate a line as a child line (price break or alternate).
+    Defaults to line_type = price_break.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        line_type = _normalize_line_type(data.get('line_type'), default='price_break')
+        if line_type is None:
+            return jsonify(success=False, message="Invalid line_type"), 400
+
+        with db_cursor(commit=True) as cur:
+            line = _execute_with_cursor(cur, """
+                SELECT *
+                FROM parts_list_lines
+                WHERE id = ? AND parts_list_id = ?
+            """, (line_id, list_id)).fetchone()
+            if not line:
+                return jsonify(success=False, message="Line not found for this list"), 404
+
+            parent_line_id = line['parent_line_id'] or line['id']
+            parent_row = _execute_with_cursor(cur, """
+                SELECT line_number
+                FROM parts_list_lines
+                WHERE id = ? AND parts_list_id = ?
+            """, (parent_line_id, list_id)).fetchone()
+            if not parent_row:
+                return jsonify(success=False, message="Parent line not found"), 404
+
+            next_line_number = _next_child_line_number(cur, list_id, parent_line_id, parent_row['line_number'])
+
+            new_row = _execute_with_cursor(cur, """
+                INSERT INTO parts_list_lines
+                (parts_list_id, line_number, customer_part_number, base_part_number, quantity,
+                 parent_line_id, line_type, customer_notes, internal_notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+            """, (
+                list_id,
+                next_line_number,
+                line['customer_part_number'],
+                line['base_part_number'],
+                line['quantity'],
+                parent_line_id,
+                line_type,
+                line['customer_notes'],
+                line['internal_notes']
+            )).fetchone()
+
+            new_id = new_row['id'] if new_row else getattr(cur, 'lastrowid', None)
+
+        return jsonify(success=True, line_id=new_id, line_number=str(next_line_number), parent_line_id=parent_line_id, line_type=line_type)
     except Exception as e:
         logging.exception(e)
         return jsonify(success=False, message=str(e)), 500
@@ -3310,7 +3837,7 @@ def get_supplier_panel_data(list_id):
                          JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
                          WHERE sq.supplier_id = ?
                            AND sq.parts_list_id = ?
-                           AND sql.parts_list_line_id = pll.id
+                           AND sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
                            AND COALESCE(sql.is_no_bid, FALSE) = FALSE
                            AND sql.unit_price IS NOT NULL
                          ORDER BY sq.quote_date DESC
@@ -3322,7 +3849,7 @@ def get_supplier_panel_data(list_id):
                          LEFT JOIN currencies c ON c.id = sq.currency_id
                          WHERE sq.supplier_id = ?
                            AND sq.parts_list_id = ?
-                           AND sql.parts_list_line_id = pll.id
+                           AND sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
                            AND COALESCE(sql.is_no_bid, FALSE) = FALSE
                          ORDER BY sq.quote_date DESC
                          LIMIT 1) as currency_code,
@@ -3333,7 +3860,7 @@ def get_supplier_panel_data(list_id):
                             JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
                             WHERE sq.supplier_id = ?
                               AND sq.parts_list_id = ?
-                              AND sql.parts_list_line_id = pll.id
+                              AND sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
                               AND COALESCE(sql.is_no_bid, FALSE) = TRUE
                         ) as is_no_bid,
                         -- Check if line is costed (regardless of supplier)
@@ -3430,11 +3957,11 @@ def parts_list_sourcing(list_id):
                 no_bid_suppliers = _execute_with_cursor(cur, """
                     SELECT DISTINCT sq.supplier_id
                     FROM parts_list_supplier_quote_lines sql
-                    JOIN parts_list_supplier_quotes sq 
+                    JOIN parts_list_supplier_quotes sq
                         ON sql.supplier_quote_id = sq.id
                     WHERE sql.parts_list_line_id = ?
                       AND sql.is_no_bid = TRUE
-                """, (line['id'],)).fetchall()
+                """, (line['parent_line_id'] or line['id'],)).fetchall()
                 no_bid_supplier_ids = {row['supplier_id'] for row in no_bid_suppliers}
 
                 # Get VQ data
@@ -3786,8 +4313,13 @@ def get_line_quotes(list_id, line_id):
             line = _execute_with_cursor(
                 cur,
                 """
-                SELECT id, parts_list_id, customer_part_number, base_part_number
-                FROM parts_list_lines 
+                SELECT
+                    id,
+                    parts_list_id,
+                    customer_part_number,
+                    base_part_number,
+                    COALESCE(parent_line_id, id) AS quote_line_id
+                FROM parts_list_lines
                 WHERE id = ? AND parts_list_id = ?
                 """,
                 (line_id, list_id),
@@ -3828,7 +4360,7 @@ def get_line_quotes(list_id, line_id):
                     CASE WHEN sql.unit_price IS NULL THEN 1 ELSE 0 END,
                     sql.unit_price ASC
                 """,
-                (line_id,),
+                (line['quote_line_id'],),
             ).fetchall()
 
             # Get latest 3 offers for this part from OTHER parts lists
@@ -3890,17 +4422,20 @@ def get_quote_availability_for_lines(list_id):
         rows = db_execute(
             """
             WITH lines AS (
-                SELECT id, base_part_number
+                SELECT
+                    id,
+                    base_part_number,
+                    COALESCE(parent_line_id, id) AS quote_line_id
                 FROM parts_list_lines
                 WHERE parts_list_id = ?
             ),
             this_list AS (
                 SELECT
-                    sql.parts_list_line_id AS line_id,
+                    l.quote_line_id AS line_id,
                     SUM(CASE WHEN sql.is_no_bid = FALSE AND sql.unit_price IS NOT NULL THEN 1 ELSE 0 END) AS this_list_count
                 FROM parts_list_supplier_quote_lines sql
-                JOIN lines l ON l.id = sql.parts_list_line_id
-                GROUP BY sql.parts_list_line_id
+                JOIN lines l ON l.quote_line_id = sql.parts_list_line_id
+                GROUP BY l.quote_line_id
             ),
             other_offers AS (
                 SELECT
@@ -3918,7 +4453,7 @@ def get_quote_availability_for_lines(list_id):
                 COALESCE(t.this_list_count, 0) AS this_list_count,
                 COALESCE(o.other_offers_count, 0) AS other_offers_count
             FROM lines l
-            LEFT JOIN this_list t ON t.line_id = l.id
+            LEFT JOIN this_list t ON t.line_id = l.quote_line_id
             LEFT JOIN other_offers o ON o.base_part_number = l.base_part_number
             ORDER BY l.id
             """,

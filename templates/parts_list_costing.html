@@ -217,6 +217,14 @@
                     <button id="manage-supplier-quotes-btn" class="btn btn-sm btn-outline-info">
                         <i class="bi bi-clipboard-check me-1"></i>Supplier Quotes
                     </button>
+                    <a href="{{ url_for('parts_list.manage_supplier_quotes', list_id=list_id) }}"
+                       class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-wrench-adjustable-circle me-1"></i>Manage Quotes
+                    </a>
+                    <a href="{{ url_for('parts_list.manage_supplier_quote_lines') }}"
+                       class="btn btn-sm btn-outline-warning">
+                        <i class="bi bi-diagram-2 me-1"></i>Manage Quote Lines
+                    </a>
                     <button type="button"
                             class="btn btn-sm btn-outline-info dropdown-toggle dropdown-toggle-split"
                             data-bs-toggle="dropdown"
@@ -401,6 +409,11 @@
                     <!-- Actions -->
                     <!-- Actions -->
                     <td>
+                        <button class="btn btn-sm btn-outline-secondary duplicate-line-btn"
+                                data-line-id="{{ line.id }}"
+                                title="Add price break">
+                            <i class="bi bi-files"></i>
+                        </button>
                         <button class="btn btn-sm btn-success save-line-btn"
                                 data-line-id="{{ line.id }}"
                                 title="Save changes">

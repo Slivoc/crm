@@ -29,6 +29,10 @@ document.addEventListener('DOMContentLoaded', function() {
         return Number.isFinite(num) ? num : 0;
     }
 
+    function getRequestedPartNumber(lineData) {
+        return (lineData.requested_part_number || lineData.customer_part_number || '').toString().trim();
+    }
+
     function getCurrencyMeta(currencyId) {
         return CURRENCIES.find(c => c.id == currencyId);
     }
@@ -586,7 +590,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!cached) return;
             const { lineData, elements } = cached;
 
-            const requestedPN = (lineData.customer_part_number || '').toString().trim();
+            const requestedPN = getRequestedPartNumber(lineData);
             const quotedPN = elements.displayPartNumber ? elements.displayPartNumber.value.trim() : requestedPN;
             if (quotedPN && quotedPN !== requestedPN) pnDiff = true;
 
@@ -662,7 +666,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             html += `<tr>
               <td align="left" style="${cellStyle}">${lineData.line_number || ''}</td>
-              <td align="left" style="${cellStyle}">${lineData.customer_part_number || ''}</td>
+              <td align="left" style="${cellStyle}">${getRequestedPartNumber(lineData)}</td>
               <td align="right" style="${cellStyle}">${effectiveQty || ''}</td>
               <td align="left" style="${cellStyle}">${lineData.chosen_supplier_name}</td>
               <td align="right" style="${cellStyle}">${unitCost.toFixed(2)}</td>
@@ -736,7 +740,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             // Highlights
-            const requestedPN = (lineData.customer_part_number || '').toString().trim();
+            const requestedPN = getRequestedPartNumber(lineData);
             const quotedPN = elements.displayPartNumber ? elements.displayPartNumber.value.trim() : requestedPN;
 
             const isPNDifferent = !lastIsNoBid && (quotedPN !== requestedPN && quotedPN !== '');
@@ -1078,7 +1082,36 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('reload-after-apply-btn').addEventListener('click', function() { window.location.reload(); });
 
+    function setupDuplicateLineButtons() {
+        document.querySelectorAll('.duplicate-line-btn').forEach(btn => {
+            btn.addEventListener('click', async function() {
+                const lineId = this.dataset.lineId;
+                if (!lineId) return;
+                const originalHtml = this.innerHTML;
+                this.disabled = true;
+                this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+                try {
+                    const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/lines/${lineId}/duplicate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ line_type: 'price_break' })
+                    });
+                    const result = await response.json();
+                    if (!result.success) {
+                        throw new Error(result.message || 'Failed to duplicate line');
+                    }
+                    window.location.reload();
+                } catch (error) {
+                    this.disabled = false;
+                    this.innerHTML = originalHtml;
+                    alert(error.message || 'Failed to duplicate line');
+                }
+            });
+        });
+    }
+
     // START
     setSummaryCurrencyLabels();
     initializeTable();
+    setupDuplicateLineButtons();
 });
