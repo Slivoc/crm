@@ -105,6 +105,11 @@ function displayCallList(data) {
                             data-customer-id="${contact.customer_id}"
                             data-contact-name="${contact.name}${contact.second_name ? ' ' + contact.second_name : ''}"
                             data-customer-name="${contact.customer_name}"
+                            data-contact-email="${contact.email || ''}"
+                            data-contact-phone="${contact.phone || ''}"
+                            data-contact-job-title="${contact.job_title || ''}"
+                            data-contact-status="${contact.contact_status || ''}"
+                            data-contact-status-color="${contact.status_color || ''}"
                             data-call-list-id="${contact.call_list_id}"
                             data-action="phone"
                             title="Log Phone Call">
@@ -115,6 +120,11 @@ function displayCallList(data) {
                             data-customer-id="${contact.customer_id}"
                             data-contact-name="${contact.name}${contact.second_name ? ' ' + contact.second_name : ''}"
                             data-customer-name="${contact.customer_name}"
+                            data-contact-email="${contact.email || ''}"
+                            data-contact-phone="${contact.phone || ''}"
+                            data-contact-job-title="${contact.job_title || ''}"
+                            data-contact-status="${contact.contact_status || ''}"
+                            data-contact-status-color="${contact.status_color || ''}"
                             data-call-list-id="${contact.call_list_id}"
                             data-action="email"
                             title="Log Email">
@@ -212,6 +222,11 @@ function displayCallList(data) {
                                 data-customer-id="${contact.customer_id}"
                                 data-contact-name="${contact.name}${contact.second_name ? ' ' + contact.second_name : ''}"
                                 data-customer-name="${contact.customer_name}"
+                                data-contact-email="${contact.email || ''}"
+                                data-contact-phone="${contact.phone || ''}"
+                                data-contact-job-title="${contact.job_title || ''}"
+                                data-contact-status="${contact.contact_status || ''}"
+                                data-contact-status-color="${contact.status_color || ''}"
                                 data-call-list-id="${contact.call_list_id}"
                                 data-action="phone"
                                 title="Log Phone Call">
@@ -222,6 +237,11 @@ function displayCallList(data) {
                                 data-customer-id="${contact.customer_id}"
                                 data-contact-name="${contact.name}${contact.second_name ? ' ' + contact.second_name : ''}"
                                 data-customer-name="${contact.customer_name}"
+                                data-contact-email="${contact.email || ''}"
+                                data-contact-phone="${contact.phone || ''}"
+                                data-contact-job-title="${contact.job_title || ''}"
+                                data-contact-status="${contact.contact_status || ''}"
+                                data-contact-status-color="${contact.status_color || ''}"
                                 data-call-list-id="${contact.call_list_id}"
                                 data-action="email"
                                 title="Log Email">
@@ -2249,18 +2269,38 @@ document.getElementById('callListContent').addEventListener('click', function(e)
     const contactName = quickActionBtn.dataset.contactName;
     const customerName = quickActionBtn.dataset.customerName;
     const communicationType = action === 'phone' ? 'Phone' : 'Email';
+    const callListId = quickActionBtn.dataset.callListId;
+    const datasetContact = {
+        id: contactId ? parseInt(contactId, 10) : null,
+        full_name: contactName,
+        customer_name: customerName,
+        customer_id: customerId ? parseInt(customerId, 10) : null,
+        email: quickActionBtn.dataset.contactEmail || '',
+        phone: quickActionBtn.dataset.contactPhone || '',
+        job_title: quickActionBtn.dataset.contactJobTitle || '',
+        status_name: quickActionBtn.dataset.contactStatus || '',
+        status_color: quickActionBtn.dataset.contactStatusColor || ''
+    };
+
+    const allContacts = []
+        .concat(callListData.no_communications || [])
+        .concat(callListData.has_communications || []);
+    const hydratedContact = allContacts.find(contact => String(contact.contact_id) === String(contactId));
+    const contact = hydratedContact ? {
+        id: hydratedContact.contact_id,
+        full_name: `${hydratedContact.name}${hydratedContact.second_name ? ' ' + hydratedContact.second_name : ''}`,
+        customer_name: hydratedContact.customer_name,
+        customer_id: hydratedContact.customer_id,
+        email: hydratedContact.email || '',
+        phone: hydratedContact.phone || '',
+        job_title: hydratedContact.job_title || '',
+        status_name: hydratedContact.contact_status || '',
+        status_color: hydratedContact.status_color || ''
+    } : datasetContact;
 
     // Get current salesperson ID from URL
     const urlParts = window.location.pathname.split('/');
     const salespersonId = urlParts[urlParts.indexOf('salespeople') + 1];
-
-    // Create a contact object compatible with UniversalContactPreview
-    const contact = {
-        id: parseInt(contactId),
-        full_name: contactName,
-        customer_name: customerName,
-        customer_id: parseInt(customerId)
-    };
 
     // Use UniversalContactPreview directly (not window.UniversalContactPreview)
     try {
@@ -2271,7 +2311,7 @@ document.getElementById('callListContent').addEventListener('click', function(e)
     } catch (error) {
         console.error('Error opening UniversalContactPreview:', error);
         // Fallback to basic modal
-        document.getElementById('callListId').value = quickActionBtn.dataset.callListId;
+        document.getElementById('callListId').value = callListId;
         document.getElementById('callListContactId').value = contactId;
         document.getElementById('callListCustomerId').value = customerId;
         document.getElementById('callListContactInfo').innerHTML = `
