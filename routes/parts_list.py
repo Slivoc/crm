@@ -4235,6 +4235,84 @@ def get_line_ils_data(list_id, line_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@parts_list_bp.route('/api/suppliers/no-bid-score', methods=['POST'])
+def get_supplier_no_bid_scores():
+    """
+    Return per-supplier no-bid scoring based on requests sent vs no-bid responses.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        raw_ids = data.get('supplier_ids', [])
+        if not isinstance(raw_ids, list):
+            return jsonify(success=False, error='supplier_ids must be a list'), 400
+
+        supplier_ids = []
+        for raw_id in raw_ids:
+            try:
+                supplier_id = int(raw_id)
+                supplier_ids.append(supplier_id)
+            except (TypeError, ValueError):
+                continue
+
+        supplier_ids = sorted(set(supplier_ids))
+        if not supplier_ids:
+            return jsonify(success=True, scores={})
+
+        placeholders = ','.join(['?'] * len(supplier_ids))
+        rows = db_execute(
+            f"""
+            SELECT
+                se.supplier_id,
+                COUNT(DISTINCT se.parts_list_line_id) AS requests_sent,
+                COUNT(DISTINCT CASE WHEN sql.is_no_bid = TRUE THEN sql.parts_list_line_id END) AS no_bid_count
+            FROM parts_list_line_supplier_emails se
+            LEFT JOIN parts_list_supplier_quotes sq
+                ON sq.supplier_id = se.supplier_id
+            LEFT JOIN parts_list_supplier_quote_lines sql
+                ON sql.supplier_quote_id = sq.id
+               AND sql.parts_list_line_id = se.parts_list_line_id
+            WHERE se.supplier_id IN ({placeholders})
+            GROUP BY se.supplier_id
+            """,
+            supplier_ids,
+            fetch='all',
+        )
+
+        scores = {}
+        for row in rows or []:
+            requests_sent = int(row['requests_sent'] or 0)
+            no_bid_count = int(row['no_bid_count'] or 0)
+            if requests_sent > 0:
+                no_bid_rate = no_bid_count / requests_sent
+                score = round((1 - no_bid_rate) * 100)
+                if score >= 85:
+                    rating = 'Great'
+                elif score >= 70:
+                    rating = 'Good'
+                elif score >= 50:
+                    rating = 'Mixed'
+                else:
+                    rating = 'Poor'
+            else:
+                no_bid_rate = None
+                score = None
+                rating = 'No history'
+
+            scores[str(row['supplier_id'])] = {
+                'requests_sent': requests_sent,
+                'no_bid_count': no_bid_count,
+                'no_bid_rate': no_bid_rate,
+                'score': score,
+                'rating': rating,
+            }
+
+        return jsonify(success=True, scores=scores)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, error=str(e)), 500
+
+
 @parts_list_bp.route('/parts-lists/<int:list_id>/lines', methods=['GET'])
 def get_parts_list_lines(list_id):
     """
