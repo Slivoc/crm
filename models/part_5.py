@@ -79,6 +79,27 @@ def remove_from_call_list(call_list_id):
         db.close()
 
 
+def snooze_call_list_entry(call_list_id, salesperson_id, snooze_until):
+    """Snooze a call list entry until a specific datetime."""
+    db = get_db_connection()
+    try:
+        db.execute(
+            '''
+            UPDATE call_list
+            SET snoozed_until = ?
+            WHERE id = ? AND salesperson_id = ? AND is_active = TRUE
+            ''',
+            (snooze_until, call_list_id, salesperson_id)
+        )
+        db.commit()
+        return {'success': True}
+    except Exception as e:
+        print(f"Error snoozing call list: {e}")
+        return {'success': False, 'error': str(e)}
+    finally:
+        db.close()
+
+
 def get_call_list_with_communication_status(salesperson_id):
     """
     Get call list divided into two groups:
@@ -109,7 +130,9 @@ def get_call_list_with_communication_status(salesperson_id):
             JOIN customers cu ON c.customer_id = cu.id
             LEFT JOIN customer_status cs ON cu.status_id = cs.id
             LEFT JOIN contact_statuses st ON c.status_id = st.id
-            WHERE cl.salesperson_id = ? AND cl.is_active = TRUE
+            WHERE cl.salesperson_id = ?
+              AND cl.is_active = TRUE
+              AND (cl.snoozed_until IS NULL OR cl.snoozed_until <= CURRENT_TIMESTAMP)
         ),
         comm_counts AS (
             SELECT

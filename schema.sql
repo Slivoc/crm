@@ -60,12 +60,17 @@ CREATE TABLE alternative_part_numbers (
 );
 
 CREATE TABLE app_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
+CREATE TABLE call_list (
+    id SERIAL PRIMARY KEY,
+    contact_id INTEGER NOT NULL,
+    salesperson_id INTEGER NOT NULL,
+    added_DATE TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    notes TEXT,
+    priority INTEGER DEFAULT 0,  -- Optional: 0=normal, 1=high, 2=urgent
+    is_active BOOLEAN DEFAULT TRUE,  -- 1=active, 0=removed from list
+    snoozed_until TIMESTAMP,
+    removed_DATE TIMESTAMP,
 
-CREATE TABLE bom_files (
-    bom_header_id INTEGER NOT NULL,
     file_id INTEGER NOT NULL,
     PRIMARY KEY (bom_header_id, file_id),
     FOREIGN KEY (bom_header_id) REFERENCES bom_headers(id),

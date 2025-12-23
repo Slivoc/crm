@@ -292,6 +292,35 @@ document.addEventListener('DOMContentLoaded', function() {
                         </div>
                         <div class="d-flex align-items-center gap-2">
                             <span class="badge bg-${badgeClass}">${daysWaiting}d</span>
+                            <div class="dropdown">
+                                <button class="btn-log-subtle dropdown-toggle"
+                                        type="button"
+                                        data-bs-toggle="dropdown"
+                                        aria-expanded="false"
+                                        title="Sleep from call list">
+                                    <i class="bi bi-moon"></i>
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-end">
+                                    <li>
+                                        <button class="dropdown-item" type="button"
+                                                onclick="snoozeMobileCallList(${contact.call_list_id}, 3)">
+                                            Sleep 3 days
+                                        </button>
+                                    </li>
+                                    <li>
+                                        <button class="dropdown-item" type="button"
+                                                onclick="snoozeMobileCallList(${contact.call_list_id}, 7)">
+                                            Sleep 1 week
+                                        </button>
+                                    </li>
+                                    <li>
+                                        <button class="dropdown-item" type="button"
+                                                onclick="snoozeMobileCallList(${contact.call_list_id}, 30)">
+                                            Sleep 1 month
+                                        </button>
+                                    </li>
+                                </ul>
+                            </div>
                             <button class="btn-log-subtle"
                                     onclick="removeFromMobileCallList(${contact.call_list_id})"
                                     title="Remove from call list">
@@ -398,6 +427,26 @@ function getCommIcon(type) {
         .catch(error => {
             console.error('Error:', error);
             alert('Error removing from call list. Please try again.');
+        });
+    };
+
+    window.snoozeMobileCallList = function(callListId, days) {
+        fetch(`/salespeople/${salespersonId}/snooze-call-list`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ call_list_id: callListId, snooze_days: days })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                loadMobileCallList();
+            } else {
+                alert('Error snoozing call list: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error snoozing call list. Please try again.');
         });
     };
 

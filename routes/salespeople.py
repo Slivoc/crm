@@ -7,7 +7,7 @@ from routes.auth import login_required, current_user
 from ai_helper import get_cached_news, get_top_customers_for_news, get_watched_customers_for_news, get_cache_key, cleanup_old_cache_files, fetch_customer_news_perplexity, process_customer_news_chatgpt, cache_news
 from routes.news_email import get_news_email_addresses, send_news_email
 from models import (get_salespeople, get_all_salespeople_with_contact_counts, get_call_list_contact_ids, add_to_call_list, remove_from_call_list,
-    get_call_list_with_communication_status, update_call_list_priority, update_call_list_notes, bulk_add_to_call_list, get_salesperson_recent_communications, get_communication_types_for_salesperson, delete_customer_tag, insert_customer_tags, get_all_tags, insert_customer_tag, get_engagement_settings, get_all_salespeople_with_customer_counts, get_priorities, save_engagement_settings, insert_salesperson, get_active_salespeople, get_engagement_metrics, toggle_salesperson_active, get_customer_contacts_with_communications, update_customer_field_value, get_all_contact_statuses, get_status_counts_for_salesperson, get_tags_by_customer_id, get_salesperson_customers_with_spend, get_salesperson_by_id, get_salesperson_contacts, get_contact_communications, get_salesperson_sales_by_date_range, get_salesperson_monthly_sales, get_accounts_monthly_sales,
+    snooze_call_list_entry, get_call_list_with_communication_status, update_call_list_priority, update_call_list_notes, bulk_add_to_call_list, get_salesperson_recent_communications, get_communication_types_for_salesperson, delete_customer_tag, insert_customer_tags, get_all_tags, insert_customer_tag, get_engagement_settings, get_all_salespeople_with_customer_counts, get_priorities, save_engagement_settings, insert_salesperson, get_active_salespeople, get_engagement_metrics, toggle_salesperson_active, get_customer_contacts_with_communications, update_customer_field_value, get_all_contact_statuses, get_status_counts_for_salesperson, get_tags_by_customer_id, get_salesperson_customers_with_spend, get_salesperson_by_id, get_salesperson_contacts, get_contact_communications, get_salesperson_sales_by_date_range, get_salesperson_monthly_sales, get_accounts_monthly_sales,
                     update_salesperson, delete_salesperson,
                     get_customers_with_status_and_updates, get_customer_status_options, get_consolidated_customer_orders, get_consolidated_customer_ids,
                     add_customer_status_update, get_customer_updates, get_customer_rfqs, get_customer_rfqs_by_date_range, get_customer_orders_by_date_range, get_customer_active_rfqs_count, get_customer_active_orders_count,
@@ -4250,6 +4250,34 @@ def update_call_list_notes_route(salesperson_id):
         notes = data.get('notes', '')
 
         result = update_call_list_notes(call_list_id, notes)
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@salespeople_bp.route('/<int:salesperson_id>/snooze-call-list', methods=['POST'])
+@login_required
+def snooze_call_list_route(salesperson_id):
+    """Snooze a call list item until a specific future date."""
+    try:
+        data = request.get_json()
+        call_list_id = data.get('call_list_id')
+        snooze_days = data.get('snooze_days')
+
+        if not call_list_id or not snooze_days:
+            return jsonify({'success': False, 'error': 'Missing call list ID or snooze days'}), 400
+
+        try:
+            snooze_days = int(snooze_days)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid snooze days'}), 400
+
+        if snooze_days <= 0:
+            return jsonify({'success': False, 'error': 'Snooze days must be positive'}), 400
+
+        snooze_until = datetime.now() + timedelta(days=snooze_days)
+        result = snooze_call_list_entry(call_list_id, salesperson_id, snooze_until)
         return jsonify(result)
 
     except Exception as e:
