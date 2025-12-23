@@ -164,6 +164,7 @@ def customer_quote(list_id):
                         cql.lead_days,
                         cql.is_no_bid,
                         cql.quoted_status,
+                        cql.quoted_on,
                         cql.line_notes,
                         cql.standard_condition,
                         cql.standard_certs,
@@ -905,6 +906,11 @@ def bulk_update_quote_lines(list_id):
                     fields.append("quoted_status = ?")
                     params.append(new_status)
                     logging.debug(f"Line {parts_list_line_id}: quoted_status = {new_status}")
+                    if new_status != current_status:
+                        if new_status == 'quoted':
+                            fields.append("quoted_on = CURRENT_TIMESTAMP")
+                        elif current_status == 'quoted':
+                            fields.append("quoted_on = NULL")
 
                 if 'margin_percent' in update and not is_locked:
                     fields.append("margin_percent = ?")
@@ -985,7 +991,7 @@ def toggle_no_bid(list_id):
             if quote_line:
                 _execute_with_cursor(cur, """
                     UPDATE customer_quote_lines
-                    SET is_no_bid = ?, quoted_status = ?, date_modified = CURRENT_TIMESTAMP
+                    SET is_no_bid = ?, quoted_status = ?, quoted_on = NULL, date_modified = CURRENT_TIMESTAMP
                     WHERE id = ?
                 """, (is_no_bid, quoted_status, quote_line['id']))
             else:
@@ -1044,6 +1050,7 @@ def mark_as_quoted(list_id):
             result = _execute_with_cursor(cur, """
                 UPDATE customer_quote_lines
                 SET quoted_status = 'quoted',
+                    quoted_on = CURRENT_TIMESTAMP,
                     date_modified = CURRENT_TIMESTAMP
                 WHERE parts_list_line_id IN (
                     SELECT pll.id 
@@ -1623,6 +1630,7 @@ def customer_quote_simple(list_id):
                     cql.lead_days,
                     cql.is_no_bid,
                     cql.quoted_status,
+                    cql.quoted_on,
                     cql.line_notes,
                     cql.standard_condition,
                     cql.standard_certs,

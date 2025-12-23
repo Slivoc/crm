@@ -52,6 +52,13 @@ document.addEventListener('DOMContentLoaded', function() {
         return displayCurrencyId || BASE_CURRENCY_ID;
     }
 
+    function formatQuotedOn(value) {
+        if (!value) return '';
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return '';
+        return parsed.toLocaleDateString();
+    }
+
     function setSummaryCurrencyLabels() {
         const baseCode = getCurrencyCode(BASE_CURRENCY_ID);
         const costLabel = document.getElementById('summaryCurrencyCodeCost');
@@ -698,6 +705,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (selectedCols.unit_price) headers += `<th align="right" style="${hStyle}">Unit Price (${displayCurrencyCode})</th>`;
         if (selectedCols.line_total) headers += `<th align="right" style="${hStyle}">Line Total (${displayCurrencyCode})</th>`;
         if (selectedCols.lead_days) headers += `<th align="left" style="${hStyle}">Lead (days)</th>`;
+        if (selectedCols.quoted_on) headers += `<th align="left" style="${hStyle}">Quoted On</th>`;
         if (selectedCols.condition) headers += `<th align="left" style="${hStyle}">Condition</th>`;
         if (selectedCols.certs) headers += `<th align="left" style="${hStyle}">Certs</th>`;
         if (selectedCols.notes) headers += `<th align="left" style="${hStyle}">Notes</th>`;
@@ -761,6 +769,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (selectedCols.unit_price) html += `<td align="right" style="${rowStyle}">${unitPriceDisplay}</td>`;
             if (selectedCols.line_total) html += `<td align="right" style="${rowStyle}">${lineTotalDisplay}</td>`;
             if (selectedCols.lead_days) html += `<td align="left" style="${rowStyle}">${elements.leadDays.value || ''}</td>`;
+            if (selectedCols.quoted_on) html += `<td align="left" style="${rowStyle}">${formatQuotedOn(lineData.quoted_on)}</td>`;
             if (selectedCols.condition) html += `<td align="left" style="${rowStyle}">${conditionValue || ''}</td>`;
             if (selectedCols.certs) html += `<td align="left" style="${rowStyle}">${certsValue || ''}</td>`;
             if (selectedCols.notes) html += `<td align="left" style="${rowStyle}">${elements.lineNotes.value || ''}</td>`;
@@ -936,6 +945,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // D. Sync UI for newly quoted lines so totals stay locked
             if (markResult.marked_count > 0) {
+                const quotedOnValue = new Date().toISOString();
                 document.querySelectorAll('.quote-row').forEach(row => {
                     const cached = rowCache.get(row);
                     if (!cached) return;
@@ -948,6 +958,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (currentStatus === 'created' && !isNoBid && price > 0 && margin > 0) {
                         row.dataset.status = 'quoted';
                         row.dataset.isNoBid = '0';
+                        cached.lineData.quoted_on = quotedOnValue;
                         cached.elements.isNoBid.checked = false;
                         handleRowChange(row, 'quoted', false, true);
                     }
