@@ -374,13 +374,25 @@ def save_supplier_quote_lines(list_id, quote_id):
                 continue
 
             quoted_part_number = line.get('quoted_part_number')
-            quantity_quoted = line.get('quantity_quoted')
-            unit_price = line.get('unit_price')
-            lead_time_days = line.get('lead_time_days')
-            condition_code = line.get('condition_code')
-            certifications = line.get('certifications')
+            quantity_quoted_raw = line.get('quantity_quoted')
+            unit_price_raw = line.get('unit_price')
+            lead_time_days_raw = line.get('lead_time_days')
+            condition_code_raw = line.get('condition_code')
+            certifications_raw = line.get('certifications')
             is_no_bid = line.get('is_no_bid', False)
-            line_notes = line.get('line_notes')
+            line_notes_raw = line.get('line_notes')
+
+            quantity_quoted = _safe_int(quantity_quoted_raw)
+            unit_price = _safe_float(unit_price_raw)
+            lead_time_days = _safe_int(lead_time_days_raw)
+            condition_code = _normalize_optional_text(condition_code_raw)
+            certifications = _normalize_optional_text(certifications_raw)
+            line_notes = _normalize_optional_text(line_notes_raw)
+
+            if isinstance(is_no_bid, str):
+                is_no_bid = is_no_bid.strip().lower() in ('true', '1', 'yes', 'y')
+            else:
+                is_no_bid = bool(is_no_bid)
 
             # DEBUG: Log all field values
             logging.info(f"quoted_part_number: '{quoted_part_number}' (type: {type(quoted_part_number).__name__})")
