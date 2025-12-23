@@ -3041,8 +3041,8 @@ def get_salesperson_recent_communications(salesperson_id, target_date_str=None, 
 
         for comm in communications:
             # Standardize communication type names
-            raw_type = comm['communication_type'].strip()
-            comm_type = standardize_communication_type(raw_type)
+            raw_type = (comm['communication_type'] or '').strip()
+            comm_type = standardize_communication_type(raw_type) if raw_type else 'Other'
             company_name = comm['customer_name']
 
             print(f"DEBUG: Raw type '{raw_type}' -> Standardized type '{comm_type}', Company: '{company_name}'")
@@ -3084,6 +3084,33 @@ def get_salesperson_recent_communications(salesperson_id, target_date_str=None, 
         for comm_type in grouped_by_type:
             for company in grouped_by_type[comm_type]:
                 grouped_by_type[comm_type][company].sort(key=lambda x: x['full_datetime'], reverse=True)
+
+        # Ensure time/date fields are JSON-serializable for Postgres (datetime objects)
+        def _serialize_time(value):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            try:
+                return value.strftime('%H:%M:%S')
+            except Exception:
+                return str(value)
+
+        def _serialize_datetime(value):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            try:
+                return value.isoformat()
+            except Exception:
+                return str(value)
+
+        for comm_type in grouped_by_type:
+            for company in grouped_by_type[comm_type]:
+                for comm in grouped_by_type[comm_type][company]:
+                    comm['time'] = _serialize_time(comm.get('time'))
+                    comm['full_datetime'] = _serialize_datetime(comm.get('full_datetime'))
 
         # Sort the types by count (most frequent first)
         sorted_grouped = {}
