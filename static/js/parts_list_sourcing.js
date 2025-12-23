@@ -391,6 +391,68 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
             });
     }
 
+    function getScoreBadge(scoreInfo) {
+        if (!scoreInfo || scoreInfo.score === null || scoreInfo.score === undefined) {
+            return '<span class="text-muted">No history</span>';
+        }
+
+        let badgeClass = 'bg-danger';
+        if (scoreInfo.score >= 85) {
+            badgeClass = 'bg-success';
+        } else if (scoreInfo.score >= 70) {
+            badgeClass = 'bg-primary';
+        } else if (scoreInfo.score >= 50) {
+            badgeClass = 'bg-warning text-dark';
+        }
+
+        const noBidRate = scoreInfo.no_bid_rate !== null && scoreInfo.no_bid_rate !== undefined
+            ? Math.round(scoreInfo.no_bid_rate * 100)
+            : null;
+        const tooltip = `Requests: ${scoreInfo.requests_sent} · No-bid: ${scoreInfo.no_bid_count}` +
+            (noBidRate !== null ? ` (${noBidRate}%)` : '');
+
+        return `
+            <span class="badge ${badgeClass}" title="${tooltip}">
+                ${scoreInfo.score}
+            </span>
+            <small class="text-muted d-block">${scoreInfo.rating}</small>
+        `;
+    }
+
+    function fetchSupplierScores(supplierIds, container) {
+        if (!supplierIds.length) {
+            return;
+        }
+
+        fetch('/parts_list/api/suppliers/no-bid-score', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                supplier_ids: supplierIds
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                return;
+            }
+
+            const scores = data.scores || {};
+            container.querySelectorAll('.supplier-score').forEach(cell => {
+                const supplierId = cell.dataset.supplierId;
+                const scoreInfo = scores[supplierId];
+                cell.innerHTML = getScoreBadge(scoreInfo);
+            });
+        })
+        .catch(() => {
+            container.querySelectorAll('.supplier-score').forEach(cell => {
+                cell.innerHTML = '<span class="text-muted">No history</span>';
+            });
+        });
+    }
+
     function displayILSResults(results, lineId, container) {
         const mappedSuppliers = results.filter(item => item.supplier_id);
         const unmappedSuppliers = results.filter(item => !item.supplier_id);
@@ -403,7 +465,7 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
             if (mappedSuppliers.length > 0) {
                 html += '<h6 class="mb-3">Mapped Suppliers</h6>';
                 html += '<table class="table table-sm ils-results-table table-hover">';
-                html += '<thead><tr><th>ILS Company</th><th>Part / Alt</th><th>Qty</th><th>Condition</th><th>System Supplier</th><th></th></tr></thead>';
+                html += '<thead><tr><th>ILS Company</th><th>Part / Alt</th><th>Qty</th><th>Condition</th><th>System Supplier</th><th>Score</th><th></th></tr></thead>';
                 html += '<tbody>';
 
                 mappedSuppliers.forEach(item => {
@@ -419,6 +481,9 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
                             <td>${item.quantity || '-'}</td>
                             <td>${item.condition_code || '-'}</td>
                             <td><span class="badge bg-success">${item.supplier_name}</span></td>
+                            <td class="supplier-score" data-supplier-id="${item.supplier_id}">
+                                <span class="text-muted">Loading...</span>
+                            </td>
                             <td>
                                 <button class="btn btn-xs btn-outline-success add-supplier-from-ils"
                                         data-line-id="${lineId}"
@@ -475,6 +540,9 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
                 addSuggestedSupplier(this.dataset.lineId, this.dataset.supplierId, supplierName, 'ils');
             });
         });
+
+        const supplierIds = [...new Set(mappedSuppliers.map(item => item.supplier_id).filter(Boolean))];
+        fetchSupplierScores(supplierIds, container);
     }
 
     // Add supplier to suggested (using event delegation)
