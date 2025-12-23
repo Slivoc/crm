@@ -1104,8 +1104,62 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    function setupCopyPartNumberButtons() {
+        document.querySelectorAll('.copy-part-number-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const partNumber = this.dataset.partNumber;
+                copyPartNumberToClipboard(partNumber, this);
+            });
+        });
+    }
+
+    function copyPartNumberToClipboard(text, buttonEl) {
+        if (!text) {
+            alert('No part number found to copy.');
+            return;
+        }
+
+        const setFeedback = () => {
+            if (!buttonEl) return;
+            const original = buttonEl.innerHTML;
+            buttonEl.innerHTML = '<i class="bi bi-check2"></i>';
+            buttonEl.classList.remove('btn-outline-secondary');
+            buttonEl.classList.add('btn-success');
+            setTimeout(() => {
+                buttonEl.innerHTML = original;
+                buttonEl.classList.remove('btn-success');
+                buttonEl.classList.add('btn-outline-secondary');
+            }, 1500);
+        };
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(setFeedback).catch(() => {
+                alert('Unable to copy part number.');
+            });
+            return;
+        }
+
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            setFeedback();
+        } catch (error) {
+            console.error('Copy failed:', error);
+            alert('Unable to copy part number.');
+        } finally {
+            document.body.removeChild(textarea);
+        }
+    }
+
     // START
     setSummaryCurrencyLabels();
     initializeTable();
     setupDuplicateLineButtons();
+    setupCopyPartNumberButtons();
 });

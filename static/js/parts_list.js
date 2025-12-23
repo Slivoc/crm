@@ -249,12 +249,22 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         part.line_type === 'price_break' ||
         (Number.isFinite(numericLineNumber) && numericLineNumber % 1 !== 0);
     const canDuplicate = !!part.line_id && part.line_type !== 'alternate';
+    const partNumberForCopy = isAlt
+        ? (part.input_part_number || part.alt_part_number || part.base_part_number || '')
+        : (part.input_part_number || '');
+    const copyPartNumberButton = partNumberForCopy
+        ? `<button class="btn btn-sm btn-outline-secondary copy-part-number-btn"
+                   data-part-number="${encodeURIComponent(partNumberForCopy)}"
+                   title="Copy part number">
+              <i class="bi bi-clipboard"></i>
+           </button>`
+        : '';
     const duplicateButton = canDuplicate
         ? `<button class="btn btn-sm btn-outline-secondary duplicate-line-btn"
                    data-part-index="${actualIndex}"
                    data-line-id="${part.line_id}"
                    title="Add price break">
-              <i class="bi bi-files"></i>
+              <i class="bi bi-plus-square"></i>
            </button>`
         : '';
 
@@ -286,7 +296,10 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
                     ${!part.found ? '<br><small class="text-danger">Not Found</small>' : ''}
                     ${isAlt && part.parent_base_part_number ? `<br><small class="text-muted" style="font-size: 0.68rem; margin-left: 0.25rem;">For: ${escapeHtml(part.parent_base_part_number)}</small>` : ''}
                 </div>
-                ${duplicateButton}
+                <div class="d-flex align-items-center gap-1">
+                    ${copyPartNumberButton}
+                    ${duplicateButton}
+                </div>
             </div>
         </td>
         <td style="width: 110px; min-width: 110px; text-align: center; cursor: ${!isSubLine && alternativesDisplay !== '-' ? 'pointer' : 'default'};"
@@ -669,6 +682,37 @@ function showToast(message, type) {
     `;
     document.body.appendChild(alertDiv);
     setTimeout(() => alertDiv.remove(), 3000);
+}
+
+function copyTextToClipboard(text) {
+    if (!text) {
+        showToast('No part number found to copy', 'warning');
+        return;
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+            .then(() => showToast('Part number copied', 'success'))
+            .catch(() => showToast('Unable to copy part number', 'danger'));
+        return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'absolute';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand('copy');
+        showToast('Part number copied', 'success');
+    } catch (error) {
+        console.error('Copy failed:', error);
+        showToast('Unable to copy part number', 'danger');
+    } finally {
+        document.body.removeChild(textarea);
+    }
 }
 
 function preventDefaults(e) {
@@ -1859,6 +1903,14 @@ document.addEventListener('DOMContentLoaded', function() {
     const partsTableBody = document.getElementById('parts-table-body');
     if (partsTableBody) {
         partsTableBody.addEventListener('click', function(event) {
+            const copyButton = event.target.closest('.copy-part-number-btn');
+            if (copyButton) {
+                const encodedPartNumber = copyButton.getAttribute('data-part-number') || '';
+                const partNumber = decodeURIComponent(encodedPartNumber);
+                copyTextToClipboard(partNumber);
+                return;
+            }
+
             const button = event.target.closest('.duplicate-line-btn');
             if (!button) return;
             const partIndex = parseInt(button.getAttribute('data-part-index'), 10);

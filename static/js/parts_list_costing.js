@@ -24,6 +24,13 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+    document.querySelectorAll('.copy-part-number-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+            const partNumber = this.dataset.partNumber;
+            copyPartNumberToClipboard(partNumber);
+        });
+    });
+
     // View quotes for a line
     document.querySelectorAll('.view-quotes-btn').forEach(btn => {
         btn.addEventListener('click', function () {
@@ -568,6 +575,37 @@ function showToast(message, type) {
     `;
     document.body.appendChild(alertDiv);
     setTimeout(() => alertDiv.remove(), 3000);
+}
+
+function copyPartNumberToClipboard(text) {
+    if (!text) {
+        showToast('No part number found to copy', 'warning');
+        return;
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+            .then(() => showToast('Part number copied', 'success'))
+            .catch(() => showToast('Unable to copy part number', 'danger'));
+        return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'absolute';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand('copy');
+        showToast('Part number copied', 'success');
+    } catch (error) {
+        console.error('Copy failed:', error);
+        showToast('Unable to copy part number', 'danger');
+    } finally {
+        document.body.removeChild(textarea);
+    }
 }
 
 // ---------- QUOTES MODAL LOGIC (GLOBAL) ----------

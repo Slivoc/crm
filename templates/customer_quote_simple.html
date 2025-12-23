@@ -423,13 +423,20 @@
                 <button class="btn btn-sm btn-outline-secondary duplicate-line-btn"
                         data-line-id="{{ line.id }}"
                         title="Add price break">
-                    <i class="bi bi-files"></i>
+                    <i class="bi bi-plus-square"></i>
                 </button>
             </div>
         </td>
 
         <td>
-            {{ line.requested_part_number or line.customer_part_number }}
+            <div class="d-flex align-items-center gap-1">
+                <span>{{ line.requested_part_number or line.customer_part_number }}</span>
+                <button class="btn btn-sm btn-outline-secondary copy-part-number-btn"
+                        data-part-number="{{ line.requested_part_number or line.customer_part_number }}"
+                        title="Copy part number">
+                    <i class="bi bi-clipboard"></i>
+                </button>
+            </div>
             {% if line.supplier_quoted_part_number and line.supplier_quoted_part_number != (line.requested_part_number or line.customer_part_number) %}
             <span class="supplier-diff-note">Supplier: {{ line.supplier_quoted_part_number }}</span>
             {% endif %}
