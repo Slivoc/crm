@@ -956,14 +956,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // E. Generate Table & Show Modal
             const customerIdValue = (typeof CUSTOMER_SYSTEM_CODE !== 'undefined' && CUSTOMER_SYSTEM_CODE) ? CUSTOMER_SYSTEM_CODE : '';
-
             const subject = customerIdValue ? `Quotation - Customer ${customerIdValue} - Parts List ${LIST_ID}` : `Quotation - Parts List ${LIST_ID}`;
             autoSelectDiffColumns();
             const tableHtml = buildEmailQuoteTable();
             document.getElementById('emailQuoteSubject').textContent = subject;
-            const customerIdHtml = customerIdValue ? `<p><strong>Customer ID:</strong> ${customerIdValue}</p>` : '';
 
-            document.getElementById('emailQuoteBody').innerHTML = `${customerIdHtml}${tableHtml}<p></p>`;
+            document.getElementById('emailQuoteBody').innerHTML = `${tableHtml}<p></p>`;
             new bootstrap.Modal(document.getElementById('emailQuoteModal')).show();
 
         } catch (error) {
@@ -996,11 +994,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('refreshPreviewBtn').addEventListener('click', function() {
         autoSelectDiffColumns();
-        const customerIdValue = (typeof CUSTOMER_SYSTEM_CODE !== 'undefined' && CUSTOMER_SYSTEM_CODE) ? CUSTOMER_SYSTEM_CODE : '';
-
-        const customerIdHtml = customerIdValue ? `<p><strong>Customer ID:</strong> ${customerIdValue}</p>` : '';
-
-        document.getElementById('emailQuoteBody').innerHTML = `${customerIdHtml}${buildEmailQuoteTable()}<p></p>`;
+        document.getElementById('emailQuoteBody').innerHTML = `${buildEmailQuoteTable()}<p></p>`;
     });
 
     document.getElementById('copyEmailQuoteBtn').addEventListener('click', async function() {
