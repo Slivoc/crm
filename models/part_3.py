@@ -645,6 +645,7 @@ def get_salesperson_contacts(salesperson_id, search_term='', customer_filter='',
             JOIN call_list cl ON c.id = cl.contact_id 
                 AND cl.salesperson_id = ?
                 AND cl.is_active = TRUE
+                AND (cl.snoozed_until IS NULL OR cl.snoozed_until <= CURRENT_TIMESTAMP)
             """)
 
         # Continue with WHERE clause

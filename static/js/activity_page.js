@@ -97,10 +97,10 @@ function displayCallList(data) {
                     <i class="bi bi-clock me-1"></i>Added ${formatDate(contact.added_date)}
                 </div>
             </div>
-            <div class="text-end">
-                <span class="badge bg-${badgeClass} mb-2">${daysWaiting} days</span>
-                <div class="d-flex gap-1 justify-content-end mb-2">
-                    <button class="btn btn-sm btn-outline-primary contact-quick-action-btn"
+                <div class="text-end">
+                    <span class="badge bg-${badgeClass} mb-2">${daysWaiting} days</span>
+                    <div class="d-flex gap-1 justify-content-end mb-2">
+                        <button class="btn btn-sm btn-outline-primary contact-quick-action-btn"
                             data-contact-id="${contact.contact_id}"
                             data-customer-id="${contact.customer_id}"
                             data-contact-name="${contact.name}${contact.second_name ? ' ' + contact.second_name : ''}"
@@ -120,6 +120,35 @@ function displayCallList(data) {
                             title="Log Email">
                         <i class="bi bi-envelope"></i>
                     </button>
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                                type="button"
+                                data-bs-toggle="dropdown"
+                                aria-expanded="false"
+                                title="Sleep from call list">
+                            <i class="bi bi-moon"></i>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li>
+                                <button class="dropdown-item" type="button"
+                                        onclick="snoozeCallList(${contact.call_list_id}, 3)">
+                                    Sleep 3 days
+                                </button>
+                            </li>
+                            <li>
+                                <button class="dropdown-item" type="button"
+                                        onclick="snoozeCallList(${contact.call_list_id}, 7)">
+                                    Sleep 1 week
+                                </button>
+                            </li>
+                            <li>
+                                <button class="dropdown-item" type="button"
+                                        onclick="snoozeCallList(${contact.call_list_id}, 30)">
+                                    Sleep 1 month
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
                 </div>
                 <button class="btn btn-sm btn-link text-danger p-1"
                     onclick="removeFromCallList(${contact.call_list_id})"
@@ -198,6 +227,35 @@ function displayCallList(data) {
                                 title="Log Email">
                             <i class="bi bi-envelope"></i>
                         </button>
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                                    type="button"
+                                    data-bs-toggle="dropdown"
+                                    aria-expanded="false"
+                                    title="Sleep from call list">
+                                <i class="bi bi-moon"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li>
+                                    <button class="dropdown-item" type="button"
+                                            onclick="snoozeCallList(${contact.call_list_id}, 3)">
+                                        Sleep 3 days
+                                    </button>
+                                </li>
+                                <li>
+                                    <button class="dropdown-item" type="button"
+                                            onclick="snoozeCallList(${contact.call_list_id}, 7)">
+                                        Sleep 1 week
+                                    </button>
+                                </li>
+                                <li>
+                                    <button class="dropdown-item" type="button"
+                                            onclick="snoozeCallList(${contact.call_list_id}, 30)">
+                                        Sleep 1 month
+                                    </button>
+                                </li>
+                            </ul>
+                        </div>
                     </div>
                     <button class="btn btn-sm btn-link text-danger p-1"
                             onclick="removeFromCallList(${contact.call_list_id})"
@@ -323,6 +381,29 @@ function removeFromCallList(callListId) {
     .catch(error => {
         console.error('Error:', error);
         alert('Error removing from call list. Please try again.');
+    });
+}
+
+function snoozeCallList(callListId, days) {
+    const urlParts = window.location.pathname.split('/');
+    const salespersonId = urlParts[urlParts.indexOf('salespeople') + 1];
+
+    fetch(`/salespeople/${salespersonId}/snooze-call-list`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ call_list_id: callListId, snooze_days: days })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            fetchCallListData();
+        } else {
+            alert('Error snoozing call list: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error snoozing call list. Please try again.');
     });
 }
 

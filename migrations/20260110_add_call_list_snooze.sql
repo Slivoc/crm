@@ -1,0 +1,2 @@
+ALTER TABLE call_list
+ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMP;
