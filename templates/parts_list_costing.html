@@ -272,7 +272,16 @@
                     <tr class="{{ 'has-cost' if line.chosen_cost else 'missing-cost' }}"
                         data-line-id="{{ line.id }}">
                         <td>{{ line.line_number }}</td>
-                        <td><strong>{{ line.customer_part_number }}</strong></td>
+                        <td>
+                            <div class="d-flex align-items-center gap-1">
+                                <strong>{{ line.customer_part_number }}</strong>
+                                <button class="btn btn-sm btn-outline-secondary copy-part-number-btn"
+                                        data-part-number="{{ line.customer_part_number }}"
+                                        title="Copy part number">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                        </td>
                         <td>
                             <span class="badge bg-secondary" data-requested-qty="{{ line.quantity }}">
                                 {{ line.quantity }}
@@ -412,7 +421,7 @@
                         <button class="btn btn-sm btn-outline-secondary duplicate-line-btn"
                                 data-line-id="{{ line.id }}"
                                 title="Add price break">
-                            <i class="bi bi-files"></i>
+                            <i class="bi bi-plus-square"></i>
                         </button>
                         <button class="btn btn-sm btn-success save-line-btn"
                                 data-line-id="{{ line.id }}"
@@ -671,4 +680,3 @@
     </div>
 </div></div>
 {% endblock %}
-
