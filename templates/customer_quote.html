@@ -441,6 +441,10 @@
                                 <label class="form-check-label" for="col-lead-days">Lead Time (days)</label>
                             </div>
                             <div class="form-check">
+                                <input class="form-check-input email-col-check" type="checkbox" id="col-quoted-on" value="quoted_on">
+                                <label class="form-check-label" for="col-quoted-on">Quoted On</label>
+                            </div>
+                            <div class="form-check">
                                 <input class="form-check-input email-col-check" type="checkbox" id="col-notes" value="notes">
                                 <label class="form-check-label" for="col-notes">Notes</label>
                             </div>
@@ -853,6 +857,12 @@ function buildEmailQuoteTable() {
       const displayCurrencyId = getDisplayCurrencyId();
       const displayCurrencyCode = getCurrencyCode(displayCurrencyId);
     const data = hot.getSourceData();
+    const formatQuotedOn = (value) => {
+        if (!value) return '';
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return '';
+        return parsed.toLocaleDateString();
+    };
 
     // Get selected columns
     const selectedCols = {};
@@ -870,6 +880,7 @@ function buildEmailQuoteTable() {
     if (selectedCols.unit_price) headers += '<th align="right" style="padding:4px 6px;border-bottom:1px solid #dee2e6;">Unit Price (${displayCurrencyCode})</th>';
     if (selectedCols.line_total) headers += '<th align="right" style="padding:4px 6px;border-bottom:1px solid #dee2e6;">Line Total (${displayCurrencyCode})</th>';
     if (selectedCols.lead_days) headers += '<th align="left"  style="padding:4px 6px;border-bottom:1px solid #dee2e6;">Lead (days)</th>';
+    if (selectedCols.quoted_on) headers += '<th align="left"  style="padding:4px 6px;border-bottom:1px solid #dee2e6;">Quoted On</th>';
     if (selectedCols.notes) headers += '<th align="left"  style="padding:4px 6px;border-bottom:1px solid #dee2e6;">Notes</th>';
 
     let html = `
@@ -957,6 +968,9 @@ function buildEmailQuoteTable() {
         if (selectedCols.lead_days) {
     rowHtml += `<td align="left" style="${lineStyle}">${row.lead_days || ''}</td>`;  // Changed from chosen_lead_days
 }
+        if (selectedCols.quoted_on) {
+            rowHtml += `<td align="left" style="${lineStyle}">${formatQuotedOn(row.quoted_on)}</td>`;
+        }
         if (selectedCols.notes) {
             rowHtml += `<td align="left" style="${lineStyle}">${row.line_notes ? row.line_notes.toString() : ''}</td>`;
         }
@@ -1043,10 +1057,12 @@ document.getElementById('email-quote-btn').addEventListener('click', async funct
             console.log(`Marked ${markResult.marked_count} lines as quoted`);
 
             // Update the table data in memory with new status
-      const rows = hot.getSourceData() || [];
-      rows.forEach((data) => {
+            const rows = hot.getSourceData() || [];
+            const quotedOnValue = new Date().toISOString();
+            rows.forEach((data, idx) => {
                 if (data.quoted_status === 'created' && data.quote_price_gbp > 0 && data.margin_percent > 0 && !data.is_no_bid) {
                     hot.setDataAtRowProp(idx, 'quoted_status', 'quoted', 'auto');
+                    hot.setDataAtRowProp(idx, 'quoted_on', quotedOnValue, 'auto');
                 }
             });
 
