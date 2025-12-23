@@ -403,13 +403,19 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
             if (mappedSuppliers.length > 0) {
                 html += '<h6 class="mb-3">Mapped Suppliers</h6>';
                 html += '<table class="table table-sm ils-results-table table-hover">';
-                html += '<thead><tr><th>ILS Company</th><th>Qty</th><th>Condition</th><th>System Supplier</th><th></th></tr></thead>';
+                html += '<thead><tr><th>ILS Company</th><th>Part / Alt</th><th>Qty</th><th>Condition</th><th>System Supplier</th><th></th></tr></thead>';
                 html += '<tbody>';
 
                 mappedSuppliers.forEach(item => {
+                    const partNumber = item.part_number || '-';
+                    const altNumber = item.alt_part_number || '';
+                    const showAlt = altNumber && altNumber !== partNumber;
+                    const altBadge = showAlt ? '<span class="badge bg-warning text-dark ms-1">ALT</span>' : '';
+                    const altLine = showAlt ? `<br><small class="text-muted">Alt: ${altNumber}</small>` : '';
                     html += `
                         <tr>
                             <td>${item.ils_company_name || '-'}</td>
+                            <td><strong>${partNumber}</strong>${altBadge}${altLine}</td>
                             <td>${item.quantity || '-'}</td>
                             <td>${item.condition_code || '-'}</td>
                             <td><span class="badge bg-success">${item.supplier_name}</span></td>
@@ -436,14 +442,20 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
                         </div>
                         <div class="unmapped-content" style="display: none;">
                             <table class="table table-sm ils-results-table">
-                                <thead><tr><th>ILS Company</th><th>CAGE</th><th>Qty</th><th>Condition</th></tr></thead>
+                                <thead><tr><th>ILS Company</th><th>Part / Alt</th><th>CAGE</th><th>Qty</th><th>Condition</th></tr></thead>
                                 <tbody>
                 `;
 
                 unmappedSuppliers.forEach(item => {
+                    const partNumber = item.part_number || '-';
+                    const altNumber = item.alt_part_number || '';
+                    const showAlt = altNumber && altNumber !== partNumber;
+                    const altBadge = showAlt ? '<span class="badge bg-warning text-dark ms-1">ALT</span>' : '';
+                    const altLine = showAlt ? `<br><small class="text-muted">Alt: ${altNumber}</small>` : '';
                     html += `
                         <tr>
                             <td>${item.ils_company_name || '-'}</td>
+                            <td><strong>${partNumber}</strong>${altBadge}${altLine}</td>
                             <td>${item.ils_cage_code || '-'}</td>
                             <td>${item.quantity || '-'}</td>
                             <td>${item.condition_code || '-'}</td>
@@ -1207,4 +1219,3 @@ if (emailSuggestedBtn) {
         });
     });
 }
-

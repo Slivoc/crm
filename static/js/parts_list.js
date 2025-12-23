@@ -1559,11 +1559,22 @@ function showIlsDetailsModal(part) {
         supplierGroups[supplierName].push(row);
     });
 
-    const renderIlsRow = (ils) => `
+    const renderIlsRow = (ils) => {
+        const partNumber = ils.part_number || part.input_part_number || '-';
+        const altNumber = ils.alt_part_number || '';
+        const showAlt = altNumber && altNumber !== partNumber;
+        const altBadge = showAlt ? '<span class="badge bg-warning text-dark ms-1">ALT</span>' : '';
+        const altLine = showAlt ? `<br><small class="text-muted">Alt: ${escapeHtml(altNumber)}</small>` : '';
+
+        return `
     <tr>
         <td>
             <strong>${escapeHtml(ils.ils_company_name)}</strong>
             ${ils.ils_cage_code ? `<br><small class="text-muted">CAGE: ${escapeHtml(ils.ils_cage_code)}</small>` : ''}
+        </td>
+        <td>
+            <strong>${escapeHtml(partNumber)}</strong>${altBadge}
+            ${altLine}
         </td>
         <td><strong>${ils.search_date ? formatDate(ils.search_date) : '-'}</strong></td>
         <td><span class="badge bg-secondary">${escapeHtml(ils.quantity)}</span></td>
@@ -1580,6 +1591,7 @@ function showIlsDetailsModal(part) {
         </td>
     </tr>
 `;
+    };
 
     let contentHtml = '';
 
@@ -1642,6 +1654,7 @@ function showIlsDetailsModal(part) {
                                         <thead>
                                             <tr>
                                                 <th>ILS Company</th>
+                                                <th>Part / Alt</th>
                                                 <th>Date</th>
                                                 <th>Qty</th>
                                                 <th>Condition</th>
@@ -1702,6 +1715,7 @@ function showIlsDetailsModal(part) {
                                         <thead>
                                             <tr>
                                                 <th>ILS Company</th>
+                                                <th>Part / Alt</th>
                                                 <th>Date</th>
                                                 <th>Qty</th>
                                                 <th>Condition</th>
