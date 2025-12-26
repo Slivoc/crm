@@ -196,6 +196,7 @@ function renderQuoteLines(quote, lines) {
             <td>${line.line_number || ''}</td>
             <td>${line.customer_part_number || ''}</td>
             <td>${line.quoted_part_number || ''}</td>
+            <td>${line.manufacturer || ''}</td>
             <td>${line.quantity_quoted || ''}</td>
             <td>${unitPrice}</td>
             <td>${noBid}</td>

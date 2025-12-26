@@ -384,18 +384,19 @@ CREATE TABLE customer_part_numbers (
                 FOREIGN KEY (customer_id) REFERENCES customers(id)
             );
 
-CREATE TABLE customer_quote_lines (
-    id SERIAL PRIMARY KEY,
-    parts_list_line_id INTEGER NOT NULL,
-    
-    -- Part number display options
-    display_part_number TEXT,           -- Custom display P/N (defaults to customer_part_number)
-    quoted_part_number TEXT,            -- What we're actually quoting (may differ from display)
-    
-    -- Costing (all in GBP for calculations)
-    base_cost_gbp NUMERIC,                 -- Cost converted to GBP (from chosen_cost + currency conversion)
-    margin_percent NUMERIC DEFAULT 0,      -- Profit margin % (NOT markup)
-    quote_price_gbp NUMERIC,               -- Selling price in GBP = base_cost_gbp / (1 - margin/100)
+CREATE TABLE customer_quote_lines (
+    id SERIAL PRIMARY KEY,
+    parts_list_line_id INTEGER NOT NULL,
+    
+    -- Part number display options
+    display_part_number TEXT,           -- Custom display P/N (defaults to customer_part_number)
+    quoted_part_number TEXT,            -- What we're actually quoting (may differ from display)
+    manufacturer TEXT,
+    
+    -- Costing (all in GBP for calculations)
+    base_cost_gbp NUMERIC,                 -- Cost converted to GBP (from chosen_cost + currency conversion)
+    margin_percent NUMERIC DEFAULT 0,      -- Profit margin % (NOT markup)
+    quote_price_gbp NUMERIC,               -- Selling price in GBP = base_cost_gbp / (1 - margin/100)
     
     -- Status
     is_no_bid INTEGER DEFAULT 0,        -- 1 if we're declining to quote this line
@@ -1004,16 +1005,17 @@ CREATE TABLE parts_list_statuses (
     display_order INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE parts_list_supplier_quote_lines (
-    id SERIAL PRIMARY KEY,
-    supplier_quote_id INTEGER NOT NULL,
-    parts_list_line_id INTEGER NOT NULL,
-    quoted_part_number VARCHAR(100), -- Supplier's part number (may differ from ours)
-    quantity_quoted INTEGER,
-    unit_price DECIMAL(15,4),
-    lead_time_days INTEGER,
-    condition_code VARCHAR(10),
-    certifications TEXT, -- Free text for certs
+CREATE TABLE parts_list_supplier_quote_lines (
+    id SERIAL PRIMARY KEY,
+    supplier_quote_id INTEGER NOT NULL,
+    parts_list_line_id INTEGER NOT NULL,
+    quoted_part_number VARCHAR(100), -- Supplier's part number (may differ from ours)
+    manufacturer TEXT,
+    quantity_quoted INTEGER,
+    unit_price DECIMAL(15,4),
+    lead_time_days INTEGER,
+    condition_code VARCHAR(10),
+    certifications TEXT, -- Free text for certs
     is_no_bid BOOLEAN DEFAULT FALSE,
     line_notes TEXT,
     DATE_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

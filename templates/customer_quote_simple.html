@@ -382,6 +382,7 @@
                         <tr>
                             <th style="min-width: 50px;">#</th>
                             <th style="min-width: 150px;">Part Number</th>
+                            <th style="min-width: 150px;">Manufacturer</th>
                             <th style="min-width: 150px;">Display P/N</th>
                             <th style="min-width: 70px;">Qty</th>
                             <th style="min-width: 90px;">Chosen Qty</th>
@@ -440,6 +441,15 @@
             {% if line.supplier_quoted_part_number and line.supplier_quoted_part_number != (line.requested_part_number or line.customer_part_number) %}
             <span class="supplier-diff-note">Supplier: {{ line.supplier_quoted_part_number }}</span>
             {% endif %}
+        </td>
+
+        <td>
+            <input type="text"
+                   class="form-control form-control-sm editable-field"
+                   data-field="manufacturer"
+                   spellcheck="false"
+                   autocomplete="off"
+                   value="{{ line.manufacturer or '' }}">
         </td>
 
         <td>

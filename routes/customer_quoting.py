@@ -875,10 +875,14 @@ def bulk_update_quote_lines(list_id):
 
                     insert_query = _with_returning_clause("""
                         INSERT INTO customer_quote_lines 
-                        (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line, margin_percent, quote_price_gbp, quoted_status, standard_condition, standard_certs)
-                        VALUES (?, ?, 0, 0, 0, ?, 'created', ?, ?)
+                        (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line, margin_percent, quote_price_gbp, quoted_status, standard_condition, standard_certs, manufacturer)
+                        VALUES (?, ?, 0, 0, 0, ?, 'created', ?, ?, ?)
                     """)
-                    _execute_with_cursor(cur, insert_query, (parts_list_line_id, base_cost_gbp, base_cost_gbp, condition, certs))
+                    _execute_with_cursor(
+                        cur,
+                        insert_query,
+                        (parts_list_line_id, base_cost_gbp, base_cost_gbp, condition, certs, update.get('manufacturer'))
+                    )
                     quote_line_id = _last_inserted_id(cur)
                     logging.info(f"Created new quote line {quote_line_id} for parts_list_line {parts_list_line_id}")
                 else:
@@ -941,6 +945,9 @@ def bulk_update_quote_lines(list_id):
                     if field in update:
                         fields.append(f"{field} = ?")
                         params.append(update[field])
+                if 'manufacturer' in update:
+                    fields.append("manufacturer = ?")
+                    params.append(update['manufacturer'])
 
                 if 'is_no_bid' in update and not is_locked:
                     fields.append("is_no_bid = ?")
@@ -1622,6 +1629,7 @@ def customer_quote_simple(list_id):
                     cql.id as quote_line_id,
                     cql.display_part_number,
                     cql.quoted_part_number,
+                    cql.manufacturer,
                     cql.base_cost_gbp,
                     cql.delivery_per_unit,
                     cql.delivery_per_line,

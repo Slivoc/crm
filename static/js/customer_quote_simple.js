@@ -218,6 +218,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 statusBtn: row.querySelector('.status-btn'),
                 lineNotes: row.querySelector('[data-field="line_notes"]'),
                 leadDays: row.querySelector('[data-field="lead_days"]'),
+                manufacturer: row.querySelector('[data-field="manufacturer"]'),
                 displayPartNumber: row.querySelector('[data-field="display_part_number"]'),
                 standardCondition: row.querySelector('[data-field="standard_condition"]'),
                 standardCerts: row.querySelector('[data-field="standard_certs"]'),
@@ -800,6 +801,7 @@ document.addEventListener('DOMContentLoaded', function() {
             updates.push({
                 parts_list_line_id: lineData.id,
                 chosen_qty: parseFloat(elements.chosenQty.value) || null,
+                manufacturer: elements.manufacturer ? elements.manufacturer.value : '',
                 display_part_number: elements.displayPartNumber.value,
                 margin_percent: parseFloat(elements.marginPercent.value) || 0,
                 quote_price_gbp: parseFloat(elements.quotePriceGbp.value) || 0,

@@ -224,6 +224,7 @@ def get_supplier_quote_details(list_id, quote_id):
                 sql.id,
                 COALESCE(sql.parts_list_line_id, pll.id) as parts_list_line_id,
                 sql.quoted_part_number,
+                sql.manufacturer,
                 sql.quantity_quoted,
                 sql.unit_price,
                 sql.lead_time_days,
@@ -379,6 +380,7 @@ def save_supplier_quote_lines(list_id, quote_id):
             lead_time_days_raw = line.get('lead_time_days')
             condition_code_raw = line.get('condition_code')
             certifications_raw = line.get('certifications')
+            manufacturer_raw = line.get('manufacturer')
             is_no_bid = line.get('is_no_bid', False)
             line_notes_raw = line.get('line_notes')
 
@@ -387,6 +389,7 @@ def save_supplier_quote_lines(list_id, quote_id):
             lead_time_days = _safe_int(lead_time_days_raw)
             condition_code = _normalize_optional_text(condition_code_raw)
             certifications = _normalize_optional_text(certifications_raw)
+            manufacturer = _normalize_optional_text(manufacturer_raw)
             line_notes = _normalize_optional_text(line_notes_raw)
 
             if isinstance(is_no_bid, str):
@@ -410,6 +413,7 @@ def save_supplier_quote_lines(list_id, quote_id):
                     lead_time_days is not None or
                     (condition_code and condition_code.strip()) or
                     (certifications and certifications.strip()) or
+                    (manufacturer and manufacturer.strip()) or
                     is_no_bid is True or
                     (line_notes and line_notes.strip())
             )
@@ -445,6 +449,7 @@ def save_supplier_quote_lines(list_id, quote_id):
                         lead_time_days = ?,
                         condition_code = ?,
                         certifications = ?,
+                        manufacturer = ?,
                         is_no_bid = ?,
                         line_notes = ?,
                         date_modified = CURRENT_TIMESTAMP
@@ -453,7 +458,7 @@ def save_supplier_quote_lines(list_id, quote_id):
                     (
                         quoted_part_number, quantity_quoted, unit_price,
                         lead_time_days, condition_code, certifications,
-                        is_no_bid, line_notes, existing['id']
+                        manufacturer, is_no_bid, line_notes, existing['id']
                     ),
                     commit=True,
                 )
@@ -464,13 +469,13 @@ def save_supplier_quote_lines(list_id, quote_id):
                     """
                     INSERT INTO parts_list_supplier_quote_lines
                     (supplier_quote_id, parts_list_line_id, quoted_part_number,
-                     quantity_quoted, unit_price, lead_time_days, condition_code,
+                     manufacturer, quantity_quoted, unit_price, lead_time_days, condition_code,
                      certifications, is_no_bid, line_notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         quote_id, parts_list_line_id, quoted_part_number,
-                        quantity_quoted, unit_price, lead_time_days, condition_code,
+                        manufacturer, quantity_quoted, unit_price, lead_time_days, condition_code,
                         certifications, is_no_bid, line_notes
                     ),
                     commit=True,
@@ -669,6 +674,7 @@ def supplier_quote_lines_data():
                 pll.customer_part_number,
                 pll.base_part_number,
                 sql.quoted_part_number,
+                sql.manufacturer,
                 sql.quantity_quoted,
                 sql.unit_price,
                 sql.lead_time_days,
