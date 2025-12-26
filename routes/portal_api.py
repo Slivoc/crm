@@ -13,7 +13,7 @@ from functools import wraps
 from werkzeug.security import check_password_hash
 
 from db import db_cursor, execute as db_execute, get_currency_rate_column
-from models import create_base_part_number
+from models import create_base_part_number, get_base_currency
 
 # ----------------------------------------------------------------------------
 portal_api_bp = Blueprint('portal_api', __name__, url_prefix='/api/portal')
@@ -51,6 +51,41 @@ def _sort_date_key(value):
     if isinstance(value, date):
         return datetime.combine(value, datetime.min.time())
     return datetime.min
+
+
+def _get_base_currency():
+    base_code = (get_base_currency() or 'GBP').upper()
+    row = db_execute(
+        "SELECT id, currency_code FROM currencies WHERE currency_code = ?",
+        (base_code,),
+        fetch='one'
+    )
+    if not row:
+        rate_column = get_currency_rate_column()
+        row = db_execute(
+            f"SELECT id, currency_code FROM currencies WHERE {rate_column} = 1 ORDER BY id LIMIT 1",
+            fetch='one'
+        )
+    if row:
+        return {'id': row['id'], 'code': row['currency_code']}
+    return {'id': None, 'code': base_code}
+
+
+def _convert_to_base_currency(amount, currency_id=None, currency_code=None, currency_rate=None, base_currency=None):
+    amount = _to_float(amount)
+    if amount is None:
+        return None
+    base_currency = base_currency or _get_base_currency()
+    base_id = base_currency.get('id')
+    base_code = (base_currency.get('code') or '').upper()
+    if base_id is not None and currency_id is not None and currency_id == base_id:
+        return amount
+    if currency_code and base_code and currency_code.upper() == base_code:
+        return amount
+    rate = _to_float(currency_rate) if currency_rate is not None else None
+    if not rate:
+        return amount
+    return amount / rate
 
 
 _PORTAL_QUOTE_REQUESTS_HAS_CUSTOMER_REFERENCE = None
@@ -164,14 +199,13 @@ def get_customer_pricing_agreement(customer_id, base_part_number):
         """, (customer_id, base_part_number, today, today), fetch='one')
 
         if pricing:
-            # Convert to GBP if needed
-            price_gbp = _to_float(pricing['price'])
-            if pricing['currency_id'] != 3:  # Not GBP
-                exchange_rate = _to_float(pricing['currency_rate'] or 1)
-                if exchange_rate != 0:
-                    price_gbp = price_gbp / exchange_rate
-
-            return price_gbp
+            base_currency = _get_base_currency()
+            return _convert_to_base_currency(
+                pricing['price'],
+                currency_id=pricing['currency_id'],
+                currency_rate=pricing['currency_rate'],
+                base_currency=base_currency
+            )
 
         return None
     except Exception as e:
@@ -378,6 +412,9 @@ def analyze_quote():
         if not parts:
             return jsonify({'success': False, 'error': 'No parts provided'}), 400
 
+        base_currency = _get_base_currency()
+        base_currency_id = base_currency.get('id')
+        base_currency_code = base_currency.get('code')
         margins = get_customer_margins(user['customer_id'])
         stock_margin = margins['stock']
         vq_margin = margins['vq']
@@ -401,6 +438,7 @@ def analyze_quote():
 
         results = []
 
+        rate_column = get_currency_rate_column()
         with db_cursor() as cursor:
             for part in parts:
                 part_number = part.get('part_number', '').strip()
@@ -420,7 +458,7 @@ def analyze_quote():
                             'in_stock': False,
                             'estimated_price': agreement_price,
                             'price_source': 'pricing_agreement',
-                            'currency': 'GBP',
+                            'currency': base_currency_code,
                             'status': 'available',
                             'estimated_lead_days': 0,
                             'debug_info': {
@@ -446,8 +484,12 @@ def analyze_quote():
                     avg_cost_value = _to_float(stock['avg_cost']) if stock and stock['avg_cost'] else None
                     stock_price = round(avg_cost_value * (1 + stock_margin / 100), 2) if (has_stock and avg_cost_value is not None) else None
 
-                    cq_price = _execute_with_cursor(cursor, """
-                        SELECT cl.unit_price as most_recent_price, c.entry_date as quote_date, curr.currency_code, c.cq_number
+                    cq_price = _execute_with_cursor(cursor, f"""
+                        SELECT cl.unit_price as most_recent_price,
+                               c.entry_date as quote_date,
+                               curr.currency_code,
+                               curr.{rate_column} as currency_rate,
+                               c.cq_number
                         FROM cq_lines cl JOIN cqs c ON cl.cq_id = c.id
                         LEFT JOIN currencies curr ON c.currency_id = curr.id
                         WHERE cl.base_part_number = ? AND c.entry_date >= ?
@@ -455,8 +497,12 @@ def analyze_quote():
                         ORDER BY c.entry_date DESC LIMIT 1
                     """, (base_part_number, cq_cutoff)).fetchone()
 
-                    sales_price = _execute_with_cursor(cursor, """
-                        SELECT sol.price as most_recent_price, so.date_entered as sale_date, curr.currency_code, so.sales_order_ref
+                    sales_price = _execute_with_cursor(cursor, f"""
+                        SELECT sol.price as most_recent_price,
+                               so.date_entered as sale_date,
+                               curr.currency_code,
+                               curr.{rate_column} as currency_rate,
+                               so.sales_order_ref
                         FROM sales_order_lines sol JOIN sales_orders so ON sol.sales_order_id = so.id
                         LEFT JOIN currencies curr ON so.currency_id = curr.id
                         WHERE sol.base_part_number = ? AND so.date_entered >= ?
@@ -476,7 +522,6 @@ def analyze_quote():
                     pl_supplier_quote_date = None
                     pl_supplier_details = {}
 
-                    rate_column = get_currency_rate_column()
                     pl_supplier_quote = _execute_with_cursor(cursor, f"""
                         SELECT
                             sql.unit_price as supplier_cost,
@@ -500,13 +545,14 @@ def analyze_quote():
 
                     if pl_supplier_quote:
                         pl_supplier_quote_date = pl_supplier_quote['effective_date']
-                        cost_gbp = _to_float(pl_supplier_quote['supplier_cost'])
-                        if pl_supplier_quote['currency_id'] and pl_supplier_quote['currency_id'] != 3:
-                            exchange_rate = _to_float(pl_supplier_quote['currency_rate'] or 1)
-                            if exchange_rate != 0:
-                                cost_gbp = cost_gbp / exchange_rate
-
-                        pl_supplier_quote_price = round(cost_gbp * (1 + vq_margin / 100), 2)
+                        cost_base = _convert_to_base_currency(
+                            pl_supplier_quote['supplier_cost'],
+                            currency_id=pl_supplier_quote['currency_id'],
+                            currency_rate=pl_supplier_quote['currency_rate'],
+                            base_currency=base_currency
+                        )
+                        if cost_base is not None:
+                            pl_supplier_quote_price = round(cost_base * (1 + vq_margin / 100), 2)
                         pl_supplier_details = {
                             'supplier': pl_supplier_quote['supplier_name'],
                             'cost': _to_float(pl_supplier_quote['supplier_cost']),
@@ -592,7 +638,7 @@ def analyze_quote():
                     if stock_price and has_stock:
                         result['estimated_price'] = stock_price
                         result['price_source'] = 'stock'
-                        result['currency'] = 'GBP'
+                        result['currency'] = base_currency_code
                         result['status'] = 'available'
                         debug_info = {
                             'winning_source': 'stock',
@@ -602,28 +648,42 @@ def analyze_quote():
                         price_candidates = []
 
                         if cq_price and cq_price['most_recent_price']:
-                            price_candidates.append({
-                                'price': round(cq_price['most_recent_price'], 2),
-                                'source': 'recent_quote',
-                                'currency': cq_price['currency_code'] or 'GBP',
-                                'date': cq_price['quote_date'],
-                                'priority': 1,
-                                'details': {'reference': cq_price['cq_number'], 'type': 'Historic Quote'}
-                            })
+                            cq_price_base = _convert_to_base_currency(
+                                cq_price['most_recent_price'],
+                                currency_code=cq_price['currency_code'],
+                                currency_rate=cq_price['currency_rate'],
+                                base_currency=base_currency
+                            )
+                            if cq_price_base is not None:
+                                price_candidates.append({
+                                    'price': round(cq_price_base, 2),
+                                    'source': 'recent_quote',
+                                    'currency': base_currency_code,
+                                    'date': cq_price['quote_date'],
+                                    'priority': 1,
+                                    'details': {'reference': cq_price['cq_number'], 'type': 'Historic Quote'}
+                                })
                         if sales_price and sales_price['most_recent_price']:
-                            price_candidates.append({
-                                'price': round(sales_price['most_recent_price'], 2),
-                                'source': 'recent_sale',
-                                'currency': sales_price['currency_code'] or 'GBP',
-                                'date': sales_price['sale_date'],
-                                'priority': 1,
-                                'details': {'reference': sales_price['sales_order_ref'], 'type': 'Historic Sale'}
-                            })
+                            sales_price_base = _convert_to_base_currency(
+                                sales_price['most_recent_price'],
+                                currency_code=sales_price['currency_code'],
+                                currency_rate=sales_price['currency_rate'],
+                                base_currency=base_currency
+                            )
+                            if sales_price_base is not None:
+                                price_candidates.append({
+                                    'price': round(sales_price_base, 2),
+                                    'source': 'recent_sale',
+                                    'currency': base_currency_code,
+                                    'date': sales_price['sale_date'],
+                                    'priority': 1,
+                                    'details': {'reference': sales_price['sales_order_ref'], 'type': 'Historic Sale'}
+                                })
                         if pl_customer_quote and pl_customer_quote['most_recent_price']:
                             price_candidates.append({
                                 'price': round(pl_customer_quote['most_recent_price'], 2),
                                 'source': 'parts_list_customer_quote',
-                                'currency': 'GBP',
+                                'currency': base_currency_code,
                                 'date': pl_customer_quote['quote_date'],
                                 'priority': 1,
                                 'details': {'type': 'Previous Quote Request'}
@@ -632,7 +692,7 @@ def analyze_quote():
                             price_candidates.append({
                                 'price': pl_supplier_quote_price,
                                 'source': 'parts_list_supplier_quote',
-                                'currency': 'GBP',
+                                'currency': base_currency_code,
                                 'date': pl_supplier_quote_date,
                                 'priority': 1,
                                 'details': pl_supplier_details
@@ -642,7 +702,7 @@ def analyze_quote():
                             price_candidates.append({
                                 'price': po_price,
                                 'source': 'purchase_order_estimate',
-                                'currency': 'GBP',
+                                'currency': base_currency_code,
                                 'date': po_date,
                                 'priority': 2,
                                 'details': po_details
@@ -651,7 +711,7 @@ def analyze_quote():
                             price_candidates.append({
                                 'price': vq_price,
                                 'source': 'vendor_quote_estimate',
-                                'currency': 'GBP',
+                                'currency': base_currency_code,
                                 'date': vq_date,
                                 'priority': 2,
                                 'details': vq_details
@@ -683,7 +743,7 @@ def analyze_quote():
                         else:
                             result['estimated_price'] = None
                             result['price_source'] = None
-                            result['currency'] = 'GBP'
+                            result['currency'] = base_currency_code
                             result['status'] = 'quote_required'
                             debug_info = {'winning_source': 'none', 'source_details': {}}
 
@@ -867,6 +927,10 @@ def get_quote_request_details(request_id):
     """Get details of a specific quote request"""
     try:
         user = request.portal_user
+        base_currency = _get_base_currency()
+        base_currency_id = base_currency.get('id')
+        base_currency_code = base_currency.get('code')
+        rate_column = get_currency_rate_column()
 
         request_data = db_execute("""
             SELECT * FROM portal_quote_requests
@@ -876,20 +940,37 @@ def get_quote_request_details(request_id):
         if not request_data:
             return jsonify({'success': False, 'error': 'Request not found'}), 404
 
-        lines = db_execute("""
+        lines = db_execute(f"""
             SELECT 
                 pqrl.*,
-                c.currency_code
+                c.currency_code,
+                c.{rate_column} as currency_rate
             FROM portal_quote_request_lines pqrl
             LEFT JOIN currencies c ON c.id = pqrl.quoted_currency_id
             WHERE pqrl.portal_quote_request_id = ?
             ORDER BY pqrl.line_number
         """, (request_id,), fetch='all') or []
 
+        normalized_lines = []
+        for line in lines:
+            line_dict = dict(line)
+            line_dict['quoted_price'] = _convert_to_base_currency(
+                line_dict.get('quoted_price'),
+                currency_id=line_dict.get('quoted_currency_id'),
+                currency_code=line_dict.get('currency_code'),
+                currency_rate=line_dict.get('currency_rate'),
+                base_currency=base_currency
+            )
+            if base_currency_id:
+                line_dict['quoted_currency_id'] = base_currency_id
+            line_dict['currency_code'] = base_currency_code
+            line_dict.pop('currency_rate', None)
+            normalized_lines.append(line_dict)
+
         return jsonify({
             'success': True,
             'request': dict(request_data),
-            'lines': [dict(l) for l in lines]
+            'lines': normalized_lines
         })
 
     except Exception as e:
@@ -903,6 +984,8 @@ def get_common_parts():
     try:
         user = request.portal_user
 
+        base_currency = _get_base_currency()
+        base_currency_code = base_currency.get('code')
         margins = get_customer_margins(user['customer_id'])
         stock_margin = margins['stock']
 
@@ -913,16 +996,18 @@ def get_common_parts():
         today = datetime.utcnow().date()
         common_cutoff = _months_ago(today, 24)
 
-        common_parts = db_execute("""
+        rate_column = get_currency_rate_column()
+        common_parts = db_execute(f"""
             SELECT 
                 sol.base_part_number,
                 pn.part_number,
                 COUNT(DISTINCT so.id) as order_count,
                 MAX(so.date_entered) as last_order_date,
-                AVG(sol.price) as avg_price
+                AVG(sol.price / COALESCE(NULLIF(curr.{rate_column}, 0), 1)) as avg_price
             FROM sales_order_lines sol
             JOIN sales_orders so ON sol.sales_order_id = so.id
             JOIN part_numbers pn ON pn.base_part_number = sol.base_part_number
+            LEFT JOIN currencies curr ON so.currency_id = curr.id
             WHERE so.customer_id = ?
             AND so.date_entered >= ?
             GROUP BY sol.base_part_number, pn.part_number
@@ -947,7 +1032,7 @@ def get_common_parts():
                         'stock_quantity': None,
                         'estimated_price': agreement_price,
                         'price_source': 'pricing_agreement',
-                        'currency': 'GBP',
+                        'currency': base_currency_code,
                         'estimated_lead_days': 0
                     }
                     results.append(result)
@@ -990,7 +1075,7 @@ def get_common_parts():
 
                 estimated_price = None
                 price_source = None
-                currency = 'GBP'
+                currency = base_currency_code
 
                 if has_stock and avg_cost_value is not None:
                     estimated_price = round(avg_cost_value * (1 + stock_margin / 100), 2)
@@ -1039,13 +1124,17 @@ def get_pricing_agreements():
         default_lead_days = int(get_portal_setting('default_lead_time_days', 7))
         today = datetime.utcnow().date()
 
-        agreements = db_execute("""
+        base_currency = _get_base_currency()
+        base_currency_code = base_currency.get('code')
+        rate_column = get_currency_rate_column()
+        agreements = db_execute(f"""
             SELECT 
                 pcp.base_part_number,
                 pn.part_number,
                 pcp.price,
                 pcp.currency_id,
                 c.currency_code,
+                c.{rate_column} as currency_rate,
                 pcp.valid_until,
                 pcp.notes
             FROM portal_customer_pricing pcp
@@ -1099,8 +1188,13 @@ def get_pricing_agreements():
                 result = {
                     'part_number': agreement['part_number'] or base_part_number,
                     'base_part_number': base_part_number,
-                    'price': _to_float(agreement['price']),
-                    'currency': agreement['currency_code'] or 'GBP',
+                    'price': _convert_to_base_currency(
+                        agreement['price'],
+                        currency_id=agreement['currency_id'],
+                        currency_rate=agreement['currency_rate'],
+                        base_currency=base_currency
+                    ),
+                    'currency': base_currency_code,
                     'valid_until': agreement['valid_until'],
                     'notes': agreement['notes'],
                     'in_stock': has_stock,
@@ -1123,6 +1217,8 @@ def get_suggested_parts():
     try:
         user = request.portal_user
 
+        base_currency = _get_base_currency()
+        base_currency_code = base_currency.get('code')
         show_quantities = bool(int(get_portal_setting('show_stock_quantities', 1)))
         min_stock = int(get_portal_setting('min_stock_threshold', 1))
         default_lead_days = int(get_portal_setting('default_lead_time_days', 7))
@@ -1160,7 +1256,7 @@ def get_suggested_parts():
                         'stock_quantity': None,
                         'estimated_price': agreement_price,
                         'price_source': 'pricing_agreement',
-                        'currency': 'GBP',
+                        'currency': base_currency_code,
                         'estimated_lead_days': 0
                     }
                     results.append(result)
@@ -1202,7 +1298,7 @@ def get_suggested_parts():
 
                 estimated_price = None
                 price_source = None
-                currency = 'GBP'
+                currency = base_currency_code
 
                 avg_cost_value = _to_float(stock['avg_cost']) if stock and stock['avg_cost'] else None
                 if has_stock and avg_cost_value is not None:
@@ -1284,6 +1380,7 @@ def submit_purchase_order():
             delivery_address.get('city') == invoice_address.get('city')
         )
 
+        base_currency_id = _get_base_currency().get('id')
         with db_cursor(commit=True) as cursor:
             header_row = _execute_with_cursor(cursor, """
                 INSERT INTO portal_purchase_orders (
@@ -1318,7 +1415,7 @@ def submit_purchase_order():
                 quote_id,
                 po_reference,
                 total_value,
-                3,
+                base_currency_id,
                 len(lines),
                 'submitted',
                 customer_notes,

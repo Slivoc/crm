@@ -4,7 +4,7 @@ import os
 
 from flask import Blueprint, render_template, request, jsonify, flash, redirect, url_for, session
 from db import db_cursor, execute as db_execute, get_currency_rate_column
-from models import create_base_part_number
+from models import create_base_part_number, get_base_currency
 from werkzeug.security import generate_password_hash
 import logging
 import secrets
@@ -31,6 +31,15 @@ def _execute_with_cursor(cur, query, params=None):
     return cur
 
 
+def _to_float(value):
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
 def _extract_single_value(row):
     if not row:
         return None
@@ -55,6 +64,41 @@ def _last_inserted_id(cur, key='id'):
             return row.get(key)
         return row[0]
     return getattr(cur, 'lastrowid', None)
+
+
+def _get_base_currency():
+    base_code = (get_base_currency() or 'GBP').upper()
+    row = db_execute(
+        "SELECT id, currency_code FROM currencies WHERE currency_code = ?",
+        (base_code,),
+        fetch='one'
+    )
+    if not row:
+        rate_column = get_currency_rate_column()
+        row = db_execute(
+            f"SELECT id, currency_code FROM currencies WHERE {rate_column} = 1 ORDER BY id LIMIT 1",
+            fetch='one'
+        )
+    if row:
+        return {'id': row['id'], 'code': row['currency_code']}
+    return {'id': None, 'code': base_code}
+
+
+def _convert_to_base_currency(amount, currency_id=None, currency_code=None, currency_rate=None, base_currency=None):
+    amount = _to_float(amount)
+    if amount is None:
+        return None
+    base_currency = base_currency or _get_base_currency()
+    base_id = base_currency.get('id')
+    base_code = (base_currency.get('code') or '').upper()
+    if base_id is not None and currency_id is not None and currency_id == base_id:
+        return amount
+    if currency_code and base_code and currency_code.upper() == base_code:
+        return amount
+    rate = _to_float(currency_rate) if currency_rate is not None else None
+    if not rate:
+        return amount
+    return amount / rate
 
 
 def get_portal_setting(key, default=None):
@@ -114,14 +158,13 @@ def get_customer_pricing_agreement(customer_id, base_part_number):
         """, (customer_id, base_part_number), fetch='one')
 
         if pricing:
-            # Convert to GBP if needed
-            price_gbp = pricing['price']
-            if pricing['currency_id'] != 3:  # Not GBP
-                exchange_rate = pricing['currency_rate'] or 1
-                if exchange_rate != 0:
-                    price_gbp = pricing['price'] / exchange_rate
-
-            return price_gbp
+            base_currency = _get_base_currency()
+            return _convert_to_base_currency(
+                pricing['price'],
+                currency_id=pricing['currency_id'],
+                currency_rate=pricing['currency_rate'],
+                base_currency=base_currency
+            )
 
         return None
     except Exception as e:
@@ -556,17 +599,20 @@ def load_line_from_parts_list(request_id, line_id):
         if not line_data['chosen_price']:
             return jsonify({'success': False, 'error': 'No selling price in parts list'}), 400
 
-        price_in_gbp = line_data['chosen_price']
-        if line_data['chosen_currency_id'] != 3:  # If not GBP
-            exchange_rate = line_data['currency_rate'] or 1
-            if exchange_rate != 0:
-                price_in_gbp = line_data['chosen_price'] / exchange_rate
+        base_currency = _get_base_currency()
+        base_currency_id = base_currency.get('id')
+        price_in_base = _convert_to_base_currency(
+            line_data['chosen_price'],
+            currency_id=line_data['chosen_currency_id'],
+            currency_rate=line_data['currency_rate'],
+            base_currency=base_currency
+        )
 
         return jsonify({
             'success': True,
-            'price': price_in_gbp,
+            'price': price_in_base,
             'lead_days': line_data['chosen_lead_days'],
-            'currency_id': 3  # Always return GBP
+            'currency_id': base_currency_id
         })
 
     except Exception as e:
@@ -607,13 +653,16 @@ def load_all_from_parts_list(request_id):
 
         loaded_count = 0
 
+        base_currency = _get_base_currency()
+        base_currency_id = base_currency.get('id')
         with db_cursor(commit=True) as cur:
             for pll in parts_list_lines:
-                price_in_gbp = pll['chosen_price']
-                if pll['chosen_currency_id'] != 3:  # If not GBP
-                    exchange_rate = pll['currency_rate'] or 1
-                    if exchange_rate != 0:
-                        price_in_gbp = pll['chosen_price'] / exchange_rate
+                price_in_base = _convert_to_base_currency(
+                    pll['chosen_price'],
+                    currency_id=pll['chosen_currency_id'],
+                    currency_rate=pll['currency_rate'],
+                    base_currency=base_currency
+                )
 
                 _execute_with_cursor(
                     cur,
@@ -621,14 +670,15 @@ def load_all_from_parts_list(request_id):
                     UPDATE portal_quote_request_lines
                     SET quoted_price = ?,
                         quoted_lead_days = ?,
-                        quoted_currency_id = 3,
+                        quoted_currency_id = ?,
                         status = 'quoted'
                     WHERE portal_quote_request_id = ?
                     AND base_part_number = ?
                     """,
                     (
-                        price_in_gbp,
+                        price_in_base,
                         pll['chosen_lead_days'],
+                        base_currency_id,
                         request_id,
                         pll['base_part_number']
                     ),
@@ -656,6 +706,26 @@ def save_portal_line(request_id, line_id):
         if not price:
             return jsonify({'success': False, 'error': 'Price required'}), 400
 
+        base_currency = _get_base_currency()
+        base_currency_id = base_currency.get('id')
+        price_in_base = _to_float(price)
+        if currency_id and base_currency_id and currency_id != base_currency_id:
+            rate_column = get_currency_rate_column()
+            rate_row = db_execute(
+                f"SELECT {rate_column} as currency_rate FROM currencies WHERE id = ?",
+                (currency_id,),
+                fetch='one'
+            )
+            price_in_base = _convert_to_base_currency(
+                price_in_base,
+                currency_id=currency_id,
+                currency_rate=rate_row['currency_rate'] if rate_row else None,
+                base_currency=base_currency
+            )
+            currency_id = base_currency_id
+        elif currency_id is None:
+            currency_id = base_currency_id
+
         with db_cursor(commit=True) as cur:
             _execute_with_cursor(
                 cur,
@@ -668,7 +738,7 @@ def save_portal_line(request_id, line_id):
                 WHERE id = ?
                 AND portal_quote_request_id = ?
                 """,
-                (price, lead_days, currency_id, line_id, request_id),
+                (price_in_base, lead_days, currency_id, line_id, request_id),
             )
 
             if cur.rowcount == 0:
@@ -800,20 +870,21 @@ def decline_portal_request(request_id):
 def load_line_from_customer_quote(request_id, line_id):
     """Load pricing from customer_quote_lines (this is the REAL quoted price with margin)"""
     try:
+        base_currency_id = _get_base_currency().get('id')
         line_data = db_execute("""
             SELECT 
                 pqrl.base_part_number,
                 pqr.parts_list_id,
                 cql.quote_price_gbp,
                 pll.chosen_lead_days,
-                3 as currency_id  -- GBP
+                ? as currency_id
             FROM portal_quote_request_lines pqrl
             JOIN portal_quote_requests pqr ON pqr.id = pqrl.portal_quote_request_id
             LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pqr.parts_list_id
                 AND pll.base_part_number = pqrl.base_part_number
             LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
             WHERE pqrl.id = ? AND pqr.id = ?
-        """, (line_id, request_id), fetch='one')
+        """, (base_currency_id, line_id, request_id), fetch='one')
 
         if not line_data:
             return jsonify({'success': False, 'error': 'Line not found'}), 404
@@ -862,6 +933,7 @@ def load_all_from_customer_quote(request_id):
 
         loaded_count = 0
 
+        base_currency_id = _get_base_currency().get('id')
         with db_cursor(commit=True) as cur:
             for cql in quote_lines:
                 _execute_with_cursor(
@@ -870,7 +942,7 @@ def load_all_from_customer_quote(request_id):
                     UPDATE portal_quote_request_lines
                     SET quoted_price = ?,
                         quoted_lead_days = ?,
-                        quoted_currency_id = 3,  -- GBP
+                        quoted_currency_id = ?,
                         status = 'quoted'
                     WHERE portal_quote_request_id = ?
                     AND base_part_number = ?
@@ -878,6 +950,7 @@ def load_all_from_customer_quote(request_id):
                     (
                         cql['quote_price_gbp'],
                         cql['chosen_lead_days'],
+                        base_currency_id,
                         request_id,
                         cql['base_part_number']
                     ),
@@ -1084,7 +1157,8 @@ def add_customer_pricing(customer_id):
 
         part_number = data.get('part_number', '').strip()
         price = data.get('price')
-        currency_id = data.get('currency_id', 3)  # Default GBP
+        base_currency_id = _get_base_currency().get('id')
+        currency_id = data.get('currency_id', base_currency_id)
         valid_from = data.get('valid_from')
         valid_until = data.get('valid_until')
         notes = data.get('notes', '')
@@ -2016,7 +2090,8 @@ def process_agreement_request(request_id):
         data = request.get_json()
         action = data.get('action')  # 'approve' or 'reject'
         price = data.get('price')
-        currency_id = data.get('currency_id', 3)
+        base_currency_id = _get_base_currency().get('id')
+        currency_id = data.get('currency_id', base_currency_id)
         valid_from = data.get('valid_from')
         valid_until = data.get('valid_until')
         notes = data.get('notes', '')

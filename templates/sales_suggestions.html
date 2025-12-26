@@ -132,17 +132,17 @@
                             <td><span class="badge bg-success">{{ part.stock_quantity }}</span></td>
                             <td>
                                 {% if part.stock_unit_price is not none %}
-                                £{{ "%.2f"|format(part.stock_unit_price) }}
+                                &pound;{{ "%.2f"|format(part.stock_unit_price) }}
                                 {% else %}
                                 -
                                 {% endif %}
                             </td>
                             <td>{{ part.customer_count }}</td>
                             <td>{{ part.total_quantity_sold }}</td>
-                            <td>£{{ "%.2f"|format(part.avg_price) }}</td>
+                            <td>&pound;{{ "%.2f"|format(part.avg_price) }}</td>
                             <td>
                                 {% if part.avg_guide_price > 0 %}
-                                £{{ "%.2f"|format(part.avg_guide_price) }}
+                                &pound;{{ "%.2f"|format(part.avg_guide_price) }}
                                 {% else %}
                                 -
                                 {% endif %}
@@ -185,14 +185,14 @@
                             <td><span class="badge bg-success">{{ customer.parts_in_stock }}</span></td>
                             <td>
                                 {% if customer.stock_value is not none %}
-                                £{{ "%.2f"|format(customer.stock_value) }}
+                                &pound;{{ "%.2f"|format(customer.stock_value) }}
                                 {% else %}
                                 -
                                 {% endif %}
                             </td>
                             <td>{{ customer.order_count }}</td>
                             <td>{{ customer.total_quantity }}</td>
-                            <td>£{{ "%.2f"|format(customer.avg_price) }}</td>
+                            <td>&pound;{{ "%.2f"|format(customer.avg_price) }}</td>
                             <td>{{ (customer.last_purchase_date|string)[:10] if customer.last_purchase_date else '-' }}</td>
                             <td>
                                 <button class="btn btn-sm btn-outline-primary"
@@ -229,12 +229,12 @@
                             <td><span class="badge bg-success">{{ bom.parts_in_stock }}</span></td>
                             <td>
                                 {% if bom.stock_value is not none %}
-                                £{{ "%.2f"|format(bom.stock_value) }}
+                                &pound;{{ "%.2f"|format(bom.stock_value) }}
                                 {% else %}
                                 -
                                 {% endif %}
                             </td>
-                            <td>£{{ "%.2f"|format(bom.avg_guide_price) }}</td>
+                            <td>&pound;{{ "%.2f"|format(bom.avg_guide_price) }}</td>
                             <td>
                                 <button class="btn btn-sm btn-outline-primary"
                                         onclick="viewBomDetails({{ bom.bom_id }}, '{{ bom.bom_name|replace("'", "\\'") }}')">
@@ -464,6 +464,7 @@
                                     <th>Avg Purchase Price</th>
                                     <th>Guide Price</th>
                                     <th>Last Purchase</th>
+                                    <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody id="customerPartsTableBody"></tbody>
@@ -521,6 +522,7 @@
                                     <th>Times Sold</th>
                                     <th>Last Sale</th>
                                     <th>Customers</th>
+                                    <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody id="bomPartsTableBody">
@@ -571,6 +573,7 @@ function escapeHtml(text) {
 let currentBomData = null;
 let detailsTable = null;
 let currentPortalPartNumber = '';
+let currentCustomerId = null;
 let portalTagsLoaded = false;
 let portalCustomerSearchTimer = null;
 
@@ -610,7 +613,7 @@ function displayPartDetails(data) {
         ? '\u00a3' + stockUnitPriceValue.toFixed(2)
         : '-');
     const avgSalePriceValue = parseFloat(data.part.avg_sale_price);
-    $('#partAvgPrice').text('£' + (Number.isFinite(avgSalePriceValue) ? avgSalePriceValue : 0).toFixed(2));
+    $('#partAvgPrice').text('\u00a3' + (Number.isFinite(avgSalePriceValue) ? avgSalePriceValue : 0).toFixed(2));
     $('#partCustomerCount').text(data.customers.length);
 
     if ($.fn.DataTable.isDataTable('#partCustomersTable')) {
@@ -633,7 +636,7 @@ function displayPartDetails(data) {
                         \u00a3${(parseFloat(customer.avg_purchase_price) || 0).toFixed(2)}
                     </td>
                     <td data-order="${customer.last_purchase_date || ''}">${customer.last_purchase_date ? customer.last_purchase_date.substring(0, 10) : '-'}</td>
-                    <td data-order="${customer.avg_guide_price || 0}">${customer.avg_guide_price > 0 ? '£' + customer.avg_guide_price.toFixed(2) : '-'}</td>
+                    <td data-order="${customer.avg_guide_price || 0}">${customer.avg_guide_price > 0 ? '\u00a3' + customer.avg_guide_price.toFixed(2) : '-'}</td>
                 </tr>
             `);
         });
@@ -648,11 +651,22 @@ function displayPartDetails(data) {
     }
 }
 
-function openPortalSuggestModal() {
+function openPortalSuggestModal(partNumber) {
+    if (partNumber) {
+        currentPortalPartNumber = partNumber;
+    }
     if (!currentPortalPartNumber) {
         alert('Please load a part first.');
         return;
     }
+
+    const openModals = document.querySelectorAll('.modal.show');
+    openModals.forEach(modalEl => {
+        const instance = bootstrap.Modal.getInstance(modalEl);
+        if (instance) {
+            instance.hide();
+        }
+    });
 
     $('#portalSuggestPartNumber').text(currentPortalPartNumber);
     $('#portalSuggestNotes').val('');
@@ -669,7 +683,7 @@ function openPortalSuggestModal() {
     }
 
     const modal = new bootstrap.Modal(document.getElementById('portalSuggestModal'));
-    modal.show();
+    setTimeout(() => modal.show(), 150);
 }
 
 function togglePortalTargetMode() {
@@ -868,6 +882,41 @@ function submitPortalSuggestion() {
     });
 }
 
+function suggestPartForCustomer(partNumber) {
+    if (!currentCustomerId) {
+        alert('No customer selected.');
+        return;
+    }
+    if (!partNumber) {
+        alert('No part selected.');
+        return;
+    }
+    if (!confirm(`Suggest ${partNumber} to this customer?`)) {
+        return;
+    }
+
+    fetch('/sales-suggestions/api/portal-suggested-parts', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            part_number: partNumber,
+            notes: '',
+            priority: 0,
+            customer_ids: [currentCustomerId]
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to add suggested part');
+        }
+        alert(`Added to ${data.inserted_count} customer(s).`);
+    })
+    .catch(error => {
+        alert(error.message || 'Failed to add suggested part.');
+    });
+}
+
 function viewBomDetails(bomId, bomName) {
     $('#bomLoadingSpinner').show();
     $('#bomInfo').hide();
@@ -909,12 +958,13 @@ function displayBomDetails(data) {
     tbody.empty();
 
     if (data.parts.length === 0) {
-        tbody.append('<tr><td colspan="10" class="text-center text-muted">No parts in stock for this BOM</td></tr>');
+        tbody.append('<tr><td colspan="11" class="text-center text-muted">No parts in stock for this BOM</td></tr>');
     } else {
         data.parts.forEach(part => {
-            const customers = part.customers ?
-                part.customers.split(',').slice(0, 3).join(', ') +
-                (part.customers.split(',').length > 3 ? '...' : '') : '-';
+            const customers = part.customers
+                ? part.customers.split(',').slice(0, 3).join(', ') +
+                  (part.customers.split(',').length > 3 ? '...' : '')
+                : '-';
 
             const guidePrice = parseFloat(part.guide_price) || 0;
             const avgSalePrice = parseFloat(part.avg_sale_price) || 0;
@@ -934,7 +984,8 @@ function displayBomDetails(data) {
             const stockCostDisplay = Number.isFinite(stockCostValue)
                 ? '\u00a3' + stockCostValue.toFixed(2) : '-';
             const stockCostOrder = Number.isFinite(stockCostValue) ? stockCostValue : 0;
-            const guidePriceDisplay = guidePrice > 0 ? `£${guidePrice.toFixed(2)}` : '-';
+            const guidePriceDisplay = guidePrice > 0 ? `\u00a3${guidePrice.toFixed(2)}` : '-';
+            const partNumber = part.part_number || part.base_part_number || '';
 
             tbody.append(`
                 <tr>
@@ -944,10 +995,15 @@ function displayBomDetails(data) {
                     <td data-order="${stockCostOrder}">${stockCostDisplay}</td>
                     <td data-order="${guidePrice}">${guidePriceDisplay}</td>
                     <td data-order="${deltaSortValue}" class="${deltaClass}">${deltaDisplay}</td>
-                    <td data-order="${avgSalePrice}">${avgSalePrice > 0 ? '£' + avgSalePrice.toFixed(2) : '-'}</td>
+                    <td data-order="${avgSalePrice}">${avgSalePrice > 0 ? '\u00a3' + avgSalePrice.toFixed(2) : '-'}</td>
                     <td data-order="${part.times_sold || 0}">${part.times_sold || 0}</td>
                     <td data-order="${part.last_sale_date || ''}">${part.last_sale_date ? part.last_sale_date.substring(0, 10) : '-'}</td>
                     <td><small>${escapeHtml(customers)}</small></td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-success portal-suggest-btn" data-part="${escapeHtml(partNumber)}">
+                            <i class="bi bi-plus-circle"></i> Suggest
+                        </button>
+                    </td>
                 </tr>
             `);
         });
@@ -992,6 +1048,7 @@ function exportBomParts() {
 }
 
 function viewCustomerDetails(customerId, customerName) {
+    currentCustomerId = customerId;
     const modal = new bootstrap.Modal(document.getElementById('customerModal'));
     $('#customerModalLabel').text(`${customerName} - Parts in Stock`);
     $('#customerLoadingSpinner').show();
@@ -1026,13 +1083,14 @@ function displayCustomerParts(data) {
     tbody.empty();
 
     if (data.parts.length === 0) {
-        tbody.append('<tr><td colspan="8" class="text-center text-muted">No parts in stock for this customer</td></tr>');
+        tbody.append('<tr><td colspan="9" class="text-center text-muted">No parts in stock for this customer</td></tr>');
     } else {
         data.parts.forEach(part => {
             const stockCostValue = parseFloat(part.stock_unit_price);
             const stockCost = Number.isFinite(stockCostValue)
                 ? '\u00a3' + stockCostValue.toFixed(2) : '-';
             const stockCostOrder = Number.isFinite(stockCostValue) ? stockCostValue : 0;
+            const partNumber = part.part_number || part.base_part_number || '';
 
             tbody.append(`
                 <tr>
@@ -1044,8 +1102,13 @@ function displayCustomerParts(data) {
                     <td data-order="${parseFloat(part.avg_purchase_price) || 0}">
                         \u00a3${(parseFloat(part.avg_purchase_price) || 0).toFixed(2)}
                     </td>
-                    <td data-order="${part.avg_guide_price}">${part.avg_guide_price > 0 ? '£' + part.avg_guide_price.toFixed(2) : '-'}</td>
+                    <td data-order="${part.avg_guide_price}">${part.avg_guide_price > 0 ? '\u00a3' + part.avg_guide_price.toFixed(2) : '-'}</td>
                     <td data-order="${part.last_purchase_date}">${part.last_purchase_date ? part.last_purchase_date.substring(0, 10) : '-'}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-success portal-suggest-customer" data-part="${escapeHtml(partNumber)}">
+                            <i class="bi bi-plus-circle"></i> Suggest
+                        </button>
+                    </td>
                 </tr>
             `);
         });
@@ -1166,6 +1229,14 @@ $(document).ready(function() {
     }
 
     // Portal suggestion modal handlers
+    $(document).on('click', '.portal-suggest-btn', function() {
+        const partNumber = $(this).attr('data-part') || '';
+        openPortalSuggestModal(partNumber);
+    });
+    $(document).on('click', '.portal-suggest-customer', function() {
+        const partNumber = $(this).attr('data-part') || '';
+        suggestPartForCustomer(partNumber);
+    });
     $('input[name="portalTargetMode"]').on('change', togglePortalTargetMode);
     $('#portalTagSelect').on('change', fetchPortalCustomersByTags);
     $('#portalTagCustomersList').on('change', '.portal-tag-customer', updatePortalTagCustomerCount);
