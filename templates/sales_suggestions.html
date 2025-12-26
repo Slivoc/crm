@@ -4,7 +4,6 @@
 
 {% block head %}
 {{ super() }}
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
 <!-- DataTables CSS -->
 <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
 <link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.bootstrap5.min.css">
@@ -62,57 +61,6 @@
         </div>
         <div class="card-body">
             <p class="mb-0 text-muted">Find sales opportunities based on current stock and customer history</p>
-        </div>
-    </div>
-
-    <!-- Upload Stock Section -->
-    <div class="card mb-4">
-        <div class="card-header bg-primary text-white">
-            <h5 class="mb-0"><i class="bi bi-upload"></i> Upload Stock Data (Optional)</h5>
-        </div>
-        <div class="card-body">
-            {% if use_uploaded_stock %}
-<div class="active-stock-banner d-flex justify-content-between align-items-center">
-    <div>
-        <strong><i class="bi bi-check-circle"></i> Using Uploaded Stock Data</strong>
-        <span class="ms-3">{{ parts_in_upload }} parts loaded</span>
-    </div>
-    <button id="clear-stock-btn" class="btn btn-sm btn-outline-danger">
-        <i class="bi bi-x-circle"></i> Clear & Use System Stock
-    </button>
-</div>
-{% else %}
-<p class="mb-3">Upload a CSV file with your current stock levels to get personalized suggestions. Otherwise, system stock will be used.</p>
-            <div class="mb-3">
-                <label for="stock-file-input" class="form-label">Choose CSV File:</label>
-                <input type="file" class="form-control" id="stock-file-input" accept=".csv">
-            </div>
-
-            <div id="hot-container" class="hot-container" style="display: none;"></div>
-
-            <div id="mapping-section" style="display: none;">
-                <h6 class="mt-3">Map Columns:</h6>
-                <div class="row">
-                    <div class="col-md-4">
-                        <label class="form-label">Part Number Column:</label>
-                        <select id="part-number-col" class="form-select"></select>
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label">Quantity Column:</label>
-                        <select id="quantity-col" class="form-select"></select>
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label">Unit Price Column (Optional):</label>
-                        <select id="unit-price-col" class="form-select">
-                            <option value="">-- Not Provided --</option>
-                        </select>
-                    </div>
-                </div>
-                <button id="apply-stock-btn" class="btn btn-success mt-3" disabled>
-                    <i class="bi bi-check-lg"></i> Apply Stock Data
-                </button>
-            </div>
-            {% endif %}
         </div>
     </div>
 
@@ -199,7 +147,7 @@
                                 -
                                 {% endif %}
                             </td>
-                            <td>{{ part.last_sale_date[:10] if part.last_sale_date else '-' }}</td>
+                            <td>{{ (part.last_sale_date|string)[:10] if part.last_sale_date else '-' }}</td>
                             <td><small>{{ part.bom_names or '-' }}</small></td>
                             <td>
                                 <button class="btn btn-sm btn-outline-primary"
@@ -245,7 +193,7 @@
                             <td>{{ customer.order_count }}</td>
                             <td>{{ customer.total_quantity }}</td>
                             <td>£{{ "%.2f"|format(customer.avg_price) }}</td>
-                            <td>{{ customer.last_purchase_date[:10] if customer.last_purchase_date else '-' }}</td>
+                            <td>{{ (customer.last_purchase_date|string)[:10] if customer.last_purchase_date else '-' }}</td>
                             <td>
                                 <button class="btn btn-sm btn-outline-primary"
                                         onclick="viewCustomerDetails({{ customer.customer_id }}, '{{ customer.customer_name|replace("'", "\\'") }}')">
@@ -373,6 +321,11 @@
                             </div>
                         </div>
                     </div>
+                    <div class="d-flex justify-content-end mb-3">
+                        <button type="button" class="btn btn-sm btn-outline-success" onclick="openPortalSuggestModal()">
+                            <i class="bi bi-plus-circle"></i> Suggest in Portal
+                        </button>
+                    </div>
 
                     <!-- Customer Breakdown Table -->
                     <h6>Customer Purchase History</h6>
@@ -399,6 +352,85 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Portal Suggested Part Modal -->
+<div class="modal fade" id="portalSuggestModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Suggest Part to Portal Customers</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info py-2">
+                    <strong>Part:</strong> <span id="portalSuggestPartNumber"></span>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-8">
+                        <label class="form-label" for="portalSuggestNotes">Notes (optional)</label>
+                        <textarea class="form-control" id="portalSuggestNotes" rows="2"></textarea>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="portalSuggestPriority">Priority</label>
+                        <select class="form-select" id="portalSuggestPriority">
+                            <option value="0">0 - Low</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5 - High</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="mb-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="portalTargetMode" id="portalTargetSingle" value="single" checked>
+                        <label class="form-check-label" for="portalTargetSingle">Single customer</label>
+                    </div>
+                </div>
+                <div id="portalSingleCustomerSection" class="border rounded p-3 mb-3">
+                    <label class="form-label" for="portalCustomerSearch">Search customer</label>
+                    <input type="text" class="form-control mb-2" id="portalCustomerSearch" placeholder="Type customer name...">
+                    <div id="portalCustomerResults" class="list-group mb-2"></div>
+                    <div class="d-flex align-items-center">
+                        <strong class="me-2">Selected:</strong>
+                        <span id="portalSelectedCustomer" class="text-muted">None</span>
+                        <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" onclick="clearPortalSelectedCustomer()">Clear</button>
+                    </div>
+                    <input type="hidden" id="portalSelectedCustomerId" value="">
+                </div>
+
+                <div class="mb-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="portalTargetMode" id="portalTargetTags" value="tags">
+                        <label class="form-check-label" for="portalTargetTags">Customers by tags</label>
+                    </div>
+                </div>
+                <div id="portalTagSection" class="border rounded p-3 mb-2" style="display: none;">
+                    <label class="form-label" for="portalTagSelect">Select tags</label>
+                    <select class="form-select mb-2" id="portalTagSelect" multiple size="6"></select>
+                    <div class="d-flex align-items-center mb-2">
+                        <small class="text-muted">Customers matching tags:</small>
+                        <small class="text-muted ms-auto">Selected: <span id="portalTagCustomerCount">0</span></small>
+                    </div>
+                    <div class="mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary me-2" onclick="selectAllPortalTagCustomers(true)">Select all</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllPortalTagCustomers(false)">Select none</button>
+                    </div>
+                    <div id="portalTagCustomersList" class="border rounded p-2" style="max-height: 240px; overflow-y: auto;"></div>
+                </div>
+
+                <div id="portalSuggestMessage" class="alert d-none mt-3" role="alert"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" onclick="submitPortalSuggestion()">Add Suggested Part</button>
             </div>
         </div>
     </div>
@@ -516,8 +548,6 @@
 {% endblock %}
 {% block scripts %}
 {{ super() }}
-<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <!-- DataTables JS -->
 <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
 <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
@@ -540,6 +570,9 @@ function escapeHtml(text) {
 // Global variables
 let currentBomData = null;
 let detailsTable = null;
+let currentPortalPartNumber = '';
+let portalTagsLoaded = false;
+let portalCustomerSearchTimer = null;
 
 // Part Details Function
 function viewPartDetails(partNumber) {
@@ -569,12 +602,15 @@ function viewPartDetails(partNumber) {
 }
 
 function displayPartDetails(data) {
+    currentPortalPartNumber = data.part.part_number;
     $('#partNumber').text(data.part.part_number);
     $('#partStockQty').text(data.part.stock_quantity);
-    $('#partStockCost').text(data.part.stock_unit_price !== null && data.part.stock_unit_price !== undefined
-        ? '£' + data.part.stock_unit_price.toFixed(2)
+    const stockUnitPriceValue = parseFloat(data.part.stock_unit_price);
+    $('#partStockCost').text(Number.isFinite(stockUnitPriceValue)
+        ? '\u00a3' + stockUnitPriceValue.toFixed(2)
         : '-');
-    $('#partAvgPrice').text('£' + (data.part.avg_sale_price || 0).toFixed(2));
+    const avgSalePriceValue = parseFloat(data.part.avg_sale_price);
+    $('#partAvgPrice').text('£' + (Number.isFinite(avgSalePriceValue) ? avgSalePriceValue : 0).toFixed(2));
     $('#partCustomerCount').text(data.customers.length);
 
     if ($.fn.DataTable.isDataTable('#partCustomersTable')) {
@@ -593,7 +629,9 @@ function displayPartDetails(data) {
                     <td><strong>${escapeHtml(customer.customer_name)}</strong></td>
                     <td data-order="${customer.times_purchased}">${customer.times_purchased}</td>
                     <td data-order="${customer.total_quantity_purchased}">${customer.total_quantity_purchased}</td>
-                    <td data-order="${customer.avg_purchase_price}">£${customer.avg_purchase_price.toFixed(2)}</td>
+                    <td data-order="${parseFloat(customer.avg_purchase_price) || 0}">
+                        \u00a3${(parseFloat(customer.avg_purchase_price) || 0).toFixed(2)}
+                    </td>
                     <td data-order="${customer.last_purchase_date || ''}">${customer.last_purchase_date ? customer.last_purchase_date.substring(0, 10) : '-'}</td>
                     <td data-order="${customer.avg_guide_price || 0}">${customer.avg_guide_price > 0 ? '£' + customer.avg_guide_price.toFixed(2) : '-'}</td>
                 </tr>
@@ -608,6 +646,226 @@ function displayPartDetails(data) {
             language: { search: "Search customers:" }
         });
     }
+}
+
+function openPortalSuggestModal() {
+    if (!currentPortalPartNumber) {
+        alert('Please load a part first.');
+        return;
+    }
+
+    $('#portalSuggestPartNumber').text(currentPortalPartNumber);
+    $('#portalSuggestNotes').val('');
+    $('#portalSuggestPriority').val('0');
+    $('#portalSuggestMessage').addClass('d-none').removeClass('alert-success alert-danger').text('');
+    clearPortalSelectedCustomer();
+    $('#portalTagSelect').val([]);
+    $('#portalTagCustomersList').empty();
+    updatePortalTagCustomerCount();
+    togglePortalTargetMode();
+
+    if (!portalTagsLoaded) {
+        loadPortalTags();
+    }
+
+    const modal = new bootstrap.Modal(document.getElementById('portalSuggestModal'));
+    modal.show();
+}
+
+function togglePortalTargetMode() {
+    const mode = $('input[name="portalTargetMode"]:checked').val();
+    $('#portalSingleCustomerSection').toggle(mode === 'single');
+    $('#portalTagSection').toggle(mode === 'tags');
+}
+
+function clearPortalSelectedCustomer() {
+    $('#portalSelectedCustomerId').val('');
+    $('#portalSelectedCustomer').text('None').addClass('text-muted');
+    $('#portalCustomerResults').empty();
+    $('#portalCustomerSearch').val('');
+}
+
+function selectPortalCustomer(customerId, customerName) {
+    $('#portalSelectedCustomerId').val(customerId);
+    $('#portalSelectedCustomer').text(customerName).removeClass('text-muted');
+    $('#portalCustomerResults').empty();
+}
+
+function loadPortalTags() {
+    fetch('/sales-suggestions/api/portal-tags')
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                throw new Error(data.error || 'Failed to load tags');
+            }
+            const select = document.getElementById('portalTagSelect');
+            select.innerHTML = '';
+            data.tags.forEach(tag => {
+                const option = document.createElement('option');
+                option.value = tag.id;
+                option.textContent = tag.tag;
+                select.appendChild(option);
+            });
+            portalTagsLoaded = true;
+        })
+        .catch(error => {
+            console.error('Error loading tags:', error);
+        });
+}
+
+function fetchPortalCustomerSearch(query) {
+    fetch(`/sales-suggestions/api/portal-customers/search?q=${encodeURIComponent(query)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                throw new Error(data.error || 'Failed to search customers');
+            }
+            renderPortalCustomerResults(data.customers || []);
+        })
+        .catch(error => {
+            console.error('Error searching portal customers:', error);
+            $('#portalCustomerResults').html('<div class="text-muted px-2">Search failed.</div>');
+        });
+}
+
+function renderPortalCustomerResults(customers) {
+    const container = $('#portalCustomerResults');
+    container.empty();
+
+    if (!customers.length) {
+        container.html('<div class="text-muted px-2">No matches found.</div>');
+        return;
+    }
+
+    customers.forEach(customer => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'list-group-item list-group-item-action';
+        button.textContent = customer.name;
+        button.addEventListener('click', () => selectPortalCustomer(customer.id, customer.name));
+        container.append(button);
+    });
+}
+
+function fetchPortalCustomersByTags() {
+    const selected = Array.from($('#portalTagSelect').val() || []);
+    const tagIds = selected.map(id => parseInt(id, 10)).filter(Number.isFinite);
+
+    if (tagIds.length === 0) {
+        $('#portalTagCustomersList').empty();
+        updatePortalTagCustomerCount();
+        return;
+    }
+
+    fetch('/sales-suggestions/api/portal-customers/by-tags', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tag_ids: tagIds})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to load customers');
+        }
+        renderPortalTagCustomers(data.customers || []);
+    })
+    .catch(error => {
+        console.error('Error loading customers by tags:', error);
+        $('#portalTagCustomersList').html('<div class="text-muted">Failed to load customers.</div>');
+        updatePortalTagCustomerCount();
+    });
+}
+
+function renderPortalTagCustomers(customers) {
+    const container = $('#portalTagCustomersList');
+    container.empty();
+
+    if (!customers.length) {
+        container.html('<div class="text-muted">No portal customers found for these tags.</div>');
+        updatePortalTagCustomerCount();
+        return;
+    }
+
+    customers.forEach(customer => {
+        const safeName = escapeHtml(customer.name);
+        const row = `
+            <div class="form-check">
+                <input class="form-check-input portal-tag-customer" type="checkbox"
+                       id="portalTagCustomer_${customer.id}" data-customer-id="${customer.id}" checked>
+                <label class="form-check-label" for="portalTagCustomer_${customer.id}">${safeName}</label>
+            </div>
+        `;
+        container.append(row);
+    });
+
+    updatePortalTagCustomerCount();
+}
+
+function updatePortalTagCustomerCount() {
+    const count = $('#portalTagCustomersList .portal-tag-customer:checked').length;
+    $('#portalTagCustomerCount').text(count);
+}
+
+function selectAllPortalTagCustomers(checked) {
+    $('#portalTagCustomersList .portal-tag-customer').prop('checked', checked);
+    updatePortalTagCustomerCount();
+}
+
+function submitPortalSuggestion() {
+    const mode = $('input[name="portalTargetMode"]:checked').val();
+    const notes = $('#portalSuggestNotes').val() || '';
+    const priority = parseInt($('#portalSuggestPriority').val(), 10) || 0;
+
+    let customerIds = [];
+    if (mode === 'single') {
+        const customerId = $('#portalSelectedCustomerId').val();
+        if (!customerId) {
+            alert('Please select a customer.');
+            return;
+        }
+        customerIds = [parseInt(customerId, 10)];
+    } else {
+        $('#portalTagCustomersList .portal-tag-customer:checked').each(function() {
+            const customerId = parseInt($(this).data('customer-id'), 10);
+            if (Number.isFinite(customerId)) {
+                customerIds.push(customerId);
+            }
+        });
+        if (!customerIds.length) {
+            alert('Please select at least one customer.');
+            return;
+        }
+    }
+
+    fetch('/sales-suggestions/api/portal-suggested-parts', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            part_number: currentPortalPartNumber,
+            notes: notes,
+            priority: priority,
+            customer_ids: customerIds
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to add suggested part');
+        }
+        const message = `Added to ${data.inserted_count} customer(s).` +
+            (data.skipped_existing ? ` Skipped ${data.skipped_existing} existing.` : '') +
+            (data.skipped_not_portal ? ` Skipped ${data.skipped_not_portal} non-portal.` : '');
+        $('#portalSuggestMessage')
+            .removeClass('d-none alert-danger')
+            .addClass('alert-success')
+            .text(message);
+    })
+    .catch(error => {
+        $('#portalSuggestMessage')
+            .removeClass('d-none alert-success')
+            .addClass('alert-danger')
+            .text(error.message || 'Failed to add suggested part.');
+    });
 }
 
 function viewBomDetails(bomId, bomName) {
@@ -658,8 +916,8 @@ function displayBomDetails(data) {
                 part.customers.split(',').slice(0, 3).join(', ') +
                 (part.customers.split(',').length > 3 ? '...' : '') : '-';
 
-            const guidePrice = part.guide_price || 0;
-            const avgSalePrice = part.avg_sale_price || 0;
+            const guidePrice = parseFloat(part.guide_price) || 0;
+            const avgSalePrice = parseFloat(part.avg_sale_price) || 0;
             const deltaPercent = part.delta_percent;
             let deltaDisplay = '-';
             let deltaClass = 'text-muted';
@@ -672,9 +930,10 @@ function displayBomDetails(data) {
                 deltaSortValue = deltaPercent;
             }
 
-            const stockCostDisplay = part.stock_unit_price !== null && part.stock_unit_price !== undefined
-                ? '£' + part.stock_unit_price.toFixed(2) : '-';
-            const stockCostOrder = part.stock_unit_price || 0;
+            const stockCostValue = parseFloat(part.stock_unit_price);
+            const stockCostDisplay = Number.isFinite(stockCostValue)
+                ? '\u00a3' + stockCostValue.toFixed(2) : '-';
+            const stockCostOrder = Number.isFinite(stockCostValue) ? stockCostValue : 0;
             const guidePriceDisplay = guidePrice > 0 ? `£${guidePrice.toFixed(2)}` : '-';
 
             tbody.append(`
@@ -770,9 +1029,10 @@ function displayCustomerParts(data) {
         tbody.append('<tr><td colspan="8" class="text-center text-muted">No parts in stock for this customer</td></tr>');
     } else {
         data.parts.forEach(part => {
-            const stockCost = part.stock_unit_price !== null && part.stock_unit_price !== undefined
-                ? '£' + part.stock_unit_price.toFixed(2) : '-';
-            const stockCostOrder = part.stock_unit_price || 0;
+            const stockCostValue = parseFloat(part.stock_unit_price);
+            const stockCost = Number.isFinite(stockCostValue)
+                ? '\u00a3' + stockCostValue.toFixed(2) : '-';
+            const stockCostOrder = Number.isFinite(stockCostValue) ? stockCostValue : 0;
 
             tbody.append(`
                 <tr>
@@ -781,7 +1041,9 @@ function displayCustomerParts(data) {
                     <td data-order="${stockCostOrder}">${stockCost}</td>
                     <td data-order="${part.times_purchased}">${part.times_purchased}</td>
                     <td data-order="${part.total_quantity_purchased}">${part.total_quantity_purchased}</td>
-                    <td data-order="${part.avg_purchase_price}">£${part.avg_purchase_price.toFixed(2)}</td>
+                    <td data-order="${parseFloat(part.avg_purchase_price) || 0}">
+                        \u00a3${(parseFloat(part.avg_purchase_price) || 0).toFixed(2)}
+                    </td>
                     <td data-order="${part.avg_guide_price}">${part.avg_guide_price > 0 ? '£' + part.avg_guide_price.toFixed(2) : '-'}</td>
                     <td data-order="${part.last_purchase_date}">${part.last_purchase_date ? part.last_purchase_date.substring(0, 10) : '-'}</td>
                 </tr>
@@ -903,202 +1165,24 @@ $(document).ready(function() {
         });
     }
 
-    // Stock upload functionality
-    let hot = null;
-    let csvData = null;
-    let csvColumns = [];
-
-    const fileInput = document.getElementById('stock-file-input');
-    if (fileInput) {
-        fileInput.addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const text = e.target.result;
-                parseCSV(text);
-            };
-            reader.readAsText(file);
-        });
-    }
-
-    function parseCSV(text) {
-        const rows = text.split('\n').map(row => {
-            const result = [];
-            let current = '';
-            let inQuotes = false;
-
-            for (let i = 0; i < row.length; i++) {
-                const char = row[i];
-
-                if (char === '"') {
-                    inQuotes = !inQuotes;
-                } else if (char === ',' && !inQuotes) {
-                    result.push(current.trim());
-                    current = '';
-                } else {
-                    current += char;
-                }
-            }
-            result.push(current.trim());
-            return result;
-        }).filter(row => row.some(cell => cell));
-
-        if (rows.length === 0) {
-            alert('No data found in CSV file');
+    // Portal suggestion modal handlers
+    $('input[name="portalTargetMode"]').on('change', togglePortalTargetMode);
+    $('#portalTagSelect').on('change', fetchPortalCustomersByTags);
+    $('#portalTagCustomersList').on('change', '.portal-tag-customer', updatePortalTagCustomerCount);
+    $('#portalCustomerSearch').on('input', function() {
+        const query = $(this).val().trim();
+        if (portalCustomerSearchTimer) {
+            clearTimeout(portalCustomerSearchTimer);
+        }
+        if (query.length < 2) {
+            $('#portalCustomerResults').empty();
             return;
         }
-
-        csvColumns = rows[0];
-        csvData = rows;
-
-        displayCSVInHandsontable(rows);
-        setupColumnMapping(csvColumns);
-    }
-
-    function displayCSVInHandsontable(data) {
-        const container = document.getElementById('hot-container');
-        container.style.display = 'block';
-
-        if (hot) hot.destroy();
-
-        hot = new Handsontable(container, {
-            data: data,
-            rowHeaders: true,
-            colHeaders: true,
-            height: 300,
-            licenseKey: 'non-commercial-and-evaluation'
-        });
-    }
-
-    function setupColumnMapping(columns) {
-        document.getElementById('mapping-section').style.display = 'block';
-
-        const partSelect = document.getElementById('part-number-col');
-        const qtySelect = document.getElementById('quantity-col');
-        const priceSelect = document.getElementById('unit-price-col');
-
-        partSelect.innerHTML = '<option value="">-- Select Column --</option>';
-        qtySelect.innerHTML = '<option value="">-- Select Column --</option>';
-        priceSelect.innerHTML = '<option value="">-- Not Provided --</option>';
-
-        columns.forEach((col, idx) => {
-            partSelect.innerHTML += `<option value="${idx}">${col}</option>`;
-            qtySelect.innerHTML += `<option value="${idx}">${col}</option>`;
-            priceSelect.innerHTML += `<option value="${idx}">${col}</option>`;
-        });
-
-        autoMapColumns(columns);
-    }
-
-    function autoMapColumns(columns) {
-        const partPatterns = ['part', 'partno', 'partnumber', 'part_number', 'item'];
-        const qtyPatterns = ['qty', 'quantity', 'current', 'remaining', 'stock', 'onhand', 'available'];
-        const pricePatterns = ['price', 'cost', 'unit', 'unitprice', 'unitcost', 'value'];
-
-        columns.forEach((col, idx) => {
-            const lowerCol = col.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-            if (partPatterns.some(pattern => lowerCol.includes(pattern))) {
-                document.getElementById('part-number-col').value = idx;
-            }
-
-            if (qtyPatterns.some(pattern => lowerCol.includes(pattern))) {
-                document.getElementById('quantity-col').value = idx;
-            }
-
-            if (pricePatterns.some(pattern => lowerCol.includes(pattern))) {
-                document.getElementById('unit-price-col').value = idx;
-            }
-        });
-
-        validateMapping();
-    }
-
-    function validateMapping() {
-        const partCol = document.getElementById('part-number-col').value;
-        const qtyCol = document.getElementById('quantity-col').value;
-        const applyBtn = document.getElementById('apply-stock-btn');
-        if (applyBtn) {
-            applyBtn.disabled = !(partCol && qtyCol);
-        }
-    }
-
-    const partColSelect = document.getElementById('part-number-col');
-    const qtyColSelect = document.getElementById('quantity-col');
-    if (partColSelect) partColSelect.addEventListener('change', validateMapping);
-    if (qtyColSelect) qtyColSelect.addEventListener('change', validateMapping);
-
-    const applyBtn = document.getElementById('apply-stock-btn');
-    if (applyBtn) {
-        applyBtn.addEventListener('click', function() {
-            const partCol = document.getElementById('part-number-col').value;
-            const qtyCol = document.getElementById('quantity-col').value;
-            const priceCol = document.getElementById('unit-price-col').value;
-
-            if (!partCol || !qtyCol) {
-                alert('Please map both Part Number and Quantity columns');
-                return;
-            }
-
-            const dataToSend = hot ? hot.getData() : csvData;
-
-            this.disabled = true;
-            this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Applying...';
-
-            const mapping = {
-                part_number: partCol,
-                quantity: qtyCol
-            };
-
-            if (priceCol) {
-                mapping.unit_price = priceCol;
-            }
-
-            fetch('/sales-suggestions/upload-stock', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    stock_data: dataToSend,
-                    mapping: mapping
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    alert(`Stock data applied successfully! ${data.parts_loaded} parts loaded.`);
-                    window.location.reload();
-                } else {
-                    alert('Error: ' + (data.error || 'Unknown error'));
-                    this.disabled = false;
-                    this.innerHTML = '<i class="bi bi-check-lg"></i> Apply Stock Data';
-                }
-            })
-            .catch(error => {
-                alert('An error occurred while uploading stock data');
-                console.error(error);
-                this.disabled = false;
-                this.innerHTML = '<i class="bi bi-check-lg"></i> Apply Stock Data';
-            });
-        });
-    }
-
-    const clearStockBtn = document.getElementById('clear-stock-btn');
-    if (clearStockBtn) {
-        clearStockBtn.addEventListener('click', function() {
-            if (!confirm('Clear uploaded stock and revert to system stock?')) return;
-
-            fetch('/sales-suggestions/clear-stock', {method: 'POST'})
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) window.location.reload();
-                    else alert('Error clearing stock data');
-                })
-                .catch(error => alert('An error occurred'));
-        });
-    }
+        portalCustomerSearchTimer = setTimeout(() => fetchPortalCustomerSearch(query), 300);
+    });
 });
 </script>
 
 {% endblock %}
+
+

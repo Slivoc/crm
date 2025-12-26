@@ -741,7 +741,7 @@ def get_customer_parts(customer_id):
                     INNER JOIN sales_orders so ON sol.sales_order_id = so.id
                     INNER JOIN part_numbers pn ON sol.base_part_number = pn.base_part_number
                     LEFT JOIN stock_movements sm ON pn.base_part_number = sm.base_part_number
-                        AND sm.movement_type = "IN"
+                        AND sm.movement_type = 'IN'
                         AND sm.available_quantity > 0
                     WHERE so.customer_id = ?
                     AND sm.id IS NULL
@@ -850,7 +850,7 @@ def get_bom_parts(bom_id):
                     LEFT JOIN sales_order_lines sol ON pn.base_part_number = sol.base_part_number
                     LEFT JOIN sales_orders so ON sol.sales_order_id = so.id
                     LEFT JOIN stock_movements sm ON pn.base_part_number = sm.base_part_number
-                        AND sm.movement_type = "IN"
+                        AND sm.movement_type = 'IN'
                         AND sm.available_quantity > 0
                     WHERE bl.bom_header_id = ?
                     AND sol.id IS NOT NULL
@@ -961,7 +961,7 @@ def debug_bom(bom_id):
                 INNER JOIN part_numbers pn ON bl.base_part_number = pn.base_part_number
                 INNER JOIN sales_order_lines sol ON pn.base_part_number = sol.base_part_number
                 INNER JOIN stock_movements sm ON pn.base_part_number = sm.base_part_number
-                    AND sm.movement_type = "IN"
+                    AND sm.movement_type = 'IN'
                     AND sm.available_quantity > 0
                 WHERE bl.bom_header_id = ?
                 ''',

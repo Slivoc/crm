@@ -1,0 +1,278 @@
+{# Shared parts list navigation/header card. Expects list_id, list_name. #}
+{% set icon_class = nav_icon|default('bi-list-ul') %}
+{% set active_page = nav_active|default('') %}
+{% set show_quote_views = show_quote_views|default(false) %}
+<div class="card mb-4" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
+    <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
+                <i class="bi {{ icon_class }} me-2" style="color:#0d6efd;"></i>
+                Parts List: {{ list_name }}
+                {% if customer_name %}
+                    <span class="text-muted" style="font-size:.9rem;">| {{ customer_name }}</span>
+                {% endif %}
+                {% if status_name %}
+                    <span class="badge bg-light text-dark border ms-2" style="font-size:.7rem;">Status: {{ status_name }}</span>
+                {% endif %}
+            </h5>
+            <div class="d-flex flex-wrap gap-2">
+                {% if not customer_name %}
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#assignCustomerModal">
+                        <i class="bi bi-person-plus me-1"></i>Assign Customer
+                    </button>
+                {% endif %}
+                <div class="btn-group" role="group">
+                <a href="{{ url_for('parts_list.view_parts_list', list_id=list_id) }}"
+                   class="btn btn-sm {{ 'btn-primary' if active_page == 'overview' else 'btn-outline-secondary' }}">
+                    <i class="bi bi-house-door me-1"></i>Overview
+                </a>
+                <a href="{{ url_for('parts_list.parts_list_sourcing', list_id=list_id) }}"
+                   class="btn btn-sm {{ 'btn-primary' if active_page == 'sourcing' else 'btn-outline-secondary' }}">
+                    <i class="bi bi-truck me-1"></i>Sourcing
+                </a>
+                <a href="{{ url_for('parts_list.parts_list_costing', list_id=list_id) }}"
+                   class="btn btn-sm {{ 'btn-primary' if active_page == 'costing' else 'btn-outline-secondary' }}">
+                    <i class="bi bi-calculator me-1"></i>Costing
+                </a>
+                {% if show_quote_views %}
+                    <a href="{{ url_for('customer_quoting.customer_quote', list_id=list_id) }}"
+                       class="btn btn-sm {{ 'btn-primary' if active_page == 'quote_table' else 'btn-outline-secondary' }}">
+                        <i class="bi bi-grid me-1"></i>Table View
+                    </a>
+                    <a href="{{ url_for('customer_quoting.customer_quote_simple', list_id=list_id) }}"
+                       class="btn btn-sm {{ 'btn-primary' if active_page == 'quote_simple' else 'btn-outline-secondary' }}">
+                        <i class="bi bi-list-ul me-1"></i>Simple View
+                    </a>
+                {% else %}
+                    <a href="{{ url_for('customer_quoting.customer_quote_simple', list_id=list_id) }}"
+                       class="btn btn-sm {{ 'btn-primary' if active_page == 'quoting' else 'btn-outline-secondary' }}">
+                        <i class="bi bi-cash-stack me-1"></i>Quoting
+                    </a>
+                {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if not customer_name %}
+<style>
+.pl-assign-results {
+    position: relative;
+    border: 1px solid #dee2e6;
+    border-top: none;
+    border-radius: 0 0 0.375rem 0.375rem;
+    max-height: 220px;
+    overflow-y: auto;
+    background: #fff;
+}
+.pl-assign-item {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    border-bottom: 1px solid #f1f3f5;
+}
+.pl-assign-item:hover {
+    background: #f8f9fa;
+}
+.pl-assign-selected {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    background: #f8f9fa;
+}
+</style>
+
+<div class="modal fade" id="assignCustomerModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Assign Customer and Contact</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="assign-customer-input" class="form-label">Customer</label>
+                    <input type="text" class="form-control" id="assign-customer-input" placeholder="Search customer...">
+                    <div id="assign-customer-results" class="pl-assign-results"></div>
+                    <div id="assign-customer-selected" class="pl-assign-selected mt-2" style="display:none;"></div>
+                </div>
+                <div class="mb-3">
+                    <label for="assign-contact-input" class="form-label">Contact (optional)</label>
+                    <input type="text" class="form-control" id="assign-contact-input" placeholder="Search contact...">
+                    <div id="assign-contact-results" class="pl-assign-results"></div>
+                    <div id="assign-contact-selected" class="pl-assign-selected mt-2" style="display:none;"></div>
+                    <div class="form-text">Leave blank if there is no specific contact.</div>
+                </div>
+                <div class="alert alert-danger d-none" id="assign-customer-error"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="assign-customer-save">Assign</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const listId = {{ list_id|tojson }};
+    const modalEl = document.getElementById('assignCustomerModal');
+    if (!modalEl) return;
+
+    const customerInput = document.getElementById('assign-customer-input');
+    const customerResults = document.getElementById('assign-customer-results');
+    const customerSelected = document.getElementById('assign-customer-selected');
+    const contactInput = document.getElementById('assign-contact-input');
+    const contactResults = document.getElementById('assign-contact-results');
+    const contactSelected = document.getElementById('assign-contact-selected');
+    const errorEl = document.getElementById('assign-customer-error');
+    const saveBtn = document.getElementById('assign-customer-save');
+
+    let selectedCustomer = null;
+    let selectedContact = null;
+    let customerTimer = null;
+    let contactTimer = null;
+
+    function showError(message) {
+        if (!errorEl) return;
+        errorEl.textContent = message;
+        errorEl.classList.remove('d-none');
+    }
+
+    function clearError() {
+        if (!errorEl) return;
+        errorEl.classList.add('d-none');
+        errorEl.textContent = '';
+    }
+
+    function setSelectedCustomer(customer) {
+        selectedCustomer = customer;
+        customerSelected.style.display = 'block';
+        customerSelected.textContent = customer.name;
+        customerInput.value = '';
+        customerResults.innerHTML = '';
+        if (selectedContact && selectedContact.customer_id && selectedContact.customer_id !== customer.id) {
+            setSelectedContact(null);
+        }
+    }
+
+    function setSelectedContact(contact) {
+        selectedContact = contact;
+        if (!contact) {
+            contactSelected.style.display = 'none';
+            contactSelected.textContent = '';
+            return;
+        }
+        contactSelected.style.display = 'block';
+        contactSelected.textContent = contact.full_name + (contact.email ? ` (${contact.email})` : '');
+        contactInput.value = '';
+        contactResults.innerHTML = '';
+    }
+
+    function renderResults(container, items, onClick) {
+        if (!items.length) {
+            container.innerHTML = '<div class="pl-assign-item text-muted">No results</div>';
+            return;
+        }
+        container.innerHTML = items.map(item => (
+            `<div class="pl-assign-item" data-id="${item.id}">${item.label}</div>`
+        )).join('');
+        container.querySelectorAll('.pl-assign-item').forEach((row) => {
+            const id = row.getAttribute('data-id');
+            if (!id) return;
+            row.addEventListener('click', () => {
+                const picked = items.find(i => String(i.id) === String(id));
+                if (picked) onClick(picked);
+            });
+        });
+    }
+
+    if (customerInput) {
+        customerInput.addEventListener('input', function() {
+            clearTimeout(customerTimer);
+            const query = this.value.trim();
+            customerResults.innerHTML = '';
+            if (query.length < 2) return;
+            customerTimer = setTimeout(() => {
+                fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=20`)
+                    .then(r => r.json())
+                    .then(customers => {
+                        const items = (customers || []).map(c => ({
+                            id: c.id,
+                            name: c.name,
+                            label: c.name
+                        }));
+                        renderResults(customerResults, items, setSelectedCustomer);
+                    })
+                    .catch(() => {
+                        customerResults.innerHTML = '<div class="pl-assign-item text-danger">Error searching customers</div>';
+                    });
+            }, 250);
+        });
+    }
+
+    if (contactInput) {
+        contactInput.addEventListener('input', function() {
+            clearTimeout(contactTimer);
+            const query = this.value.trim();
+            contactResults.innerHTML = '';
+            if (query.length < 2) return;
+            contactTimer = setTimeout(() => {
+                fetch(`/customers/search_contact?query=${encodeURIComponent(query)}`)
+                    .then(r => r.json())
+                    .then(contacts => {
+                        const filtered = (contacts || []).filter(c => {
+                            if (!selectedCustomer) return true;
+                            return String(c.customer_id || '') === String(selectedCustomer.id);
+                        });
+                        const items = filtered.map(c => ({
+                            id: c.id,
+                            full_name: c.full_name || `${c.name || ''} ${c.second_name || ''}`.trim(),
+                            email: c.email,
+                            customer_id: c.customer_id,
+                            label: `${c.full_name || `${c.name || ''} ${c.second_name || ''}`.trim()}${c.customer_name ? ` - ${c.customer_name}` : ''}`
+                        }));
+                        renderResults(contactResults, items, setSelectedContact);
+                    })
+                    .catch(() => {
+                        contactResults.innerHTML = '<div class="pl-assign-item text-danger">Error searching contacts</div>';
+                    });
+            }, 250);
+        });
+    }
+
+    if (saveBtn) {
+        saveBtn.addEventListener('click', function() {
+            clearError();
+            if (!selectedCustomer) {
+                showError('Please select a customer before saving.');
+                return;
+            }
+            const payload = {
+                customer_id: Number(selectedCustomer.id),
+                contact_id: selectedContact ? Number(selectedContact.id) : null
+            };
+            saveBtn.disabled = true;
+            fetch(`/parts_list/parts-lists/${listId}/update`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) {
+                        showError(data.message || 'Save failed.');
+                        saveBtn.disabled = false;
+                        return;
+                    }
+                    window.location.reload();
+                })
+                .catch(() => {
+                    showError('Save failed. Please try again.');
+                    saveBtn.disabled = false;
+                });
+        });
+    }
+})();
+</script>
+{% endif %}

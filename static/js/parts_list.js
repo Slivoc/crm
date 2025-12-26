@@ -253,14 +253,14 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         ? (part.input_part_number || part.alt_part_number || part.base_part_number || '')
         : (part.input_part_number || '');
     const copyPartNumberButton = partNumberForCopy
-        ? `<button class="btn btn-sm btn-outline-secondary copy-part-number-btn"
+        ? `<button class="btn btn-sm icon-action-btn copy-part-number-btn"
                    data-part-number="${encodeURIComponent(partNumberForCopy)}"
                    title="Copy part number">
               <i class="bi bi-clipboard"></i>
            </button>`
         : '';
     const duplicateButton = canDuplicate
-        ? `<button class="btn btn-sm btn-outline-secondary duplicate-line-btn"
+        ? `<button class="btn btn-sm icon-action-btn duplicate-line-btn"
                    data-part-index="${actualIndex}"
                    data-line-id="${part.line_id}"
                    title="Add price break">

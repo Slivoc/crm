@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, request, jsonify, url_for, redirect, session, flash, abort
-from models import create_base_part_number, get_global_alternatives
+from models import create_base_part_number, get_global_alternatives, insert_update
 from db import execute as db_execute, db_cursor
 import logging
 import openai
@@ -17,6 +17,7 @@ import email
 from email import policy
 from email.message import EmailMessage
 import os
+import html
 
 # Optional rich RTF→text converter; falls back to a lightweight stripper if missing
 try:
@@ -35,6 +36,24 @@ def _execute_with_cursor(cur, query, params=None):
     prepared = query.replace('?', '%s') if os.getenv('DATABASE_URL', '').startswith(('postgres://', 'postgresql://')) else query
     cur.execute(prepared, params or [])
     return cur
+
+
+def _log_parts_list_creation_communication(list_id, list_name, customer_id, contact_id, salesperson_id):
+    if not (list_id and customer_id and contact_id and salesperson_id):
+        return
+    list_url = url_for('parts_list.view_parts_list', list_id=list_id)
+    safe_name = html.escape(list_name or f"Parts List {list_id}")
+    notes = (
+        f"<i class=\"bi bi-list-check text-primary me-1\"></i> "
+        f"Parts list created: <a href=\"{list_url}\">{safe_name}</a>"
+    )
+    insert_update(
+        customer_id,
+        salesperson_id,
+        notes,
+        contact_id=contact_id,
+        communication_type='Other',
+    )
 
 
 _ALLOWED_LINE_TYPES = {'normal', 'price_break', 'alternate'}
@@ -526,7 +545,17 @@ def manage_supplier_quotes(list_id):
     Simple management page for supplier quotes cleanup.
     """
     header = db_execute(
-        "SELECT id, name FROM parts_lists WHERE id = ?",
+        """
+        SELECT 
+            pl.id,
+            pl.name,
+            c.name AS customer_name,
+            s.name AS status_name
+        FROM parts_lists pl
+        LEFT JOIN customers c ON c.id = pl.customer_id
+        LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+        WHERE pl.id = ?
+        """,
         (list_id,),
         fetch='one',
     )
@@ -539,6 +568,8 @@ def manage_supplier_quotes(list_id):
         'parts_list_supplier_quotes_manage.html',
         list_id=list_id,
         list_name=header['name'],
+        customer_name=header.get('customer_name'),
+        status_name=header.get('status_name'),
         cache_bust=cache_bust,
     )
 
@@ -814,6 +845,7 @@ def extract_supplier_quote():
         logger.debug("Raw quote_text (first 500 chars): %r", quote_text[:500])
         logger.debug("Raw context_parts (first 500 chars): %r", context_parts[:500])
 
+        currency_warning = _detect_multiple_currencies(quote_text)
         extracted_items = extract_supplier_quote_data(quote_text, context_parts)
 
         logger.info("extract_supplier_quote: got %d items from extractor",
@@ -827,7 +859,8 @@ def extract_supplier_quote():
 
         return jsonify({
             "success": True,
-            "items": extracted_items
+            "items": extracted_items,
+            "currency_warning": currency_warning
         })
 
     except Exception as e:
@@ -909,6 +942,55 @@ def _normalize_optional_text(value):
         return None
 
     return text
+
+
+_CURRENCY_CODE_PATTERN = re.compile(
+    r'\b(USD|EUR|GBP|CAD|AUD|NZD|CHF|JPY|CNY|SEK|NOK|DKK|SGD|HKD|INR|KRW|MXN|BRL|AED|SAR|ZAR|TRY|PLN|CZK|HUF|RON)\b',
+    re.IGNORECASE,
+)
+_CURRENCY_SYMBOLS = {
+    '$': {'USD', 'CAD', 'AUD', 'NZD', 'SGD', 'HKD'},
+    '£': {'GBP'},
+    '€': {'EUR'},
+    '¥': {'JPY', 'CNY'},
+}
+
+
+def _detect_multiple_currencies(text):
+    if not text:
+        return None
+
+    codes = {match.group(1).upper() for match in _CURRENCY_CODE_PATTERN.finditer(text)}
+    symbols = {symbol for symbol in _CURRENCY_SYMBOLS if symbol in text}
+
+    warning = False
+    if len(codes) >= 2:
+        warning = True
+    elif len(codes) == 1:
+        only_code = next(iter(codes))
+        if symbols:
+            if symbols == {'$'} and only_code in _CURRENCY_SYMBOLS['$']:
+                warning = False
+            elif symbols == {'£'} and only_code == 'GBP':
+                warning = False
+            elif symbols == {'€'} and only_code == 'EUR':
+                warning = False
+            elif symbols == {'¥'} and only_code in _CURRENCY_SYMBOLS['¥']:
+                warning = False
+            else:
+                warning = True
+    else:
+        if len(symbols) >= 2:
+            warning = True
+
+    if not warning:
+        return None
+
+    marker_list = sorted(codes) + sorted(symbols)
+    return {
+        "message": "Multiple currencies detected in the supplier quote. Please confirm line currencies before saving.",
+        "markers": marker_list,
+    }
 
 
 def extract_supplier_quote_data(quote_text, context_parts=""):
@@ -2095,10 +2177,12 @@ def parts_list_costing(list_id):
                 pl.*,
                 c.name AS customer_name,
                 cont.name AS contact_name,
-                cont.email AS contact_email
+                cont.email AS contact_email,
+                s.name AS status_name
             FROM parts_lists pl
             LEFT JOIN customers c ON c.id = pl.customer_id
             LEFT JOIN contacts cont ON cont.id = pl.contact_id
+            LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
             WHERE pl.id = ?
             """,
             (list_id,),
@@ -2196,6 +2280,8 @@ def parts_list_costing(list_id):
         return render_template('parts_list_costing.html',
                                list_id=list_id,
                                list_name=header['name'],
+                               customer_name=header.get('customer_name'),
+                               status_name=header.get('status_name'),
                                lines=[dict(l) for l in lines],
                                suppliers=[dict(s) for s in suppliers],
                                currencies=[dict(c) for c in currencies],
@@ -2248,12 +2334,27 @@ def email_suppliers():
     if not email_data:
         return redirect(url_for('parts_list.parts_list'))
 
+    list_id = email_data.get('list_id')
+    list_header = None
+
     logging.info(f"Retrieved email data from session: list_id={email_data.get('list_id')}, mode={mode}")
     logging.info(f"Number of parts: {len(email_data.get('results', []))}")
     if email_data.get('results'):
         logging.info(f"Sample part data: {email_data['results'][0]}")
 
     with db_cursor() as cursor:
+        if list_id:
+            list_header = _execute_with_cursor(cursor, """
+                SELECT
+                    pl.name,
+                    c.name AS customer_name,
+                    s.name AS status_name
+                FROM parts_lists pl
+                LEFT JOIN customers c ON c.id = pl.customer_id
+                LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+                WHERE pl.id = ?
+            """, (list_id,)).fetchone()
+
         # Branch based on mode
         if mode == 'suggested':
             suppliers_map = process_suggested_suppliers(email_data, cursor)
@@ -2300,7 +2401,11 @@ def email_suppliers():
                            total_parts=len(email_data['results']),
                            email_data=email_data,
                            mode=mode,
-                           page_title=page_title)
+                           page_title=page_title,
+                           list_id=list_id,
+                           list_name=list_header['name'] if list_header else None,
+                           customer_name=list_header['customer_name'] if list_header else None,
+                           status_name=list_header['status_name'] if list_header else None)
 
 
 def process_ils_suppliers(email_data, cursor, cutoff_date):
@@ -2625,6 +2730,7 @@ def table_view(list_id):
                            list_id=list_id,
                            list_name=header['name'],
                            customer_name=header['customer_name'],
+                           status_name=header.get('status_name'),
                            lines=[dict(line) for line in lines])
 
 
@@ -3428,7 +3534,7 @@ def save_parts_list():
             header_row = _execute_with_cursor(cur, """
                 INSERT INTO parts_lists 
                     (name, customer_id, contact_id, salesperson_id, status_id, notes, 
-                     date_created, date_modified)
+                    date_created, date_modified)
                 VALUES (?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 RETURNING id
             """, (name, customer_id, contact_id, salesperson_id, notes)).fetchone()
@@ -3465,6 +3571,14 @@ def save_parts_list():
                 _execute_with_cursor(cur, insert_sql, (
                     parts_list_id, line_number, customer_part_number, base_part_number, quantity, chosen_qty
                 ))
+
+        _log_parts_list_creation_communication(
+            parts_list_id,
+            name,
+            customer_id,
+            contact_id,
+            salesperson_id,
+        )
 
         return jsonify(
             success=True,
@@ -3941,10 +4055,12 @@ def parts_list_sourcing(list_id):
                     pl.*, 
                     c.name as customer_name,
                     cont.name as contact_name,
-                    cont.email as contact_email
+                    cont.email as contact_email,
+                    s.name as status_name
                 FROM parts_lists pl
                 LEFT JOIN customers c ON c.id = pl.customer_id
                 LEFT JOIN contacts cont ON cont.id = pl.contact_id
+                LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
                 WHERE pl.id = ?
             """, (list_id,)).fetchone()
 
@@ -4158,6 +4274,7 @@ def parts_list_sourcing(list_id):
                                list_id=list_id,
                                list_name=header['name'],
                                customer_name=header['customer_name'],
+                               status_name=header.get('status_name'),
                                lines=lines_with_data,
                                total_lines=total_lines,
                                lines_with_vq=lines_with_vq,
@@ -4718,7 +4835,8 @@ def view_parts_list(list_id):
                            loaded_list=loaded_list,
                            list_id=list_id,
                            list_name=header['name'],
-                           customer_name=header['customer_name'])
+                           customer_name=header['customer_name'],
+                           status_name=header.get('status_name'))
 
 
 @parts_list_bp.route('/extract-quote-from-pdf', methods=['POST'])
@@ -5969,6 +6087,14 @@ def create_from_email():
             else:
                 logging.info("No parts extracted - created empty list")
 
+        _log_parts_list_creation_communication(
+            list_id,
+            list_name,
+            customer_id,
+            contact_id,
+            salesperson_id,
+        )
+
         redirect_url = url_for('parts_list.view_parts_list', list_id=list_id, _external=True)
         logging.info(f"Returning redirect to: {redirect_url}")
 
@@ -6107,6 +6233,14 @@ def outlook_macro():
                 logging.info(f"Outlook macro inserted {len(extracted)} lines")
             else:
                 logging.info("Outlook macro: no parts extracted")
+
+        _log_parts_list_creation_communication(
+            list_id,
+            list_name,
+            customer_id,
+            contact_id,
+            salesperson_id,
+        )
 
         redirect_url = url_for('parts_list.view_parts_list', list_id=list_id, _external=True)
 

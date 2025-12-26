@@ -83,6 +83,8 @@
 {% endblock %}
 {% block content %}
 <div class="container-fluid mt-4">
+    {% set nav_icon = 'bi-table' %}
+    {% include 'partials/parts_list_nav.html' %}
     <!-- Loading Spinner -->
     <div class="spinner-overlay" id="partsListLoadingSpinner">
         <div class="spinner-border text-light" role="status" style="width: 3rem; height: 3rem;">

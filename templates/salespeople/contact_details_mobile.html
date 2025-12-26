@@ -125,7 +125,7 @@
                     </small>
                 </div>
                 {% if comm.notes %}
-                <div class="small">{{ comm.notes }}</div>
+                <div class="small">{{ comm.notes|safe }}</div>
                 {% endif %}
                 {% if comm.salesperson_name %}
                 <div class="text-muted small mt-1">

@@ -931,6 +931,13 @@ function extractQuoteData() {
             data.items ||
             (Array.isArray(data) ? data : []);
 
+        if (data.currency_warning && data.currency_warning.message) {
+            const markers = Array.isArray(data.currency_warning.markers)
+                ? ` (${data.currency_warning.markers.join(', ')})`
+                : '';
+            showToast(`${data.currency_warning.message}${markers}`, 'warning');
+        }
+
         if (data.success && Array.isArray(extractedLines) && extractedLines.length > 0) {
             applyExtractedDataToTable(extractedLines);
             showToast(`Extracted ${extractedLines.length} line(s) successfully`, 'success');

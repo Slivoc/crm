@@ -210,42 +210,10 @@
 {% block content %}
 <div class="container-fluid mt-4">
 
-    <!-- Header / Nav Card -->
-    <div class="card mb-4" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
-        <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
-            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
-                    <i class="bi bi-cash-stack me-2" style="color:#0d6efd;"></i>
-                    Parts List: {{ list_name }}
-                    {% if customer_name %}
-                        <span class="text-muted" style="font-size:.9rem;">| {{ customer_name }}</span>
-                    {% endif %}
-                </h5>
-                <div class="btn-group" role="group">
-                    <a href="{{ url_for('parts_list.view_parts_list', list_id=list_id) }}"
-                       class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-house-door me-1"></i>Overview
-                    </a>
-                    <a href="{{ url_for('parts_list.parts_list_sourcing', list_id=list_id) }}"
-                       class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-truck me-1"></i>Sourcing
-                    </a>
-                    <a href="{{ url_for('parts_list.parts_list_costing', list_id=list_id) }}"
-                       class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-calculator me-1"></i>Costing
-                    </a>
-                    <a href="{{ url_for('customer_quoting.customer_quote', list_id=list_id) }}"
-                       class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-grid me-1"></i>Table View
-                    </a>
-                    <a href="{{ url_for('customer_quoting.customer_quote_simple', list_id=list_id) }}"
-                       class="btn btn-sm btn-primary">
-                        <i class="bi bi-list-ul me-1"></i>Simple View
-                    </a>
-                </div>
-            </div>
-        </div>
-    </div>
+    {% set nav_active = 'quote_simple' %}
+    {% set nav_icon = 'bi-cash-stack' %}
+    {% set show_quote_views = true %}
+    {% include 'partials/parts_list_nav.html' %}
 
     <!-- Stats Row -->
     <div class="row mb-4">
@@ -421,7 +389,7 @@
         <td>
             <div class="d-flex align-items-center gap-1">
                 <span>{{ line.line_number }}</span>
-                <button class="btn btn-sm btn-outline-secondary duplicate-line-btn"
+                <button class="btn btn-sm icon-action-btn duplicate-line-btn"
                         data-line-id="{{ line.id }}"
                         title="Add price break">
                     <i class="bi bi-plus-square"></i>
@@ -432,7 +400,7 @@
         <td>
             <div class="d-flex align-items-center gap-1">
                 <span>{{ line.requested_part_number or line.customer_part_number }}</span>
-                <button class="btn btn-sm btn-outline-secondary copy-part-number-btn"
+                <button class="btn btn-sm icon-action-btn copy-part-number-btn"
                         data-part-number="{{ line.requested_part_number or line.customer_part_number }}"
                         title="Copy part number">
                     <i class="bi bi-clipboard"></i>

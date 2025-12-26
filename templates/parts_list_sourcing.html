@@ -243,39 +243,9 @@
 {% block content %}
 <div class="container-fluid mt-4">
 
-    <!-- Parts Workflow Navigation -->
-    <div class="card mb-4" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
-        <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
-            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
-                    <i class="bi bi-truck me-2" style="color:#0d6efd;"></i>
-                    Parts List: {{ list_name }}
-                    {% if customer_name %}
-                        <span class="text-muted" style="font-size:.9rem;">| {{ customer_name }}</span>
-                    {% endif %}
-                </h5>
-                <div class="btn-group" role="group">
-                    <a href="{{ url_for('parts_list.parts_list', list_id=list_id) }}"
-                       class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-house-door me-1"></i>Overview
-                    </a>
-                    <a href="{{ url_for('parts_list.parts_list_sourcing', list_id=list_id) }}"
-                       class="btn btn-sm btn-primary">
-                        <i class="bi bi-truck me-1"></i>Sourcing
-                    </a>
-                    <a href="{{ url_for('parts_list.parts_list_costing', list_id=list_id) }}"
-                       class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-calculator me-1"></i>Costing
-                    </a>
-
-                    <a href="/customer-quoting/parts-lists/{{ list_id }}/customer-quote-simple"
-                       class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-cash-stack me-1"></i>Quoting
-                    </a>
-                </div>
-            </div>
-        </div>
-    </div>
+    {% set nav_active = 'sourcing' %}
+    {% set nav_icon = 'bi-truck' %}
+    {% include 'partials/parts_list_nav.html' %}
     <!-- Filters -->
     <div class="card mb-4 filter-section" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
         <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
