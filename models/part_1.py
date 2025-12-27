@@ -1565,6 +1565,8 @@ def insert_update(customer_id, salesperson_id, update_text, contact_id=None, com
                         salesperson_id INTEGER NOT NULL,
                         communication_type TEXT NOT NULL,
                         notes TEXT,
+                        email_message_id TEXT,
+                        email_direction TEXT,
                         update_id INTEGER,
                         FOREIGN KEY (contact_id) REFERENCES contacts(id),
                         FOREIGN KEY (customer_id) REFERENCES customers(id),

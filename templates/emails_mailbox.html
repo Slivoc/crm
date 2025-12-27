@@ -14,6 +14,10 @@
             <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshMailboxBtn" title="Refresh">
                 <i class="bi bi-arrow-clockwise"></i>
             </button>
+            <div class="form-check form-switch mailbox-image-toggle" title="Toggle inline images">
+                <input class="form-check-input" type="checkbox" id="loadImagesToggle">
+                <label class="form-check-label" for="loadImagesToggle" id="loadImagesLabel">Images</label>
+            </div>
             <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#mailboxAccessModal" title="Account settings">
                 <i class="bi bi-gear"></i>
             </button>
@@ -34,6 +38,12 @@
                     <i class="bi bi-inbox"></i>
                     <p>Loading emails...</p>
                 </div>
+            </div>
+            <div class="email-list-footer">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="mailboxLoadMoreBtn" disabled>
+                    Load more
+                </button>
+                <div class="email-list-footer-text" id="mailboxLoadMoreStatus"></div>
             </div>
         </div>
 
@@ -76,6 +86,21 @@
                     <div class="reading-company-badge" id="readingCompanyBadge" style="display: none;">
                         <i class="bi bi-building me-1"></i>
                         <span id="readingCompany">—</span>
+                    </div>
+                    <div class="reading-contact-actions" id="readingContactActions" style="display: none;">
+                        <div class="contact-actions-label">
+                            <i class="bi bi-person-plus me-1"></i>
+                            Sender not in contacts
+                            <span class="contact-actions-domain" id="readingContactDomain"></span>
+                        </div>
+                        <div class="contact-actions-buttons">
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="addCustomerFromDomainBtn">
+                                <i class="bi bi-building-add me-1"></i>Create Customer
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="attachCustomerBtn" data-bs-toggle="modal" data-bs-target="#mailboxAddContactModal">
+                                <i class="bi bi-person-plus me-1"></i>Add to Existing
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="reading-body">
@@ -125,6 +150,39 @@
     </div>
 </div>
 
+<!-- Add Contact Modal -->
+<div class="modal fade" id="mailboxAddContactModal" tabindex="-1" aria-labelledby="mailboxAddContactLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="mailboxAddContactLabel">
+                    <i class="bi bi-person-plus me-2"></i>Add sender to customer
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="mailboxCustomerSearchInput" class="form-label">Customer search</label>
+                    <input type="text" class="form-control" id="mailboxCustomerSearchInput" placeholder="Type a customer name..." autocomplete="off">
+                    <div class="form-text">Search uses the same customer search route as the top bar.</div>
+                </div>
+                <div class="list-group" id="mailboxCustomerSearchResults"></div>
+                <div class="alert alert-light border mt-3 d-none" id="mailboxSelectedCustomer">
+                    <div class="fw-semibold" id="mailboxSelectedCustomerName"></div>
+                    <div class="text-muted small" id="mailboxSelectedCustomerMeta"></div>
+                </div>
+                <div class="alert alert-danger mt-3 d-none" id="mailboxAddContactFeedback"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="mailboxAddContactSaveBtn" disabled>
+                    <i class="bi bi-check2-circle me-1"></i>Add Contact
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 const graphSeed = {{ graph | tojson }};
 const graphStatusEl = document.getElementById('graphStatus');
@@ -137,6 +195,10 @@ const readingFrom = document.getElementById('readingFrom');
 const readingFromEmail = document.getElementById('readingFromEmail');
 const readingCompany = document.getElementById('readingCompany');
 const readingCompanyBadge = document.getElementById('readingCompanyBadge');
+const readingContactActions = document.getElementById('readingContactActions');
+const readingContactDomain = document.getElementById('readingContactDomain');
+const addCustomerFromDomainBtn = document.getElementById('addCustomerFromDomainBtn');
+const attachCustomerBtn = document.getElementById('attachCustomerBtn');
 const readingReceived = document.getElementById('readingReceived');
 const readingFrame = document.getElementById('readingFrame');
 const senderAvatar = document.getElementById('senderAvatar');
@@ -144,14 +206,40 @@ const createPartsListBtn = document.getElementById('createPartsListBtn');
 const createSupplierQuoteBtn = document.getElementById('createSupplierQuoteBtn');
 const createTicketBtn = document.getElementById('createTicketBtn');
 const openOutlookBtn = document.getElementById('openOutlookBtn');
+const loadImagesToggle = document.getElementById('loadImagesToggle');
+const loadImagesLabel = document.getElementById('loadImagesLabel');
 const mailboxCount = document.getElementById('mailboxCount');
 const emailSearch = document.getElementById('emailSearch');
+const mailboxCustomerSearchInput = document.getElementById('mailboxCustomerSearchInput');
+const mailboxCustomerSearchResults = document.getElementById('mailboxCustomerSearchResults');
+const mailboxSelectedCustomer = document.getElementById('mailboxSelectedCustomer');
+const mailboxSelectedCustomerName = document.getElementById('mailboxSelectedCustomerName');
+const mailboxSelectedCustomerMeta = document.getElementById('mailboxSelectedCustomerMeta');
+const mailboxAddContactSaveBtn = document.getElementById('mailboxAddContactSaveBtn');
+const mailboxAddContactFeedback = document.getElementById('mailboxAddContactFeedback');
+const mailboxAddContactModal = document.getElementById('mailboxAddContactModal');
+const mailboxLoadMoreBtn = document.getElementById('mailboxLoadMoreBtn');
+const mailboxLoadMoreStatus = document.getElementById('mailboxLoadMoreStatus');
 
 let messageCache = [];
 let selectedMessage = null;
 let selectedMessageId = null;
 let selectedPartsListId = null;
 let selectedSupplierId = null;
+let mailboxSelectedCustomerData = null;
+let mailboxContactSeed = null;
+let selectedMessageHtml = null;
+let selectedMessageText = null;
+let selectedMessageResolvedHtml = null;
+let mailboxNextToken = null;
+let mailboxIsLoading = false;
+const MAILBOX_PAGE_SIZE = 25;
+let mailboxLoadImages = localStorage.getItem('mailboxLoadImages');
+mailboxLoadImages = mailboxLoadImages === null ? true : mailboxLoadImages === 'true';
+const inlinePrefetchInFlight = new Set();
+const INLINE_PREFETCH_LIMIT = 6;
+const INLINE_PREFETCH_CONCURRENCY = 2;
+updateLoadImagesButton();
 
 function parsePartsAvailabilitySubject(subject) {
     if (!subject) return null;
@@ -246,30 +334,232 @@ function truncateText(text, maxLength) {
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
 }
 
-async function loadMailboxMessages() {
-    emailListContainer.innerHTML = `
-        <div class="email-list-placeholder">
-            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-            <p>Loading emails...</p>
-        </div>
+function extractEmailDomain(email) {
+    if (!email || !email.includes('@')) return '';
+    return email.split('@').pop().toLowerCase();
+}
+
+function setContactActionsVisible(isVisible) {
+    if (!readingContactActions) return;
+    readingContactActions.style.display = isVisible ? 'flex' : 'none';
+}
+
+function updateLoadImagesButton() {
+    if (!loadImagesToggle) return;
+    loadImagesToggle.checked = mailboxLoadImages;
+    if (loadImagesLabel) {
+        loadImagesLabel.textContent = mailboxLoadImages ? 'Images on' : 'Images off';
+    }
+}
+
+function stripImagesFromHtml(htmlContent) {
+    if (!htmlContent) return htmlContent;
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlContent, 'text/html');
+    doc.querySelectorAll('img').forEach(img => {
+        img.removeAttribute('src');
+        img.style.display = 'none';
+    });
+    doc.querySelectorAll('[background]').forEach(el => {
+        el.removeAttribute('background');
+    });
+    doc.querySelectorAll('[style]').forEach(el => {
+        const style = el.getAttribute('style') || '';
+        if (!style) return;
+        const cleaned = style.replace(/url\(([^)]+)\)/gi, '');
+        if (cleaned !== style) {
+            el.setAttribute('style', cleaned);
+        }
+    });
+    return doc.body ? doc.body.innerHTML : htmlContent;
+}
+
+async function buildReadingHtmlDoc(htmlContent, isPlainText) {
+    if (isPlainText) {
+        return `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body { 
+                        font-family: monospace;
+                        font-size: 13px;
+                        line-height: 1.5;
+                        color: #212529;
+                        margin: 0;
+                        padding: 16px;
+                        white-space: pre-wrap;
+                        word-wrap: break-word;
+                    }
+                </style>
+            </head>
+            <body>${htmlContent || 'No content.'}</body>
+            </html>
+        `;
+    }
+
+    let contentToRender = htmlContent;
+    if (!mailboxLoadImages) {
+        contentToRender = stripImagesFromHtml(contentToRender);
+    }
+
+    return `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                * { box-sizing: border-box; }
+                body { 
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                    font-size: 14px;
+                    line-height: 1.6;
+                    color: #212529;
+                    margin: 0;
+                    padding: 16px;
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
+                }
+                img { 
+                    max-width: 100%; 
+                    height: auto; 
+                    display: inline-block;
+                }
+                a { color: #0d6efd; }
+                table { 
+                    max-width: 100%; 
+                    border-collapse: collapse;
+                }
+                td, th { 
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
+                }
+                pre, code {
+                    white-space: pre-wrap;
+                    word-wrap: break-word;
+                    max-width: 100%;
+                    overflow-x: auto;
+                }
+                blockquote {
+                    border-left: 3px solid #dee2e6;
+                    margin: 1em 0;
+                    padding-left: 1em;
+                    color: #6c757d;
+                }
+            </style>
+        </head>
+        <body>${contentToRender}</body>
+        </html>
     `;
+}
+
+async function renderMessageBody() {
+    if (!selectedMessage) return;
+    const isPlainText = selectedMessage.body?.contentType !== 'html';
+    if (isPlainText) {
+        const htmlDoc = await buildReadingHtmlDoc(selectedMessageText || 'No content.', true);
+        readingFrame.srcdoc = htmlDoc;
+        return;
+    }
+
+    let htmlContent = selectedMessageHtml || '';
+    if (mailboxLoadImages) {
+        if (!selectedMessageResolvedHtml) {
+            selectedMessageResolvedHtml = await resolveInlineImages(htmlContent, selectedMessage.id);
+        }
+        htmlContent = selectedMessageResolvedHtml;
+    }
+    const htmlDoc = await buildReadingHtmlDoc(htmlContent, false);
+    readingFrame.srcdoc = htmlDoc;
+}
+
+function resetMailboxAddContactModal() {
+    mailboxSelectedCustomerData = null;
+    mailboxAddContactSaveBtn.disabled = true;
+    mailboxCustomerSearchResults.innerHTML = '';
+    mailboxSelectedCustomer.classList.add('d-none');
+    mailboxAddContactFeedback.classList.add('d-none');
+    mailboxAddContactFeedback.textContent = '';
+}
+
+function updateLoadMoreState({ hasMore = false, loading = false, error = '' } = {}) {
+    if (!mailboxLoadMoreBtn || !mailboxLoadMoreStatus) return;
+    if (loading) {
+        mailboxLoadMoreBtn.disabled = true;
+        mailboxLoadMoreStatus.textContent = 'Loading...';
+        return;
+    }
+    if (error) {
+        mailboxLoadMoreBtn.disabled = false;
+        mailboxLoadMoreStatus.textContent = error;
+        return;
+    }
+    if (!hasMore) {
+        mailboxLoadMoreBtn.disabled = true;
+        mailboxLoadMoreStatus.textContent = messageCache.length ? 'All caught up' : '';
+        return;
+    }
+    mailboxLoadMoreBtn.disabled = false;
+    mailboxLoadMoreStatus.textContent = '';
+}
+
+async function loadMailboxMessages({ reset = false } = {}) {
+    if (mailboxIsLoading) return;
+    if (!reset && !mailboxNextToken) return;
+    mailboxIsLoading = true;
+    updateLoadMoreState({ loading: true });
     
     try {
-        const response = await fetch('/emails/graph/messages');
+        if (reset) {
+            mailboxNextToken = null;
+            messageCache = [];
+            emailListContainer.innerHTML = `
+                <div class="email-list-placeholder">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                    <p>Loading emails...</p>
+                </div>
+            `;
+        }
+
+        const params = new URLSearchParams();
+        params.set('page_size', MAILBOX_PAGE_SIZE);
+        if (!reset && mailboxNextToken) {
+            params.set('page_token', mailboxNextToken);
+        }
+
+        const response = await fetch(`/emails/graph/messages?${params.toString()}`);
         const data = await response.json();
         
         if (!response.ok || !data.success) {
-            emailListContainer.innerHTML = `
-                <div class="email-list-placeholder text-danger">
-                    <i class="bi bi-exclamation-circle"></i>
-                    <p>${data.error?.message || 'Failed to load emails'}</p>
-                    <button class="btn btn-sm btn-outline-primary mt-2" onclick="loadMailboxMessages()">Retry</button>
-                </div>
-            `;
+            if (reset) {
+                emailListContainer.innerHTML = `
+                    <div class="email-list-placeholder text-danger">
+                        <i class="bi bi-exclamation-circle"></i>
+                        <p>${data.error?.message || 'Failed to load emails'}</p>
+                        <button class="btn btn-sm btn-outline-primary mt-2" onclick="loadMailboxMessages({ reset: true })">Retry</button>
+                    </div>
+                `;
+            } else {
+                showToast(data.error?.message || 'Failed to load emails', 'error');
+            }
+            updateLoadMoreState({ error: 'Load failed' });
             return;
         }
 
-        messageCache = data.messages || [];
+        const newMessages = data.messages || [];
+        mailboxNextToken = data.next_token || null;
+
+        let messagesToRender = newMessages;
+        if (reset) {
+            messageCache = newMessages;
+        } else if (newMessages.length) {
+            const existingIds = new Set(messageCache.map(message => message.id));
+            const deduped = newMessages.filter(message => message?.id && !existingIds.has(message.id));
+            messageCache = messageCache.concat(deduped);
+            messagesToRender = deduped;
+        }
         mailboxCount.textContent = messageCache.length;
         
         if (!messageCache.length) {
@@ -279,22 +569,36 @@ async function loadMailboxMessages() {
                     <p>No emails found</p>
                 </div>
             `;
+            updateLoadMoreState({ hasMore: false });
             return;
         }
 
-        renderEmailList(messageCache);
+        if (reset) {
+            renderEmailList(messageCache, false);
+        } else {
+            renderEmailList(messagesToRender, true);
+        }
+        prefetchInlineAttachments(messagesToRender);
+        updateLoadMoreState({ hasMore: Boolean(mailboxNextToken) });
     } catch (error) {
-        emailListContainer.innerHTML = `
-            <div class="email-list-placeholder text-danger">
-                <i class="bi bi-wifi-off"></i>
-                <p>Connection error</p>
-                <button class="btn btn-sm btn-outline-primary mt-2" onclick="loadMailboxMessages()">Retry</button>
-            </div>
-        `;
+        if (reset) {
+            emailListContainer.innerHTML = `
+                <div class="email-list-placeholder text-danger">
+                    <i class="bi bi-wifi-off"></i>
+                    <p>Connection error</p>
+                    <button class="btn btn-sm btn-outline-primary mt-2" onclick="loadMailboxMessages({ reset: true })">Retry</button>
+                </div>
+            `;
+        } else {
+            showToast('Connection error', 'error');
+        }
+        updateLoadMoreState({ error: 'Connection error' });
+    } finally {
+        mailboxIsLoading = false;
     }
 }
 
-function renderEmailList(messages) {
+function renderEmailList(messages, append = false) {
     const html = messages.map(message => {
         const from = message.from?.emailAddress?.name || message.from?.emailAddress?.address || 'Unknown';
         const fromEmail = message.from_email || '';
@@ -332,14 +636,37 @@ function renderEmailList(messages) {
         `;
     }).join('');
 
-    emailListContainer.innerHTML = html;
+    if (!append) {
+        emailListContainer.innerHTML = html;
+    } else if (html) {
+        emailListContainer.insertAdjacentHTML('beforeend', html);
+    }
+}
 
-    document.querySelectorAll('.email-item').forEach(item => {
-        item.addEventListener('click', () => {
-            const messageId = item.getAttribute('data-id');
-            selectMessage(messageId);
-        });
+async function prefetchInlineAttachments(messages) {
+    if (!Array.isArray(messages) || !messages.length) return;
+    const ids = messages
+        .map(message => message.id)
+        .filter(Boolean)
+        .slice(0, INLINE_PREFETCH_LIMIT)
+        .filter(id => !inlinePrefetchInFlight.has(id));
+    if (!ids.length) return;
+
+    let index = 0;
+    const workers = Array.from({ length: INLINE_PREFETCH_CONCURRENCY }, async () => {
+        while (index < ids.length) {
+            const messageId = ids[index++];
+            inlinePrefetchInFlight.add(messageId);
+            try {
+                await fetch(`/emails/graph/message/${encodeURIComponent(messageId)}/inline-attachments`);
+            } catch (error) {
+                // Prefetch failures are non-fatal.
+            } finally {
+                inlinePrefetchInFlight.delete(messageId);
+            }
+        }
     });
+    await Promise.all(workers);
 }
 
 async function selectMessage(messageId) {
@@ -358,7 +685,7 @@ async function selectMessage(messageId) {
     readingFrame.srcdoc = '<div style="display:flex;justify-content:center;align-items:center;height:100%;color:#6c757d;"><div class="spinner-border spinner-border-sm" role="status"></div></div>';
 
     try {
-        const response = await fetch(`/emails/graph/message/${messageId}`);
+        const response = await fetch(`/emails/graph/message/${encodeURIComponent(messageId)}`);
         const data = await response.json();
         
         if (!response.ok || !data.success) {
@@ -373,6 +700,7 @@ async function selectMessage(messageId) {
         const received = selectedMessage.receivedDateTime ? formatFullDate(selectedMessage.receivedDateTime) : '';
         const fromName = fromData.name || fromData.address || 'Unknown';
         const fromEmail = fromData.address || '';
+        const hasContact = Boolean(lookup && lookup.contact_type);
         
         readingSubject.textContent = subject;
         readingFrom.textContent = fromName;
@@ -392,84 +720,25 @@ async function selectMessage(messageId) {
             readingCompanyBadge.style.display = 'none';
         }
 
-        // Render email body with image support
-        let bodyContent = selectedMessage.body?.content || '';
-        if (selectedMessage.body?.contentType === 'html') {
-            bodyContent = await resolveInlineImages(bodyContent, selectedMessage.id);
-            // Create HTML document with proper styling and image support
-            const htmlDoc = `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <style>
-                        * { box-sizing: border-box; }
-                        body { 
-                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-                            font-size: 14px;
-                            line-height: 1.6;
-                            color: #212529;
-                            margin: 0;
-                            padding: 16px;
-                            word-wrap: break-word;
-                            overflow-wrap: break-word;
-                        }
-                        img { 
-                            max-width: 100%; 
-                            height: auto; 
-                            display: inline-block;
-                        }
-                        a { color: #0d6efd; }
-                        table { 
-                            max-width: 100%; 
-                            border-collapse: collapse;
-                        }
-                        td, th { 
-                            word-wrap: break-word;
-                            overflow-wrap: break-word;
-                        }
-                        pre, code {
-                            white-space: pre-wrap;
-                            word-wrap: break-word;
-                            max-width: 100%;
-                            overflow-x: auto;
-                        }
-                        blockquote {
-                            border-left: 3px solid #dee2e6;
-                            margin: 1em 0;
-                            padding-left: 1em;
-                            color: #6c757d;
-                        }
-                    </style>
-                </head>
-                <body>${bodyContent}</body>
-                </html>
-            `;
-            readingFrame.srcdoc = htmlDoc;
+        if (!hasContact && fromEmail) {
+            mailboxContactSeed = {
+                name: fromName || '',
+                email: fromEmail || '',
+                domain: extractEmailDomain(fromEmail)
+            };
+            readingContactDomain.textContent = mailboxContactSeed.domain ? `(${mailboxContactSeed.domain})` : '';
+            setContactActionsVisible(true);
         } else {
-            readingFrame.srcdoc = `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8">
-                    <style>
-                        body { 
-                            font-family: monospace;
-                            font-size: 13px;
-                            line-height: 1.5;
-                            color: #212529;
-                            margin: 0;
-                            padding: 16px;
-                            white-space: pre-wrap;
-                            word-wrap: break-word;
-                        }
-                    </style>
-                </head>
-                <body>${bodyContent || 'No content.'}</body>
-                </html>
-            `;
+            mailboxContactSeed = null;
+            readingContactDomain.textContent = '';
+            setContactActionsVisible(false);
         }
+
+        // Render email body with optional image loading
+        selectedMessageHtml = selectedMessage.body?.content || '';
+        selectedMessageText = selectedMessageHtml;
+        selectedMessageResolvedHtml = null;
+        await renderMessageBody();
 
         // Enable action buttons
         if (selectedMessage.webLink) {
@@ -485,6 +754,130 @@ async function selectMessage(messageId) {
         showToast('Error loading message', 'error');
     }
 }
+
+async function searchMailboxCustomers(query) {
+    if (!query || query.length < 2) {
+        mailboxCustomerSearchResults.innerHTML = '';
+        return;
+    }
+
+    mailboxCustomerSearchResults.innerHTML = `
+        <div class="list-group-item text-muted">
+            <span class="spinner-border spinner-border-sm me-2"></span>Searching...
+        </div>
+    `;
+
+    try {
+        const response = await fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=10`);
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Search failed');
+        }
+
+        if (!Array.isArray(data) || !data.length) {
+            mailboxCustomerSearchResults.innerHTML = `
+                <div class="list-group-item text-muted">No customers found</div>
+            `;
+            return;
+        }
+
+        mailboxCustomerSearchResults.innerHTML = data.map(customer => {
+            const website = customer.website ? customer.website.replace(/^https?:\/\/(www\.)?/, '').split('/')[0] : '';
+            const meta = [customer.country, website].filter(Boolean).join(' - ');
+            return `
+                <button type="button" class="list-group-item list-group-item-action mailbox-customer-result" data-id="${customer.id}">
+                    <div class="fw-semibold">${customer.name}</div>
+                    ${meta ? `<div class="text-muted small">${meta}</div>` : ''}
+                </button>
+            `;
+        }).join('');
+
+        mailboxCustomerSearchResults.querySelectorAll('.mailbox-customer-result').forEach(item => {
+            item.addEventListener('click', () => {
+                const customerId = item.getAttribute('data-id');
+                const customer = data.find(entry => String(entry.id) === String(customerId));
+                if (!customer) return;
+                mailboxSelectedCustomerData = customer;
+                mailboxSelectedCustomerName.textContent = customer.name || 'Selected customer';
+                const website = customer.website ? customer.website.replace(/^https?:\/\/(www\.)?/, '').split('/')[0] : '';
+                const meta = [customer.country, website].filter(Boolean).join(' - ');
+                mailboxSelectedCustomerMeta.textContent = meta;
+                mailboxSelectedCustomer.classList.remove('d-none');
+                mailboxAddContactSaveBtn.disabled = false;
+            });
+        });
+    } catch (error) {
+        mailboxCustomerSearchResults.innerHTML = `
+            <div class="list-group-item text-danger">Search failed</div>
+        `;
+    }
+}
+
+mailboxCustomerSearchInput?.addEventListener('input', (e) => {
+    const query = e.target.value.trim();
+    clearTimeout(mailboxCustomerSearchInput._timer);
+    mailboxCustomerSearchInput._timer = setTimeout(() => {
+        searchMailboxCustomers(query);
+    }, 250);
+});
+
+addCustomerFromDomainBtn?.addEventListener('click', () => {
+    if (!mailboxContactSeed) return;
+    const domain = mailboxContactSeed.domain || '';
+    const prefill = domain ? domain : mailboxContactSeed.name || mailboxContactSeed.email;
+    if (typeof window.openAddCustomerModal === 'function') {
+        window.openAddCustomerModal(prefill);
+    }
+});
+
+mailboxAddContactModal?.addEventListener('show.bs.modal', () => {
+    resetMailboxAddContactModal();
+    if (!mailboxCustomerSearchInput || !mailboxContactSeed) return;
+    const seed = mailboxContactSeed.domain || mailboxContactSeed.name || mailboxContactSeed.email || '';
+    mailboxCustomerSearchInput.value = seed;
+    searchMailboxCustomers(seed);
+});
+
+mailboxAddContactSaveBtn?.addEventListener('click', async () => {
+    if (!mailboxSelectedCustomerData || !mailboxContactSeed) return;
+    mailboxAddContactSaveBtn.disabled = true;
+    mailboxAddContactSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+    mailboxAddContactFeedback.classList.add('d-none');
+    mailboxAddContactFeedback.textContent = '';
+
+    const payload = {
+        email: mailboxContactSeed.email,
+        name: mailboxContactSeed.name || mailboxContactSeed.email,
+        customer_id: mailboxSelectedCustomerData.id
+    };
+
+    try {
+        const response = await fetch('/contacts/add', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to add contact');
+        }
+
+        showToast('Contact added', 'success');
+        readingCompany.textContent = mailboxSelectedCustomerData.name || 'Customer';
+        readingCompanyBadge.style.display = 'inline-flex';
+        setContactActionsVisible(false);
+        mailboxContactSeed = null;
+
+        const modal = bootstrap.Modal.getInstance(mailboxAddContactModal);
+        modal?.hide();
+    } catch (error) {
+        mailboxAddContactFeedback.textContent = error.message || 'Failed to add contact';
+        mailboxAddContactFeedback.classList.remove('d-none');
+    } finally {
+        mailboxAddContactSaveBtn.disabled = false;
+        mailboxAddContactSaveBtn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Add Contact';
+    }
+});
 
 function extractTextFromBody(message) {
     if (!message?.body) return '';
@@ -510,13 +903,23 @@ function replaceInlineImages(htmlContent, attachments) {
         if (!item?.content_id_key || !item?.data_url) return;
         map[item.content_id_key] = item.data_url;
     });
-    return htmlContent.replace(/src=(["'])cid:([^"']+)\1/gi, (match, quote, cid) => {
+    let updated = htmlContent.replace(/(\s)(src|background)\s*=\s*(["']?)cid:([^"'\s>]+)\3/gi, (match, lead, attr, quote, cid) => {
         const key = normalizeContentId(cid);
         if (map[key]) {
-            return `src=${quote}${map[key]}${quote}`;
+            const safeQuote = quote || '"';
+            return `${lead}${attr}=${safeQuote}${map[key]}${safeQuote}`;
         }
         return match;
     });
+    updated = updated.replace(/url\(\s*(["']?)cid:([^"')\s]+)\1\s*\)/gi, (match, quote, cid) => {
+        const key = normalizeContentId(cid);
+        if (map[key]) {
+            const safeQuote = quote || '"';
+            return `url(${safeQuote}${map[key]}${safeQuote})`;
+        }
+        return match;
+    });
+    return updated;
 }
 
 async function resolveInlineImages(htmlContent, messageId) {
@@ -524,7 +927,7 @@ async function resolveInlineImages(htmlContent, messageId) {
         return htmlContent;
     }
     try {
-        const response = await fetch(`/emails/graph/message/${messageId}/inline-attachments`);
+        const response = await fetch(`/emails/graph/message/${encodeURIComponent(messageId)}/inline-attachments`);
         const data = await response.json();
         if (!response.ok || !data.success) {
             return htmlContent;
@@ -552,6 +955,15 @@ emailSearch.addEventListener('input', (e) => {
     });
     
     renderEmailList(filtered);
+});
+
+emailListContainer?.addEventListener('click', (event) => {
+    const item = event.target.closest('.email-item');
+    if (!item) return;
+    const messageId = item.getAttribute('data-id');
+    if (messageId) {
+        selectMessage(messageId);
+    }
 });
 
 // Event handlers
@@ -589,13 +1001,27 @@ document.getElementById('refreshMailboxBtn').addEventListener('click', async () 
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     
     try {
-        await loadMailboxMessages();
+        await loadMailboxMessages({ reset: true });
         showToast('Mailbox refreshed', 'success');
     } catch (error) {
         showToast('Refresh failed', 'error');
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i>';
+    }
+});
+
+mailboxLoadMoreBtn?.addEventListener('click', async () => {
+    await loadMailboxMessages();
+});
+
+loadImagesToggle?.addEventListener('change', async () => {
+    mailboxLoadImages = loadImagesToggle.checked;
+    localStorage.setItem('mailboxLoadImages', mailboxLoadImages ? 'true' : 'false');
+    updateLoadImagesButton();
+    if (selectedMessage) {
+        readingFrame.srcdoc = '<div style="display:flex;justify-content:center;align-items:center;height:100%;color:#6c757d;"><div class="spinner-border spinner-border-sm" role="status"></div></div>';
+        await renderMessageBody();
     }
 });
 
@@ -752,7 +1178,7 @@ function createToastContainer() {
 console.log('Mailbox initialized');
 console.log('createTicketBtn element:', createTicketBtn);
 setGraphStatus(graphSeed);
-loadMailboxMessages();
+loadMailboxMessages({ reset: true });
 </script>
 
 <style>
@@ -773,8 +1199,9 @@ loadMailboxMessages();
     justify-content: space-between;
     align-items: center;
     padding: 12px 20px;
-    background: #fff;
-    border-bottom: 1px solid #e9ecef;
+    background: #f5f7fb;
+    border: 1px solid #e4e8f0;
+    border-radius: 16px;
 }
 
 .topbar-left {
@@ -792,6 +1219,7 @@ loadMailboxMessages();
 .topbar-actions {
     display: flex;
     gap: 8px;
+    align-items: center;
 }
 
 /* Layout */
@@ -846,6 +1274,20 @@ loadMailboxMessages();
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
+}
+
+.email-list-footer {
+    padding: 10px 12px;
+    border-top: 1px solid #e9ecef;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.email-list-footer-text {
+    font-size: 0.75rem;
+    color: #6c757d;
 }
 
 .email-list-placeholder {
@@ -1048,6 +1490,24 @@ loadMailboxMessages();
     display: flex;
     gap: 8px;
     flex-shrink: 0;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.mailbox-image-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid #e3e8ef;
+    background: #f1f4f8;
+    font-size: 0.85rem;
+    color: #5b6776;
+}
+
+.mailbox-image-toggle .form-check-input {
+    margin-top: 0;
 }
 
 .reading-meta {
@@ -1102,6 +1562,37 @@ loadMailboxMessages();
     background: #e8f0fe;
     padding: 6px 12px;
     border-radius: 16px;
+}
+
+.reading-contact-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px dashed #dee2e6;
+    border-radius: 10px;
+    background: #fdfdfd;
+}
+
+.contact-actions-label {
+    font-size: 0.85rem;
+    color: #495057;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.contact-actions-domain {
+    font-weight: 600;
+    color: #1a73e8;
+}
+
+.contact-actions-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .reading-body {

@@ -13,6 +13,7 @@ from routes.customers import customers_bp
 from routes.suppliers import suppliers_bp
 from routes.test_email import test_email_bp
 from routes.salespeople import salespeople_bp, collect_customer_news
+from routes.emails import sync_graph_mailbox_contacts
 from models import get_salespeople, insert_update, get_updates_by_customer_id, insert_rfq_from_macro, get_all_tags, get_project_by_id, Permission
 from routes.emails import get_company_name_by_email
 from routes.parts import parts_bp
@@ -415,6 +416,22 @@ def scheduled_news_scan():
                     salesperson_id,
                     exc
                 )
+
+
+@scheduler.task('cron', id='graph_mailbox_sync', hour=1, minute=20)
+def scheduled_graph_mailbox_sync():
+    with app.app_context():
+        try:
+            result = sync_graph_mailbox_contacts()
+            current_app.logger.info(
+                "Scheduled Graph Mail Sync: users=%s messages=%s communications=%s errors=%s",
+                result.get("users", 0),
+                result.get("messages", 0),
+                result.get("communications", 0),
+                result.get("errors", 0)
+            )
+        except Exception as exc:
+            current_app.logger.exception("Scheduled Graph Mail Sync failed: %s", exc)
 
 scheduler.init_app(app)
 scheduler.start()

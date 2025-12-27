@@ -26,13 +26,15 @@ import imaplib
 import smtplib
 import re
 from datetime import date, datetime
+from urllib.parse import quote
 from collections import defaultdict
 import json
 from functools import wraps
 import time
 import traceback
 import uuid
-from datetime import datetime, timedelta  # Add this import
+from datetime import datetime, timedelta, timezone  # Add this import
+from threading import Lock
 
 
 # Email handling imports
@@ -117,6 +119,11 @@ GRAPH_DEFAULTS = {
 }
 
 RESERVED_GRAPH_SCOPES = {"offline_access", "profile", "openid"}
+
+INLINE_ATTACHMENT_CACHE_TTL = 300
+INLINE_ATTACHMENT_CACHE_MAX = 200
+_INLINE_ATTACHMENT_CACHE = {}
+_INLINE_ATTACHMENT_CACHE_LOCK = Lock()
 
 
 def _get_app_setting(key, default=None):
@@ -233,6 +240,267 @@ def _lookup_contact_company(email_address):
     }
 
 
+def _normalize_email_address(value):
+    if not value:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized or None
+
+
+def _encode_graph_next_link(link):
+    if not link:
+        return None
+    try:
+        return base64.urlsafe_b64encode(link.encode("utf-8")).decode("ascii")
+    except Exception:
+        return None
+
+
+def _decode_graph_next_link(token):
+    if not token:
+        return None
+    try:
+        return base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8")
+    except Exception:
+        return None
+
+
+def _extract_graph_addresses(recipients):
+    emails = []
+    for recipient in recipients or []:
+        if isinstance(recipient, dict):
+            email_data = recipient.get("emailAddress") or {}
+            address = email_data.get("address") or recipient.get("address")
+            normalized = _normalize_email_address(address)
+            if normalized:
+                emails.append(normalized)
+    return emails
+
+
+def _format_graph_datetime(value):
+    if not value:
+        return None
+    try:
+        parsed = parser.isoparse(value)
+    except Exception:
+        try:
+            parsed = parser.parse(value)
+        except Exception:
+            return None
+    if parsed.tzinfo:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _get_contacts_by_emails(emails):
+    normalized = sorted({_normalize_email_address(email) for email in emails if email})
+    normalized = [email for email in normalized if email]
+    if not normalized:
+        return {}
+    placeholders = ",".join(["?"] * len(normalized))
+    rows = db_execute(
+        f"""
+        SELECT c.*, cu.name as customer_name
+        FROM contacts c
+        LEFT JOIN customers cu ON c.customer_id = cu.id
+        WHERE LOWER(c.email) IN ({placeholders})
+          AND c.customer_id IS NOT NULL
+        """,
+        normalized,
+        fetch="all",
+    ) or []
+    contacts = {}
+    for row in rows:
+        row_data = dict(row) if not isinstance(row, dict) else row
+        email_value = _normalize_email_address(row_data.get("email"))
+        if email_value:
+            contacts[email_value] = row_data
+    return contacts
+
+
+def _build_graph_contact_entries(messages, mailbox_email):
+    mailbox_email = _normalize_email_address(mailbox_email)
+    entries = []
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        message_id = message.get("id")
+        if not message_id:
+            continue
+        subject = message.get("subject") or ""
+        from_data = message.get("from", {}).get("emailAddress", {}) if isinstance(message.get("from"), dict) else {}
+        from_email = _normalize_email_address(from_data.get("address"))
+        to_emails = _extract_graph_addresses(message.get("toRecipients"))
+        cc_emails = _extract_graph_addresses(message.get("ccRecipients"))
+
+        is_outbound = bool(from_email and mailbox_email and from_email == mailbox_email)
+        if is_outbound:
+            direction = "outbound"
+            message_emails = [email for email in (to_emails + cc_emails) if email and email != mailbox_email]
+            timestamp = _format_graph_datetime(message.get("sentDateTime") or message.get("receivedDateTime"))
+        else:
+            direction = "inbound"
+            message_emails = [from_email] if from_email else []
+            timestamp = _format_graph_datetime(message.get("receivedDateTime") or message.get("sentDateTime"))
+
+        for email in message_emails:
+            entries.append({
+                "email_message_id": message_id,
+                "contact_email": email,
+                "direction": direction,
+                "timestamp": timestamp,
+                "subject": subject,
+            })
+    return entries
+
+
+def _record_graph_contact_communications(messages, mailbox_email, salesperson_id):
+    if not salesperson_id:
+        return 0
+
+    entries = _build_graph_contact_entries(messages, mailbox_email)
+    if not entries:
+        return 0
+
+    contacts = _get_contacts_by_emails([entry["contact_email"] for entry in entries])
+    if not contacts:
+        return 0
+
+    now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    insert_rows = []
+    for entry in entries:
+        contact = contacts.get(entry["contact_email"])
+        if not contact:
+            continue
+        contact_id = contact.get("id")
+        customer_id = contact.get("customer_id")
+        if not contact_id or not customer_id:
+            continue
+        insert_rows.append((
+            entry["timestamp"] or now_str,
+            contact_id,
+            customer_id,
+            salesperson_id,
+            "email",
+            entry["subject"],
+            entry["email_message_id"],
+            entry["direction"],
+        ))
+
+    if not insert_rows:
+        return 0
+
+    if _using_postgres():
+        insert_query = """
+            INSERT INTO contact_communications
+                (date, contact_id, customer_id, salesperson_id, communication_type, notes, email_message_id, email_direction)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (email_message_id, contact_id) DO NOTHING
+        """
+    else:
+        insert_query = """
+            INSERT OR IGNORE INTO contact_communications
+                (date, contact_id, customer_id, salesperson_id, communication_type, notes, email_message_id, email_direction)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
+    with db_cursor(commit=True) as cursor:
+        cursor.executemany(_prepare_placeholders(insert_query), insert_rows)
+    return len(insert_rows)
+
+
+def sync_graph_mailbox_contacts():
+    settings = _get_graph_settings(include_secret=True)
+    user_rows = db_execute("SELECT user_id FROM graph_token_cache", fetch="all") or []
+    totals = {
+        "users": 0,
+        "messages": 0,
+        "communications": 0,
+        "errors": 0,
+    }
+
+    for row in user_rows:
+        user_id = row.get("user_id") if isinstance(row, dict) else row[0]
+        if not user_id:
+            continue
+        totals["users"] += 1
+        try:
+            cache = _load_graph_cache_for_user(user_id)
+            app = _build_msal_app(settings, cache=cache)
+            accounts = app.get_accounts()
+            if not accounts:
+                continue
+            token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+            _save_graph_cache_for_user(user_id, cache)
+            if not token or "access_token" not in token:
+                totals["errors"] += 1
+                continue
+
+            headers = {"Authorization": f"Bearer {token['access_token']}"}
+            state = _get_graph_delta_state(user_id)
+            delta_link = state.get("delta_link")
+            mailbox_email = state.get("mailbox_email")
+            if not mailbox_email:
+                me_resp = requests.get(
+                    "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
+                    headers=headers,
+                    timeout=20,
+                )
+                if me_resp.status_code < 400:
+                    try:
+                        me_body = me_resp.json() if me_resp.content else {}
+                    except ValueError:
+                        me_body = {}
+                    mailbox_email = (me_body or {}).get("mail") or (me_body or {}).get("userPrincipalName")
+
+            url = delta_link or "https://graph.microsoft.com/v1.0/me/messages/delta"
+            params = None
+            if not delta_link:
+                params = {
+                    "$top": "100",
+                    "$select": (
+                        "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,conversationId"
+                    ),
+                }
+
+            salesperson_id = _get_salesperson_id_for_user(user_id) or user_id
+            processed_messages = 0
+            recorded = 0
+
+            while url:
+                resp = requests.get(url, headers=headers, params=params, timeout=30)
+                params = None
+                try:
+                    body = resp.json() if resp.content else {}
+                except ValueError:
+                    body = {}
+                if resp.status_code >= 400:
+                    totals["errors"] += 1
+                    break
+
+                messages = body.get("value", []) if isinstance(body, dict) else []
+                processed_messages += len(messages)
+                if messages:
+                    recorded += _record_graph_contact_communications(messages, mailbox_email, salesperson_id)
+
+                next_link = body.get("@odata.nextLink") if isinstance(body, dict) else None
+                delta_link = body.get("@odata.deltaLink") if isinstance(body, dict) else None
+                if next_link:
+                    url = next_link
+                else:
+                    url = None
+
+            if delta_link or mailbox_email:
+                _save_graph_delta_state(user_id, delta_link=delta_link, mailbox_email=mailbox_email)
+
+            totals["messages"] += processed_messages
+            totals["communications"] += recorded
+        except Exception:
+            totals["errors"] += 1
+
+    return totals
+
+
 def _get_graph_settings(include_secret=False):
     client_id = _get_app_setting(GRAPH_SETTING_KEYS["client_id"], "") or GRAPH_DEFAULTS["client_id"]
     tenant_id = _get_app_setting(GRAPH_SETTING_KEYS["tenant_id"], "") or GRAPH_DEFAULTS["tenant_id"]
@@ -335,10 +603,82 @@ def _build_msal_app(settings, cache=None):
     )
 
 
+def _load_graph_cache_for_user(user_id):
+    cache = msal.SerializableTokenCache()
+    row = db_execute(
+        "SELECT cache_text FROM graph_token_cache WHERE user_id = ?",
+        (user_id,),
+        fetch="one",
+    )
+    if row:
+        serialized = row.get("cache_text") if isinstance(row, dict) else row[0]
+        if serialized:
+            cache.deserialize(serialized)
+    return cache
+
+
+def _save_graph_cache_for_user(user_id, cache):
+    if not cache.has_state_changed:
+        return
+    serialized = cache.serialize()
+    db_execute(
+        """
+        INSERT INTO graph_token_cache (user_id, cache_text, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE
+        SET cache_text = EXCLUDED.cache_text,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (user_id, serialized),
+        commit=True,
+    )
+
+
 def _current_graph_user_id():
     if current_user and getattr(current_user, "is_authenticated", False):
         return getattr(current_user, "id", None)
     return None
+
+
+def _get_salesperson_id_for_user(user_id):
+    row = db_execute(
+        "SELECT legacy_salesperson_id FROM salesperson_user_link WHERE user_id = ?",
+        (user_id,),
+        fetch="one",
+    )
+    if not row:
+        return None
+    return row.get("legacy_salesperson_id") if isinstance(row, dict) else row[0]
+
+
+def _get_graph_delta_state(user_id):
+    row = db_execute(
+        """
+        SELECT delta_link, mailbox_email
+        FROM graph_mailbox_deltas
+        WHERE user_id = ?
+        """,
+        (user_id,),
+        fetch="one",
+    )
+    if not row:
+        return {"delta_link": None, "mailbox_email": None}
+    return row if isinstance(row, dict) else {"delta_link": row[0], "mailbox_email": row[1]}
+
+
+def _save_graph_delta_state(user_id, delta_link=None, mailbox_email=None):
+    db_execute(
+        """
+        INSERT INTO graph_mailbox_deltas (user_id, delta_link, mailbox_email, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE
+        SET delta_link = EXCLUDED.delta_link,
+            mailbox_email = EXCLUDED.mailbox_email,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (user_id, delta_link, mailbox_email),
+        commit=True,
+    )
 
 
 def _using_postgres() -> bool:
@@ -368,6 +708,33 @@ def _normalize_content_id(value):
     if value.startswith('<') and value.endswith('>'):
         value = value[1:-1]
     return value.lower()
+
+
+def _get_inline_attachment_cache(message_id):
+    if not message_id:
+        return None
+    now = time.time()
+    with _INLINE_ATTACHMENT_CACHE_LOCK:
+        entry = _INLINE_ATTACHMENT_CACHE.get(message_id)
+        if not entry:
+            return None
+        if now - entry["ts"] > INLINE_ATTACHMENT_CACHE_TTL:
+            _INLINE_ATTACHMENT_CACHE.pop(message_id, None)
+            return None
+        return entry["attachments"]
+
+
+def _set_inline_attachment_cache(message_id, attachments):
+    if not message_id:
+        return
+    now = time.time()
+    with _INLINE_ATTACHMENT_CACHE_LOCK:
+        _INLINE_ATTACHMENT_CACHE[message_id] = {"ts": now, "attachments": attachments}
+        if len(_INLINE_ATTACHMENT_CACHE) <= INLINE_ATTACHMENT_CACHE_MAX:
+            return
+        oldest = sorted(_INLINE_ATTACHMENT_CACHE.items(), key=lambda item: item[1]["ts"])
+        for key, _value in oldest[: max(0, len(oldest) - INLINE_ATTACHMENT_CACHE_MAX)]:
+            _INLINE_ATTACHMENT_CACHE.pop(key, None)
 
 
 def _fetch_email_associations(message_ids, conversation_ids, table_name):
@@ -842,11 +1209,46 @@ def graph_messages():
         }), 400
 
     headers = {"Authorization": f"Bearer {token['access_token']}"}
-    params = {
-        "$top": "20",
-        "$select": "id,subject,from,receivedDateTime,bodyPreview,webLink,conversationId",
-    }
-    resp = requests.get("https://graph.microsoft.com/v1.0/me/messages", headers=headers, params=params, timeout=20)
+    page_size = request.args.get("page_size", "25")
+    try:
+        page_size = int(page_size)
+    except (TypeError, ValueError):
+        page_size = 25
+    page_size = max(1, min(page_size, 50))
+
+    page_token = request.args.get("page_token")
+    next_link = _decode_graph_next_link(page_token) if page_token else None
+    if page_token and not next_link:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Invalid pagination token",
+            },
+        }), 400
+    if next_link:
+        if not next_link.startswith("https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages"):
+            return jsonify({
+                "success": False,
+                "error": {
+                    "message": "Invalid pagination token",
+                },
+            }), 400
+        resp = requests.get(next_link, headers=headers, timeout=20)
+    else:
+        params = {
+            "$top": str(page_size),
+            "$select": (
+                "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
+                "bodyPreview,webLink,conversationId"
+            ),
+            "$orderby": "receivedDateTime desc",
+        }
+        resp = requests.get(
+            "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages",
+            headers=headers,
+            params=params,
+            timeout=20,
+        )
     try:
         body = resp.json() if resp.content else None
     except ValueError:
@@ -863,6 +1265,26 @@ def graph_messages():
         }), 400
 
     messages = body.get("value", []) if isinstance(body, dict) else []
+    next_token = None
+    if isinstance(body, dict):
+        next_token = _encode_graph_next_link(body.get("@odata.nextLink"))
+
+    mailbox_email = session.get("graph_last_user")
+    if not mailbox_email:
+        me_resp = requests.get(
+            "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
+            headers=headers,
+            timeout=20,
+        )
+        if me_resp.status_code < 400:
+            try:
+                me_body = me_resp.json() if me_resp.content else {}
+            except ValueError:
+                me_body = {}
+            mailbox_email = (me_body or {}).get("mail") or (me_body or {}).get("userPrincipalName")
+            if mailbox_email:
+                session["graph_last_user"] = mailbox_email
+
     message_ids = [m.get("id") for m in messages if isinstance(m, dict) and m.get("id")]
     conversation_ids = [m.get("conversationId") for m in messages if isinstance(m, dict) and m.get("conversationId")]
     ticket_by_message, ticket_by_conversation = _fetch_email_associations(message_ids, conversation_ids, "tickets")
@@ -878,13 +1300,24 @@ def graph_messages():
         conversation_id = message.get("conversationId")
         message["ticket_id"] = ticket_by_message.get(message_id) or ticket_by_conversation.get(conversation_id)
         message["parts_list_id"] = parts_list_by_message.get(message_id) or parts_list_by_conversation.get(conversation_id)
+
+    try:
+        salesperson_id = None
+        if hasattr(current_user, "get_salesperson_id"):
+            salesperson_id = current_user.get_salesperson_id()
+        if not salesperson_id:
+            salesperson_id = getattr(current_user, "id", None)
+        _record_graph_contact_communications(messages, mailbox_email, salesperson_id)
+    except Exception as exc:
+        current_app.logger.warning("Graph contact sync failed: %s", exc)
     return jsonify({
         "success": True,
         "messages": messages,
+        "next_token": next_token,
     })
 
 
-@emails_bp.route('/emails/graph/message/<message_id>', methods=['GET'])
+@emails_bp.route('/emails/graph/message/<path:message_id>', methods=['GET'])
 def graph_message_detail(message_id):
     settings = _get_graph_settings(include_secret=True)
     cache = _load_graph_cache()
@@ -915,7 +1348,13 @@ def graph_message_detail(message_id):
     params = {
         "$select": "id,subject,from,receivedDateTime,body,bodyPreview,webLink,conversationId",
     }
-    resp = requests.get(f"https://graph.microsoft.com/v1.0/me/messages/{message_id}", headers=headers, params=params, timeout=20)
+    safe_message_id = quote(message_id, safe="")
+    resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}",
+        headers=headers,
+        params=params,
+        timeout=20,
+    )
     try:
         body = resp.json() if resp.content else None
     except ValueError:
@@ -942,8 +1381,15 @@ def graph_message_detail(message_id):
     })
 
 
-@emails_bp.route('/emails/graph/message/<message_id>/inline-attachments', methods=['GET'])
+@emails_bp.route('/emails/graph/message/<path:message_id>/inline-attachments', methods=['GET'])
 def graph_message_inline_attachments(message_id):
+    cached = _get_inline_attachment_cache(message_id)
+    if cached is not None:
+        return jsonify({
+            "success": True,
+            "attachments": cached,
+            "cached": True,
+        })
     settings = _get_graph_settings(include_secret=True)
     cache = _load_graph_cache()
     app = _build_msal_app(settings, cache=cache)
@@ -971,10 +1417,11 @@ def graph_message_inline_attachments(message_id):
 
     headers = {"Authorization": f"Bearer {token['access_token']}"}
     params = {
-        "$select": "id,name,contentId,contentType,isInline,contentBytes",
+        "$select": "id,name,contentType,isInline",
     }
+    safe_message_id = quote(message_id, safe="")
     resp = requests.get(
-        f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments",
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments",
         headers=headers,
         params=params,
         timeout=20,
@@ -996,23 +1443,41 @@ def graph_message_inline_attachments(message_id):
 
     attachments = []
     for item in body.get("value", []) if isinstance(body, dict) else []:
-        content_id = item.get("contentId")
-        content_bytes = item.get("contentBytes")
-        if not item.get("isInline") or not content_id or not content_bytes:
+        if not item.get("isInline"):
             continue
-        content_type = item.get("contentType") or "application/octet-stream"
+        attachment_id = item.get("id")
+        if not attachment_id:
+            continue
+        safe_attachment_id = quote(attachment_id, safe="")
+        detail_resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments/{safe_attachment_id}",
+            headers=headers,
+            timeout=20,
+        )
+        try:
+            detail_body = detail_resp.json() if detail_resp.content else None
+        except ValueError:
+            detail_body = None
+        if detail_resp.status_code >= 400 or not isinstance(detail_body, dict):
+            continue
+        content_id = detail_body.get("contentId")
+        content_bytes = detail_body.get("contentBytes")
+        if not content_id or not content_bytes:
+            continue
+        content_type = detail_body.get("contentType") or item.get("contentType") or "application/octet-stream"
         attachments.append({
             "content_id": content_id,
             "content_id_key": _normalize_content_id(content_id),
             "data_url": f"data:{content_type};base64,{content_bytes}",
         })
 
+    _set_inline_attachment_cache(message_id, attachments)
     return jsonify({
         "success": True,
         "attachments": attachments,
     })
 
-@emails_bp.route('/emails/graph/message/<message_id>/attachments', methods=['GET'])
+@emails_bp.route('/emails/graph/message/<path:message_id>/attachments', methods=['GET'])
 def graph_message_attachments(message_id):
     settings = _get_graph_settings(include_secret=True)
     cache = _load_graph_cache()
@@ -1043,8 +1508,9 @@ def graph_message_attachments(message_id):
     params = {
         "$select": "id,name,contentType,size,isInline",
     }
+    safe_message_id = quote(message_id, safe="")
     resp = requests.get(
-        f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments",
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments",
         headers=headers,
         params=params,
         timeout=20,
@@ -1084,7 +1550,7 @@ def graph_message_attachments(message_id):
     })
 
 
-@emails_bp.route('/emails/graph/message/<message_id>/attachments/<attachment_id>', methods=['GET'])
+@emails_bp.route('/emails/graph/message/<path:message_id>/attachments/<path:attachment_id>', methods=['GET'])
 def graph_message_attachment_content(message_id, attachment_id):
     settings = _get_graph_settings(include_secret=True)
     cache = _load_graph_cache()
@@ -1112,8 +1578,10 @@ def graph_message_attachment_content(message_id, attachment_id):
         }), 400
 
     headers = {"Authorization": f"Bearer {token['access_token']}"}
+    safe_message_id = quote(message_id, safe="")
+    safe_attachment_id = quote(attachment_id, safe="")
     resp = requests.get(
-        f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments/{attachment_id}",
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments/{safe_attachment_id}",
         headers=headers,
         timeout=20,
     )
