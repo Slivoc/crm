@@ -14,6 +14,8 @@ from flask import (
 
     send_from_directory
 )
+from flask import session
+from flask_login import current_user
 import base64
 import quopri
 from email.utils import parsedate_to_datetime
@@ -28,6 +30,8 @@ from collections import defaultdict
 import json
 from functools import wraps
 import time
+import traceback
+import uuid
 from datetime import datetime, timedelta  # Add this import
 
 
@@ -51,6 +55,8 @@ from werkzeug.utils import secure_filename
 from bs4 import BeautifulSoup
 from dateutil import parser
 import extract_msg  # For processing .msg email files
+import msal
+import requests
 
 # Project-specific imports (replace with your actual module structure)
 from db import db_cursor, execute as db_execute
@@ -70,7 +76,8 @@ from models import (
     get_all_templates,
     get_customer_domains,
     get_supplier_domains,
-    get_supplier_contact_by_email
+    get_supplier_contact_by_email,
+    get_contact_by_email
 )
 from hubspot_helpers import (
     get_or_create_hubspot_contact,
@@ -80,6 +87,258 @@ from hubspot_helpers import (
 from domains import populate_domains
 
 emails_bp = Blueprint('emails', __name__)
+
+MAILBOX_SETTING_KEYS = {
+    "user": "mailbox_user",
+    "password": "mailbox_password",
+    "host": "mailbox_host",
+    "port": "mailbox_port",
+    "use_ssl": "mailbox_use_ssl",
+}
+
+GRAPH_SETTING_KEYS = {
+    "client_id": "graph_client_id",
+    "tenant_id": "graph_tenant_id",
+    "client_secret": "graph_client_secret",
+    "redirect_uri": "graph_redirect_uri",
+    "scopes": "graph_scopes",
+}
+
+DEFAULT_GRAPH_SCOPES = [
+    "User.Read",
+    "Mail.Read",
+    "Mail.ReadWrite",
+    "Mail.Send",
+]
+
+GRAPH_DEFAULTS = {
+    "client_id": "bbd6527a-1d84-40a5-94d3-cfef86cd0f29",
+    "tenant_id": "e906849c-00a1-497a-95c4-38f844356d82",
+}
+
+RESERVED_GRAPH_SCOPES = {"offline_access", "profile", "openid"}
+
+
+def _get_app_setting(key, default=None):
+    row = db_execute(
+        "SELECT value FROM app_settings WHERE key = ?",
+        (key,),
+        fetch="one",
+    )
+    if not row:
+        return default
+    if isinstance(row, dict):
+        return row.get("value", default)
+    try:
+        return row["value"]
+    except Exception:
+        return default
+
+
+def _set_app_setting(key, value):
+    db_execute(
+        """
+        INSERT INTO app_settings (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value
+        """,
+        (key, value),
+        commit=True,
+    )
+
+
+def _parse_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_mailbox_settings(include_password=False):
+    saved_user = _get_app_setting(MAILBOX_SETTING_KEYS["user"])
+    saved_password = _get_app_setting(MAILBOX_SETTING_KEYS["password"])
+    saved_host = _get_app_setting(MAILBOX_SETTING_KEYS["host"])
+    saved_port = _get_app_setting(MAILBOX_SETTING_KEYS["port"])
+    saved_ssl = _get_app_setting(MAILBOX_SETTING_KEYS["use_ssl"])
+
+    email_host = saved_host or os.getenv("EMAIL_HOST", "")
+    email_port = saved_port or os.getenv("EMAIL_PORT", "993")
+    email_user = saved_user or os.getenv("EMAIL_USER", "")
+    email_password = saved_password or os.getenv("EMAIL_PASSWORD", "")
+
+    settings = {
+        "email_user": email_user,
+        "email_host": email_host,
+        "email_port": str(email_port) if email_port is not None else "",
+        "use_ssl": _parse_bool(saved_ssl, default=True),
+        "password_set": bool(email_password),
+    }
+
+    if include_password:
+        settings["email_password"] = email_password
+
+    return settings
+
+
+def _decode_imap_data(value):
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    if isinstance(value, (list, tuple)):
+        return [_decode_imap_data(item) for item in value]
+    return value
+
+
+def _format_supplier_contact_name(contact):
+    if not contact:
+        return None
+    first = contact.get("first_name") or ""
+    second = contact.get("second_name") or ""
+    full = f"{first} {second}".strip()
+    return full or contact.get("name")
+
+
+def _lookup_contact_company(email_address):
+    if not email_address:
+        return {
+            "contact_name": None,
+            "contact_type": None,
+            "company_name": None,
+            "company_type": None,
+        }
+
+    customer_contact = get_contact_by_email(email_address)
+    if customer_contact:
+        return {
+            "contact_name": customer_contact.get("name"),
+            "contact_type": "customer",
+            "company_name": customer_contact.get("customer_name"),
+            "company_type": "Customer",
+        }
+
+    supplier_contact = get_supplier_contact_by_email(email_address)
+    if supplier_contact:
+        return {
+            "contact_name": _format_supplier_contact_name(supplier_contact),
+            "contact_type": "supplier",
+            "company_name": supplier_contact.get("supplier_name"),
+            "company_type": "Supplier",
+        }
+
+    return {
+        "contact_name": None,
+        "contact_type": None,
+        "company_name": None,
+        "company_type": None,
+    }
+
+
+def _get_graph_settings(include_secret=False):
+    client_id = _get_app_setting(GRAPH_SETTING_KEYS["client_id"], "") or GRAPH_DEFAULTS["client_id"]
+    tenant_id = _get_app_setting(GRAPH_SETTING_KEYS["tenant_id"], "") or GRAPH_DEFAULTS["tenant_id"]
+    client_secret = _get_app_setting(GRAPH_SETTING_KEYS["client_secret"], "")
+    redirect_uri = _get_app_setting(GRAPH_SETTING_KEYS["redirect_uri"], "")
+    if not redirect_uri:
+        redirect_uri = url_for('emails.graph_callback', _external=True)
+    scopes_value = _get_app_setting(GRAPH_SETTING_KEYS["scopes"], "")
+    if scopes_value:
+        scopes = [s.strip() for s in scopes_value.split(",") if s.strip()]
+    else:
+        scopes = DEFAULT_GRAPH_SCOPES.copy()
+    scopes = [scope for scope in scopes if scope not in RESERVED_GRAPH_SCOPES]
+
+    settings = {
+        "client_id": client_id,
+        "tenant_id": tenant_id,
+        "redirect_uri": redirect_uri,
+        "scopes": scopes,
+        "secret_set": bool(client_secret),
+    }
+
+    if include_secret:
+        settings["client_secret"] = client_secret
+
+    return settings
+
+
+def _set_graph_settings(data):
+    client_id = (data.get("client_id") or "").strip()
+    tenant_id = (data.get("tenant_id") or "").strip()
+    client_secret = data.get("client_secret")
+    redirect_uri = (data.get("redirect_uri") or "").strip()
+    scopes = data.get("scopes") or []
+    if isinstance(scopes, str):
+        scopes = [s.strip() for s in scopes.split(",") if s.strip()]
+    scopes = [scope for scope in scopes if scope not in RESERVED_GRAPH_SCOPES]
+
+    _set_app_setting(GRAPH_SETTING_KEYS["client_id"], client_id)
+    _set_app_setting(GRAPH_SETTING_KEYS["tenant_id"], tenant_id)
+    if client_secret is not None:
+        _set_app_setting(GRAPH_SETTING_KEYS["client_secret"], client_secret)
+    _set_app_setting(GRAPH_SETTING_KEYS["redirect_uri"], redirect_uri)
+    _set_app_setting(GRAPH_SETTING_KEYS["scopes"], ",".join(scopes))
+
+    return _get_graph_settings()
+
+
+def _graph_authority(tenant_id):
+    return f"https://login.microsoftonline.com/{tenant_id}"
+
+
+def _load_graph_cache():
+    cache = msal.SerializableTokenCache()
+    serialized = None
+    user_id = _current_graph_user_id()
+    if user_id:
+        row = db_execute(
+            "SELECT cache_text FROM graph_token_cache WHERE user_id = ?",
+            (user_id,),
+            fetch="one",
+        )
+        if row:
+            serialized = row.get("cache_text") if isinstance(row, dict) else row[0]
+    else:
+        serialized = session.get("graph_token_cache")
+    if serialized:
+        cache.deserialize(serialized)
+    return cache
+
+
+def _save_graph_cache(cache):
+    if cache.has_state_changed:
+        serialized = cache.serialize()
+        user_id = _current_graph_user_id()
+        if user_id:
+            db_execute(
+                """
+                INSERT INTO graph_token_cache (user_id, cache_text, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE
+                SET cache_text = EXCLUDED.cache_text,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, serialized),
+                commit=True,
+            )
+        else:
+            session["graph_token_cache"] = serialized
+
+
+def _build_msal_app(settings, cache=None):
+    if cache is None:
+        cache = _load_graph_cache()
+    return msal.ConfidentialClientApplication(
+        settings["client_id"],
+        authority=_graph_authority(settings["tenant_id"]),
+        client_credential=settings.get("client_secret") or None,
+        token_cache=cache,
+    )
+
+
+def _current_graph_user_id():
+    if current_user and getattr(current_user, "is_authenticated", False):
+        return getattr(current_user, "id", None)
+    return None
 
 
 def _using_postgres() -> bool:
@@ -100,6 +359,57 @@ def _execute_with_cursor(cur, query, params=None, *, fetch=None):
     if fetch == 'all':
         return cur.fetchall()
     return cur
+
+
+def _normalize_content_id(value):
+    if not value:
+        return None
+    value = str(value).strip()
+    if value.startswith('<') and value.endswith('>'):
+        value = value[1:-1]
+    return value.lower()
+
+
+def _fetch_email_associations(message_ids, conversation_ids, table_name):
+    if not message_ids and not conversation_ids:
+        return {}, {}
+    if table_name not in {"tickets", "parts_lists"}:
+        return {}, {}
+
+    clauses = []
+    params = []
+    if message_ids:
+        clauses.append(f"email_message_id IN ({','.join(['?'] * len(message_ids))})")
+        params.extend(message_ids)
+    if conversation_ids:
+        clauses.append(f"email_conversation_id IN ({','.join(['?'] * len(conversation_ids))})")
+        params.extend(conversation_ids)
+
+    where_clause = " OR ".join(clauses)
+    try:
+        rows = db_execute(
+            f"""
+            SELECT id, email_message_id, email_conversation_id
+            FROM {table_name}
+            WHERE {where_clause}
+            """,
+            params,
+            fetch="all",
+        ) or []
+    except Exception:
+        return {}, {}
+
+    by_message = {}
+    by_conversation = {}
+    for row in rows:
+        row_data = dict(row) if not isinstance(row, dict) else row
+        message_id = row_data.get("email_message_id")
+        conversation_id = row_data.get("email_conversation_id")
+        if message_id:
+            by_message[message_id] = row_data.get("id")
+        if conversation_id:
+            by_conversation[conversation_id] = row_data.get("id")
+    return by_message, by_conversation
 
 
 # Helper function to get company name by the sender's email
@@ -162,113 +472,693 @@ def decode_encoded_words(text):
 
 @emails_bp.route('/emails')
 def list_emails():
-    email_host = os.getenv('EMAIL_HOST')
-    email_port = int(os.getenv('EMAIL_PORT', 993))
-    email_user = os.getenv('EMAIL_USER')
-    email_password = os.getenv('EMAIL_PASSWORD')
+    mailbox = _get_mailbox_settings()
+    graph = _get_graph_settings()
+    return render_template('emails.html', mailbox=mailbox, graph=graph)
 
-    # Connect to email server
-    mail = imaplib.IMAP4_SSL(email_host, email_port)
-    mail.login(email_user, email_password)
-    mail.select("inbox")
-    status, messages = mail.search(None, 'ALL')
-    email_ids = messages[0].split()
 
-    email_data = []
-    for email_id in email_ids[-10:]:
-        res, msg = mail.fetch(email_id, "(RFC822)")
-        for response_part in msg:
-            if isinstance(response_part, tuple):
-                msg = email.message_from_bytes(response_part[1])
-                subject, encoding = decode_header(msg["Subject"])[0]
-                if isinstance(subject, bytes):
-                    subject = subject.decode(encoding if encoding else 'utf-8')
-                sender = msg.get("From")
-                date = msg.get("Date")
+@emails_bp.route('/emails/mailbox')
+def mailbox_page():
+    graph = _get_graph_settings()
+    graph_user = session.get("graph_last_user")
+    return render_template('emails_mailbox.html', graph=graph, graph_user=graph_user)
 
-                # Strip the (GMT+08:00) or similar pattern before parsing
-                clean_date = re.sub(r'\s*\(GMT[^\)]+\)', '', date)
 
-                # Parse and format the date using dateutil
-                parsed_date = parser.parse(clean_date)
-                formatted_date = parsed_date.strftime("%a, %d %b %Y %H:%M")  # Desired format
+@emails_bp.route('/emails/mailbox-settings', methods=['GET', 'POST'])
+def mailbox_settings():
+    if request.method == 'GET':
+        settings = _get_mailbox_settings()
+        return jsonify({'success': True, 'settings': settings})
 
-                # Extract email address from the sender string with proper decoding
-                if '<' in sender:
-                    try:
-                        sender_email = sender.split('<')[1].replace('>', '').strip()
-                        sender_name = sender.split('<')[0].replace('"', '').strip()
+    data = request.get_json(silent=True) or {}
 
-                        # Decode any encoded words in the sender name
-                        sender_name = decode_encoded_words(sender_name)
+    email_user = (data.get('email_user') or '').strip()
+    email_password = data.get('email_password')
+    email_host = (data.get('email_host') or '').strip()
+    email_port = (data.get('email_port') or '').strip()
+    use_ssl = _parse_bool(data.get('use_ssl'), default=True)
 
-                        # If sender_name is empty or just whitespace, use the email as the name
-                        if not sender_name or sender_name.isspace():
-                            sender_name = sender_email
-                    except:
-                        sender_email = sender.strip()
-                        sender_name = sender_email
-                else:
-                    sender_email = sender.strip()
-                    sender_name = sender_email
-                    # Also decode if it's just a plain address that might be encoded
-                    sender_name = decode_encoded_words(sender_name)
+    _set_app_setting(MAILBOX_SETTING_KEYS["user"], email_user)
+    if email_password is not None:
+        _set_app_setting(MAILBOX_SETTING_KEYS["password"], email_password)
+    _set_app_setting(MAILBOX_SETTING_KEYS["host"], email_host)
+    _set_app_setting(MAILBOX_SETTING_KEYS["port"], email_port)
+    _set_app_setting(MAILBOX_SETTING_KEYS["use_ssl"], "1" if use_ssl else "0")
 
-                # Get the company name by email
-                result = get_company_name_by_email(sender_email)
-                contact = result['customer_contact']
-                customer = result['customer']
-                supplier_contact = result['supplier_contact']
-                supplier_name = result['supplier_name']
+    settings = _get_mailbox_settings()
+    return jsonify({'success': True, 'settings': settings})
 
-                # Extract the email content (text/plain)
-                email_content = None
-                if msg.is_multipart():
-                    for part in msg.walk():
-                        if part.get_content_type() == "text/plain":
-                            payload = part.get_payload(decode=True)
-                            if payload is not None:
-                                # Attempt UTF-8 decoding first
-                                try:
-                                    email_content = payload.decode('utf-8')
-                                except UnicodeDecodeError:
-                                    # Fallback to other encodings if UTF-8 fails
-                                    try:
-                                        email_content = payload.decode('iso-8859-1')
-                                    except UnicodeDecodeError:
-                                        email_content = payload.decode('windows-1252')
-                            break
-                else:
-                    payload = msg.get_payload(decode=True)
-                    if payload is not None:
-                        try:
-                            email_content = payload.decode('utf-8')
-                        except UnicodeDecodeError:
-                            try:
-                                email_content = payload.decode('iso-8859-1')
-                            except UnicodeDecodeError:
-                                email_content = payload.decode('windows-1252')
 
-                # Append email details along with customer and contact information
-                email_data.append({
-                    'id': email_id.decode(),
-                    'subject': subject,
-                    'sender': sender,  # Keep the original sender string
-                    'sender_email': sender_email,  # Add the extracted email
-                    'sender_name': sender_name,  # Add the extracted name
-                    'date': formatted_date,
-                    'customer_company': customer['name'] if customer else None,
-                    'supplier_company': supplier_name,
-                    'contact_id': contact['id'] if contact else None,
-                    'customer_id': customer['id'] if customer else None,
-                    'supplier_contact_id': supplier_contact['id'] if supplier_contact else None,
-                    'email_content': email_content
-                })
+@emails_bp.route('/emails/test-connection', methods=['POST'])
+def test_mailbox_connection():
+    started_at = time.time()
+    data = request.get_json(silent=True) or {}
+    saved_settings = _get_mailbox_settings(include_password=True)
 
-    mail.logout()
+    email_user = (data.get('email_user') or saved_settings.get("email_user") or "").strip()
+    email_password = data.get('email_password')
+    if email_password is None:
+        email_password = saved_settings.get("email_password") or ""
+    email_host = (data.get('email_host') or saved_settings.get("email_host") or "").strip()
+    email_port = data.get('email_port') or saved_settings.get("email_port") or "993"
+    use_ssl = _parse_bool(data.get('use_ssl'), default=saved_settings.get("use_ssl", True))
 
-    # Pass email data to the template
-    return render_template('emails.html', emails=email_data)
+    debug_info = {
+        "input": {
+            "email_user": email_user,
+            "email_host": email_host,
+            "email_port": str(email_port),
+            "use_ssl": use_ssl,
+            "password_set": bool(email_password),
+            "password_length": len(email_password) if email_password else 0,
+        },
+        "events": [],
+    }
+
+    missing = []
+    if not email_host:
+        missing.append("email_host")
+    if not email_user:
+        missing.append("email_user")
+    if not email_password:
+        missing.append("email_password")
+
+    if missing:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Missing required settings",
+                "missing": missing,
+            },
+            "debug": debug_info,
+        }), 400
+
+    mail = None
+    try:
+        debug_info["events"].append({
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "step": "connect",
+            "detail": {
+                "host": email_host,
+                "port": int(email_port),
+                "use_ssl": use_ssl,
+            },
+        })
+
+        if use_ssl:
+            mail = imaplib.IMAP4_SSL(email_host, int(email_port))
+        else:
+            mail = imaplib.IMAP4(email_host, int(email_port))
+
+        debug_info["events"].append({
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "step": "login",
+            "detail": {"user": email_user},
+        })
+        mail.login(email_user, email_password)
+
+        debug_info["events"].append({
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "step": "list_folders",
+        })
+        status, folders = mail.list()
+        debug_info["events"].append({
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "step": "list_folders_result",
+            "detail": {
+                "status": status,
+                "folders": _decode_imap_data(folders[:20] if folders else []),
+            },
+        })
+
+        debug_info["events"].append({
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "step": "select_inbox",
+        })
+        status, data = mail.select("INBOX")
+        debug_info["events"].append({
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "step": "select_inbox_result",
+            "detail": {
+                "status": status,
+                "data": _decode_imap_data(data),
+            },
+        })
+
+        duration_ms = int((time.time() - started_at) * 1000)
+        return jsonify({
+            "success": True,
+            "duration_ms": duration_ms,
+            "debug": debug_info,
+        })
+    except Exception as exc:
+        duration_ms = int((time.time() - started_at) * 1000)
+        return jsonify({
+            "success": False,
+            "duration_ms": duration_ms,
+            "error": {
+                "type": exc.__class__.__name__,
+                "message": str(exc),
+                "traceback": traceback.format_exc(),
+            },
+            "debug": debug_info,
+        }), 500
+    finally:
+        try:
+            if mail is not None:
+                mail.logout()
+        except Exception:
+            pass
+
+
+@emails_bp.route('/emails/graph/settings', methods=['GET', 'POST'])
+def graph_settings():
+    if request.method == 'GET':
+        settings = _get_graph_settings()
+        return jsonify({'success': True, 'settings': settings})
+
+    data = request.get_json(silent=True) or {}
+    settings = _set_graph_settings(data)
+    return jsonify({'success': True, 'settings': settings})
+
+
+@emails_bp.route('/emails/graph/connect', methods=['GET'])
+def graph_connect():
+    settings = _get_graph_settings(include_secret=True)
+    missing = []
+    if not settings.get("client_id"):
+        missing.append("client_id")
+    if not settings.get("tenant_id"):
+        missing.append("tenant_id")
+    if not settings.get("client_secret"):
+        missing.append("client_secret")
+
+    redirect_uri = settings.get("redirect_uri") or url_for('emails.graph_callback', _external=True)
+    settings["redirect_uri"] = redirect_uri
+
+    if missing:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Missing Graph settings",
+                "missing": missing,
+            },
+        }), 400
+
+    state = uuid.uuid4().hex
+    next_url = request.args.get("next") or url_for('emails.list_emails')
+    session["graph_auth_state"] = state
+    session["graph_redirect_uri"] = redirect_uri
+    session["graph_next_url"] = next_url
+
+    cache = _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    auth_url = app.get_authorization_request_url(
+        settings["scopes"],
+        state=state,
+        redirect_uri=redirect_uri,
+        prompt="select_account",
+    )
+    _save_graph_cache(cache)
+    return redirect(auth_url)
+
+
+@emails_bp.route('/emails/graph/callback', methods=['GET'])
+def graph_callback():
+    error = request.args.get("error")
+    if error:
+        return jsonify({
+            "success": False,
+            "error": {
+                "type": error,
+                "message": request.args.get("error_description") or "Authorization failed",
+            },
+        }), 400
+
+    state = request.args.get("state")
+    saved_state = session.get("graph_auth_state")
+    if not state or state != saved_state:
+        if current_app.debug:
+            current_app.logger.warning(
+                "Graph state mismatch in debug; continuing. expected=%s received=%s",
+                saved_state,
+                state,
+            )
+        else:
+            return jsonify({
+                "success": False,
+                "error": {
+                    "message": "State mismatch",
+                },
+            }), 400
+
+    code = request.args.get("code")
+    if not code:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Missing authorization code",
+            },
+        }), 400
+
+    settings = _get_graph_settings(include_secret=True)
+    redirect_uri = session.get("graph_redirect_uri") or settings.get("redirect_uri") or url_for('emails.graph_callback', _external=True)
+    settings["redirect_uri"] = redirect_uri
+
+    cache = _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    result = app.acquire_token_by_authorization_code(
+        code,
+        scopes=settings["scopes"],
+        redirect_uri=redirect_uri,
+    )
+    _save_graph_cache(cache)
+
+    if "error" in result:
+        return jsonify({
+            "success": False,
+            "error": {
+                "type": result.get("error"),
+                "message": result.get("error_description") or "Token acquisition failed",
+                "correlation_id": result.get("correlation_id"),
+            },
+            "debug": result,
+        }), 400
+
+    session["graph_last_user"] = result.get("id_token_claims", {}).get("preferred_username")
+
+    next_url = session.pop("graph_next_url", None) or url_for('emails.list_emails')
+    return redirect(next_url)
+
+
+@emails_bp.route('/emails/graph/test', methods=['POST'])
+def graph_test():
+    settings = _get_graph_settings(include_secret=True)
+    cache = _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache(cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token",
+            },
+            "debug": token,
+        }), 400
+
+    access_token = token["access_token"]
+    headers = {"Authorization": f"Bearer {access_token}"}
+    debug = {"calls": []}
+
+    me_resp = requests.get("https://graph.microsoft.com/v1.0/me", headers=headers, timeout=20)
+    try:
+        me_body = me_resp.json() if me_resp.content else None
+    except ValueError:
+        me_body = me_resp.text
+    debug["calls"].append({
+        "endpoint": "/me",
+        "status": me_resp.status_code,
+        "body": me_body,
+    })
+
+    messages_resp = requests.get(
+        "https://graph.microsoft.com/v1.0/me/messages?$top=5",
+        headers=headers,
+        timeout=20,
+    )
+    try:
+        messages_body = messages_resp.json() if messages_resp.content else None
+    except ValueError:
+        messages_body = messages_resp.text
+    debug["calls"].append({
+        "endpoint": "/me/messages?$top=5",
+        "status": messages_resp.status_code,
+        "body": messages_body,
+    })
+
+    return jsonify({
+        "success": True,
+        "debug": debug,
+    })
+
+
+@emails_bp.route('/emails/graph/messages', methods=['GET'])
+def graph_messages():
+    settings = _get_graph_settings(include_secret=True)
+    cache = _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache(cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token",
+            },
+            "debug": token,
+        }), 400
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    params = {
+        "$top": "20",
+        "$select": "id,subject,from,receivedDateTime,bodyPreview,webLink,conversationId",
+    }
+    resp = requests.get("https://graph.microsoft.com/v1.0/me/messages", headers=headers, params=params, timeout=20)
+    try:
+        body = resp.json() if resp.content else None
+    except ValueError:
+        body = resp.text
+
+    if resp.status_code >= 400:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Graph request failed",
+                "status": resp.status_code,
+            },
+            "debug": body,
+        }), 400
+
+    messages = body.get("value", []) if isinstance(body, dict) else []
+    message_ids = [m.get("id") for m in messages if isinstance(m, dict) and m.get("id")]
+    conversation_ids = [m.get("conversationId") for m in messages if isinstance(m, dict) and m.get("conversationId")]
+    ticket_by_message, ticket_by_conversation = _fetch_email_associations(message_ids, conversation_ids, "tickets")
+    parts_list_by_message, parts_list_by_conversation = _fetch_email_associations(message_ids, conversation_ids, "parts_lists")
+
+    for message in messages:
+        from_data = message.get("from", {}).get("emailAddress", {}) if isinstance(message, dict) else {}
+        from_email = from_data.get("address")
+        message["from_email"] = from_email
+        message["from_name"] = from_data.get("name")
+        message["lookup"] = _lookup_contact_company(from_email)
+        message_id = message.get("id")
+        conversation_id = message.get("conversationId")
+        message["ticket_id"] = ticket_by_message.get(message_id) or ticket_by_conversation.get(conversation_id)
+        message["parts_list_id"] = parts_list_by_message.get(message_id) or parts_list_by_conversation.get(conversation_id)
+    return jsonify({
+        "success": True,
+        "messages": messages,
+    })
+
+
+@emails_bp.route('/emails/graph/message/<message_id>', methods=['GET'])
+def graph_message_detail(message_id):
+    settings = _get_graph_settings(include_secret=True)
+    cache = _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache(cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token",
+            },
+            "debug": token,
+        }), 400
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    params = {
+        "$select": "id,subject,from,receivedDateTime,body,bodyPreview,webLink,conversationId",
+    }
+    resp = requests.get(f"https://graph.microsoft.com/v1.0/me/messages/{message_id}", headers=headers, params=params, timeout=20)
+    try:
+        body = resp.json() if resp.content else None
+    except ValueError:
+        body = resp.text
+
+    if resp.status_code >= 400:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Graph request failed",
+                "status": resp.status_code,
+            },
+            "debug": body,
+        }), 400
+
+    from_data = body.get("from", {}).get("emailAddress", {}) if isinstance(body, dict) else {}
+    from_email = from_data.get("address")
+    lookup = _lookup_contact_company(from_email)
+
+    return jsonify({
+        "success": True,
+        "message": body,
+        "lookup": lookup,
+    })
+
+
+@emails_bp.route('/emails/graph/message/<message_id>/inline-attachments', methods=['GET'])
+def graph_message_inline_attachments(message_id):
+    settings = _get_graph_settings(include_secret=True)
+    cache = _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache(cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token",
+            },
+            "debug": token,
+        }), 400
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    params = {
+        "$select": "id,name,contentId,contentType,isInline,contentBytes",
+    }
+    resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments",
+        headers=headers,
+        params=params,
+        timeout=20,
+    )
+    try:
+        body = resp.json() if resp.content else None
+    except ValueError:
+        body = resp.text
+
+    if resp.status_code >= 400:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Graph request failed",
+                "status": resp.status_code,
+            },
+            "debug": body,
+        }), 400
+
+    attachments = []
+    for item in body.get("value", []) if isinstance(body, dict) else []:
+        content_id = item.get("contentId")
+        content_bytes = item.get("contentBytes")
+        if not item.get("isInline") or not content_id or not content_bytes:
+            continue
+        content_type = item.get("contentType") or "application/octet-stream"
+        attachments.append({
+            "content_id": content_id,
+            "content_id_key": _normalize_content_id(content_id),
+            "data_url": f"data:{content_type};base64,{content_bytes}",
+        })
+
+    return jsonify({
+        "success": True,
+        "attachments": attachments,
+    })
+
+@emails_bp.route('/emails/graph/message/<message_id>/attachments', methods=['GET'])
+def graph_message_attachments(message_id):
+    settings = _get_graph_settings(include_secret=True)
+    cache = _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache(cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token",
+            },
+            "debug": token,
+        }), 400
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    params = {
+        "$select": "id,name,contentType,size,isInline",
+    }
+    resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments",
+        headers=headers,
+        params=params,
+        timeout=20,
+    )
+    try:
+        body = resp.json() if resp.content else None
+    except ValueError:
+        body = resp.text
+
+    if resp.status_code >= 400:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Graph request failed",
+                "status": resp.status_code,
+            },
+            "debug": body,
+        }), 400
+
+    attachments = []
+    for item in body.get("value", []) if isinstance(body, dict) else []:
+        name = item.get("name") or ""
+        content_type = item.get("contentType") or ""
+        is_pdf = name.lower().endswith(".pdf") or content_type == "application/pdf"
+        attachments.append({
+            "id": item.get("id"),
+            "name": name,
+            "content_type": content_type,
+            "size": item.get("size"),
+            "is_inline": item.get("isInline"),
+            "is_pdf": is_pdf,
+        })
+
+    return jsonify({
+        "success": True,
+        "attachments": attachments,
+    })
+
+
+@emails_bp.route('/emails/graph/message/<message_id>/attachments/<attachment_id>', methods=['GET'])
+def graph_message_attachment_content(message_id, attachment_id):
+    settings = _get_graph_settings(include_secret=True)
+    cache = _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache(cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token",
+            },
+            "debug": token,
+        }), 400
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments/{attachment_id}",
+        headers=headers,
+        timeout=20,
+    )
+    try:
+        body = resp.json() if resp.content else None
+    except ValueError:
+        body = resp.text
+
+    if resp.status_code >= 400:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Graph request failed",
+                "status": resp.status_code,
+            },
+            "debug": body,
+        }), 400
+
+    if not isinstance(body, dict):
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Invalid attachment response",
+            },
+        }), 400
+
+    content_bytes = body.get("contentBytes")
+    if not content_bytes:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Attachment has no content",
+            },
+        }), 400
+
+    return jsonify({
+        "success": True,
+        "attachment": {
+            "id": body.get("id"),
+            "name": body.get("name"),
+            "content_type": body.get("contentType"),
+            "size": body.get("size"),
+            "content_bytes": content_bytes,
+        },
+    })
 
 from bs4 import BeautifulSoup
 
@@ -561,6 +1451,7 @@ def upload_email(entity, entity_id):
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
         file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+        wipe_existing = str(request.form.get('wipe_existing', '')).lower() in ('1', 'true', 'on', 'yes')
 
         try:
             # Save the file to the uploads folder
@@ -573,6 +1464,23 @@ def upload_email(entity, entity_id):
             email_content = msg.htmlBody if msg.htmlBody else msg.body
 
             with db_cursor(commit=True) as cursor:
+                if wipe_existing:
+                    _execute_with_cursor(
+                        cursor,
+                        'DELETE FROM excess_stock_lines WHERE excess_stock_list_id = ?',
+                        (entity_id,),
+                    )
+                    _execute_with_cursor(
+                        cursor,
+                        'DELETE FROM excess_stock_files WHERE excess_stock_list_id = ?',
+                        (entity_id,),
+                    )
+                    _execute_with_cursor(
+                        cursor,
+                        'UPDATE excess_stock_lists SET email = NULL WHERE id = ?',
+                        (entity_id,),
+                    )
+
                 _execute_with_cursor(
                     cursor,
                     'UPDATE excess_stock_lists SET email = ? WHERE id = ?',

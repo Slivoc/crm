@@ -1297,11 +1297,14 @@ def get_excess_list_by_id221(excess_list_id):
     ]
 
 
-def insert_excess_stock_line(excess_stock_list_id, base_part_number, quantity, date_code=None, manufacturer=None):
+def insert_excess_stock_line(excess_stock_list_id, base_part_number, quantity, date_code=None, manufacturer=None, unit_price=None, unit_price_currency_id=None, part_number=None):
     db_execute('''
-        INSERT INTO excess_stock_lines (excess_stock_list_id, base_part_number, quantity, date_code, manufacturer)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (excess_stock_list_id, base_part_number, quantity, date_code, manufacturer), commit=True)
+        INSERT INTO excess_stock_lines (
+            excess_stock_list_id, base_part_number, quantity, date_code, manufacturer,
+            unit_price, unit_price_currency_id, part_number
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (excess_stock_list_id, base_part_number, quantity, date_code, manufacturer, unit_price, unit_price_currency_id, part_number), commit=True)
 
 
 def get_excess_stock_list_id_by_file(file_id):

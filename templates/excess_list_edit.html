@@ -13,30 +13,34 @@
                 <div class="card-body">
                     <form action="{{ url_for('excess.edit_excess_list', list_id=excess_list.id) }}" method="post">
                         <div class="row">
+                            <div class="col-md-12">
+                                <div class="mb-3">
+                                    <label for="name" class="form-label">List Name:</label>
+                                    <input type="text" id="name" name="name" class="form-control" value="{{ excess_list.name or '' }}">
+                                </div>
+                            </div>
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label for="customer_id" class="form-label">Customer:</label>
-                                    <select id="customer_id" name="customer_id" class="form-select">
-                                        <option value="">Select Customer</option>
-                                        {% for customer in customers %}
-                                        <option value="{{ customer.id }}" {% if customer.id == excess_list.customer_id %}selected{% endif %}>
-                                            {{ customer.name }}
-                                        </option>
-                                        {% endfor %}
-                                    </select>
+                                    <div class="position-relative">
+                                        <input type="text" id="customer_search" class="form-control" placeholder="Search customers..." autocomplete="off" value="{{ excess_list.customer_name or '' }}">
+                                        <input type="hidden" id="customer_id" name="customer_id" value="{{ excess_list.customer_id or '' }}">
+                                        <div id="customer_search_results" class="position-absolute w-100 mt-1 d-none" style="z-index: 1050;">
+                                            <div class="list-group shadow"></div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label for="supplier_id" class="form-label">Supplier:</label>
-                                    <select id="supplier_id" name="supplier_id" class="form-select">
-                                        <option value="">Select Supplier</option>
-                                        {% for supplier in suppliers %}
-                                        <option value="{{ supplier.id }}" {% if supplier.id == excess_list.supplier_id %}selected{% endif %}>
-                                            {{ supplier.name }}
-                                        </option>
-                                        {% endfor %}
-                                    </select>
+                                    <div class="position-relative">
+                                        <input type="text" id="supplier_search" class="form-control" placeholder="Search suppliers..." autocomplete="off" value="{{ excess_list.supplier_name or '' }}">
+                                        <input type="hidden" id="supplier_id" name="supplier_id" value="{{ excess_list.supplier_id or '' }}">
+                                        <div id="supplier_search_results" class="position-absolute w-100 mt-1 d-none" style="z-index: 1050;">
+                                            <div class="list-group shadow"></div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="col-md-6">
@@ -66,7 +70,15 @@
                     {% endif %}
                 </div>
 
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="wipe_existing_toggle" {% if total_lines and total_lines > 0 %}checked{% endif %}>
+                    <label class="form-check-label" for="wipe_existing_toggle">
+                        Replace existing lines and attachments on upload
+                    </label>
+                </div>
+
                 <form id="email-upload-form" action="{{ url_for('emails.upload_email', entity='excess_list', entity_id=excess_list.id) }}" method="post" enctype="multipart/form-data" style="display: none;">
+                    <input type="hidden" id="wipe_existing" name="wipe_existing" value="0">
                     <input type="file" id="email_file" name="email_file" accept=".eml, .msg">
                     <button type="submit" class="btn btn-primary">Upload Email</button>
                 </form>
@@ -120,6 +132,9 @@
                     <a href="{{ url_for('excess.match_excess', excess_stock_list_id=excess_list.id) }}" class="btn btn-success">
                         Match Excess Stock
                     </a>
+                    <button type="button" class="btn btn-outline-danger ms-2" id="delete-excess-list-btn">
+                        Delete List
+                    </button>
                 </div>
             </div>
         </div>
@@ -133,13 +148,38 @@
                     <strong>Excess List Items</strong>
                 </div>
                 <div class="card-body">
+                    <form method="get" class="row g-2 align-items-end mb-3">
+                        <div class="col-md-6">
+                            <label for="line-search" class="form-label">Search lines</label>
+                            <input type="text" id="line-search" name="q" class="form-control" value="{{ line_search_query or '' }}" placeholder="Part number, manufacturer, date code">
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end gap-2">
+                            <button type="submit" class="btn btn-outline-primary">Search</button>
+                            <a class="btn btn-outline-secondary" href="{{ url_for('excess.edit_excess_list', list_id=excess_list.id) }}">Clear</a>
+                            {% if not line_search_query and total_lines and total_lines > line_limit and not line_show_all %}
+                            <a class="btn btn-outline-secondary" href="{{ url_for('excess.edit_excess_list', list_id=excess_list.id, show_all=1) }}">Show all</a>
+                            {% endif %}
+                        </div>
+                    </form>
+                    <div class="text-muted small mb-2">
+                        {% if line_search_query %}
+                            Showing {{ excess_list_lines|length }} of {{ filtered_lines or 0 }} matching lines.
+                        {% elif line_show_all %}
+                            Showing all {{ total_lines or 0 }} lines.
+                        {% else %}
+                            Showing first {{ excess_list_lines|length }} of {{ total_lines or 0 }} lines.
+                        {% endif %}
+                    </div>
                     <table class="table table-striped">
                         <thead>
                             <tr>
                                 <th>ID</th>
+                                <th>Part Number</th>
                                 <th>Base Part Number</th>
                                 <th>Manufacturer</th>
                                 <th>Quantity</th>
+                                <th>Unit Price</th>
+                                <th>Currency</th>
                                 <th>Date Code</th>
                             </tr>
                         </thead>
@@ -147,9 +187,12 @@
                             {% for line in excess_list_lines %}
                             <tr>
                                 <td>{{ line.id }}</td>
+                                <td>{{ line.part_number or '-' }}</td>
                                 <td>{{ line.base_part_number }}</td>
                                 <td>{{ line.manufacturer }}</td>
                                 <td>{{ line.quantity }}</td>
+                                <td>{{ line.unit_price }}</td>
+                                <td>{{ line.unit_price_currency_code or '-' }}</td>
                                 <td>{{ line.date_code }}</td>
                             </tr>
                             {% endfor %}
@@ -164,9 +207,87 @@
 <script>
 // JavaScript for handling drag-and-drop and email upload
 document.addEventListener('DOMContentLoaded', (event) => {
+    function initLookupSearch(options) {
+        const input = document.getElementById(options.inputId);
+        const hidden = document.getElementById(options.hiddenId);
+        const results = document.getElementById(options.resultsId);
+        const list = results ? results.querySelector('.list-group') : null;
+        let timer;
+
+        if (!input || !hidden || !results || !list) {
+            return;
+        }
+
+        input.addEventListener('input', function() {
+            const query = input.value.trim();
+            hidden.value = '';
+            clearTimeout(timer);
+
+            if (query.length < 2) {
+                results.classList.add('d-none');
+                list.innerHTML = '';
+                return;
+            }
+
+            timer = setTimeout(() => {
+                fetch(`${options.endpoint}?q=${encodeURIComponent(query)}&limit=${options.limit || 15}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        list.innerHTML = '';
+                        if (!data || data.length === 0) {
+                            const emptyItem = document.createElement('div');
+                            emptyItem.className = 'list-group-item text-muted';
+                            emptyItem.textContent = 'No results found';
+                            list.appendChild(emptyItem);
+                        } else {
+                            data.forEach(item => {
+                                const button = document.createElement('button');
+                                button.type = 'button';
+                                button.className = 'list-group-item list-group-item-action';
+                                button.textContent = item.name;
+                                button.addEventListener('click', () => {
+                                    hidden.value = item.id;
+                                    input.value = item.name;
+                                    results.classList.add('d-none');
+                                    list.innerHTML = '';
+                                });
+                                list.appendChild(button);
+                            });
+                        }
+                        results.classList.remove('d-none');
+                    })
+                    .catch(() => {
+                        results.classList.add('d-none');
+                    });
+            }, 300);
+        });
+
+        document.addEventListener('click', function(event) {
+            if (!results.contains(event.target) && event.target !== input) {
+                results.classList.add('d-none');
+            }
+        });
+    }
+
+    initLookupSearch({
+        inputId: 'customer_search',
+        hiddenId: 'customer_id',
+        resultsId: 'customer_search_results',
+        endpoint: "{{ url_for('customers.customer_search') }}"
+    });
+
+    initLookupSearch({
+        inputId: 'supplier_search',
+        hiddenId: 'supplier_id',
+        resultsId: 'supplier_search_results',
+        endpoint: "{{ url_for('suppliers.supplier_search') }}"
+    });
+
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('email_file');
     const form = document.getElementById('email-upload-form');
+    const wipeToggle = document.getElementById('wipe_existing_toggle');
+    const wipeInput = document.getElementById('wipe_existing');
 
     // Prevent default drag behaviors
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -213,10 +334,37 @@ document.addEventListener('DOMContentLoaded', (event) => {
     }
 
     function handleFiles(files) {
+        if (wipeInput && wipeToggle) {
+            wipeInput.value = wipeToggle.checked ? '1' : '0';
+        }
         if (files instanceof FileList) {
             fileInput.files = files; // Populate the file input with the dropped files
         }
         form.submit();  // Automatically submit the form with the uploaded file
+    }
+
+    const deleteBtn = document.getElementById('delete-excess-list-btn');
+    if (deleteBtn) {
+        deleteBtn.addEventListener('click', function() {
+            if (!confirm(`Delete excess list #{{ excess_list.id }}?\n\nThis will permanently delete the list and all its lines.`)) {
+                return;
+            }
+            fetch("{{ url_for('excess.delete_excess_list', list_id=excess_list.id) }}", {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = "{{ url_for('excess.view_excess_lists') }}";
+                } else {
+                    alert('Error: ' + (data.message || 'Unable to delete list'));
+                }
+            })
+            .catch(error => {
+                alert('Error deleting list: ' + error.message);
+            });
+        });
     }
 });
 </script>

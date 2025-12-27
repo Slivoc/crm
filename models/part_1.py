@@ -69,6 +69,10 @@ def get_db():
     return get_db_connection()
 
 def dict_from_row(row):
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row
     return dict(zip(row.keys(), row))
 
 
@@ -1526,7 +1530,6 @@ def update_rfq_line_db(line_id, update_data):
 def insert_update(customer_id, salesperson_id, update_text, contact_id=None, communication_type=None, update_date=None):
     # Use provided date or default to current timestamp
     if update_date:
-        from datetime import datetime, date
         if isinstance(update_date, date) and not isinstance(update_date, datetime):
             update_datetime = datetime.combine(update_date, datetime.min.time())
         elif isinstance(update_date, datetime):

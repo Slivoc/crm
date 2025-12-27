@@ -56,7 +56,7 @@ idna==3.10
 importlib_resources==6.4.5
 itsdangerous==2.2.0
 Jinja2==3.1.4
-jiter==0.5.0
+jiter==0.5.0; python_version < "3.13" or platform_system != "Windows"
 joblib==1.4.2
 jsonlines==4.0.0
 jsonschema==4.23.0
@@ -126,6 +126,7 @@ referencing==0.35.1
 regex==2024.9.11
 reportlab==4.2.5
 requests==2.32.3
+msal==1.30.0
 rich==13.9.2
 rouge_score==0.1.2
 rpds-py==0.20.0

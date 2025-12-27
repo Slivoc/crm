@@ -1882,6 +1882,31 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         LIMIT 10
     ''', (base_part_number,)).fetchall()
 
+    excess_data = _execute_with_cursor(cursor, '''
+        SELECT
+            l.id,
+            l.excess_stock_list_id,
+            l.quantity,
+            l.date_code,
+            l.manufacturer,
+            l.unit_price,
+            l.unit_price_currency_id,
+            c.currency_code,
+            c.symbol,
+            el.name as list_name,
+            el.upload_date,
+            el.entered_date,
+            s.id as supplier_id,
+            s.name as supplier_name
+        FROM excess_stock_lines l
+        JOIN excess_stock_lists el ON el.id = l.excess_stock_list_id
+        LEFT JOIN suppliers s ON s.id = el.supplier_id
+        LEFT JOIN currencies c ON c.id = l.unit_price_currency_id
+        WHERE l.base_part_number = ?
+        ORDER BY el.upload_date DESC, el.entered_date DESC, l.id DESC
+        LIMIT 10
+    ''', (base_part_number,)).fetchall()
+
     # Parts List Quotes metrics
     parts_list_quotes_count = len(parts_list_quotes)
     lowest_parts_list_quote_price = None
@@ -1962,6 +1987,28 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
             avg_po_price = sum(prices) / len(prices)
         if po_data:
             most_recent_po_supplier = po_data[0]['supplier_name']
+
+    # Excess metrics
+    excess_count = len(excess_data)
+    lowest_excess_price = None
+    lowest_excess_supplier = None
+    lowest_excess_supplier_id = None
+    lowest_excess_currency_code = None
+    lowest_excess_currency_id = None
+    lowest_excess_list_id = None
+    if excess_data:
+        priced_rows = [
+            row for row in excess_data
+            if row['unit_price'] is not None and isinstance(row['unit_price'], (int, float))
+        ]
+        if priced_rows:
+            lowest_row = min(priced_rows, key=lambda x: x['unit_price'])
+            lowest_excess_price = lowest_row['unit_price']
+            lowest_excess_supplier = lowest_row['supplier_name']
+            lowest_excess_supplier_id = lowest_row['supplier_id']
+            lowest_excess_currency_code = lowest_row['currency_code']
+            lowest_excess_currency_id = lowest_row['unit_price_currency_id']
+            lowest_excess_list_id = lowest_row['excess_stock_list_id']
 
     # ILS data
     ils_data = _execute_with_cursor(cursor, '''
@@ -2069,6 +2116,16 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         'avg_po_price': avg_po_price,
         'most_recent_po_supplier': most_recent_po_supplier,
         'po_details': [dict(po) for po in po_data],
+
+        # Excess
+        'excess_count': excess_count,
+        'lowest_excess_price': lowest_excess_price,
+        'lowest_excess_supplier': lowest_excess_supplier,
+        'lowest_excess_supplier_id': lowest_excess_supplier_id,
+        'lowest_excess_currency_code': lowest_excess_currency_code,
+        'lowest_excess_currency_id': lowest_excess_currency_id,
+        'lowest_excess_list_id': lowest_excess_list_id,
+        'excess_details': [dict(row) for row in excess_data],
 
         # ILS
         'ils_total_suppliers': ils_total_suppliers,
@@ -3618,7 +3675,19 @@ def add_suggested_supplier(list_id, line_id):
         )
 
         if existing:
-            return jsonify(success=False, message='Supplier already in suggested list'), 400
+            supplier = db_execute(
+                """
+                SELECT name FROM suppliers WHERE id = ?
+                """,
+                (supplier_id,),
+                fetch='one',
+            )
+            return jsonify(
+                success=True,
+                suggested_id=existing['id'],
+                supplier_name=supplier['name'] if supplier else None,
+                message='Supplier already in suggested list',
+            )
 
         # Get supplier name
         supplier = db_execute(
@@ -4160,6 +4229,29 @@ def parts_list_sourcing(list_id):
                     ORDER BY sm.movement_date
                 """, (base_part_number,)).fetchall()
 
+                excess_data = _execute_with_cursor(cur, """
+                    SELECT
+                        l.id,
+                        l.quantity,
+                        l.date_code,
+                        l.manufacturer,
+                        l.unit_price,
+                        l.unit_price_currency_id,
+                        c.currency_code,
+                        el.name as list_name,
+                        el.upload_date,
+                        el.entered_date,
+                        s.id as supplier_id,
+                        s.name as supplier_name
+                    FROM excess_stock_lines l
+                    JOIN excess_stock_lists el ON el.id = l.excess_stock_list_id
+                    LEFT JOIN suppliers s ON s.id = el.supplier_id
+                    LEFT JOIN currencies c ON c.id = l.unit_price_currency_id
+                    WHERE l.base_part_number = ?
+                    ORDER BY el.upload_date DESC, el.entered_date DESC, l.id DESC
+                    LIMIT 10
+                """, (base_part_number,)).fetchall()
+
                 ils_data = _execute_with_cursor(cur, """
                     SELECT 
                         r.ils_company_name,
@@ -4248,6 +4340,7 @@ def parts_list_sourcing(list_id):
                 line_dict['vq_data'] = [dict(r) for r in vq_data]
                 line_dict['po_data'] = [dict(r) for r in po_data]
                 line_dict['stock_data'] = [dict(r) for r in stock_data]
+                line_dict['excess_data'] = [dict(r) for r in excess_data]
                 line_dict['ils_data'] = [dict(r) for r in ils_data]
                 line_dict['suggested_suppliers'] = [dict(r) for r in suggested_suppliers]
                 line_dict['email_history'] = email_history
@@ -4259,6 +4352,7 @@ def parts_list_sourcing(list_id):
         lines_with_vq = sum(1 for l in lines_with_data if len(l['vq_data']) > 0)
         lines_with_po = sum(1 for l in lines_with_data if len(l['po_data']) > 0)
         lines_with_stock = sum(1 for l in lines_with_data if len(l['stock_data']) > 0)
+        lines_with_excess = sum(1 for l in lines_with_data if len(l.get('excess_data') or []) > 0)
         lines_with_ils = sum(1 for l in lines_with_data if len(l['ils_data']) > 0)
         lines_with_suggested = sum(1 for l in lines_with_data if len(l['suggested_suppliers']) > 0)
         lines_contacted = sum(1 for l in lines_with_data if len(l['email_history']) > 0)
@@ -4280,6 +4374,7 @@ def parts_list_sourcing(list_id):
                                lines_with_vq=lines_with_vq,
                                lines_with_po=lines_with_po,
                                lines_with_stock=lines_with_stock,
+                               lines_with_excess=lines_with_excess,
                                lines_with_ils=lines_with_ils,
                                lines_with_suggested=lines_with_suggested,
                                lines_contacted=lines_contacted,
@@ -4899,6 +4994,32 @@ def extract_quote_from_pdf():
         logging.exception("PDF extraction failed")
         return jsonify(success=False, message="Failed to process PDF: " + str(e))
 
+@parts_list_bp.route('/extract-pdf-text', methods=['POST'])
+def extract_pdf_text():
+    if 'file' not in request.files:
+        return jsonify(success=False, message="No file uploaded"), 400
+
+    file = request.files['file']
+    if not file or not file.filename or not file.filename.lower().endswith('.pdf'):
+        return jsonify(success=False, message="Please upload a PDF file"), 400
+
+    try:
+        import pdfplumber
+        text_parts = []
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                if page_text:
+                    text_parts.append(page_text)
+        text = "\n".join(text_parts).strip()
+        max_chars = 60000
+        if len(text) > max_chars:
+            text = text[:max_chars] + "..."
+        return jsonify(success=True, text=text)
+    except Exception as e:
+        logging.exception("PDF text extraction failed")
+        return jsonify(success=False, message="Failed to process PDF: " + str(e))
+
 @parts_list_bp.route('/global-quick-search')
 def global_quick_search():
     q = request.args.get('q', '').strip()
@@ -4929,6 +5050,8 @@ def global_quick_search():
 @parts_list_bp.route('/parts-lists/<int:list_id>/quick-quote')
 def quick_supplier_quote(list_id, supplier_id=None):
     cache_bust = datetime.now().strftime('%Y%m%d')
+    email_message_id = request.args.get('email_message_id') or None
+    email_conversation_id = request.args.get('email_conversation_id') or None
 
     with db_cursor() as cur:
         # Verify list exists
@@ -5009,6 +5132,8 @@ def quick_supplier_quote(list_id, supplier_id=None):
                            lines=[dict(l) for l in lines],
                            suppliers=[dict(s) for s in suppliers],
                            currencies=[dict(c) for c in currencies],
+                           email_message_id=email_message_id,
+                           email_conversation_id=email_conversation_id,
                            cache_bust=cache_bust)
 
 
@@ -5824,6 +5949,8 @@ def create_from_email():
     """
     uploaded_file = request.files.get('file')
     raw_body = request.get_data() if not uploaded_file else None
+    email_message_id = request.form.get('email_message_id') if uploaded_file else request.headers.get('X-Email-Message-Id')
+    email_conversation_id = request.form.get('email_conversation_id') if uploaded_file else request.headers.get('X-Email-Conversation-Id')
 
     if not uploaded_file and not raw_body:
         logging.warning("create-from-email: no multipart file and empty body")
@@ -6062,10 +6189,10 @@ def create_from_email():
             
             list_row = _execute_with_cursor(cur, """
                 INSERT INTO parts_lists 
-                    (name, customer_id, contact_id, salesperson_id, status_id, notes, date_created, date_modified)
-                VALUES (?, ?, ?, ?, 1, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (name, customer_id, contact_id, salesperson_id, status_id, notes, email_message_id, email_conversation_id, date_created, date_modified)
+                VALUES (?, ?, ?, ?, 1, '', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 RETURNING id
-            """, (list_name, customer_id, contact_id, salesperson_id)).fetchone()
+            """, (list_name, customer_id, contact_id, salesperson_id, email_message_id, email_conversation_id)).fetchone()
             
             list_id = list_row['id'] if list_row else getattr(cur, 'lastrowid', None)
             logging.info(f"Created parts list ID {list_id}")
@@ -6131,6 +6258,8 @@ def outlook_macro():
     sender = data.get('sender_email') or data.get('sender') or ''
     selected_text = data.get('selected_text') or ''
     body_text = data.get('body_text') or ''
+    email_message_id = data.get('message_id') or data.get('email_message_id')
+    email_conversation_id = data.get('conversation_id') or data.get('email_conversation_id')
 
     def _clean_body(text: str) -> str:
         """Remove control chars and collapse whitespace from email bodies."""
@@ -6209,10 +6338,10 @@ def outlook_macro():
 
             list_row = _execute_with_cursor(cur, """
                 INSERT INTO parts_lists 
-                    (name, customer_id, contact_id, salesperson_id, status_id, notes, date_created, date_modified)
-                VALUES (?, ?, ?, ?, 1, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (name, customer_id, contact_id, salesperson_id, status_id, notes, email_message_id, email_conversation_id, date_created, date_modified)
+                VALUES (?, ?, ?, ?, 1, '', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 RETURNING id
-            """, (list_name, customer_id, contact_id, salesperson_id)).fetchone()
+            """, (list_name, customer_id, contact_id, salesperson_id, email_message_id, email_conversation_id)).fetchone()
 
             list_id = list_row['id'] if list_row else getattr(cur, 'lastrowid', None)
             logging.info(f"Outlook macro created parts list ID {list_id}")

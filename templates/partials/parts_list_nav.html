@@ -21,6 +21,13 @@
                         <i class="bi bi-person-plus me-1"></i>Assign Customer
                     </button>
                 {% endif %}
+                <button type="button"
+                        class="btn btn-sm btn-outline-danger"
+                        id="delete-parts-list-btn"
+                        data-list-id="{{ list_id }}"
+                        data-list-name="{{ list_name|e }}">
+                    <i class="bi bi-trash me-1"></i>Delete
+                </button>
                 <div class="btn-group" role="group">
                 <a href="{{ url_for('parts_list.view_parts_list', list_id=list_id) }}"
                    class="btn btn-sm {{ 'btn-primary' if active_page == 'overview' else 'btn-outline-secondary' }}">
@@ -54,6 +61,35 @@
         </div>
     </div>
 </div>
+
+<script>
+(function() {
+    const deleteBtn = document.getElementById('delete-parts-list-btn');
+    if (!deleteBtn) return;
+    deleteBtn.addEventListener('click', function() {
+        const listId = this.getAttribute('data-list-id');
+        const listName = this.getAttribute('data-list-name') || '';
+        if (!confirm(`Delete parts list "${listName}"?\n\nThis will permanently delete the list and all its lines.`)) {
+            return;
+        }
+        fetch("{{ url_for('parts_list.delete_parts_list', list_id=0) }}".replace('/0/', `/${listId}/`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.location.href = "{{ url_for('parts_list.view_parts_lists') }}";
+            } else {
+                alert('Error: ' + (data.message || 'Unable to delete list'));
+            }
+        })
+        .catch(error => {
+            alert('Error deleting list: ' + error.message);
+        });
+    });
+})();
+</script>
 
 {% if not customer_name %}
 <style>

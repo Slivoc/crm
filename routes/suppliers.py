@@ -55,6 +55,56 @@ def suppliers():
     breadcrumbs = generate_breadcrumbs(path)
     suppliers = get_suppliers()
     return render_template('suppliers.html', currencies=currencies, suppliers=suppliers, breadcrumbs=breadcrumbs)
+
+
+@suppliers_bp.route('/search')
+def supplier_search():
+    query = request.args.get('q', '') or request.args.get('query', '')
+    limit = int(request.args.get('limit', 10))
+
+    if not query:
+        return jsonify([])
+
+    params = (
+        f'%{query}%',
+        f'{query}%',
+        f'%{query}%',
+        limit,
+    )
+    if _using_postgres():
+        sql = '''
+            SELECT id, name
+            FROM suppliers
+            WHERE name ILIKE ?
+            ORDER BY
+                CASE
+                    WHEN name ILIKE ? THEN 1
+                    WHEN name ILIKE ? THEN 2
+                    ELSE 3
+                END,
+                name
+            LIMIT ?
+        '''
+    else:
+        sql = '''
+            SELECT id, name
+            FROM suppliers
+            WHERE LOWER(name) LIKE LOWER(?)
+            ORDER BY
+                CASE
+                    WHEN LOWER(name) LIKE LOWER(?) THEN 1
+                    WHEN LOWER(name) LIKE LOWER(?) THEN 2
+                    ELSE 3
+                END,
+                name
+            LIMIT ?
+        '''
+
+    suppliers = db_execute(sql, params, fetch='all') or []
+    return jsonify([{
+        'id': supplier['id'],
+        'name': supplier['name'],
+    } for supplier in suppliers])
 @suppliers_bp.route('/create', methods=['POST'])
 def create_supplier():
     if request.method == 'POST':

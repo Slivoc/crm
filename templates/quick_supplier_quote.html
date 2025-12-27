@@ -158,6 +158,14 @@
                     </h5>
                 </div>
                 <div class="card-body d-flex flex-column">
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <label class="form-label mb-0 me-2">Pull from email</label>
+                        <select class="form-select form-select-sm" id="email-source-select" style="max-width: 260px;">
+                            <option value="body">Mail body</option>
+                        </select>
+                        <button class="btn btn-outline-primary btn-sm" type="button" id="load-email-source-btn">Load</button>
+                        <span class="text-muted small" id="email-source-status"></span>
+                    </div>
                     <textarea class="form-control flex-grow-1 mb-3" id="supplier-response-text"
                               rows="10"
                               placeholder="Paste the supplier's email or quote text here...&#10;&#10;The AI will extract part numbers, prices, lead times, and other relevant data."></textarea>
@@ -189,6 +197,8 @@
 <script>
     window.PARTS_LIST_ID = {{ list_id }};
     window.IS_QUICK_QUOTE = true;
+    window.EMAIL_MESSAGE_ID = {{ email_message_id | tojson }};
+    window.EMAIL_CONVERSATION_ID = {{ email_conversation_id | tojson }};
     {% if supplier_id %}
     window.PRESELECTED_SUPPLIER_ID = {{ supplier_id }};
     {% endif %}
@@ -196,4 +206,137 @@
 
 <script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
 <script src="{{ url_for('static', filename='js/supplier_quotes.js') }}?v={{ cache_bust }}"></script>
+<script>
+    const emailSourceSelect = document.getElementById('email-source-select');
+    const emailSourceButton = document.getElementById('load-email-source-btn');
+    const emailSourceStatus = document.getElementById('email-source-status');
+    const supplierResponseText = document.getElementById('supplier-response-text');
+
+    function setEmailStatus(message, isError = false) {
+        if (!emailSourceStatus) return;
+        emailSourceStatus.textContent = message || '';
+        emailSourceStatus.classList.toggle('text-danger', isError);
+        emailSourceStatus.classList.toggle('text-muted', !isError);
+    }
+
+    function parseEmailBodyText(message) {
+        if (!message?.body) return '';
+        if (message.body.contentType === 'text') return message.body.content || '';
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(message.body.content || '', 'text/html');
+        return doc.body?.textContent || '';
+    }
+
+    function base64ToBlob(base64, contentType) {
+        const byteChars = atob(base64);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) {
+            byteNumbers[i] = byteChars.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        return new Blob([byteArray], { type: contentType || 'application/octet-stream' });
+    }
+
+    async function loadEmailAttachments() {
+        if (!window.EMAIL_MESSAGE_ID || !emailSourceSelect) return;
+        setEmailStatus('Loading attachments...');
+        try {
+            const response = await fetch(`/emails/graph/message/${window.EMAIL_MESSAGE_ID}/attachments`);
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                setEmailStatus('Attachment list unavailable', true);
+                return;
+            }
+            const attachments = (data.attachments || []).filter(att => !att.is_inline);
+            if (!attachments.length) {
+                setEmailStatus('No attachments found');
+                return;
+            }
+            attachments.forEach(att => {
+                const option = document.createElement('option');
+                option.value = `attachment:${att.id}`;
+                const label = att.name ? `Attachment: ${att.name}` : 'Attachment';
+                option.textContent = label;
+                option.dataset.contentType = att.content_type || '';
+                option.dataset.isPdf = att.is_pdf ? '1' : '0';
+                emailSourceSelect.appendChild(option);
+            });
+            setEmailStatus('');
+        } catch (error) {
+            setEmailStatus('Attachment list unavailable', true);
+        }
+    }
+
+    async function loadMailBody() {
+        setEmailStatus('Loading mail body...');
+        try {
+            const response = await fetch(`/emails/graph/message/${window.EMAIL_MESSAGE_ID}`);
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                setEmailStatus('Failed to load mail body', true);
+                return;
+            }
+            const text = parseEmailBodyText(data.message || {});
+            supplierResponseText.value = text || '';
+            setEmailStatus(text ? 'Loaded mail body' : 'Mail body was empty');
+        } catch (error) {
+            setEmailStatus('Failed to load mail body', true);
+        }
+    }
+
+    async function loadAttachmentText(attachmentId) {
+        setEmailStatus('Loading attachment...');
+        try {
+            const response = await fetch(`/emails/graph/message/${window.EMAIL_MESSAGE_ID}/attachments/${attachmentId}`);
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                setEmailStatus('Failed to load attachment', true);
+                return;
+            }
+            const attachment = data.attachment || {};
+            const isPdf = (attachment.name || '').toLowerCase().endsWith('.pdf') || attachment.content_type === 'application/pdf';
+            if (!isPdf) {
+                setEmailStatus('Only PDF attachments are supported for now', true);
+                return;
+            }
+
+            const blob = base64ToBlob(attachment.content_bytes, attachment.content_type);
+            const formData = new FormData();
+            formData.append('file', blob, attachment.name || 'attachment.pdf');
+
+            const textResponse = await fetch('/parts_list/extract-pdf-text', {
+                method: 'POST',
+                body: formData
+            });
+            const textData = await textResponse.json();
+            if (!textResponse.ok || !textData.success) {
+                setEmailStatus(textData.message || 'Failed to extract PDF text', true);
+                return;
+            }
+            supplierResponseText.value = textData.text || '';
+            setEmailStatus(textData.text ? 'Loaded attachment text' : 'Attachment text was empty');
+        } catch (error) {
+            setEmailStatus('Failed to load attachment', true);
+        }
+    }
+
+    if (!window.EMAIL_MESSAGE_ID) {
+        if (emailSourceSelect) emailSourceSelect.disabled = true;
+        if (emailSourceButton) emailSourceButton.disabled = true;
+        setEmailStatus('No linked email');
+    } else {
+        loadEmailAttachments();
+        emailSourceButton?.addEventListener('click', async () => {
+            const value = emailSourceSelect.value;
+            if (value === 'body') {
+                await loadMailBody();
+                return;
+            }
+            if (value.startsWith('attachment:')) {
+                const attachmentId = value.split(':')[1];
+                await loadAttachmentText(attachmentId);
+            }
+        });
+    }
+</script>
 {% endblock %}

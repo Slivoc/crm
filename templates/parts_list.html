@@ -579,6 +579,28 @@ AN960-416L"></textarea>
 window.LOADED_LIST_DATA = {{ loaded_list | tojson | safe if loaded_list else 'null' }};
 </script>
 
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const draft = localStorage.getItem('emailPartsListDraft');
+    if (!draft) {
+        return;
+    }
+
+    try {
+        const parsed = JSON.parse(draft);
+        const input = document.getElementById('parts-input');
+        if (input && parsed.body) {
+            input.value = parsed.body;
+            input.dispatchEvent(new Event('input'));
+        }
+    } catch (error) {
+        console.error('Failed to load email draft', error);
+    } finally {
+        localStorage.removeItem('emailPartsListDraft');
+    }
+});
+</script>
+
 
 <script src="{{ url_for('static', filename='js/parts_list.js') }}"></script>
 {% endblock %}

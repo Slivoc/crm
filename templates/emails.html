@@ -1,760 +1,260 @@
 {% extends "base.html" %}
 
 {% block content %}
-
-
-    <div class="card shadow border-0 mb-4">
-        <div class="card-header d-flex justify-content-between align-items-center">
-    <strong>Inbox</strong>
-    <div class="dropdown">
-        <button class="btn btn-primary dropdown-toggle" type="button" id="emailActionsDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-            <i class="bi bi-gear"></i> Email Actions
-        </button>
-        <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="emailActionsDropdown">
-            <li><a class="dropdown-item" href="{{ url_for('emails.scan_email_contacts') }}">
-                <i class="bi bi-search"></i> Scan Emails for new Contacts
-            </a></li>
-            <li><button class="dropdown-item" type="button" id="sync-button">
-                <i class="bi bi-arrow-repeat"></i> Sync latest Emails to database
-            </button></li>
-            <li><button class="dropdown-item" type="button" onclick="syncHistoricEmails()">
-                <i class="bi bi-clock-history"></i> Force Historic Sync
-            </button></li>
-            <li><button class="dropdown-item" type="button" onclick="populateDomains()">
-                <i class="bi bi-globe"></i> Populate Domain Tables
-            </button></li>
-        </ul>
-    </div>
-</div>
-        <div class="card-body table-container p-0">
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th>Sender</th>
-                        <th>Company</th>
-                        <th>Subject</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for email in emails %}
-                    <tr class="email-row" data-id="{{ email.id }}">
-                        <td>{{ email.date }}</td>
-                        <!-- Replace the current sender cell -->
-<td>
-    {% if email.sender %}
-        {% set sender_parts = email.sender.split('<') %}
-        {% if sender_parts|length > 1 %}
-            {% set name = sender_parts[0].replace('"', '').strip() %}
-            {% set email_address = sender_parts[1].replace('>', '').strip() %}
-            <div class="sender-name">{{ name }}</div>
-            <small class="text-muted sender-email">{{ email_address }}</small>
-        {% else %}
-            {{ email.sender }}
-        {% endif %}
-    {% else %}
-        <span class="text-muted">Unknown</span>
-    {% endif %}
-</td>
-<!-- Company cell content -->
-<!-- Replace the current company cell -->
-<td>
-    {% if email.customer_company %}
-    <div class="company-badge customer-company mb-1">
-        <i class="bi bi-building"></i>
-        <span class="company-name">{{ email.customer_company }}</span>
-        <small class="company-type">Customer</small>
-    </div>
-    {% endif %}
-    {% if email.supplier_company %}
-    <div class="company-badge supplier-company mb-1">
-        <i class="bi bi-truck"></i>
-        <span class="company-name">{{ email.supplier_company }}</span>
-        <small class="company-type">Supplier</small>
-    </div>
-    {% endif %}
-    {% if not email.customer_company and not email.supplier_company %}
-    <div class="dropdown d-inline-block">
-        <button class="btn btn-primary btn-sm dropdown-toggle" type="button"
-        id="addContactDropdown-{{ email.id }}"
-        data-bs-toggle="dropdown"
-        data-email="{{ email.sender_email }}"
-        data-name="{{ email.sender_name }}"
-        aria-expanded="false">
-    Add Contact
-</button>
-        <ul class="dropdown-menu" aria-labelledby="addContactDropdown-{{ email.id }}">
-            <li class="dropdown-item-text" id="loadingItem-{{ email.id }}">
-                <small class="text-muted">Loading suggestions...</small>
-            </li>
-            <div id="suggestions-{{ email.id }}"></div>
-            <li><hr class="dropdown-divider"></li>
-            <li>
-                <a class="dropdown-item" href="#"
-   onclick="showAddContactModal('{{ email.sender_email }}', '{{ email.sender_name }}')">
-    <i class="bi bi-plus-circle"></i> Add as new contact
-</a>
-            </li>
-        </ul>
-    </div>
-    {% endif %}
-</td>
-                        <td>{{ email.subject }}</td>
-                            <td>
-                                <div class="btn-group">
-                                    <button type="button" class="btn btn-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                                        Create Record
-                                    </button>
-                                    <ul class="dropdown-menu">
-                                        {% if email.customer_id %}
-                                        <li>
-                                            <form action="{{ url_for('emails.create_rfq_from_email', email_id=email.id) }}" method="post" class="d-inline">
-                                                <button type="submit" class="dropdown-item">Create RFQ</button>
-                                            </form>
-                                        </li>
-                                        {% endif %}
-                                        {% if email.supplier_contact_id %}
-                                        <li>
-                                            <form action="{{ url_for('emails.create_offer_from_email', email_id=email.id) }}" method="post" class="d-inline">
-                                                <button type="submit" class="dropdown-item">Create Offer</button>
-                                            </form>
-                                        </li>
-                                        {% endif %}
-                                    </ul>
-                                </div>
-                            </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-</div>
-</div>
-
- <!-- Modified Add Contact Modal -->
-<div class="modal fade" id="addContactModal" tabindex="-1" aria-labelledby="addContactModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="addContactModalLabel">Add New Contact</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+<div class="mailbox-debugger">
+    <div class="mailbox-hero mb-4">
+        <div class="hero-content">
+            <div>
+                <span class="hero-kicker">Email Admin</span>
+                <h1 class="hero-title">Configure Microsoft Graph for the CRM.</h1>
+                <p class="hero-subtitle">
+                    Set the Azure app settings and test Graph calls. This page is intended for
+                    admin setup and debugging, not daily mailbox use.
+                </p>
             </div>
-            <div class="modal-body">
-                <form id="addContactForm">
-                    <input type="hidden" id="contactEmail">
+            <div class="hero-status">
+                <span class="status-label">Graph config</span>
+                <div id="graphStatus" class="status-pill status-pill--warn">Not configured</div>
+            </div>
+        </div>
+        <div class="hero-footnote">
+            Delegated auth is used so each user connects their own mailbox.
+        </div>
+    </div>
 
-                    <!-- Contact Type Selection -->
-                    <div class="mb-3">
-                        <label class="form-label">Contact Type</label>
-                        <div class="btn-group w-100" role="group">
-                            <input type="radio" class="btn-check" name="contactType" id="customerType" value="customer" checked>
-                            <label class="btn btn-outline-primary" for="customerType">Customer Contact</label>
-
-                            <input type="radio" class="btn-check" name="contactType" id="supplierType" value="supplier">
-                            <label class="btn btn-outline-primary" for="supplierType">Supplier Contact</label>
+    <div class="row g-4">
+        <div class="col-lg-5">
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-white border-0">
+                    <strong>Microsoft Graph (Delegated)</strong>
+                </div>
+                <div class="card-body">
+                    <form id="graphSettingsForm">
+                        <div class="mb-3">
+                            <label for="graphClientId" class="form-label">Client ID</label>
+                            <input type="text"
+                                   class="form-control"
+                                   id="graphClientId"
+                                   value="{{ graph.client_id or '' }}"
+                                   placeholder="App (client) ID">
                         </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="firstName" class="form-label">First Name</label>
-                        <input type="text" class="form-control" id="firstName">
-                    </div>
-                    <div class="mb-3">
-                        <label for="secondName" class="form-label">Second Name</label>
-                        <input type="text" class="form-control" id="secondName">
-                    </div>
-
-                    <!-- Customer Section -->
-                    <div id="customerSection" class="mb-3">
-                        <label for="customerSelect" class="form-label">Customer</label>
-                        <div class="input-group">
-                            <select class="form-select" id="customerSelect">
-                                <option value="">Select Customer...</option>
-                            </select>
-                            <button class="btn btn-outline-secondary" type="button" onclick="showQuickCustomerForm()">
-                                + New
+                        <div class="mb-3">
+                            <label for="graphTenantId" class="form-label">Tenant ID</label>
+                            <input type="text"
+                                   class="form-control"
+                                   id="graphTenantId"
+                                   value="{{ graph.tenant_id or '' }}"
+                                   placeholder="Directory (tenant) ID">
+                        </div>
+                        <div class="mb-3">
+                            <label for="graphClientSecret" class="form-label">Client secret</label>
+                            <input type="password"
+                                   class="form-control"
+                                   id="graphClientSecret"
+                                   placeholder="Paste your client secret">
+                            <div class="form-text">Leave blank to keep the saved secret.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="graphRedirectUri" class="form-label">Redirect URI</label>
+                            <input type="text"
+                                   class="form-control"
+                                   id="graphRedirectUri"
+                                   value="{{ graph.redirect_uri or '' }}"
+                                   placeholder="https://your-domain/emails/graph/callback">
+                            <div class="form-text">Must match a redirect URI in Azure app registration.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="graphScopes" class="form-label">Scopes (comma separated)</label>
+                            <input type="text"
+                                   class="form-control"
+                                   id="graphScopes"
+                                   value="{{ graph.scopes | join(', ') }}"
+                                   placeholder="User.Read, Mail.Read, Mail.Send">
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button type="button" class="btn btn-primary" id="saveGraphBtn">
+                                Save Graph settings
+                            </button>
+                            <button type="button" class="btn btn-outline-primary" id="connectGraphBtn">
+                                Connect with Microsoft
+                            </button>
+                            <button type="button" class="btn btn-dark" id="testGraphBtn">
+                                Test Graph calls
                             </button>
                         </div>
-                        <!-- Quick Customer Creation Form -->
-                        <div id="quickCustomerForm" class="border rounded p-3 mt-2 d-none">
-                            <div class="mb-3">
-                                <label for="newCustomerName" class="form-label">New Customer Name</label>
-                                <input type="text" class="form-control" id="newCustomerName">
-                            </div>
-                            <div class="mb-2">
-                                <button type="button" class="btn btn-primary btn-sm" onclick="createCustomer()">
-                                    Create Customer
-                                </button>
-                                <button type="button" class="btn btn-link btn-sm" onclick="hideQuickCustomerForm()">
-                                    Cancel
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Supplier Section -->
-                    <div id="supplierSection" class="mb-3 d-none">
-                        <label for="supplierSelect" class="form-label">Supplier</label>
-                        <div class="input-group">
-                            <select class="form-select" id="supplierSelect">
-                                <option value="">Select Supplier...</option>
-                            </select>
-                            <button class="btn btn-outline-secondary" type="button" onclick="showQuickSupplierForm()">
-                                + New
-                            </button>
-                        </div>
-                        <!-- Quick Supplier Creation Form -->
-                        <div id="quickSupplierForm" class="border rounded p-3 mt-2 d-none">
-                            <div class="mb-3">
-                                <label for="newSupplierName" class="form-label">New Supplier Name</label>
-                                <input type="text" class="form-control" id="newSupplierName">
-                            </div>
-                            <div class="mb-2">
-                                <button type="button" class="btn btn-primary btn-sm" onclick="createSupplier()">
-                                    Create Supplier
-                                </button>
-                                <button type="button" class="btn btn-link btn-sm" onclick="hideQuickSupplierForm()">
-                                    Cancel
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </form>
+                    </form>
+                </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="saveContact()">Save Contact</button>
+        </div>
+
+        <div class="col-lg-7">
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+                    <strong>Graph Debug Output</strong>
+                    <div class="btn-group">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="copyGraphBtn">
+                            Copy JSON
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="clearGraphBtn">
+                            Clear
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <pre id="graphDebugOutput" class="debug-output">No Graph calls yet.</pre>
+                </div>
+            </div>
+
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white border-0">
+                    <strong>Admin Notes</strong>
+                </div>
+                <div class="card-body">
+                    <textarea class="form-control"
+                              id="debugNotes"
+                              rows="6"
+                              placeholder="Keep notes about tenant approvals, redirect URIs, and scopes."></textarea>
+                </div>
             </div>
         </div>
     </div>
 </div>
 
-
-<!-- Email preview section -->
-<div class="card shadow border-0 mt-4">
-    <div class="card-header">
-        <strong>Email Preview</strong>
-    </div>
-    <div class="card-body">
-        <p><strong>Subject:</strong> <span id="email-subject">Select an email to preview its content...</span></p>
-        <p><strong>From:</strong> <span id="email-sender"></span></p>
-        <p><strong>Date:</strong> <span id="email-date"></span></p>
-        <p><strong>Company:</strong> <span id="email-company"></span></p>
-        <hr>
-        <pre id="email-content" class="email-content"></pre>
-    </div>
-</div>
-
 <script>
-let contactModal;
-document.addEventListener('DOMContentLoaded', function() {
-    // Initialize modal
-    contactModal = new bootstrap.Modal(document.getElementById('addContactModal'));
+const graphSeed = {{ graph | tojson }};
+const graphStatusEl = document.getElementById('graphStatus');
+const graphDebugOutput = document.getElementById('graphDebugOutput');
 
-    // Set up contact type toggle handlers
-    document.querySelectorAll('input[name="contactType"]').forEach(radio => {
-        radio.addEventListener('change', toggleContactType);
-    });
-
-    // Load lists when modal opens
-
-    const viewButtons = document.querySelectorAll('.view-email-btn');
-    const emailRows = document.querySelectorAll('.email-row');
-    const addCustomerForm = document.getElementById('add-customer-form');
-
-    // Function to handle fetching and updating the email preview
-    function handleEmailSelection(emailId) {
-        emailRows.forEach(row => row.classList.remove('selected'));  // Remove previous highlighting
-        const selectedRow = document.querySelector(`tr[data-id='${emailId}']`);
-        selectedRow.classList.add('selected');
-
-            fetch(`/emails/content/${emailId}`)
-        .then(response => response.json())
-        .then(data => {
-            console.log('Email data received:', data);  // Add this line
-            document.getElementById('email-subject').textContent = data.subject;
-            document.getElementById('email-sender').textContent = data.sender;
-            document.getElementById('email-date').textContent = data.date;
-            document.getElementById('email-company').textContent = data.company || 'Unknown';
-            document.getElementById('email-content').textContent = data.content;
-        })
-        .catch(error => console.error('Error fetching email content:', error));
-}
-
-    // Handle row selection for viewing email
-    viewButtons.forEach(button => {
-        button.addEventListener('click', function(event) {
-            event.stopPropagation();  // Prevent the row click from firing too
-            const emailId = this.getAttribute('data-id');
-            handleEmailSelection(emailId);
-        });
-    });
-
-    emailRows.forEach(row => {
-        row.addEventListener('click', function() {
-            const emailId = this.getAttribute('data-id');
-            handleEmailSelection(emailId);
-        });
-    });
-
- });
-
-function sendTestEmail() {
-    fetch('{{ url_for("emails.send_test_email") }}', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                alert('Test email sent successfully!');
-            } else {
-                alert('Failed to send test email: ' + data.error);
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Error sending test email.');
-        });
-}
-document.addEventListener('DOMContentLoaded', function () {
-    const syncButton = document.getElementById('sync-button');
-
-    // Sync Button Click Handler
-    if (syncButton) {
-        syncButton.addEventListener('click', function () {
-            // Show a loading state (optional)
-            syncButton.disabled = true;
-            const originalText = syncButton.innerHTML;
-            syncButton.innerHTML = '<i class="bi bi-arrow-repeat"></i> Syncing...';
-
-            // Make a POST request to the sync emails route
-            fetch('{{ url_for("emails.sync_emails_route") }}', {
-                method: 'POST',
-            })
-                .then((response) => response.json())
-                .then((data) => {
-                    // Update the UI after the sync is complete
-                    alert(data.message || 'Emails synced successfully!');
-                })
-                .catch((error) => {
-                    console.error('Error syncing emails:', error);
-                    alert('Failed to sync emails.');
-                })
-                .finally(() => {
-                    // Reset the button state
-                    syncButton.disabled = false;
-                    syncButton.innerHTML = originalText;
-                });
-        });
-    }
-});
-function syncHistoricEmails() {
-    fetch('/force_historic_scan', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        alert(`Historic sync complete. Synced ${data.count} emails.`);
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Error during historic sync');
-    });
-}
-
-function toggleContactType(event) {
-    const customerSection = document.getElementById('customerSection');
-    const supplierSection = document.getElementById('supplierSection');
-
-    if (!customerSection || !supplierSection) {
-        console.error('Contact type sections not found');
-        return;
-    }
-
-    if (event.target.value === 'customer') {
-        customerSection.classList.remove('d-none');
-        supplierSection.classList.add('d-none');
-    } else {
-        customerSection.classList.add('d-none');
-        supplierSection.classList.remove('d-none');
-    }
-}
-
-async function loadSuppliers() {
-    try {
-        const response = await fetch('/suppliers/api/list');
-        const suppliers = await response.json();
-        const select = document.getElementById('supplierSelect');
-
-        select.innerHTML = '<option value="">Select Supplier...</option>';
-        suppliers.forEach(supplier => {
-            const option = document.createElement('option');
-            option.value = supplier.id;
-            option.textContent = supplier.name;
-            select.appendChild(option);
-        });
-    } catch (error) {
-        console.error('Error loading suppliers:', error);
-        showToast('Failed to load suppliers', 'error');
-    }
-}
-
-function showQuickSupplierForm() {
-    document.getElementById('quickSupplierForm').classList.remove('d-none');
-}
-
-function hideQuickSupplierForm() {
-    document.getElementById('quickSupplierForm').classList.add('d-none');
-    document.getElementById('newSupplierName').value = '';
-}
-
-async function createSupplier() {
-    const supplierName = document.getElementById('newSupplierName').value;
-    const contactEmail = document.getElementById('contactEmail').value; // Get from the hidden input
-
-    if (!supplierName.trim()) {
-        showToast('Please enter a supplier name', 'error');
-        return;
-    }
-
-    try {
-        const response = await fetch('/suppliers/create', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest'
-            },
-            body: JSON.stringify({
-                name: supplierName,
-                email: contactEmail
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            const select = document.getElementById('supplierSelect');
-            const option = document.createElement('option');
-            option.value = data.supplier_id;
-            option.textContent = data.supplier_name;
-            select.appendChild(option);
-            select.value = data.supplier_id;
-
-            hideQuickSupplierForm();
-            showToast('Supplier created successfully');
-        } else {
-            showToast(data.error || 'Failed to create supplier', 'error');
-        }
-    } catch (error) {
-        console.error('Error creating supplier:', error);
-        showToast('Failed to create supplier', 'error');
-    }
-}
-
-async function saveContact() {
-    const submitButton = document.querySelector('.modal-footer .btn-primary');
-    if (!submitButton) return;
-
-    submitButton.disabled = true;
-
-    // Get the email value directly from the hidden input
-    const email = document.getElementById('contactEmail').value;
-    console.log('Email from hidden input:', email); // Debug log
-
-    const contactType = document.querySelector('input[name="contactType"]:checked');
-    if (!contactType) {
-        showToast('Please select a contact type', 'error');
-        submitButton.disabled = false;
-        return;
-    }
-
-      const formData = {
-        email: document.getElementById('contactEmail').value.trim(),
-        first_name: document.getElementById('firstName').value.trim(),  // Changed from name to first_name
-        second_name: document.getElementById('secondName').value.trim(),
-        supplier_id: null,
-        customer_id: null
+function collectGraphSettings() {
+    const payload = {
+        client_id: document.getElementById('graphClientId').value.trim(),
+        tenant_id: document.getElementById('graphTenantId').value.trim(),
+        client_secret: document.getElementById('graphClientSecret').value,
+        redirect_uri: document.getElementById('graphRedirectUri').value.trim(),
+        scopes: document.getElementById('graphScopes').value.trim()
     };
+    if (!payload.client_secret) {
+        delete payload.client_secret;
+    }
+    return payload;
+}
 
-    if (contactType.value === 'customer') {
-        formData.customer_id = document.getElementById('customerSelect')?.value || null;
-        // For customer endpoint, rename first_name to name
-        formData.name = formData.first_name;
-        delete formData.first_name;
+function setGraphStatus(settings) {
+    const hasClient = settings.client_id && settings.client_id.length > 0;
+    const hasTenant = settings.tenant_id && settings.tenant_id.length > 0;
+    const hasSecret = settings.secret_set;
+    if (hasClient && hasTenant && hasSecret) {
+        graphStatusEl.textContent = 'Configured';
+        graphStatusEl.classList.add('status-pill--ready');
+        graphStatusEl.classList.remove('status-pill--warn');
     } else {
-        formData.supplier_id = document.getElementById('supplierSelect')?.value || null;
-        // For supplier endpoint, keep first_name
-        delete formData.name;
+        graphStatusEl.textContent = 'Missing settings';
+        graphStatusEl.classList.add('status-pill--warn');
+        graphStatusEl.classList.remove('status-pill--ready');
     }
+}
 
+async function saveGraphSettings() {
+    const payload = collectGraphSettings();
+    const response = await fetch('/emails/graph/settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!data.success) {
+        throw new Error(data.error || 'Failed to save Graph settings');
+    }
+    setGraphStatus(data.settings);
+    return data.settings;
+}
+
+async function testGraphCalls() {
+    const response = await fetch('/emails/graph/test', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    });
+    const data = await response.json();
+    graphDebugOutput.textContent = JSON.stringify(data, null, 2);
+    if (!response.ok) {
+        throw new Error(data.error ? data.error.message : 'Graph test failed');
+    }
+    return data;
+}
+
+function toggleLoading(buttons, isLoading) {
+    buttons.forEach(button => {
+        button.disabled = isLoading;
+        if (isLoading) {
+            button.dataset.originalText = button.innerHTML;
+            button.innerHTML = 'Working...';
+        } else if (button.dataset.originalText) {
+            button.innerHTML = button.dataset.originalText;
+        }
+    });
+}
+
+document.getElementById('saveGraphBtn').addEventListener('click', async () => {
+    const buttons = [document.getElementById('saveGraphBtn')];
+    toggleLoading(buttons, true);
     try {
-        const endpoint = contactType.value === 'customer' ?
-            '/customers/contacts/add' :
-            '/suppliers/supplier-contacts/add';
-
-        console.log('Sending to endpoint:', endpoint);
-        console.log('With data:', formData);
-
-       const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(formData)
-        });
-
-        const data = await response.json();
-        console.log('Response from server:', data); // Debug log
-
-        if (response.ok) {
-            contactModal.hide();
-            showToast('Contact added successfully');
-            window.location.reload();
-        } else {
-            showToast(data.error || 'Failed to add contact', 'error');
-        }
+        await saveGraphSettings();
+        showToast('Graph settings saved', 'success');
     } catch (error) {
-        console.error('Error saving contact:', error);
-        showToast('Failed to add contact', 'error');
+        showToast(error.message, 'error');
     } finally {
-        submitButton.disabled = false;
+        toggleLoading(buttons, false);
     }
-}
-
-// Modify the existing showAddContactModal function to handle suggestions
-function showAddContactModal(email, name, type = null, companyId = null) {
-    if (!contactModal) {
-        contactModal = new bootstrap.Modal(document.getElementById('addContactModal'));
-    }
-
-    // Set email and names
-    document.getElementById('contactEmail').value = email;
-    const names = name.split(' ');
-    document.getElementById('firstName').value = names[0] || '';
-    document.getElementById('secondName').value = names.slice(1).join(' ');
-
-    // Load customers and suppliers
-    loadCustomers().then(() => {
-        if (type === 'customer' && companyId) {
-            document.getElementById('customerType').checked = true;
-            document.getElementById('customerSelect').value = companyId;
-            toggleContactType({ target: { value: 'customer' }});
-        }
-    });
-
-    loadSuppliers().then(() => {
-        if (type === 'supplier' && companyId) {
-            document.getElementById('supplierType').checked = true;
-            document.getElementById('supplierSelect').value = companyId;
-            toggleContactType({ target: { value: 'supplier' }});
-        }
-    });
-
-    contactModal.show();
-}
-
-// Add event listeners for the dropdowns
-document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('[id^="addContactDropdown-"]').forEach(button => {
-        button.addEventListener('show.bs.dropdown', function() {
-            const emailId = this.id.split('-')[1];
-            const email = this.closest('tr').querySelector('[onclick*="showAddContactModal"]')
-                             .getAttribute('onclick')
-                             .match(/'([^']+)'/)[1];
-            loadDomainSuggestions(emailId, email);
-        });
-    });
 });
 
-// Function to update the contacts table without refresh
-function updateContactsTable(contact) {
-    // Remove from new contacts if it exists
-    const newContactRow = document.querySelector(`#newContactsTableBody tr[data-email="${contact.email}"]`);
-    if (newContactRow) {
-        newContactRow.remove();
-    }
-
-    // Add to existing contacts
-    const existingContactsBody = document.getElementById('existingContactsTableBody');
-    const newRow = document.createElement('tr');
-    newRow.setAttribute('data-domain', contact.domain);
-    newRow.setAttribute('data-email', contact.email);
-
-    newRow.innerHTML = `
-        <td>
-            <strong>${contact.name || 'Unknown'}</strong><br>
-            <small class="text-muted">${contact.email}</small>
-        </td>
-        <td>${contact.email_count || 1}</td>
-        <td>${contact.customer_name || '<em>No Customer</em>'}</td>
-        <td>
-            <div class="btn-group">
-                <a href="/contacts/${contact.id}"
-                   class="btn btn-outline-primary btn-sm">View</a>
-                <button onclick="showEmailPreview('${contact.email}')"
-                        class="btn btn-outline-secondary btn-sm">View Email</button>
-                <button onclick="ignoreDomain('${contact.email}', '${contact.domain}')"
-                        class="btn btn-outline-danger btn-sm">Ignore Domain</button>
-            </div>
-        </td>
-    `;
-
-    existingContactsBody.insertBefore(newRow, existingContactsBody.firstChild);
-}
-
-// Quick customer creation functions
-function showQuickCustomerForm() {
-    document.getElementById('quickCustomerForm').classList.remove('d-none');
-}
-
-function hideQuickCustomerForm() {
-    document.getElementById('quickCustomerForm').classList.add('d-none');
-}
-
-async function createCustomer() {
-    const customerName = document.getElementById('newCustomerName').value;
-    if (!customerName.trim()) {
-        showToast('Please enter a customer name', 'error');
-        return;
-    }
-
+document.getElementById('connectGraphBtn').addEventListener('click', async () => {
+    const buttons = [document.getElementById('connectGraphBtn')];
+    toggleLoading(buttons, true);
     try {
-        const response = await fetch('/customers/customers/new', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest'
-            },
-            body: JSON.stringify({
-                name: customerName
-            })
-        });
+        await saveGraphSettings();
+        window.location.href = '/emails/graph/connect?next=/emails';
+    } catch (error) {
+        showToast(error.message, 'error');
+        toggleLoading(buttons, false);
+    }
+});
 
-        const data = await response.json();
+document.getElementById('testGraphBtn').addEventListener('click', async () => {
+    const buttons = [document.getElementById('testGraphBtn')];
+    toggleLoading(buttons, true);
+    try {
+        await testGraphCalls();
+        showToast('Graph test completed', 'success');
+    } catch (error) {
+        showToast(error.message, 'error');
+    } finally {
+        toggleLoading(buttons, false);
+    }
+});
 
-        if (data.success) {
-            // Add new customer to select dropdown
-            const select = document.getElementById('customerSelect');
-            const option = document.createElement('option');
-            option.value = data.customer_id;
-            option.textContent = data.customer_name;
-            select.appendChild(option);
+document.getElementById('clearGraphBtn').addEventListener('click', () => {
+    graphDebugOutput.textContent = 'No Graph calls yet.';
+});
 
-            // Select the new customer
-            select.value = data.customer_id;
-
-            // Hide the quick create form
-            hideQuickCustomerForm();
-            document.getElementById('newCustomerName').value = '';
-
-            showToast('Customer created successfully');
+document.getElementById('copyGraphBtn').addEventListener('click', async () => {
+    const text = graphDebugOutput.textContent;
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
         } else {
-            showToast(data.error || 'Failed to create customer', 'error');
+            const temp = document.createElement('textarea');
+            temp.value = text;
+            document.body.appendChild(temp);
+            temp.select();
+            document.execCommand('copy');
+            document.body.removeChild(temp);
         }
+        showToast('Graph JSON copied', 'success');
     } catch (error) {
-        console.error('Error creating customer:', error);
-        showToast('Failed to create customer', 'error');
+        showToast('Failed to copy Graph output', 'error');
     }
-}
+});
 
-// Add these functions to your existing JavaScript
-
-function initializeSearchableSelect(selectElement, placeholder = "Search...") {
-    // Create wrapper div
-    const wrapper = document.createElement('div');
-    wrapper.className = 'position-relative';
-    selectElement.parentNode.insertBefore(wrapper, selectElement);
-    wrapper.appendChild(selectElement);
-
-    // Create and insert search input
-    const searchInput = document.createElement('input');
-    searchInput.type = 'text';
-    searchInput.className = 'form-control mb-2';
-    searchInput.placeholder = placeholder;
-    wrapper.insertBefore(searchInput, selectElement);
-
-    // Store original options
-    const originalOptions = Array.from(selectElement.options);
-
-    // Add input event listener
-    searchInput.addEventListener('input', (e) => {
-        const searchTerm = e.target.value.toLowerCase();
-
-        // Clear current options
-        selectElement.innerHTML = '';
-
-        // Add default "Select" option
-        const defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = `Select ${placeholder}...`;
-        selectElement.appendChild(defaultOption);
-
-        // Filter and add matching options
-        originalOptions.forEach(option => {
-            if (option.value && option.text.toLowerCase().includes(searchTerm)) {
-                selectElement.appendChild(option.cloneNode(true));
-            }
-        });
-    });
-
-    // Clear search when modal is hidden
-    const modal = selectElement.closest('.modal');
-    if (modal) {
-        modal.addEventListener('hidden.bs.modal', () => {
-            searchInput.value = '';
-            selectElement.innerHTML = '';
-            originalOptions.forEach(option => {
-                selectElement.appendChild(option.cloneNode(true));
-            });
-        });
-    }
-}
-
-// Modify your existing loadCustomers and loadSuppliers functions:
-async function loadCustomers() {
-    try {
-        const response = await fetch('/customers');
-        const customers = await response.json();
-        const select = document.getElementById('customerSelect');
-
-        select.innerHTML = '<option value="">Select Customer...</option>';
-        customers.forEach(customer => {
-            const option = document.createElement('option');
-            option.value = customer.id;
-            option.textContent = customer.name;
-            select.appendChild(option);
-        });
-
-        // Initialize searchable select
-        initializeSearchableSelect(select, "Customer");
-    } catch (error) {
-        console.error('Error loading customers:', error);
-        showError('Failed to load customers');
-    }
-}
-
-async function loadSuppliers() {
-    try {
-        const response = await fetch('/suppliers/api/list');
-        const suppliers = await response.json();
-        const select = document.getElementById('supplierSelect');
-
-        select.innerHTML = '<option value="">Select Supplier...</option>';
-        suppliers.forEach(supplier => {
-            const option = document.createElement('option');
-            option.value = supplier.id;
-            option.textContent = supplier.name;
-            select.appendChild(option);
-        });
-
-        // Initialize searchable select
-        initializeSearchableSelect(select, "Supplier");
-    } catch (error) {
-        console.error('Error loading suppliers:', error);
-        showToast('Failed to load suppliers', 'error');
-    }
-}
 function showToast(message, type = 'success') {
     const toastContainer = document.getElementById('toastContainer') || createToastContainer();
     const toast = document.createElement('div');
@@ -777,245 +277,99 @@ function createToastContainer() {
     return container;
 }
 
-function showError(message) {
-    showToast(message, 'error');
-}
-
-
-async function loadDomainSuggestions(emailId) {
-    const dropdownButton = document.getElementById(`addContactDropdown-${emailId}`);
-    const email = dropdownButton.getAttribute('data-email');
-    const name = dropdownButton.getAttribute('data-name');
-    const domain = email.split('@')[1];
-    const suggestionsDiv = document.getElementById(`suggestions-${emailId}`);
-    const loadingItem = document.getElementById(`loadingItem-${emailId}`);
-
-    try {
-        const [customerResponse, supplierResponse] = await Promise.all([
-            fetch(`/customers/by-domain/${domain}`),
-            fetch(`/suppliers/by-domain/${domain}`)
-        ]);
-
-        const customers = await customerResponse.json();
-        const suppliers = await supplierResponse.json();
-
-        loadingItem.style.display = 'none';
-
-        let html = '';
-
-        if (customers && customers.length > 0) {
-            html += '<li><h6 class="dropdown-header">Customer Suggestions</h6></li>';
-            customers.forEach(customer => {
-                html += `
-                    <li>
-                        <a class="dropdown-item" href="#"
-                           onclick="showAddContactModal('${email}', '${name}', 'customer', ${customer.id})">
-                            <i class="bi bi-building"></i> ${customer.name}
-                        </a>
-                    </li>`;
-            });
-        }
-
-        if (suppliers && suppliers.length > 0) {
-            if (customers && customers.length > 0) {
-                html += '<li><hr class="dropdown-divider"></li>';
-            }
-            html += '<li><h6 class="dropdown-header">Supplier Suggestions</h6></li>';
-            suppliers.forEach(supplier => {
-                html += `
-                    <li>
-                        <a class="dropdown-item" href="#"
-                           onclick="showAddContactModal('${email}', '${name}', 'supplier', ${supplier.id})">
-                            <i class="bi bi-truck"></i> ${supplier.name}
-                        </a>
-                    </li>`;
-            });
-        }
-
-        if (!customers.length && !suppliers.length) {
-            html += `
-                <li class="dropdown-item-text">
-                    <small class="text-muted">No suggestions found for ${domain}</small>
-                </li>`;
-        }
-
-        suggestionsDiv.innerHTML = html;
-
-    } catch (error) {
-        console.error('Error loading domain suggestions:', error);
-        loadingItem.innerHTML = `<small class="text-danger">Error loading suggestions</small>`;
-    }
-}
-
-// Update event listeners for the dropdowns
-document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('[id^="addContactDropdown-"]').forEach(button => {
-        button.addEventListener('show.bs.dropdown', function() {
-            const emailId = this.id.split('-')[1];
-            loadDomainSuggestions(emailId, this);
-        });
-    });
-});
-document.addEventListener('DOMContentLoaded', function() {
-    var dropdownElementList = [].slice.call(document.querySelectorAll('.dropdown-toggle'))
-    var dropdownList = dropdownElementList.map(function(dropdownToggleEl) {
-        return new bootstrap.Dropdown(dropdownToggleEl)
-    })
-});
-
-function populateDomains() {
-    if (confirm('This will scan all contacts and populate domain tables. Continue?')) {
-        fetch('/emails/populate-domains', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            alert(`Domain population complete. Added ${data.customer_count} customer domains and ${data.supplier_count} supplier domains.`);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Error during domain population');
-        });
-    }
-}
+setGraphStatus(graphSeed);
 </script>
 
 <style>
-.email-row.selected {
-    background-color: #f0f8ff;
-    font-weight: bold;
+.mailbox-debugger {
+    padding-bottom: 40px;
 }
 
-.green-tick {
-    color: #28a745;
-    font-size: 1.2em;
-    margin-left: 5px;
+.mailbox-hero {
+    border-radius: 20px;
+    padding: 32px;
+    background: linear-gradient(135deg, #0f4c5c, #3957a3);
+    color: #f7f7ff;
+    box-shadow: 0 12px 30px rgba(15, 76, 92, 0.25);
 }
 
-.email-content {
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    max-height: 400px;
-    overflow-y: auto;
-}
-
-.position-relative {
-    position: relative;
-}
-
-.select-search-wrapper {
-    margin-bottom: 1rem;
-}
-
-.sender-name {
-    font-weight: 500;
-    text-overflow: ellipsis;
-    overflow: hidden;
-    max-width: 200px;
-    white-space: nowrap;
-}
-
-.sender-email {
-    display: block;
-    font-size: 0.85em;
-    color: #6c757d;
-    text-overflow: ellipsis;
-    overflow: hidden;
-    max-width: 200px;
-    white-space: nowrap;
-}
-
-.company-badge {
+.hero-content {
     display: flex;
-    align-items: center;
-    padding: 8px 12px;
-    border-radius: 6px;
-    color: white;
-    font-weight: 500;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    flex-direction: column;
+    gap: 20px;
 }
 
-.customer-company {
-    background-color: var(--primary);
-    background-image: linear-gradient(135deg, var(--primary), var(--primary-dark));
-    border: 1px solid var(--primary-dark);
-}
-
-.supplier-company {
-    background-color: #3B7E43; /* Slightly darker green to differentiate */
-    background-image: linear-gradient(135deg, #3B7E43, #326938);
-    border: 1px solid #326938;
-
-}
-
-.company-badge i {
-    margin-right: 8px;
-    font-size: 1.1em;
-}
-
-.company-name {
-    font-size: 1.1em;
+.hero-kicker {
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    font-size: 0.75rem;
     font-weight: 600;
-    margin-right: 8px;
+    opacity: 0.8;
 }
 
-.company-type {
-    background-color: rgba(255, 255, 255, 0.2);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 0.75em;
-    margin-left: auto;
+.hero-title {
+    font-size: 2rem;
+    font-weight: 700;
+    margin: 12px 0;
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .company-badge {
-        flex-direction: column;
-        align-items: flex-start;
+.hero-subtitle {
+    max-width: 520px;
+    font-size: 1rem;
+    opacity: 0.9;
+}
+
+.hero-status {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.status-label {
+    font-size: 0.85rem;
+    opacity: 0.8;
+}
+
+.status-pill {
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.2);
+    font-size: 0.9rem;
+}
+
+.status-pill--ready {
+    background: rgba(16, 185, 129, 0.25);
+    color: #eafff4;
+}
+
+.status-pill--warn {
+    background: rgba(249, 115, 22, 0.25);
+    color: #fff4e6;
+}
+
+.hero-footnote {
+    margin-top: 16px;
+    font-size: 0.9rem;
+    opacity: 0.8;
+}
+
+.debug-output {
+    background: #0d1117;
+    color: #d6e4ff;
+    border-radius: 12px;
+    padding: 16px;
+    max-height: 360px;
+    overflow-y: auto;
+    font-size: 0.85rem;
+}
+
+@media (min-width: 992px) {
+    .hero-content {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
     }
-
-    .company-type {
-        margin-left: 0;
-        margin-top: 5px;
-    }
 }
-/* Add this to your existing style section */
-.dropdown-menu {
-    z-index: 1050; /* Higher z-index to ensure dropdowns appear above other elements */
-}
-
-/* If needed, you can lower the z-index of the Add Contact button */
-.btn-primary.btn-sm.dropdown-toggle {
-    z-index: 1; /* Lower z-index for the add contact button */
-}
-
-/* This ensures the modal (which contains the add contact form)
-   always appears on top of everything else */
-.modal {
-    z-index: 1060;
-}
-[id^="addContactDropdown-"] {
-    position: relative;
-    z-index: 1; /* Lower z-index for the button */
-}
-
-/* Target the dropdown menu that appears from this button */
-[id^="addContactDropdown-"] + .dropdown-menu,
-[aria-labelledby^="addContactDropdown-"] {
-    z-index: 1050 !important; /* Higher z-index to ensure the dropdown appears above the button */
-}
-
-/* Make sure all dropdowns in the table have proper z-index */
-.table .dropdown-menu {
-    z-index: 1050 !important;
-}
-
-/* If needed, increase z-index of the parent dropdown container */
-.d-inline-block {
-
 </style>
-
 {% endblock %}

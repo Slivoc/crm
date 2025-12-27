@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Ticket Workspaces{% endblock %}
+
+{% block content %}
+<div class="workspaces-container">
+    <div class="workspaces-header">
+        <div>
+            <h1 class="page-title"><i class="bi bi-collection me-2"></i>Ticket Workspaces</h1>
+            <p class="text-muted mb-0">Create workspaces and assign members for ticket routing.</p>
+        </div>
+        <a href="{{ url_for('tickets.list_tickets') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i>Back to Tickets
+        </a>
+    </div>
+
+    <div class="workspace-grid">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Create Workspace</h5>
+                <form method="post" action="{{ url_for('tickets.manage_workspaces') }}">
+                    <div class="mb-3">
+                        <label class="form-label" for="workspaceName">Workspace name</label>
+                        <input type="text" class="form-control" id="workspaceName" name="name" placeholder="Customer Services" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Members</label>
+                        <div class="member-grid">
+                            {% for user in users %}
+                                <div class="member-pill">
+                                    <input class="member-input" type="checkbox" id="member-create-{{ user.id }}" name="member_ids" value="{{ user.id }}">
+                                    <label class="member-label" for="member-create-{{ user.id }}">{{ user.username }}</label>
+                                </div>
+                            {% else %}
+                                <span class="text-muted small">No users available.</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-lg me-1"></i>Create Workspace
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="workspace-list">
+            {% for workspace in workspaces %}
+                <div class="card workspace-card">
+                    <div class="card-body">
+                        <form method="post" action="{{ url_for('tickets.update_workspace', workspace_id=workspace.id) }}">
+                            <div class="d-flex justify-content-between align-items-start mb-3">
+                                <div class="flex-grow-1">
+                                    <label class="form-label">Workspace name</label>
+                                    <input type="text" class="form-control" name="name" value="{{ workspace.name }}" required>
+                                </div>
+                                <button type="submit" class="btn btn-outline-primary ms-3">
+                                    <i class="bi bi-save me-1"></i>Save
+                                </button>
+                            </div>
+                            <label class="form-label">Members</label>
+                            <div class="member-grid">
+                                {% for user in users %}
+                                    <div class="member-pill">
+                                        <input class="member-input" type="checkbox" id="member-{{ workspace.id }}-{{ user.id }}" name="member_ids" value="{{ user.id }}" {% if user.id in workspace.member_ids %}checked{% endif %}>
+                                        <label class="member-label" for="member-{{ workspace.id }}-{{ user.id }}">{{ user.username }}</label>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            {% else %}
+                <div class="card">
+                    <div class="card-body text-muted">No workspaces created yet.</div>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<style>
+.workspaces-container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.workspaces-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.workspace-grid {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 24px;
+}
+
+.workspace-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.member-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.member-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid #dee2e6;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    background: #f8f9fa;
+}
+
+.member-input {
+    margin: 0;
+    cursor: pointer;
+    appearance: auto !important;
+    -webkit-appearance: auto !important;
+    -moz-appearance: auto !important;
+    width: 1rem;
+    height: 1rem;
+    opacity: 1 !important;
+    position: static !important;
+    display: inline-block !important;
+    background-color: #ffffff !important;
+    border: 1px solid #adb5bd !important;
+    border-radius: 0.25rem;
+    box-shadow: inset 0 0 0 1px #adb5bd !important;
+    accent-color: #4a9651;
+}
+
+.member-label {
+    cursor: pointer;
+    margin: 0;
+}
+
+@media (max-width: 992px) {
+    .workspace-grid {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+
+<script>
+document.querySelectorAll('.member-pill').forEach(pill => {
+    pill.addEventListener('click', (event) => {
+        if (event.target.tagName === 'INPUT') {
+            return;
+        }
+        event.preventDefault();
+        const checkbox = pill.querySelector('input[type="checkbox"]');
+        if (!checkbox) {
+            return;
+        }
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+});
+</script>
+{% endblock %}

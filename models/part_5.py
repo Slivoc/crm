@@ -32,6 +32,20 @@ DATABASE_URL = _os.getenv('DATABASE_URL', 'sqlite:///database.db')
 engine = create_engine(DATABASE_URL)
 metadata = MetaData()
 
+_CALL_LIST_HAS_SNOOZED_UNTIL = None
+
+def _call_list_has_snoozed_until():
+    global _CALL_LIST_HAS_SNOOZED_UNTIL
+    if _CALL_LIST_HAS_SNOOZED_UNTIL is not None:
+        return _CALL_LIST_HAS_SNOOZED_UNTIL
+    try:
+        inspector = inspect(engine)
+        columns = {col["name"] for col in inspector.get_columns("call_list")}
+        _CALL_LIST_HAS_SNOOZED_UNTIL = "snoozed_until" in columns
+    except Exception:
+        _CALL_LIST_HAS_SNOOZED_UNTIL = False
+    return _CALL_LIST_HAS_SNOOZED_UNTIL
+
 # PostgreSQL compatibility helper
 
 def add_to_call_list(contact_id, salesperson_id, notes=None, priority=0):
@@ -106,7 +120,11 @@ def get_call_list_with_communication_status(salesperson_id):
     1. Contacts with NO communications since being added to list
     2. Contacts WITH communications since being added to list
     """
-    query = '''
+    snooze_clause = ""
+    if _call_list_has_snoozed_until():
+        snooze_clause = "AND (cl.snoozed_until IS NULL OR cl.snoozed_until <= CURRENT_TIMESTAMP)"
+
+    query = f'''
         WITH base AS (
             SELECT
                 cl.id as call_list_id,
@@ -132,7 +150,7 @@ def get_call_list_with_communication_status(salesperson_id):
             LEFT JOIN contact_statuses st ON c.status_id = st.id
             WHERE cl.salesperson_id = ?
               AND cl.is_active = TRUE
-              AND (cl.snoozed_until IS NULL OR cl.snoozed_until <= CURRENT_TIMESTAMP)
+              {snooze_clause}
         ),
         comm_counts AS (
             SELECT

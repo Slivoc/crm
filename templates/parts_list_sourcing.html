@@ -327,6 +327,7 @@
         <th style="width:180px;" class="section-header-col section-header-purchasing">Stock</th>
         <th style="width:200px;" class="section-header-col section-header-purchasing">Recent PO</th>
         <th style="width:200px;" class="section-header-col section-header-purchasing">Recent VQ</th>
+        <th style="width:200px;" class="section-header-col section-header-purchasing">Excess</th>
         <th style="width:100px;" class="section-header-col section-header-ils">ILS</th>
         <th style="width:180px;" class="section-header-col section-header-suggested">Suggested</th>
         <th style="width:180px;" class="section-header-col section-header-contact">Contacted</th>
@@ -339,6 +340,7 @@
                             data-has-vq="{{ '1' if line.vq_data else '0' }}"
                             data-has-po="{{ '1' if line.po_data else '0' }}"
                             data-has-stock="{{ '1' if line.stock_data else '0' }}"
+                            data-has-excess="{{ '1' if line.excess_data else '0' }}"
                             data-has-suggested="{{ '1' if line.suggested_suppliers else '0' }}"
                             data-contacted="{{ '1' if line.email_history else '0' }}"
                             data-part-number="{{ line.customer_part_number }}">
@@ -513,6 +515,120 @@
 
     {% else %}
         <em class="text-muted">No VQs</em>
+    {% endif %}
+</td>
+
+                           <!-- Excess -->
+<td class="{% if line.excess_data %}populated{% endif %}">
+    {% if line.excess_data %}
+        {% set ex = line.excess_data[0] %}
+        <div class="d-flex justify-content-between align-items-start">
+            <div style="flex:1;">
+                <strong>{{ ex.supplier_name or 'Unknown' }}</strong><br>
+                {% if ex.list_name %}
+                    <span class="text-muted-sm">{{ ex.list_name }}</span><br>
+                {% endif %}
+                {% if ex.unit_price %}
+                    <span style="color:#1976d2;font-weight:600;">
+                        {{ ex.currency_code or 'GBP' }} {{ "%.2f"|format(ex.unit_price) }}
+                    </span><br>
+                {% else %}
+                    <span class="text-muted-sm">No price</span><br>
+                {% endif %}
+                {% if ex.quantity %}
+                    <span class="text-muted-sm">Qty: {{ ex.quantity }}</span><br>
+                {% endif %}
+                <span class="text-date">{{ ex.upload_date or ex.entered_date }}</span>
+            </div>
+            <div class="d-flex flex-column gap-1">
+                {% if ex.unit_price %}
+                <button class="btn-icon btn-use use-excess-cost-btn"
+                        data-line-id="{{ line.id }}"
+                        data-cost="{{ ex.unit_price }}"
+                        data-qty="{{ ex.quantity }}"
+                        data-supplier-id="{{ ex.supplier_id }}"
+                        data-supplier-name="{{ ex.supplier_name }}"
+                        data-currency-id="{{ ex.unit_price_currency_id }}"
+                        data-currency-code="{{ ex.currency_code }}"
+                        data-source-type="excess"
+                        title="Use Cost">
+                    <i class="bi bi-check2"></i>
+                </button>
+                {% endif %}
+                {% if ex.supplier_id %}
+                <button class="btn-icon btn-add add-supplier-btn"
+                        data-line-id="{{ line.id }}"
+                        data-supplier-id="{{ ex.supplier_id }}"
+                        data-supplier-name="{{ ex.supplier_name }}"
+                        data-source="excess"
+                        title="Add to Suggested">
+                    <i class="bi bi-plus"></i>
+                </button>
+                {% endif %}
+            </div>
+        </div>
+        {% if line.excess_data|length > 1 %}
+        <button class="btn btn-link p-0 mt-1 text-decoration-none expand-excess-btn"
+                type="button"
+                data-bs-toggle="collapse"
+                data-bs-target="#excess-full-{{ line.id }}"
+                aria-expanded="false"
+                aria-controls="excess-full-{{ line.id }}">
+            <i class="bi bi-chevron-right expand-btn"></i>
+            +{{ line.excess_data|length - 1 }} more
+        </button>
+        <div class="collapse mt-2" id="excess-full-{{ line.id }}">
+            {% for ex in line.excess_data[1:] %}
+            <div class="d-flex justify-content-between align-items-start py-1 border-top">
+                <div style="flex:1;">
+                    <strong>{{ ex.supplier_name or 'Unknown' }}</strong><br>
+                    {% if ex.list_name %}
+                        <span class="text-muted-sm">{{ ex.list_name }}</span><br>
+                    {% endif %}
+                    {% if ex.unit_price %}
+                        <span style="color:#1976d2;font-weight:600;">
+                            {{ ex.currency_code or 'GBP' }} {{ "%.2f"|format(ex.unit_price) }}
+                        </span><br>
+                    {% else %}
+                        <span class="text-muted-sm">No price</span><br>
+                    {% endif %}
+                    {% if ex.quantity %}
+                        <span class="text-muted-sm">Qty: {{ ex.quantity }}</span><br>
+                    {% endif %}
+                    <span class="text-date">{{ ex.upload_date or ex.entered_date }}</span>
+                </div>
+                <div class="d-flex flex-column gap-1">
+                    {% if ex.unit_price %}
+                    <button class="btn-icon btn-use use-excess-cost-btn"
+                            data-line-id="{{ line.id }}"
+                            data-cost="{{ ex.unit_price }}"
+                            data-qty="{{ ex.quantity }}"
+                            data-supplier-id="{{ ex.supplier_id }}"
+                            data-supplier-name="{{ ex.supplier_name }}"
+                            data-currency-id="{{ ex.unit_price_currency_id }}"
+                            data-currency-code="{{ ex.currency_code }}"
+                            data-source-type="excess"
+                            title="Use Cost">
+                        <i class="bi bi-check2"></i>
+                    </button>
+                    {% endif %}
+                    {% if ex.supplier_id %}
+                    <button class="btn-icon btn-add add-supplier-btn"
+                            data-line-id="{{ line.id }}"
+                            data-supplier-id="{{ ex.supplier_id }}"
+                            data-supplier-name="{{ ex.supplier_name }}"
+                            data-source="excess"
+                            title="Add to Suggested">
+                        <i class="bi bi-plus"></i>
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    {% else %}
+        <em class="text-muted">No excess</em>
     {% endif %}
 </td>
 

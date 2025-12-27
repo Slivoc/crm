@@ -1,0 +1,1184 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mailbox-container">
+    <!-- Compact Header -->
+    <div class="mailbox-topbar">
+        <div class="topbar-left">
+            <h1 class="mailbox-title">
+                <i class="bi bi-envelope me-2"></i>Inbox
+            </h1>
+            <span class="badge bg-secondary ms-2" id="mailboxCount">0</span>
+        </div>
+        <div class="topbar-actions">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshMailboxBtn" title="Refresh">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#mailboxAccessModal" title="Account settings">
+                <i class="bi bi-gear"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="mailbox-layout">
+        <!-- Email List Panel -->
+        <div class="email-list-panel">
+            <div class="email-list-header">
+                <div class="search-box">
+                    <i class="bi bi-search"></i>
+                    <input type="text" class="form-control" id="emailSearch" placeholder="Search emails...">
+                </div>
+            </div>
+            <div class="email-list-body" id="emailListContainer">
+                <div class="email-list-placeholder">
+                    <i class="bi bi-inbox"></i>
+                    <p>Loading emails...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reading Pane -->
+        <div class="reading-pane" id="readingPane">
+            <div class="reading-empty-state" id="emptyReadingState">
+                <i class="bi bi-envelope-open"></i>
+                <h5>Select an email to read</h5>
+                <p class="text-muted">Choose a message from the list to view its contents</p>
+            </div>
+            <div class="reading-content" id="readingContent" style="display: none;">
+                <div class="reading-header">
+                    <div class="reading-subject-row">
+                        <h4 id="readingSubject">Subject</h4>
+                        <div class="reading-actions">
+                            <button type="button" class="btn btn-sm btn-primary" id="createPartsListBtn" disabled title="Create Parts List">
+                                <i class="bi bi-list-ul me-1"></i>Parts List
+                            </button>
+                            <button type="button" class="btn btn-sm btn-success" id="createSupplierQuoteBtn" disabled title="Quick Supplier Quote">
+                                <i class="bi bi-lightning-charge me-1"></i>Supplier Quote
+                            </button>
+                            <button type="button" class="btn btn-sm btn-warning" id="createTicketBtn" disabled title="Create Ticket">
+                                <i class="bi bi-ticket-detailed me-1"></i>Ticket
+                            </button>
+                            <a class="btn btn-sm btn-outline-secondary disabled" id="openOutlookBtn" href="#" target="_blank" rel="noopener" title="Open in Outlook">
+                                <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                        </div>
+                    </div>
+                    <div class="reading-meta">
+                        <div class="sender-info">
+                            <div class="sender-avatar" id="senderAvatar">?</div>
+                            <div class="sender-details">
+                                <div class="sender-name" id="readingFrom">Unknown Sender</div>
+                                <div class="sender-email text-muted" id="readingFromEmail"></div>
+                            </div>
+                        </div>
+                        <div class="email-date" id="readingReceived">—</div>
+                    </div>
+                    <div class="reading-company-badge" id="readingCompanyBadge" style="display: none;">
+                        <i class="bi bi-building me-1"></i>
+                        <span id="readingCompany">—</span>
+                    </div>
+                </div>
+                <div class="reading-body">
+                    <iframe id="readingFrame" class="reading-frame" title="Email body"></iframe>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Mailbox Access Modal -->
+<div class="modal fade" id="mailboxAccessModal" tabindex="-1" aria-labelledby="mailboxAccessLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="mailboxAccessLabel">
+                    <i class="bi bi-microsoft me-2"></i>Microsoft Account
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted mb-3">
+                    Connect your mailbox via Microsoft Graph to read and manage emails.
+                </p>
+                <div class="connection-status mb-3">
+                    <div class="status-indicator" id="graphStatus">
+                        <i class="bi bi-circle-fill"></i>
+                        <span>Not connected</span>
+                    </div>
+                    {% if graph_user %}
+                    <div class="connected-user mt-2">
+                        <i class="bi bi-person-check me-1"></i>
+                        <span>{{ graph_user }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-primary" id="connectGraphBtn">
+                        <i class="bi bi-box-arrow-in-right me-2"></i>Connect with Microsoft
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" id="testGraphBtn">
+                        <i class="bi bi-lightning me-2"></i>Test Connection
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const graphSeed = {{ graph | tojson }};
+const graphStatusEl = document.getElementById('graphStatus');
+const emailListContainer = document.getElementById('emailListContainer');
+const readingPane = document.getElementById('readingPane');
+const emptyReadingState = document.getElementById('emptyReadingState');
+const readingContent = document.getElementById('readingContent');
+const readingSubject = document.getElementById('readingSubject');
+const readingFrom = document.getElementById('readingFrom');
+const readingFromEmail = document.getElementById('readingFromEmail');
+const readingCompany = document.getElementById('readingCompany');
+const readingCompanyBadge = document.getElementById('readingCompanyBadge');
+const readingReceived = document.getElementById('readingReceived');
+const readingFrame = document.getElementById('readingFrame');
+const senderAvatar = document.getElementById('senderAvatar');
+const createPartsListBtn = document.getElementById('createPartsListBtn');
+const createSupplierQuoteBtn = document.getElementById('createSupplierQuoteBtn');
+const createTicketBtn = document.getElementById('createTicketBtn');
+const openOutlookBtn = document.getElementById('openOutlookBtn');
+const mailboxCount = document.getElementById('mailboxCount');
+const emailSearch = document.getElementById('emailSearch');
+
+let messageCache = [];
+let selectedMessage = null;
+let selectedMessageId = null;
+let selectedPartsListId = null;
+let selectedSupplierId = null;
+
+function parsePartsAvailabilitySubject(subject) {
+    if (!subject) return null;
+    const match = subject.match(/parts availability request\s*-\s*(\d+)(?:-(\d+))?/i);
+    if (!match) return null;
+    return {
+        listId: match[1],
+        supplierId: match[2] || null
+    };
+}
+
+function updateSupplierQuoteButton(subject) {
+    const parsed = parsePartsAvailabilitySubject(subject);
+    selectedPartsListId = parsed ? parsed.listId : null;
+    selectedSupplierId = parsed ? parsed.supplierId : null;
+
+    if (parsed) {
+        const label = parsed.listId ? `Supplier Quote (PL ${parsed.listId})` : 'Supplier Quote';
+        createSupplierQuoteBtn.disabled = false;
+        createSupplierQuoteBtn.innerHTML = `<i class="bi bi-lightning-charge me-1"></i>${label}`;
+    } else {
+        createSupplierQuoteBtn.disabled = true;
+        createSupplierQuoteBtn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i>Supplier Quote';
+    }
+}
+
+function setGraphStatus(settings) {
+    const hasClient = settings.client_id && settings.client_id.length > 0;
+    const hasTenant = settings.tenant_id && settings.tenant_id.length > 0;
+    const hasSecret = settings.secret_set;
+    const icon = graphStatusEl.querySelector('i');
+    const text = graphStatusEl.querySelector('span');
+    
+    if (hasClient && hasTenant && hasSecret) {
+        icon.className = 'bi bi-circle-fill text-success';
+        text.textContent = 'Ready to connect';
+    } else {
+        icon.className = 'bi bi-circle-fill text-warning';
+        text.textContent = 'Setup required';
+    }
+}
+
+function formatRelativeDate(dateString) {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+function formatFullDate(dateString) {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-GB', { 
+        weekday: 'long',
+        day: 'numeric', 
+        month: 'long',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function getInitials(name) {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+}
+
+function getAvatarColor(name) {
+    if (!name) return '#6c757d';
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+        hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const colors = ['#4f46e5', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#be185d', '#4338ca'];
+    return colors[Math.abs(hash) % colors.length];
+}
+
+function truncateText(text, maxLength) {
+    if (!text) return '';
+    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+async function loadMailboxMessages() {
+    emailListContainer.innerHTML = `
+        <div class="email-list-placeholder">
+            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+            <p>Loading emails...</p>
+        </div>
+    `;
+    
+    try {
+        const response = await fetch('/emails/graph/messages');
+        const data = await response.json();
+        
+        if (!response.ok || !data.success) {
+            emailListContainer.innerHTML = `
+                <div class="email-list-placeholder text-danger">
+                    <i class="bi bi-exclamation-circle"></i>
+                    <p>${data.error?.message || 'Failed to load emails'}</p>
+                    <button class="btn btn-sm btn-outline-primary mt-2" onclick="loadMailboxMessages()">Retry</button>
+                </div>
+            `;
+            return;
+        }
+
+        messageCache = data.messages || [];
+        mailboxCount.textContent = messageCache.length;
+        
+        if (!messageCache.length) {
+            emailListContainer.innerHTML = `
+                <div class="email-list-placeholder">
+                    <i class="bi bi-inbox"></i>
+                    <p>No emails found</p>
+                </div>
+            `;
+            return;
+        }
+
+        renderEmailList(messageCache);
+    } catch (error) {
+        emailListContainer.innerHTML = `
+            <div class="email-list-placeholder text-danger">
+                <i class="bi bi-wifi-off"></i>
+                <p>Connection error</p>
+                <button class="btn btn-sm btn-outline-primary mt-2" onclick="loadMailboxMessages()">Retry</button>
+            </div>
+        `;
+    }
+}
+
+function renderEmailList(messages) {
+    const html = messages.map(message => {
+        const from = message.from?.emailAddress?.name || message.from?.emailAddress?.address || 'Unknown';
+        const fromEmail = message.from_email || '';
+        const company = message.lookup?.company_name || '';
+        const subject = message.subject || '(no subject)';
+        const preview = message.bodyPreview || '';
+        const dateStr = formatRelativeDate(message.receivedDateTime);
+        const initials = getInitials(from);
+        const avatarColor = getAvatarColor(from);
+        const isSelected = selectedMessageId === message.id;
+        const ticketBadge = message.ticket_id
+            ? `<a class="email-badge email-badge-ticket" href="/tickets/${message.ticket_id}" target="_blank" rel="noopener" onclick="event.stopPropagation();">Ticket #${message.ticket_id}</a>`
+            : '';
+        const partsListBadge = message.parts_list_id
+            ? `<a class="email-badge email-badge-parts" href="/parts_list/view/${message.parts_list_id}" target="_blank" rel="noopener" onclick="event.stopPropagation();">Parts List #${message.parts_list_id}</a>`
+            : '';
+        const badges = ticketBadge || partsListBadge
+            ? `<div class="email-badges">${ticketBadge}${partsListBadge}</div>`
+            : '';
+        
+        return `
+            <div class="email-item ${isSelected ? 'selected' : ''}" data-id="${message.id}">
+                <div class="email-avatar" style="background-color: ${avatarColor}">${initials}</div>
+                <div class="email-content">
+                    <div class="email-top-row">
+                        <span class="email-sender">${from}</span>
+                        <span class="email-date">${dateStr}</span>
+                    </div>
+                    <div class="email-subject">${truncateText(subject, 50)}</div>
+                    <div class="email-preview">${truncateText(preview, 80)}</div>
+                    ${company ? `<span class="email-company-tag"><i class="bi bi-building"></i> ${company}</span>` : ''}
+                    ${badges}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    emailListContainer.innerHTML = html;
+
+    document.querySelectorAll('.email-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const messageId = item.getAttribute('data-id');
+            selectMessage(messageId);
+        });
+    });
+}
+
+async function selectMessage(messageId) {
+    // Update selection UI
+    document.querySelectorAll('.email-item').forEach(item => {
+        item.classList.toggle('selected', item.getAttribute('data-id') === messageId);
+    });
+    selectedMessageId = messageId;
+    
+    // Show loading state
+    emptyReadingState.style.display = 'none';
+    readingContent.style.display = 'flex';
+    readingSubject.textContent = 'Loading...';
+    readingFrom.textContent = '';
+    readingFromEmail.textContent = '';
+    readingFrame.srcdoc = '<div style="display:flex;justify-content:center;align-items:center;height:100%;color:#6c757d;"><div class="spinner-border spinner-border-sm" role="status"></div></div>';
+
+    try {
+        const response = await fetch(`/emails/graph/message/${messageId}`);
+        const data = await response.json();
+        
+        if (!response.ok || !data.success) {
+            showToast(data.error?.message || 'Failed to load message', 'error');
+            return;
+        }
+
+        selectedMessage = data.message;
+        const lookup = data.lookup || {};
+        const fromData = selectedMessage.from?.emailAddress || {};
+        const subject = selectedMessage.subject || '(no subject)';
+        const received = selectedMessage.receivedDateTime ? formatFullDate(selectedMessage.receivedDateTime) : '';
+        const fromName = fromData.name || fromData.address || 'Unknown';
+        const fromEmail = fromData.address || '';
+        
+        readingSubject.textContent = subject;
+        readingFrom.textContent = fromName;
+        readingFromEmail.textContent = fromEmail;
+        readingReceived.textContent = received;
+        updateSupplierQuoteButton(subject);
+        
+        // Update avatar
+        senderAvatar.textContent = getInitials(fromName);
+        senderAvatar.style.backgroundColor = getAvatarColor(fromName);
+        
+        // Company badge
+        if (lookup.company_name) {
+            readingCompany.textContent = `${lookup.company_name}${lookup.company_type ? ` (${lookup.company_type})` : ''}`;
+            readingCompanyBadge.style.display = 'inline-flex';
+        } else {
+            readingCompanyBadge.style.display = 'none';
+        }
+
+        // Render email body with image support
+        let bodyContent = selectedMessage.body?.content || '';
+        if (selectedMessage.body?.contentType === 'html') {
+            bodyContent = await resolveInlineImages(bodyContent, selectedMessage.id);
+            // Create HTML document with proper styling and image support
+            const htmlDoc = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <style>
+                        * { box-sizing: border-box; }
+                        body { 
+                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                            font-size: 14px;
+                            line-height: 1.6;
+                            color: #212529;
+                            margin: 0;
+                            padding: 16px;
+                            word-wrap: break-word;
+                            overflow-wrap: break-word;
+                        }
+                        img { 
+                            max-width: 100%; 
+                            height: auto; 
+                            display: inline-block;
+                        }
+                        a { color: #0d6efd; }
+                        table { 
+                            max-width: 100%; 
+                            border-collapse: collapse;
+                        }
+                        td, th { 
+                            word-wrap: break-word;
+                            overflow-wrap: break-word;
+                        }
+                        pre, code {
+                            white-space: pre-wrap;
+                            word-wrap: break-word;
+                            max-width: 100%;
+                            overflow-x: auto;
+                        }
+                        blockquote {
+                            border-left: 3px solid #dee2e6;
+                            margin: 1em 0;
+                            padding-left: 1em;
+                            color: #6c757d;
+                        }
+                    </style>
+                </head>
+                <body>${bodyContent}</body>
+                </html>
+            `;
+            readingFrame.srcdoc = htmlDoc;
+        } else {
+            readingFrame.srcdoc = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <style>
+                        body { 
+                            font-family: monospace;
+                            font-size: 13px;
+                            line-height: 1.5;
+                            color: #212529;
+                            margin: 0;
+                            padding: 16px;
+                            white-space: pre-wrap;
+                            word-wrap: break-word;
+                        }
+                    </style>
+                </head>
+                <body>${bodyContent || 'No content.'}</body>
+                </html>
+            `;
+        }
+
+        // Enable action buttons
+        if (selectedMessage.webLink) {
+            openOutlookBtn.href = selectedMessage.webLink;
+            openOutlookBtn.classList.remove('disabled');
+        } else {
+            openOutlookBtn.classList.add('disabled');
+        }
+        createPartsListBtn.disabled = false;
+        createTicketBtn.disabled = false;
+
+    } catch (error) {
+        showToast('Error loading message', 'error');
+    }
+}
+
+function extractTextFromBody(message) {
+    if (!message?.body) return '';
+    if (message.body.contentType === 'text') return message.body.content || '';
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(message.body.content || '', 'text/html');
+    return doc.body?.textContent || '';
+}
+
+function normalizeContentId(value) {
+    if (!value) return '';
+    let cleaned = value.trim();
+    if (cleaned.startsWith('<') && cleaned.endsWith('>')) {
+        cleaned = cleaned.slice(1, -1);
+    }
+    return cleaned.toLowerCase();
+}
+
+function replaceInlineImages(htmlContent, attachments) {
+    if (!htmlContent || !attachments?.length) return htmlContent;
+    const map = {};
+    attachments.forEach(item => {
+        if (!item?.content_id_key || !item?.data_url) return;
+        map[item.content_id_key] = item.data_url;
+    });
+    return htmlContent.replace(/src=(["'])cid:([^"']+)\1/gi, (match, quote, cid) => {
+        const key = normalizeContentId(cid);
+        if (map[key]) {
+            return `src=${quote}${map[key]}${quote}`;
+        }
+        return match;
+    });
+}
+
+async function resolveInlineImages(htmlContent, messageId) {
+    if (!htmlContent || !htmlContent.toLowerCase().includes('cid:') || !messageId) {
+        return htmlContent;
+    }
+    try {
+        const response = await fetch(`/emails/graph/message/${messageId}/inline-attachments`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            return htmlContent;
+        }
+        return replaceInlineImages(htmlContent, data.attachments || []);
+    } catch (error) {
+        return htmlContent;
+    }
+}
+
+// Search functionality
+emailSearch.addEventListener('input', (e) => {
+    const query = e.target.value.toLowerCase().trim();
+    if (!query) {
+        renderEmailList(messageCache);
+        return;
+    }
+    
+    const filtered = messageCache.filter(msg => {
+        const from = (msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || '').toLowerCase();
+        const subject = (msg.subject || '').toLowerCase();
+        const preview = (msg.bodyPreview || '').toLowerCase();
+        const company = (msg.lookup?.company_name || '').toLowerCase();
+        return from.includes(query) || subject.includes(query) || preview.includes(query) || company.includes(query);
+    });
+    
+    renderEmailList(filtered);
+});
+
+// Event handlers
+document.getElementById('connectGraphBtn').addEventListener('click', () => {
+    window.location.href = '/emails/graph/connect?next=/emails/mailbox';
+});
+
+document.getElementById('testGraphBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('testGraphBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Testing...';
+    
+    try {
+        const response = await fetch('/emails/graph/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await response.json();
+        if (data.success) {
+            showToast('Connection successful!', 'success');
+        } else {
+            showToast(data.error?.message || 'Test failed', 'error');
+        }
+    } catch (error) {
+        showToast('Connection test failed', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-lightning me-2"></i>Test Connection';
+    }
+});
+
+document.getElementById('refreshMailboxBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('refreshMailboxBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    
+    try {
+        await loadMailboxMessages();
+        showToast('Mailbox refreshed', 'success');
+    } catch (error) {
+        showToast('Refresh failed', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i>';
+    }
+});
+
+createPartsListBtn.addEventListener('click', async () => {
+    if (!selectedMessage) return;
+    createPartsListBtn.disabled = true;
+    createPartsListBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creating...';
+    const bodyText = extractTextFromBody(selectedMessage);
+    const payload = {
+        subject: selectedMessage.subject || '',
+        sender_email: selectedMessage.from?.emailAddress?.address || '',
+        body_text: bodyText || selectedMessage.bodyPreview || '',
+        message_id: selectedMessage.id || '',
+        conversation_id: selectedMessage.conversationId || ''
+    };
+    try {
+        const response = await fetch('/parts_list/outlook/macro', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (data.success) {
+            if (data.parts_count === 0) {
+                showToast('No parts found. Created an empty parts list.', 'warning');
+            } else {
+                showToast(`Created parts list #${data.list_id}`, 'success');
+            }
+            const redirectUrl = data.redirect_url || `/parts_list/view/${data.list_id}`;
+            setTimeout(() => {
+                window.location.href = redirectUrl;
+            }, 400);
+        } else {
+            showToast(data.message || 'Failed to create parts list', 'error');
+        }
+    } catch (error) {
+        showToast('Error creating parts list', 'error');
+    } finally {
+        createPartsListBtn.disabled = false;
+        createPartsListBtn.innerHTML = '<i class="bi bi-list-ul me-1"></i>Parts List';
+    }
+});
+
+createSupplierQuoteBtn.addEventListener('click', () => {
+    if (!selectedMessage || !selectedPartsListId) return;
+
+    let url = `/parts_list/parts-lists/${selectedPartsListId}/quick-quote`;
+    if (selectedSupplierId) {
+        url += `/${selectedSupplierId}`;
+    }
+
+    const params = new URLSearchParams();
+    if (selectedMessage.id) {
+        params.set('email_message_id', selectedMessage.id);
+    }
+    if (selectedMessage.conversationId) {
+        params.set('email_conversation_id', selectedMessage.conversationId);
+    }
+
+    const query = params.toString();
+    if (query) {
+        url += `?${query}`;
+    }
+
+    window.location.href = url;
+});
+
+createTicketBtn.addEventListener('click', async () => {
+    if (!selectedMessage) {
+        console.log('No selected message');
+        return;
+    }
+    
+    console.log('Creating ticket from email:', selectedMessage);
+    createTicketBtn.disabled = true;
+    createTicketBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creating...';
+    
+    const payload = {
+        message_id: selectedMessage.id || '',
+        conversation_id: selectedMessage.conversationId || '',
+        from_email: selectedMessage.from?.emailAddress?.address || '',
+        subject: selectedMessage.subject || '',
+        body_preview: selectedMessage.bodyPreview || ''
+    };
+    console.log('Payload:', payload);
+    
+    try {
+        const response = await fetch('/tickets/from-email', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        
+        console.log('Response status:', response.status);
+        const data = await response.json();
+        console.log('Response data:', data);
+        
+        if (data.success) {
+            if (data.existing) {
+                showToast(`Updated existing ticket #${data.ticket_id}`, 'success');
+            } else {
+                showToast(`Created ticket #${data.ticket_id}`, 'success');
+            }
+            // Redirect to the ticket
+            setTimeout(() => {
+                window.location.href = `/tickets/${data.ticket_id}`;
+            }, 500);
+        } else {
+            showToast(data.error || 'Failed to create ticket', 'error');
+        }
+    } catch (error) {
+        console.error('Error creating ticket:', error);
+        showToast('Error creating ticket: ' + error.message, 'error');
+    } finally {
+        createTicketBtn.disabled = false;
+        createTicketBtn.innerHTML = '<i class="bi bi-ticket-detailed me-1"></i>Ticket';
+    }
+});
+
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toastContainer') || createToastContainer();
+    const toast = document.createElement('div');
+    let bgClass = 'bg-success';
+    let textClass = 'text-white';
+    if (type === 'error') {
+        bgClass = 'bg-danger';
+    } else if (type === 'warning') {
+        bgClass = 'bg-warning';
+        textClass = 'text-dark';
+    } else if (type === 'info') {
+        bgClass = 'bg-info';
+    }
+    toast.className = `toast show align-items-center ${textClass} ${bgClass} border-0`;
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">${message}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+function createToastContainer() {
+    const container = document.createElement('div');
+    container.id = 'toastContainer';
+    container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+    container.style.zIndex = '1100';
+    document.body.appendChild(container);
+    return container;
+}
+
+// Initialize
+console.log('Mailbox initialized');
+console.log('createTicketBtn element:', createTicketBtn);
+setGraphStatus(graphSeed);
+loadMailboxMessages();
+</script>
+
+<style>
+/* Container */
+.mailbox-container {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 120px);
+    background: #f8f9fa;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Top Bar */
+.mailbox-topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    background: #fff;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.topbar-left {
+    display: flex;
+    align-items: center;
+}
+
+.mailbox-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0;
+    color: #212529;
+}
+
+.topbar-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* Layout */
+.mailbox-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* Email List Panel */
+.email-list-panel {
+    width: 380px;
+    min-width: 320px;
+    max-width: 450px;
+    background: #fff;
+    border-right: 1px solid #e9ecef;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.email-list-header {
+    padding: 12px;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.search-box {
+    position: relative;
+}
+
+.search-box i {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #6c757d;
+}
+
+.search-box input {
+    padding-left: 36px;
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+    background: #f8f9fa;
+}
+
+.search-box input:focus {
+    background: #fff;
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.15);
+}
+
+.email-list-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.email-list-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #6c757d;
+    padding: 40px 20px;
+    text-align: center;
+}
+
+.email-list-placeholder i {
+    font-size: 3rem;
+    margin-bottom: 12px;
+    opacity: 0.5;
+}
+
+/* Email Item */
+.email-item {
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid #f1f3f4;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.email-item:hover {
+    background: #f8f9fa;
+}
+
+.email-item.selected {
+    background: #e8f0fe;
+    border-left: 3px solid #1a73e8;
+    padding-left: 13px;
+}
+
+.email-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.email-content {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.email-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2px;
+}
+
+.email-sender {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #202124;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.email-date {
+    font-size: 0.75rem;
+    color: #5f6368;
+    flex-shrink: 0;
+    margin-left: 8px;
+}
+
+.email-subject {
+    font-size: 0.85rem;
+    color: #202124;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+}
+
+.email-preview {
+    font-size: 0.8rem;
+    color: #5f6368;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.email-company-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.7rem;
+    color: #1a73e8;
+    background: #e8f0fe;
+    padding: 2px 8px;
+    border-radius: 12px;
+    margin-top: 6px;
+}
+
+.email-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.email-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 12px;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.email-badge-ticket {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeeba;
+}
+
+.email-badge-parts {
+    background: #e2f0ff;
+    color: #084298;
+    border: 1px solid #b6d4fe;
+}
+
+.email-badge:hover {
+    opacity: 0.9;
+    text-decoration: none;
+}
+
+/* Reading Pane */
+.reading-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    overflow: hidden;
+}
+
+.reading-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #6c757d;
+    text-align: center;
+}
+
+.reading-empty-state i {
+    font-size: 4rem;
+    margin-bottom: 16px;
+    opacity: 0.3;
+}
+
+.reading-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.reading-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid #e9ecef;
+    flex-shrink: 0;
+}
+
+.reading-subject-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.reading-subject-row h4 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #202124;
+    word-break: break-word;
+}
+
+.reading-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.reading-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.sender-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.sender-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.sender-details {
+    min-width: 0;
+}
+
+.sender-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #202124;
+}
+
+.sender-email {
+    font-size: 0.85rem;
+}
+
+.email-date {
+    font-size: 0.85rem;
+    color: #5f6368;
+}
+
+.reading-company-badge {
+    display: inline-flex;
+    align-items: center;
+    margin-top: 12px;
+    font-size: 0.85rem;
+    color: #1a73e8;
+    background: #e8f0fe;
+    padding: 6px 12px;
+    border-radius: 16px;
+}
+
+.reading-body {
+    flex: 1;
+    overflow: hidden;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.reading-frame {
+    width: 100%;
+    flex: 1;
+    min-height: 300px;
+    border: none;
+    background: #fff;
+}
+
+/* Connection Status */
+.connection-status {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+}
+
+.status-indicator i {
+    font-size: 0.6rem;
+}
+
+.connected-user {
+    font-size: 0.85rem;
+    color: #198754;
+}
+
+/* Responsive */
+@media (max-width: 992px) {
+    .mailbox-layout {
+        flex-direction: column;
+    }
+    
+    .email-list-panel {
+        width: 100%;
+        max-width: none;
+        height: 40%;
+        border-right: none;
+        border-bottom: 1px solid #e9ecef;
+    }
+    
+    .reading-pane {
+        height: 60%;
+    }
+}
+
+/* Scrollbar styling */
+.email-list-body::-webkit-scrollbar {
+    width: 8px;
+}
+
+.email-list-body::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+.email-list-body::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+}
+
+.email-list-body::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+</style>
+{% endblock %}

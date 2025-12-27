@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS graph_token_cache (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id),
+    cache_text TEXT NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -9,6 +9,13 @@ function formatCurrency(value) {
     return '£' + parseFloat(value).toFixed(2);
 }
 
+function formatCurrencyWithCode(value, code) {
+    if (value === null || value === undefined || value === '' || isNaN(value)) return '-';
+    const numeric = parseFloat(value).toFixed(2);
+    const prefix = code ? `${code} ` : '';
+    return `${prefix}${numeric}`;
+}
+
 function formatDate(dateStr) {
     if (!dateStr) return '-';
     try { return new Date(dateStr).toLocaleDateString(); }
@@ -257,6 +264,148 @@ function showPartDetailsModal(part) {
                                                     data-source-ref="${po.purchase_order_ref}">
                                                 <i class="bi bi-check-circle"></i> Use Cost
                                             </button>
+                                        </div>
+                                    </td>` : ''}
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+
+    // EXCESS STOCK DETAILS - PURCHASING
+    if (part.excess_count > 0 && part.excess_details && part.excess_details.length > 0) {
+        const excessToShow = part.excess_details;
+        const priceRange = getPriceRange(part.excess_details, 'unit_price');
+        const uniqueSuppliers = [...new Set(part.excess_details.map(ex => ex.supplier_name).filter(Boolean))];
+
+        detailsHtml += `
+            <div class="modal-section purchasing">
+                <div class="modal-section-header">
+                    <i class="bi bi-boxes" style="color: #0d6efd; font-size: 1rem;"></i>
+                    <span>Excess Stock Lists</span>
+                    <span class="modal-section-badge" style="background: #0d6efd; color: white;">${part.excess_details.length} line${part.excess_details.length !== 1 ? 's' : ''}</span>
+                    ${uniqueSuppliers.length ? `<span class="modal-section-badge" style="background: #6610f2; color: white;">
+                        <i class="bi bi-building me-1"></i>${uniqueSuppliers.length} supplier${uniqueSuppliers.length !== 1 ? 's' : ''}
+                    </span>` : ''}
+                    ${priceRange ? `<span class="modal-section-badge" style="background: #0dcaf0; color: white;">
+                        Avg: ${formatCurrency(priceRange.avg)}
+                    </span>` : ''}
+                    
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm modal-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>List</th>
+                                <th>Supplier</th>
+                                <th>Quantity</th>
+                                <th>Price</th>
+                                ${showActions ? '<th style="width: 180px;">Actions</th>' : ''}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${excessToShow.map(ex => `
+                                <tr>
+                                    <td><strong>${formatDate(ex.upload_date || ex.entered_date)}</strong></td>
+                                    <td>${escapeHtml(ex.list_name || '-') }</td>
+                                    <td>${escapeHtml(ex.supplier_name || 'Unknown')}</td>
+                                    <td>${ex.quantity || '-'}</td>
+                                    <td style="font-weight: 600; color: #0d6efd;">${formatCurrencyWithCode(ex.unit_price, ex.currency_code || 'GBP')}</td>
+                                    ${showActions ? `
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            ${ex.supplier_id ? `
+                                            <button class="btn btn-outline-primary add-supplier-btn"
+                                                    data-supplier-id="${ex.supplier_id}"
+                                                    data-supplier-name="${escapeHtml(ex.supplier_name || '')}"
+                                                    data-source-type="excess"
+                                                    title="Add to suggested suppliers">
+                                                <i class="bi bi-plus-circle"></i>
+                                            </button>` : ''}
+                                            ${ex.unit_price ? `
+                                            <button class="btn btn-success use-cost-btn"
+                                                    data-supplier-id="${ex.supplier_id || ''}"
+                                                    data-cost="${ex.unit_price}"
+                                                    data-currency="${ex.unit_price_currency_id || ''}"
+                                                    data-source-type="excess"
+                                                    data-source-ref="${ex.excess_stock_list_id}">
+                                                <i class="bi bi-check-circle"></i> Use Cost
+                                            </button>` : ''}
+                                        </div>
+                                    </td>` : ''}
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+
+    // EXCESS STOCK DETAILS - PURCHASING
+    if (part.excess_count > 0 && part.excess_details && part.excess_details.length > 0) {
+        const excessToShow = part.excess_details;
+        const priceRange = getPriceRange(part.excess_details, 'unit_price');
+        const uniqueSuppliers = [...new Set(part.excess_details.map(ex => ex.supplier_name).filter(Boolean))];
+
+        detailsHtml += `
+            <div class="modal-section purchasing">
+                <div class="modal-section-header">
+                    <i class="bi bi-boxes" style="color: #0d6efd; font-size: 1rem;"></i>
+                    <span>Excess Stock Lists</span>
+                    <span class="modal-section-badge" style="background: #0d6efd; color: white;">${part.excess_details.length} line${part.excess_details.length !== 1 ? 's' : ''}</span>
+                    ${uniqueSuppliers.length ? `<span class="modal-section-badge" style="background: #6610f2; color: white;">
+                        <i class="bi bi-building me-1"></i>${uniqueSuppliers.length} supplier${uniqueSuppliers.length !== 1 ? 's' : ''}
+                    </span>` : ''}
+                    ${priceRange ? `<span class="modal-section-badge" style="background: #0dcaf0; color: white;">
+                        Avg: ${formatCurrency(priceRange.avg)}
+                    </span>` : ''}
+                    
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm modal-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>List</th>
+                                <th>Supplier</th>
+                                <th>Quantity</th>
+                                <th>Price</th>
+                                ${showActions ? '<th style="width: 180px;">Actions</th>' : ''}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${excessToShow.map(ex => `
+                                <tr>
+                                    <td><strong>${formatDate(ex.upload_date || ex.entered_date)}</strong></td>
+                                    <td>${escapeHtml(ex.list_name || '-') }</td>
+                                    <td>${escapeHtml(ex.supplier_name || 'Unknown')}</td>
+                                    <td>${ex.quantity || '-'}</td>
+                                    <td style="font-weight: 600; color: #0d6efd;">${formatCurrencyWithCode(ex.unit_price, ex.currency_code || 'GBP')}</td>
+                                    ${showActions ? `
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            ${ex.supplier_id ? `
+                                            <button class="btn btn-outline-primary add-supplier-btn"
+                                                    data-supplier-id="${ex.supplier_id}"
+                                                    data-supplier-name="${escapeHtml(ex.supplier_name || '')}"
+                                                    data-source-type="excess"
+                                                    title="Add to suggested suppliers">
+                                                <i class="bi bi-plus-circle"></i>
+                                            </button>` : ''}
+                                            ${ex.unit_price ? `
+                                            <button class="btn btn-success use-cost-btn"
+                                                    data-supplier-id="${ex.supplier_id || ''}"
+                                                    data-cost="${ex.unit_price}"
+                                                    data-currency="${ex.unit_price_currency_id || ''}"
+                                                    data-source-type="excess"
+                                                    data-source-ref="${ex.excess_stock_list_id}">
+                                                <i class="bi bi-check-circle"></i> Use Cost
+                                            </button>` : ''}
                                         </div>
                                     </td>` : ''}
                                 </tr>
@@ -1124,6 +1273,33 @@ document.addEventListener('DOMContentLoaded', function() {
         currentListId = window.LOADED_LIST_DATA.header.id;
     }
 
+    document.addEventListener('click', function(e) {
+        const useBtn = e.target.closest('.use-excess-cost-btn');
+        if (useBtn) {
+            const lineId = useBtn.dataset.lineId;
+            const costData = {
+                supplier_id: useBtn.dataset.supplierId || null,
+                cost: parseFloat(useBtn.dataset.cost),
+                currency_id: useBtn.dataset.currencyId ? parseInt(useBtn.dataset.currencyId) : null,
+                source_type: 'excess',
+                source_reference: useBtn.dataset.sourceRef || null
+            };
+            useCost(lineId, costData, useBtn);
+            return;
+        }
+
+        const addBtn = e.target.closest('.add-excess-supplier-btn');
+        if (addBtn) {
+            addSuggestedSupplier(
+                addBtn.dataset.lineId,
+                addBtn.dataset.supplierId,
+                addBtn.dataset.supplierName || '',
+                'excess',
+                addBtn
+            );
+        }
+    });
+
     // Setup button handlers
     const emailBtn = document.getElementById('email-suppliers-btn');
     if (emailBtn) {
@@ -1386,6 +1562,47 @@ document.addEventListener('DOMContentLoaded', function() {
             ilsClickHandler = `onclick="handleIlsClick(${index - 1})"`;
         }
 
+        let excessDisplay = '-';
+        if (part.excess_count > 0 && part.lowest_excess_price !== null && part.lowest_excess_price !== undefined) {
+            const excessPrice = formatCurrencyWithCode(part.lowest_excess_price, part.lowest_excess_currency_code || 'GBP');
+            const supplierLine = part.lowest_excess_supplier ? `<br><small class="text-muted" style="font-size: 0.75rem;">${escapeHtml(part.lowest_excess_supplier)}</small>` : '';
+            const actions = part.line_id ? `
+                <div class="mt-1 d-flex gap-1">
+                    ${part.lowest_excess_price ? `
+                    <button class="btn btn-sm btn-outline-primary use-excess-cost-btn"
+                            data-line-id="${part.line_id}"
+                            data-cost="${part.lowest_excess_price}"
+                            data-currency-id="${part.lowest_excess_currency_id || ''}"
+                            data-currency-code="${part.lowest_excess_currency_code || ''}"
+                            data-supplier-id="${part.lowest_excess_supplier_id || ''}"
+                            data-supplier-name="${escapeHtml(part.lowest_excess_supplier || '')}"
+                            data-source-type="excess"
+                            data-source-ref="${part.lowest_excess_list_id || ''}">
+                        <i class="bi bi-check-circle"></i>
+                    </button>` : ''}
+                    ${part.lowest_excess_supplier_id ? `
+                    <button class="btn btn-sm btn-outline-secondary add-excess-supplier-btn"
+                            data-line-id="${part.line_id}"
+                            data-supplier-id="${part.lowest_excess_supplier_id}"
+                            data-supplier-name="${escapeHtml(part.lowest_excess_supplier || '')}"
+                            data-source-type="excess">
+                        <i class="bi bi-plus-circle"></i>
+                    </button>` : ''}
+                </div>` : '';
+            excessDisplay = `<div style="font-weight: 600; color: #0d6efd;">${excessPrice}${supplierLine}${actions}</div>`;
+        } else if (part.excess_count > 0) {
+            excessDisplay = `<span class="text-muted">${part.excess_count} line${part.excess_count !== 1 ? 's' : ''}</span>`;
+        }
+
+        let partsListQuotesDisplay = '-';
+        if (part.parts_list_quotes_count > 0) {
+            partsListQuotesDisplay = `
+                <span class="badge-count badge-success">
+                    ${part.parts_list_quotes_count}
+                </span>
+            `;
+        }
+
         tr.innerHTML = `
     <td style="width: 60px; min-width: 60px;">${index}</td>
     <td style="width: 200px; min-width: 200px;">
@@ -1425,6 +1642,12 @@ document.addEventListener('DOMContentLoaded', function() {
             ${part.most_recent_po_supplier ? `<br><small class="text-muted" style="font-size: 0.75rem;">${escapeHtml(part.most_recent_po_supplier)}</small>` : ''}
         </div>
     </td>
+    <td style="width: 170px; min-width: 170px;" class="purchasing-col">
+        ${excessDisplay}
+    </td>
+    <td style="width: 150px; min-width: 150px;" class="purchasing-col">
+        ${partsListQuotesDisplay}
+    </td>
     <td style="width: 120px; min-width: 120px; ${part.ils_total_suppliers > 0 ? 'cursor: pointer;' : ''}"
         class="purchasing-col ${ilsClickable}"
         ${ilsClickHandler}
@@ -1450,7 +1673,7 @@ document.addEventListener('DOMContentLoaded', function() {
     </td>
     <td style="width: 150px; min-width: 150px; font-weight: 600; color: ${guidePrice !== '-' ? '#0d6efd' : '#adb5bd'};">${guidePrice}</td>
     <td style="width: 120px; min-width: 120px;">
-        ${part.found && (part.bom_usage_count > 0 || part.vq_count > 0 || part.so_count > 0 || part.cq_count > 0 || part.po_count > 0 || part.stock_movement_count > 0 || part.ils_total_suppliers > 0)
+        ${part.found && (part.bom_usage_count > 0 || part.vq_count > 0 || part.so_count > 0 || part.cq_count > 0 || part.po_count > 0 || part.stock_movement_count > 0 || part.ils_total_suppliers > 0 || part.excess_count > 0 || part.parts_list_quotes_count > 0)
             ? `<button class="btn btn-sm btn-outline-primary"
                        onclick="handleViewDetails(${index - 1})"
                        style="cursor: pointer; padding: 0.25rem 0.5rem; font-size: 0.875rem;">

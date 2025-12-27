@@ -127,7 +127,7 @@ def _row_value(row, key=None):
 
 # Set up logging
 app = Flask(__name__)
-logging.basicConfig(level=logging.ERROR)
+logger = logging.getLogger(__name__)
 
 rfqs_bp = Blueprint('rfqs', __name__)
 Session = sessionmaker(bind=engine)

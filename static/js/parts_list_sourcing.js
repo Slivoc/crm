@@ -259,7 +259,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Use cost buttons
     document.addEventListener('click', function(e) {
-        const costBtn = e.target.closest('.use-vq-cost-btn, .use-po-cost-btn, .use-stock-cost-btn');
+        const costBtn = e.target.closest('.use-vq-cost-btn, .use-po-cost-btn, .use-stock-cost-btn, .use-excess-cost-btn');
         if (!costBtn) return;
 
         const lineId = costBtn.dataset.lineId;
@@ -279,6 +279,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (costBtn.classList.contains('use-vq-cost-btn')) source = 'vq';
             else if (costBtn.classList.contains('use-po-cost-btn')) source = 'po';
             else if (costBtn.classList.contains('use-stock-cost-btn')) source = 'stock';
+            else if (costBtn.classList.contains('use-excess-cost-btn')) source = 'excess';
         }
 
         fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/lines/${lineId}/use-cost`, {

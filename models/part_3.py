@@ -32,6 +32,20 @@ DATABASE_URL = _os.getenv('DATABASE_URL', 'sqlite:///database.db')
 engine = create_engine(DATABASE_URL)
 metadata = MetaData()
 
+_CALL_LIST_HAS_SNOOZED_UNTIL = None
+
+def _call_list_has_snoozed_until():
+    global _CALL_LIST_HAS_SNOOZED_UNTIL
+    if _CALL_LIST_HAS_SNOOZED_UNTIL is not None:
+        return _CALL_LIST_HAS_SNOOZED_UNTIL
+    try:
+        inspector = inspect(engine)
+        columns = {col["name"] for col in inspector.get_columns("call_list")}
+        _CALL_LIST_HAS_SNOOZED_UNTIL = "snoozed_until" in columns
+    except Exception:
+        _CALL_LIST_HAS_SNOOZED_UNTIL = False
+    return _CALL_LIST_HAS_SNOOZED_UNTIL
+
 # PostgreSQL compatibility helper
 
 def get_customers_by_country(country_code: str) -> List[Dict]:
@@ -641,11 +655,14 @@ def get_salesperson_contacts(salesperson_id, search_term='', customer_filter='',
 
         # Left join with call_list table if we need to filter by it
         if call_list_only:
-            query_parts.append("""
+            snooze_clause = ""
+            if _call_list_has_snoozed_until():
+                snooze_clause = "AND (cl.snoozed_until IS NULL OR cl.snoozed_until <= CURRENT_TIMESTAMP)"
+            query_parts.append(f"""
             JOIN call_list cl ON c.id = cl.contact_id 
                 AND cl.salesperson_id = ?
                 AND cl.is_active = TRUE
-                AND (cl.snoozed_until IS NULL OR cl.snoozed_until <= CURRENT_TIMESTAMP)
+                {snooze_clause}
             """)
 
         # Continue with WHERE clause

@@ -4,49 +4,63 @@
 <div class="card shadow p-3 border-0">
     <div class="card-header d-flex justify-content-between align-items-center">
         <strong>Import excel excess list</strong>
-        <!-- Move Save Changes button into the header -->
-        <button id="save-btn" class="btn btn-primary">Import lines</button>
-    </div>
-    <div class="card-body p-2">
-        <div class="table-responsive">
-            <div id="part-numbers-table"></div>
+        <div class="d-flex align-items-center gap-2">
+            <div class="d-flex align-items-center gap-2">
+                <label class="small text-muted mb-0" for="header-row-input">Header row</label>
+                <input type="number" id="header-row-input" class="form-control form-control-sm" value="{{ saved_header_row or 1 }}" min="1" {% if total_rows %}max="{{ total_rows }}"{% endif %} style="width: 90px;">
+            </div>
+            {% if not show_all %}
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('handson.excess_list_mapping', file_id=file_id, show_all=1) }}">
+                Show all rows{% if total_rows %} ({{ total_rows }}){% endif %}
+            </a>
+            {% else %}
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('handson.excess_list_mapping', file_id=file_id) }}">
+                Show first 20 rows
+            </a>
+            {% endif %}
+            <button id="save-btn" class="btn btn-primary">Import lines</button>
         </div>
     </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+    <div class="card-body p-2">
+        {% if not show_all %}
+        <div class="text-muted small px-2 pb-2">
+            Showing first 20 rows. Use "Show all rows" to load everything.
+        </div>
+        {% endif %}
+        <div id="import-status" class="text-muted small px-2 pb-2 d-none"></div>
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle" id="excess-preview-table"></table>
+        </div>
+    </div>
 
     <style>
     /* Ensure the dropdown div and table have the same grid width */
     #column-mapping {
-        display: grid;
-        grid-template-columns: 50px repeat(auto-fit, minmax(150px, 1fr)); /* Added first column for row numbers */
-        gap: 10px;
-        margin-bottom: 0; /* Remove margin between dropdowns and table */
+        display: flex;
+        gap: 8px;
+        margin-bottom: 0;
+        overflow-x: auto;
     }
 
-    #column-mapping .dummy-column {
-        visibility: hidden; /* Placeholder for row numbers */
+    #column-mapping .mapping-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
     }
 
-    #column-mapping select {
+    #column-mapping select,
+    #column-mapping .mapping-label {
         width: 100%;
     }
 
-    /* Ensure Handsontable takes up full width below the dropdowns */
-    #handsontable-container {
-        width: 100%;
-        margin-top: 10px;
+    #excess-preview-table th,
+    #excess-preview-table td {
+        white-space: nowrap;
     }
     </style>
 
-    <body>
     <!-- Column Mapping Dropdowns -->
     <div id="column-mapping"></div>
-    <div class="dummy-column"></div>
-    <!-- Handsontable container for excess list data -->
-    <div id="handsontable-container" style="margin-top: 20px;"></div>
-
 
     <script>
                 // Inject excess_stock_list_id from Flask and ensure it's an integer
@@ -56,22 +70,36 @@
 
     // Data passed from the backend
     const fileData = {{ file_data | tojson }};
-    const columns = {{ columns | tojson }};  // These are generic column names like 'Column 0', 'Column 1', etc.
+    const columns = {{ columns | tojson }};
+    const savedMapping = {{ saved_mapping | tojson }};
 
     // List of available database fields for excess lists
-    const dbFields = ['base_part_number', 'quantity', 'date_code', 'manufacturer'];
+    const dbFields = ['part_number', 'base_part_number', 'quantity', 'unit_price', 'unit_price_currency', 'date_code', 'manufacturer'];
 
     // Create dropdowns for each column
     const mappingDiv = document.getElementById('column-mapping');
-    const dummyDiv = document.createElement('div');
-    dummyDiv.classList.add('dummy-column');  // Create the dummy column to align
-    mappingDiv.appendChild(dummyDiv);  // Add the dummy column to the mapping div
+
+    const colWidths = columns.map(() => 180);
 
     // Loop to create dropdowns
     columns.forEach((col, index) => {
+        const cell = document.createElement('div');
+        cell.classList.add('mapping-cell');
+        cell.style.width = `${colWidths[index]}px`;
+
+        const label = document.createElement('div');
+        label.classList.add('mapping-label', 'small', 'text-muted');
+        label.textContent = `Column ${index + 1}`;
+
         const select = document.createElement('select');
         select.setAttribute('data-column-index', index);
-        select.classList.add('form-select'); // Add Bootstrap 5 form-select class
+        select.classList.add('form-select');
+
+        const skipOption = document.createElement('option');
+        skipOption.value = '__skip__';
+        skipOption.innerText = 'Skip column';
+        skipOption.selected = true;
+        select.appendChild(skipOption);
 
         dbFields.forEach(field => {
             const option = document.createElement('option');
@@ -80,29 +108,82 @@
             select.appendChild(option);
         });
 
-        // Append the dropdown to the mapping div
-        mappingDiv.appendChild(select);
+        if (savedMapping && savedMapping.hasOwnProperty(String(index))) {
+            const savedValue = savedMapping[String(index)];
+            if (savedValue) {
+                select.value = savedValue;
+            }
+        }
+
+        cell.appendChild(label);
+        cell.appendChild(select);
+        mappingDiv.appendChild(cell);
     });
 
-    // Initialize Handsontable with the raw file data (moved outside the loop)
-    const container = document.getElementById('handsontable-container');
-    const hot = new Handsontable(container, {
-        data: fileData,
-        colHeaders: columns,
-        rowHeaders: true,
-        filters: true,
-        dropdownMenu: true,
-        columnSorting: true,
-        contextMenu: true,  // Enable Handsontable's context menu
-        width: '100%',
-        stretchH: 'all',  // Ensure table stretches across the container
-        colWidths: [150, 200, 150, 100],  // Set specific initial widths for each column
-        manualColumnResize: true,  // Allow users to resize columns by dragging
-        licenseKey: 'non-commercial-and-evaluation'
-    });
+    const table = document.getElementById('excess-preview-table');
+    const headerRowInput = document.getElementById('header-row-input');
+
+    function getHeaderLabels() {
+        const headerIndex = Math.max(1, parseInt(headerRowInput.value || '1', 10)) - 1;
+        if (fileData[headerIndex]) {
+            return fileData[headerIndex].map((value, idx) => String(value || `Column ${idx + 1}`));
+        }
+        return columns.map((_, idx) => `Column ${idx + 1}`);
+    }
+
+    function renderPreviewTable() {
+        const headerLabels = getHeaderLabels();
+        const headerIndex = Math.max(1, parseInt(headerRowInput.value || '1', 10)) - 1;
+        const dataRows = fileData.map((row, idx) => ({
+            row,
+            isHeader: idx === headerIndex
+        }));
+
+        table.innerHTML = '';
+        const thead = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        const thIndex = document.createElement('th');
+        thIndex.textContent = '#';
+        headRow.appendChild(thIndex);
+        headerLabels.forEach(label => {
+            const th = document.createElement('th');
+            th.textContent = label;
+            headRow.appendChild(th);
+        });
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        dataRows.forEach((entry, idx) => {
+            const tr = document.createElement('tr');
+            if (entry.isHeader) {
+                tr.classList.add('table-warning');
+            }
+            const tdIndex = document.createElement('td');
+            tdIndex.textContent = String(idx + 1);
+            tr.appendChild(tdIndex);
+            entry.row.forEach((value, colIdx) => {
+                const td = document.createElement('td');
+                td.textContent = String(value || '');
+                td.style.width = `${colWidths[colIdx]}px`;
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+
+        document.querySelectorAll('#column-mapping .mapping-label').forEach((label, idx) => {
+            label.textContent = headerLabels[idx] || `Column ${idx + 1}`;
+        });
+    }
+
+    renderPreviewTable();
+    headerRowInput.addEventListener('input', renderPreviewTable);
 
     // Submit mapping data to the backend when the "Save Changes" button is clicked
     document.getElementById('save-btn').addEventListener('click', function() {
+        const statusEl = document.getElementById('import-status');
+        const saveBtn = document.getElementById('save-btn');
         const mapping = {};
         document.querySelectorAll('#column-mapping select').forEach(select => {
             const columnIndex = select.getAttribute('data-column-index');
@@ -110,7 +191,11 @@
             mapping[columnIndex] = mappedField;
         });
 
-        const data = hot.getData();  // Get Handsontable data
+        statusEl.textContent = 'Importing lines... this can take a few minutes for large files.';
+        statusEl.classList.remove('d-none');
+        saveBtn.disabled = true;
+        const originalText = saveBtn.textContent;
+        saveBtn.textContent = 'Importing...';
 
         // Send the mapping, data, and excess_stock_list_id to the backend for processing
         fetch('/handson/process_excess_list', {
@@ -120,17 +205,28 @@
             },
             body: JSON.stringify({
                 excess_stock_list_id: excessStockListId,  // Include the excess_stock_list_id here
-                data: data,
+                file_id: {{ file_id }},
+                header_row: parseInt(headerRowInput.value || '1', 10),
                 mapping: mapping
             })
-        }).then(response => response.json())
-          .then(result => {
-              console.log(result);
-          });
+        }).then(response => {
+            if (!response.ok) {
+                throw new Error('Import failed. Please check the server logs.');
+            }
+            return response.json();
+        }).then(result => {
+            if (result && result.success && result.redirect_url) {
+                window.location.href = result.redirect_url;
+            } else if (result && result.message) {
+                alert(result.message);
+            }
+        }).catch(error => {
+            alert(error.message || 'Import failed.');
+        }).finally(() => {
+            saveBtn.disabled = false;
+            saveBtn.textContent = originalText;
+        });
     });
 
     </script>
-
-    </body>
-    </html>
 {% endblock %}

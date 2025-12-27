@@ -6,6 +6,7 @@ from flask import Flask, redirect, request, url_for, send_from_directory, g, jso
 from flask_login import LoginManager, current_user
 import imaplib
 import os
+import sys
 import time
 from routes.rfqs import rfqs_bp, get_rfq_lines
 from routes.customers import customers_bp
@@ -70,6 +71,7 @@ from routes.portal_api import portal_api_bp
 from routes.portal_admin import portal_admin_bp
 from routes.news_email import send_news_email
 from routes.parts_list_ai import parts_list_ai_bp
+from routes.tickets import tickets_bp
 
 scheduler = APScheduler()
 
@@ -191,6 +193,7 @@ app.register_blueprint(ils_bp, url_prefix='/ils')
 app.register_blueprint(customer_quoting_bp, url_prefix='/customer-quoting')
 app.register_blueprint(marketplace_bp, url_prefix='/marketplace')
 app.register_blueprint(parts_list_ai_bp, url_prefix='/parts-list-ai')
+app.register_blueprint(tickets_bp, url_prefix='/tickets')
 app.secret_key = 'your-secret-key-here'  # Required for sessions
 app.register_blueprint(portal_api_bp)
 app.register_blueprint(portal_admin_bp)
@@ -238,6 +241,19 @@ def before_request():
         g.current_salesperson_id = current_user.get_salesperson_id()
     else:
         g.current_salesperson_id = session.get('selected_salesperson_id')
+
+@app.before_request
+def log_route_hit():
+    if _is_static_request():
+        return None
+    print(f"[route] {request.method} {request.path}", file=sys.stderr, flush=True)
+
+@app.after_request
+def log_route_status(response):
+    if _is_static_request():
+        return response
+    print(f"[route] -> {response.status}", file=sys.stderr, flush=True)
+    return response
 
 @app.context_processor
 def inject_auth_status():

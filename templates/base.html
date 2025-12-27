@@ -655,6 +655,10 @@ input:-webkit-autofill {
                         <i class="bi bi-speedometer2 me-2"></i>
                         My CRM
                     </a>
+                    <a href="{{ url_for('tickets.list_tickets') }}" class="btn btn-toggle align-items-center rounded d-flex">
+                        <i class="bi bi-ticket-perforated me-2"></i>
+                        Tickets
+                    </a>
                     {% endif %}
                 </li>
 
@@ -877,6 +881,18 @@ input:-webkit-autofill {
                 </a>
             </li>
             <li>
+                <a href="{{ url_for('emails.mailbox_page') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1">
+                    <i class="bi bi-inbox me-2"></i>
+                    Mailbox
+                </a>
+            </li>
+            <li>
+                <a href="{{ url_for('emails.list_emails') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1">
+                    <i class="bi bi-gear me-2"></i>
+                    Email Admin
+                </a>
+            </li>
+            <li>
                 <a href="/bulk_emails/" class="link-dark rounded d-flex align-items-center ps-3 py-1">
                     <i class="bi bi-send me-2"></i>
                     Bulk Emails
@@ -984,6 +1000,9 @@ input:-webkit-autofill {
 
                 <!-- Shortcuts (right-aligned) -->
                 <div class="d-flex gap-2 position-relative">
+                    <a href="{{ url_for('emails.mailbox_page') }}" class="btn btn-outline-secondary" title="Mailbox">
+                        <i class="bi bi-envelope"></i>
+                    </a>
                     <!-- Part Number Search -->
                     <div class="position-relative">
                         <input type="text" class="form-control" name="quick_search" placeholder="quick search part number" style="width: 200px;">

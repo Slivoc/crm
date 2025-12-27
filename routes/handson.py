@@ -1,9 +1,10 @@
 from flask import Blueprint, render_template, flash, redirect, current_app, jsonify, request
 import pandas as pd
-from models import get_excess_stock_list_id_by_file, insert_excess_stock_line, get_file_by_id, create_base_part_number, get_part_numbers, insert_part_number  # Import your function to get data
+from models import get_excess_stock_list_id_by_file, insert_excess_stock_line, get_file_by_id, create_base_part_number, get_part_numbers, insert_part_number, get_excess_stock_list_by_id  # Import your function to get data
 import os
 import sqlite3
 import json
+import re
 from datetime import datetime
 from folder_watcher import start_folder_watcher
 import threading
@@ -24,6 +25,15 @@ def _prepare_query(query):
 def _execute_with_cursor(cur, query, params=None):
     cur.execute(_prepare_query(query), params or [])
     return cur
+
+
+def _resolve_file_path(file_path):
+    if not file_path:
+        return file_path
+    if os.path.isabs(file_path):
+        return file_path
+    base_path = current_app.root_path if current_app else os.getcwd()
+    return os.path.join(base_path, file_path)
 
 
 def _with_returning_clause(query):
@@ -63,7 +73,7 @@ def view_file_in_handson(file_id):
     if not file_details:
         return "File not found", 404
 
-    file_path = file_details['filepath']
+    file_path = _resolve_file_path(file_details['filepath'])
 
     # Ensure the file exists
     if not os.path.exists(file_path):
@@ -90,10 +100,9 @@ def process_excess_list():
     # Debug: Print the received data and mapping
     print("Received content:", content)
 
-    if 'data' not in content or 'mapping' not in content:
-        return jsonify(success=False, message="Data or mapping missing from request"), 400
+    if 'mapping' not in content:
+        return jsonify(success=False, message="Mapping missing from request"), 400
 
-    data = content['data']
     mapping = content['mapping']
 
     # Ensure that 'excess_stock_list_id' is provided in the request
@@ -101,31 +110,120 @@ def process_excess_list():
         return jsonify(success=False, message="'excess_stock_list_id' is missing from the request"), 400
 
     excess_stock_list_id = content['excess_stock_list_id']
+    header_row = int(content.get('header_row', 1) or 1)
+    if header_row < 1:
+        header_row = 1
 
-    # Assume that mapping contains field names like 'base_part_number', 'quantity', etc.
-    try:
-        base_part_index = int(next(key for key, value in mapping.items() if value == 'base_part_number'))
-        manufacturer_index = int(next(key for key, value in mapping.items() if value == 'manufacturer'))
-        quantity_index = int(next(key for key, value in mapping.items() if value == 'quantity'))
+    data = content.get('data')
+    if data is None:
+        file_id = content.get('file_id')
+        if not file_id:
+            return jsonify(success=False, message="File ID missing from request"), 400
 
-        # Check if 'date_code' is in the mapping
-        date_code_index = int(next((key for key, value in mapping.items() if value == 'date_code'), -1))
-    except (ValueError, StopIteration) as e:
-        return jsonify(success=False, message=f"Mapping error: {str(e)}"), 400
+        file_details = get_file_by_id(file_id)
+        if not file_details:
+            return jsonify(success=False, message="File not found"), 404
+
+        file_path = _resolve_file_path(file_details['filepath'])
+        if not os.path.exists(file_path):
+            return jsonify(success=False, message="File path does not exist"), 404
+
+        df = pd.read_excel(file_path, header=None)
+        df = df.fillna('')
+        if header_row < len(df):
+            df = df.iloc[header_row:]
+        else:
+            df = df.iloc[0:0]
+        data = df.values.tolist()
+
+    def _find_mapping_index(field_name):
+        for key, value in mapping.items():
+            if value == field_name:
+                return int(key)
+        return None
+
+    base_part_index = _find_mapping_index('base_part_number')
+    part_number_index = _find_mapping_index('part_number')
+    quantity_index = _find_mapping_index('quantity')
+    if quantity_index is None or (base_part_index is None and part_number_index is None):
+        return jsonify(success=False, message="Mapping error: quantity and part_number or base_part_number are required"), 400
+
+    manufacturer_index = _find_mapping_index('manufacturer')
+    date_code_index = _find_mapping_index('date_code')
+    unit_price_index = _find_mapping_index('unit_price')
+    unit_price_currency_index = _find_mapping_index('unit_price_currency')
 
     # Fetch all existing base part numbers from the database
     existing_part_numbers = {part['base_part_number'] for part in get_part_numbers()}
 
+    def _parse_unit_price(value):
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return value
+        text = str(value).strip()
+        if text == '':
+            return None
+        text = re.sub(r'[£$€]', '', text)
+        text = text.replace(',', '')
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    currency_rows = db_execute(
+        "SELECT id, currency_code, symbol FROM currencies",
+        fetch='all',
+    ) or []
+    currency_map = {}
+    for row in currency_rows:
+        code = (row.get('currency_code') or '').strip().lower()
+        symbol = (row.get('symbol') or '').strip().lower()
+        if code:
+            currency_map[code] = row['id']
+        if symbol:
+            currency_map[symbol] = row['id']
+
+    def _parse_currency_id(value):
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return int(value)
+        text = str(value).strip().lower()
+        if not text:
+            return None
+        return currency_map.get(text)
+
     # Process each row based on the user's mapping
     for row in data:
         try:
+            if base_part_index is not None and base_part_index >= len(row):
+                continue
+            if part_number_index is not None and part_number_index >= len(row):
+                continue
+            if quantity_index >= len(row):
+                continue
+            if unit_price_index is not None and unit_price_index >= len(row):
+                unit_price_index = None
+            if unit_price_currency_index is not None and unit_price_currency_index >= len(row):
+                unit_price_currency_index = None
+
             # Clean and standardize base part number
-            raw_part_number = row[base_part_index]
+            raw_part_number = row[part_number_index] if part_number_index is not None else row[base_part_index]
+            if raw_part_number is None or str(raw_part_number).strip() == '':
+                continue
             base_part_number = create_base_part_number(raw_part_number)
+            part_number = str(raw_part_number).strip()
 
             quantity = row[quantity_index]
             manufacturer = row[manufacturer_index] if manufacturer_index is not None else None
-            date_code = row[date_code_index] if date_code_index != -1 else None  # Handle case where date_code is missing
+            date_code = row[date_code_index] if date_code_index is not None else None
+            unit_price = _parse_unit_price(row[unit_price_index]) if unit_price_index is not None else None
+            unit_price_currency_id = (
+                _parse_currency_id(row[unit_price_currency_index])
+                if unit_price_currency_index is not None
+                else None
+            )
 
             # Check if the base_part_number exists in the database
             if base_part_number not in existing_part_numbers:
@@ -138,15 +236,28 @@ def process_excess_list():
                                      base_part_number=base_part_number,
                                      quantity=quantity,
                                      date_code=date_code,
-                                     manufacturer=manufacturer)
+                                     manufacturer=manufacturer,
+                                     unit_price=unit_price,
+                                     unit_price_currency_id=unit_price_currency_id,
+                                     part_number=part_number)
         except Exception as e:
             # Catch all other exceptions
             print(f"Error processing row {row}: {e}")
             return jsonify(success=False, message=f"Error processing row: {str(e)}"), 500
 
-    # If everything is successful, flash a success message and redirect to the edit page
+    db_execute(
+        '''
+        UPDATE excess_stock_lists
+        SET mapping = ?, mapping_header_row = ?
+        WHERE id = ?
+        ''',
+        (json.dumps(mapping), header_row, excess_stock_list_id),
+        commit=True,
+    )
+
+    # If everything is successful, return a JSON response with redirect
     flash('Excess list processed successfully!', 'success')
-    return redirect(f'/excess/excess_lists/{excess_stock_list_id}/edit')
+    return jsonify(success=True, redirect_url=f'/excess/excess_lists/{excess_stock_list_id}/edit')
 
 
 
@@ -158,28 +269,57 @@ def excess_list_mapping(file_id):
     if not file_details:
         return "File not found", 404
 
-    file_path = file_details['filepath']
+    file_path = _resolve_file_path(file_details['filepath'])
 
     # Ensure the file exists
     if not os.path.exists(file_path):
         return "File path does not exist", 404
 
-    # Read the Excel file exactly as it is
+    show_all = str(request.args.get('show_all', '')).lower() in ('1', 'true', 'on', 'yes')
+
+    # Read the Excel file without enforcing headers so we can show raw rows
     if file_path.endswith('.xls') or file_path.endswith('.xlsx'):
-        df = pd.read_excel(file_path, header=None)  # Read without enforcing headers
+        if show_all:
+            df = pd.read_excel(file_path, header=None)
+        else:
+            df = pd.read_excel(file_path, header=None, nrows=20)
 
         # Convert the dataframe to a list of dictionaries for Handsontable
-        data = df.to_dict(orient='records')
-        columns = ['Column ' + str(i) for i in range(len(df.columns))]  # Generate generic column headers
+        df = df.fillna('')
+        data = df.values.tolist()
+        columns = list(range(df.shape[1]))
+
+        total_rows = None
+        if not show_all:
+            try:
+                total_rows = len(pd.read_excel(file_path, header=None, usecols=[0]))
+            except Exception:
+                total_rows = None
 
         # Example: Get the excess_stock_list_id (You could get this from another source, query, etc.)
         excess_stock_list_id = get_excess_stock_list_id_by_file(file_id)  # Define your logic for retrieving this
+        excess_list = get_excess_stock_list_by_id(excess_stock_list_id) if excess_stock_list_id else None
+        saved_mapping = None
+        saved_header_row = 1
+        if excess_list:
+            saved_header_row = excess_list.get('mapping_header_row') or 1
+            raw_mapping = excess_list.get('mapping')
+            if raw_mapping:
+                try:
+                    saved_mapping = json.loads(raw_mapping)
+                except json.JSONDecodeError:
+                    saved_mapping = None
 
         # Render the mapping page with the data, column headers, and excess_stock_list_id
         return render_template('excess_list_mapping.html',
                                file_data=data,
                                columns=columns,
-                               excess_stock_list_id=excess_stock_list_id)  # Pass it to the template
+                               excess_stock_list_id=excess_stock_list_id,
+                               show_all=show_all,
+                               total_rows=total_rows,
+                               saved_mapping=saved_mapping,
+                               saved_header_row=saved_header_row,
+                               file_id=file_id)  # Pass it to the template
 
     return "Invalid file format", 400
 
@@ -190,7 +330,7 @@ def import_mapping(file_id):
     if not file_details:
         return "File not found", 404
 
-    file_path = file_details['filepath']
+    file_path = _resolve_file_path(file_details['filepath'])
     if not os.path.exists(file_path):
         return "File path does not exist", 404
 
@@ -427,7 +567,7 @@ def import_parts():
         return jsonify(success=False, message="File not found", next_step="customers"), 404
 
     try:
-        df = pd.read_excel(file_details['filepath'])
+        df = pd.read_excel(_resolve_file_path(file_details['filepath']))
 
         results = {
             'processed': 0,
@@ -606,7 +746,7 @@ def import_customers():
         return jsonify(success=False, message="File not found"), 404
 
     try:
-        df = pd.read_excel(file_details['filepath'])
+        df = pd.read_excel(_resolve_file_path(file_details['filepath']))
 
         results = {
             'processed': 0,
@@ -715,7 +855,7 @@ def import_sales_orders():
         return jsonify(success=False, message="File not found"), 404
 
     try:
-        df = pd.read_excel(file_details['filepath'])
+        df = pd.read_excel(_resolve_file_path(file_details['filepath']))
 
         results = {
             'processed': 0,
@@ -1196,7 +1336,7 @@ def import_order_lines():
         return jsonify(success=False, message="File not found"), 404
 
     try:
-        df = pd.read_excel(file_details['filepath'])
+        df = pd.read_excel(_resolve_file_path(file_details['filepath']))
 
         results = {
             'processed': 0,
@@ -1915,7 +2055,7 @@ def part_number_mapping(file_id):
     if not file_details:
         return "File not found", 404
 
-    file_path = file_details['filepath']
+    file_path = _resolve_file_path(file_details['filepath'])
     if not os.path.exists(file_path):
         return "File path does not exist", 404
 
@@ -1986,7 +2126,7 @@ def import_part_numbers():
         return jsonify(success=False, message="File not found"), 404
 
     try:
-        df = pd.read_excel(file_details['filepath'])
+        df = pd.read_excel(_resolve_file_path(file_details['filepath']))
 
         results = {
             'processed': 0,
@@ -2228,7 +2368,7 @@ def purchase_order_mapping(file_id):
     if not file_details:
         return "File not found", 404
 
-    file_path = file_details['filepath']
+    file_path = _resolve_file_path(file_details['filepath'])
     if not os.path.exists(file_path):
         return "File path does not exist", 404
 
@@ -2340,8 +2480,8 @@ def import_purchase_orders():
 
         # Get total row count for progress reporting
         try:
-            row_count_df = pd.read_excel(file_details['filepath'], nrows=1)
-            total_rows = len(pd.read_excel(file_details['filepath'], usecols=[0]))
+            row_count_df = pd.read_excel(_resolve_file_path(file_details['filepath']), nrows=1)
+            total_rows = len(pd.read_excel(_resolve_file_path(file_details['filepath']), usecols=[0]))
             print(f"Total rows to process: {total_rows}")
         except Exception as e:
             print(f"Error counting rows: {e}")
@@ -2352,7 +2492,7 @@ def import_purchase_orders():
 
         # Get total number of rows for progress reporting
         try:
-            total_rows = len(pd.read_excel(file_details['filepath'], usecols=[0]))
+            total_rows = len(pd.read_excel(_resolve_file_path(file_details['filepath']), usecols=[0]))
             print(f"Total rows to process: {total_rows}")
         except Exception as e:
             print(f"Error counting rows: {e}")
@@ -2373,7 +2513,7 @@ def import_purchase_orders():
                     # Skip header row and all previously processed rows
                     skiprows = range(1, processed_rows + 1)
 
-                df_chunk = pd.read_excel(file_details['filepath'], skiprows=skiprows, nrows=CHUNK_SIZE)
+                df_chunk = pd.read_excel(_resolve_file_path(file_details['filepath']), skiprows=skiprows, nrows=CHUNK_SIZE)
 
                 # ADD THE DEBUGGING STATEMENTS RIGHT HERE ↓
                 print(f"DataFrame columns in chunk {chunk_num}: {df_chunk.columns.tolist()}")
@@ -2822,7 +2962,7 @@ def import_purchase_order_lines():
 
         # Get total number of rows for progress reporting
         try:
-            total_rows = len(pd.read_excel(file_details['filepath'], usecols=[0]))
+            total_rows = len(pd.read_excel(_resolve_file_path(file_details['filepath']), usecols=[0]))
             print(f"Total rows to process: {total_rows}")
         except Exception as e:
             print(f"Error counting rows: {e}")
@@ -2842,7 +2982,7 @@ def import_purchase_order_lines():
                     # Skip header row and all previously processed rows
                     skiprows = range(1, processed_rows + 1)
 
-                df_chunk = pd.read_excel(file_details['filepath'], skiprows=skiprows, nrows=CHUNK_SIZE)
+                df_chunk = pd.read_excel(_resolve_file_path(file_details['filepath']), skiprows=skiprows, nrows=CHUNK_SIZE)
 
                 # If chunk is empty, we're done
                 if df_chunk.empty:

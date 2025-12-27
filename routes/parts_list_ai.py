@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, request, jsonify, url_for, session
-from models import get_db_connection
+from models import get_db_connection, get_base_currency
 import logging
 from openai import OpenAI
 import json
@@ -246,7 +246,10 @@ def analyze_parts_list(list_id):
                 -- Email tracking
                 COALESCE((SELECT COUNT(DISTINCT supplier_id)
                  FROM parts_list_line_supplier_emails
-                 WHERE parts_list_line_id = pll.id), 0) as suppliers_contacted
+                 WHERE parts_list_line_id = pll.id), 0) as suppliers_contacted,
+                COALESCE((SELECT COUNT(*)
+                 FROM parts_list_line_suggested_suppliers ss
+                 WHERE ss.parts_list_line_id = pll.id), 0) as suggested_suppliers_count
             FROM parts_list_lines pll
             LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
             LEFT JOIN currencies curr ON curr.id = pll.chosen_currency_id
@@ -388,6 +391,8 @@ def _build_analysis_context(header, lines):
         (l['quote_count'] or 0) == 0
     ))
 
+    pending_lines = sum(1 for l in lines if (l['contacted_count'] or 0) > 0 and l['chosen_cost'] is None)
+
     # Calculate total value if costed
     total_cost = sum(
         (l['chosen_cost'] or 0) * (l['chosen_qty'] or l['quantity'])
@@ -395,48 +400,63 @@ def _build_analysis_context(header, lines):
         if l['chosen_cost']
     )
 
-    # Build line summaries
-    line_summaries = []
-    for line in lines:
-        sourcing_status = "NEEDS SOURCING"
-        best_price = None
+    def _line_status(line, stock_qty, quote_count, vq_count, contacted_count, ils_count):
+        if line['chosen_cost']:
+            return f"COSTED - {line['chosen_supplier_name'] or 'Unknown'}"
+        if stock_qty >= line['quantity']:
+            return f"IN STOCK ({stock_qty} available)"
+        if quote_count > 0:
+            return f"QUOTED ({quote_count} suppliers)"
+        if vq_count > 0:
+            return f"VQ AVAILABLE ({vq_count} quotes)"
+        if contacted_count > 0:
+            return f"PENDING ({contacted_count} suppliers contacted)"
+        if ils_count > 0:
+            return f"ILS AVAILABLE ({ils_count} suppliers)"
+        return "NEEDS SOURCING"
 
-        # Safely handle None values
+    # Build a short list of focus lines (uncosted only)
+    focus_lines = []
+    for line in lines:
         stock_qty = line['stock_qty'] or 0
         vq_count = line['vq_count'] or 0
         quote_count = line['quote_count'] or 0
         contacted_count = line['contacted_count'] or 0
         ils_count = line['ils_count'] or 0
-
         if line['chosen_cost']:
-            sourcing_status = f"COSTED - {line['chosen_supplier_name'] or 'Unknown'}"
-            best_price = line['chosen_cost']
-        elif stock_qty >= line['quantity']:
-            sourcing_status = f"IN STOCK ({stock_qty} available)"
-            best_price = line['stock_cost']
-        elif quote_count > 0:
-            sourcing_status = f"QUOTED ({quote_count} suppliers)"
-            best_price = line['quote_price']
-        elif vq_count > 0:
-            sourcing_status = f"VQ AVAILABLE ({vq_count} quotes)"
-            best_price = line['vq_price']
-        elif contacted_count > 0:
-            sourcing_status = f"PENDING ({contacted_count} suppliers contacted)"
-        elif ils_count > 0:
-            sourcing_status = f"ILS AVAILABLE ({ils_count} suppliers)"
+            continue
 
-        line_summaries.append({
+        status = _line_status(line, stock_qty, quote_count, vq_count, contacted_count, ils_count)
+        best_price = None
+        if "IN STOCK" in status:
+            best_price = line['stock_cost']
+        elif "QUOTED" in status:
+            best_price = line['quote_price']
+        elif "VQ AVAILABLE" in status:
+            best_price = line['vq_price']
+
+        focus_lines.append({
             'line': line['line_number'],
             'part': line['customer_part_number'],
             'qty': line['quantity'],
-            'status': sourcing_status,
+            'status': status,
             'best_price': best_price,
-            'lead_days': line['chosen_lead_days'],
-            'stock': stock_qty,
-            'vq_count': vq_count,
+            'stock_qty': stock_qty,
             'quote_count': quote_count,
-            'contacted': contacted_count
+            'vq_count': vq_count,
+            'contacted': contacted_count,
+            'ils_count': ils_count
         })
+
+    status_order = {
+        "NEEDS SOURCING": 0,
+        "PENDING": 1,
+        "IN STOCK": 2,
+        "QUOTED": 3,
+        "VQ AVAILABLE": 4,
+        "ILS AVAILABLE": 5
+    }
+    focus_lines.sort(key=lambda l: (status_order.get(l['status'].split(" (")[0], 9), -l['qty']))
 
     return {
         'list_name': header['name'],
@@ -446,9 +466,10 @@ def _build_analysis_context(header, lines):
         'costed_lines': costed_lines,
         'in_stock_lines': in_stock_lines,
         'quoted_lines': quoted_lines,
+        'pending_lines': pending_lines,
         'need_sourcing': need_sourcing,
         'total_cost': total_cost,
-        'lines': line_summaries
+        'focus_lines': focus_lines[:12]
     }
 
 
@@ -456,7 +477,7 @@ def _call_ai_for_analysis(context):
     """
     Call OpenAI to generate comprehensive analysis
     """
-    prompt = f"""You are an aviation parts procurement analyst. Analyze this parts list and provide actionable insights.
+    prompt = f"""You are an aviation parts procurement analyst. Write a short travel-friendly briefing.
 
 PARTS LIST: {context['list_name']}
 Customer: {context['customer']}
@@ -465,42 +486,26 @@ Status: {context['status']}
 SUMMARY STATS:
 - Total lines: {context['total_lines']}
 - Fully costed: {context['costed_lines']}
-- Available in stock: {context['in_stock_lines']}
-- Supplier quotes received: {context['quoted_lines']}
+- In stock: {context['in_stock_lines']}
+- Supplier quotes: {context['quoted_lines']}
+- Pending replies: {context['pending_lines']}
 - Need sourcing: {context['need_sourcing']}
 - Total cost (costed items): ${context['total_cost']:,.2f}
 
-LINE DETAILS:
-{json.dumps(context['lines'], indent=2, default=str)}
+FOCUS LINES (uncosted, top priority):
+{json.dumps(context['focus_lines'], indent=2, default=str)}
 
-Provide analysis in the following sections:
+Output format (strict, no paragraphs, max 8 bullets total):
+- Each line is a single bullet that starts with one of: "Snapshot:", "Coverage:", "Blockers:", "Next actions:".
+- Max 2 bullets per label.
 
-1. EXECUTIVE SUMMARY (2-3 sentences)
-   - Overall readiness to quote customer
-   - Key risks or concerns
-   - Estimated timeline to complete
-
-2. SOURCING BREAKDOWN
-   - Group parts by sourcing strategy (stock/VQ/supplier quotes/need sourcing)
-   - Highlight any parts with multiple good options
-   - Flag parts with only one source or no sources
-
-3. COST OPTIMIZATION OPPORTUNITIES
-   - Parts where stock is available but more expensive than VQ
-   - Parts where we should negotiate better pricing
-   - Parts where alternative suppliers might help
-
-4. TIMELINE & LEAD TIME ANALYSIS
-   - Identify longest lead time parts
-   - Flag any potential delivery bottlenecks
-   - Suggest expediting strategies if needed
-
-5. NEXT ACTIONS (prioritized list)
-   - What needs to be done immediately
-   - Which suppliers to contact
-   - Any pricing negotiations needed
-
-Keep it concise and actionable. Use bullet points. Focus on decisions the user needs to make.
+Rules:
+- Every bullet must reference specific line numbers or say "All remaining lines costed".
+- No generic advice; only actions tied to the focus lines.
+- Use the status text from focus lines (e.g., NEEDS SOURCING, IN STOCK) and include a concrete reason (counts or qty).
+- Avoid vague words like "potential", "may", "could".
+- If no actions are needed, write "Next actions: None".
+- Keep it under 700 characters. Do not repeat the stats verbatim.
 """
 
     response = client.chat.completions.create(
@@ -515,11 +520,298 @@ Keep it concise and actionable. Use bullet points. Focus on decisions the user n
                 "content": prompt
             }
         ],
-        max_tokens=2000,
-        temperature=0.3
+        max_tokens=500,
+        temperature=0.2
     )
 
     return response.choices[0].message.content
+
+
+def _get_base_currency_id(cur):
+    base_code = (get_base_currency() or 'GBP').upper()
+    cur.execute("SELECT id FROM currencies WHERE currency_code = ?", (base_code,))
+    row = cur.fetchone()
+    if row:
+        return row['id']
+    cur.execute("SELECT id FROM currencies ORDER BY id LIMIT 1")
+    fallback = cur.fetchone()
+    return fallback['id'] if fallback else None
+
+
+def _rank_suppliers_for_part(cur, base_part_number):
+    cur.execute("""
+        SELECT DISTINCT
+            s.id,
+            s.name,
+            COUNT(*) as quote_count,
+            AVG(vl.vendor_price) as avg_price,
+            AVG(vl.lead_days) as avg_lead_days
+        FROM vq_lines vl
+        JOIN vqs v ON vl.vq_id = v.id
+        LEFT JOIN suppliers s ON v.supplier_id = s.id
+        WHERE vl.base_part_number = ?
+          AND s.id IS NOT NULL
+          AND vl.vendor_price > 0
+        GROUP BY s.id
+        ORDER BY avg_price ASC
+        LIMIT 5
+    """, (base_part_number,))
+    vq_suppliers = cur.fetchall()
+
+    cur.execute("""
+        SELECT DISTINCT
+            s.id,
+            s.name,
+            COUNT(*) as ils_results
+        FROM ils_search_results ils
+        JOIN suppliers s ON ils.supplier_id = s.id
+        WHERE ils.base_part_number = ?
+        GROUP BY s.id
+        ORDER BY ils_results DESC
+        LIMIT 5
+    """, (base_part_number,))
+    ils_suppliers = cur.fetchall()
+
+    supplier_scores = {}
+
+    for idx, vq in enumerate(vq_suppliers):
+        score = 10 - idx
+        if vq['id'] not in supplier_scores:
+            supplier_scores[vq['id']] = {
+                'supplier_id': vq['id'],
+                'supplier_name': vq['name'],
+                'score': 0,
+                'reasons': []
+            }
+        supplier_scores[vq['id']]['score'] += score
+        supplier_scores[vq['id']]['reasons'].append(
+            f"{vq['quote_count']} past quotes, avg ${vq['avg_price']:.2f}"
+        )
+
+    for idx, ils in enumerate(ils_suppliers):
+        score = 5 - idx
+        if ils['id'] not in supplier_scores:
+            supplier_scores[ils['id']] = {
+                'supplier_id': ils['id'],
+                'supplier_name': ils['name'],
+                'score': 0,
+                'reasons': []
+            }
+        supplier_scores[ils['id']]['score'] += score
+        supplier_scores[ils['id']]['reasons'].append(
+            f"{ils['ils_results']} ILS results"
+        )
+
+    return sorted(supplier_scores.values(), key=lambda x: x['score'], reverse=True)[:3]
+
+
+@parts_list_ai_bp.route('/api/assign-stock/<int:list_id>', methods=['POST'])
+def assign_stock(list_id):
+    """
+    Assign stock costs to lines where stock fully covers quantity.
+    """
+    try:
+        data = request.get_json() or {}
+        line_ids = data.get('line_ids')
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        base_currency_id = _get_base_currency_id(cur)
+
+        if line_ids:
+            placeholders = ",".join("?" for _ in line_ids)
+            cur.execute(f"""
+                SELECT
+                    pll.id,
+                    pll.quantity,
+                    COALESCE((SELECT SUM(sm.available_quantity)
+                     FROM stock_movements sm
+                     WHERE sm.base_part_number = pll.base_part_number
+                       AND sm.movement_type = 'IN'
+                       AND sm.available_quantity > 0), 0) as stock_qty,
+                    (SELECT MIN(sm.cost_per_unit)
+                     FROM stock_movements sm
+                     WHERE sm.base_part_number = pll.base_part_number
+                       AND sm.movement_type = 'IN'
+                       AND sm.available_quantity > 0
+                       AND sm.cost_per_unit > 0) as stock_cost
+                FROM parts_list_lines pll
+                WHERE pll.parts_list_id = ?
+                  AND pll.id IN ({placeholders})
+                  AND pll.chosen_cost IS NULL
+            """, (list_id, *line_ids))
+        else:
+            cur.execute("""
+                SELECT
+                    pll.id,
+                    pll.quantity,
+                    COALESCE((SELECT SUM(sm.available_quantity)
+                     FROM stock_movements sm
+                     WHERE sm.base_part_number = pll.base_part_number
+                       AND sm.movement_type = 'IN'
+                       AND sm.available_quantity > 0), 0) as stock_qty,
+                    (SELECT MIN(sm.cost_per_unit)
+                     FROM stock_movements sm
+                     WHERE sm.base_part_number = pll.base_part_number
+                       AND sm.movement_type = 'IN'
+                       AND sm.available_quantity > 0
+                       AND sm.cost_per_unit > 0) as stock_cost
+                FROM parts_list_lines pll
+                WHERE pll.parts_list_id = ?
+                  AND pll.chosen_cost IS NULL
+            """, (list_id,))
+        lines = cur.fetchall()
+
+        updated_ids = []
+        for line in lines:
+            stock_qty = line['stock_qty'] or 0
+            stock_cost = line['stock_cost']
+            if stock_qty >= line['quantity'] and stock_cost and stock_cost > 0:
+                cur.execute("""
+                    UPDATE parts_list_lines
+                    SET chosen_cost = ?,
+                        chosen_qty = ?,
+                        chosen_currency_id = ?,
+                        date_modified = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (stock_cost, line['quantity'], base_currency_id, line['id']))
+                updated_ids.append(line['id'])
+
+        conn.commit()
+        conn.close()
+
+        return jsonify(success=True, updated_count=len(updated_ids), line_ids=updated_ids)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_ai_bp.route('/api/add-suggested-suppliers/<int:list_id>', methods=['POST'])
+def add_suggested_suppliers(list_id):
+    """
+    Add suggested suppliers to unsourced lines (first pass).
+    """
+    try:
+        data = request.get_json() or {}
+        line_ids = data.get('line_ids')
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if line_ids:
+            placeholders = ",".join("?" for _ in line_ids)
+            cur.execute(f"""
+                SELECT
+                    pll.id,
+                    pll.base_part_number,
+                    pll.customer_part_number,
+                    pll.quantity,
+                    pll.chosen_cost,
+                    COALESCE((SELECT SUM(sm.available_quantity)
+                     FROM stock_movements sm
+                     WHERE sm.base_part_number = pll.base_part_number
+                       AND sm.movement_type = 'IN'
+                       AND sm.available_quantity > 0), 0) as stock_qty,
+                    COALESCE((SELECT COUNT(DISTINCT sq.supplier_id)
+                     FROM parts_list_supplier_quote_lines sql
+                     JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                     WHERE sql.parts_list_line_id = pll.id
+                       AND sql.is_no_bid = FALSE
+                       AND sql.unit_price IS NOT NULL), 0) as quote_count,
+                    COALESCE((SELECT COUNT(*)
+                     FROM parts_list_line_suggested_suppliers ss
+                     WHERE ss.parts_list_line_id = pll.id), 0) as suggested_count
+                FROM parts_list_lines pll
+                WHERE pll.parts_list_id = ?
+                  AND pll.id IN ({placeholders})
+            """, (list_id, *line_ids))
+            candidate_lines = [
+                line for line in cur.fetchall()
+                if not line['chosen_cost']
+                and (line['stock_qty'] or 0) < line['quantity']
+                and (line['quote_count'] or 0) == 0
+                and (line['suggested_count'] or 0) == 0
+            ]
+        else:
+            cur.execute("""
+                SELECT
+                    pll.id,
+                    pll.base_part_number,
+                    pll.customer_part_number,
+                    pll.quantity,
+                    COALESCE((SELECT SUM(sm.available_quantity)
+                     FROM stock_movements sm
+                     WHERE sm.base_part_number = pll.base_part_number
+                       AND sm.movement_type = 'IN'
+                       AND sm.available_quantity > 0), 0) as stock_qty,
+                    COALESCE((SELECT COUNT(DISTINCT sq.supplier_id)
+                     FROM parts_list_supplier_quote_lines sql
+                     JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                     WHERE sql.parts_list_line_id = pll.id
+                       AND sql.is_no_bid = FALSE
+                       AND sql.unit_price IS NOT NULL), 0) as quote_count,
+                    COALESCE((SELECT COUNT(*)
+                     FROM parts_list_line_suggested_suppliers ss
+                     WHERE ss.parts_list_line_id = pll.id), 0) as suggested_count
+                FROM parts_list_lines pll
+                WHERE pll.parts_list_id = ?
+                  AND pll.chosen_cost IS NULL
+            """, (list_id,))
+            candidate_lines = [
+                line for line in cur.fetchall()
+                if (line['stock_qty'] or 0) < line['quantity']
+                and (line['quote_count'] or 0) == 0
+                and (line['suggested_count'] or 0) == 0
+            ]
+
+        added_count = 0
+        updated_lines = []
+
+        for line in candidate_lines:
+            if not line['base_part_number']:
+                continue
+            ranked = _rank_suppliers_for_part(cur, line['base_part_number'])
+            if not ranked:
+                continue
+
+            cur.execute("""
+                SELECT supplier_id
+                FROM parts_list_line_suggested_suppliers
+                WHERE parts_list_line_id = ?
+            """, (line['id'],))
+            existing_ids = {row['supplier_id'] for row in cur.fetchall()}
+
+            line_added = 0
+            for supplier in ranked:
+                supplier_id = supplier['supplier_id']
+                if supplier_id in existing_ids:
+                    continue
+                cur.execute("""
+                    INSERT INTO parts_list_line_suggested_suppliers
+                        (parts_list_line_id, supplier_id, source_type, date_added)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                """, (line['id'], supplier_id, 'ai'))
+                added_count += 1
+                line_added += 1
+                existing_ids.add(supplier_id)
+
+            if line_added:
+                updated_lines.append(line['id'])
+
+        conn.commit()
+        conn.close()
+
+        return jsonify(
+            success=True,
+            updated_lines=len(updated_lines),
+            added_count=added_count
+        )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
 
 
 @parts_list_ai_bp.route('/api/suggest-suppliers/<int:list_id>', methods=['POST'])

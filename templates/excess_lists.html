@@ -12,24 +12,32 @@
                 <div class="row">
                     <div class="col-md-4">
                         <div class="mb-3">
+                            <label for="name" class="form-label">List Name:</label>
+                            <input type="text" id="name" name="name" class="form-control" placeholder="e.g. ALA Dec 2025">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
                             <label for="customer_id" class="form-label">Customer:</label>
-                            <select id="customer_id" name="customer_id" class="form-select">
-                                <option value="">Select Customer</option>
-                                {% for customer in customers %}
-                                <option value="{{ customer.id }}">{{ customer.name }}</option>
-                                {% endfor %}
-                            </select>
+                            <div class="position-relative">
+                                <input type="text" id="customer_search" class="form-control" placeholder="Search customers..." autocomplete="off">
+                                <input type="hidden" id="customer_id" name="customer_id">
+                                <div id="customer_search_results" class="position-absolute w-100 mt-1 d-none" style="z-index: 1050;">
+                                    <div class="list-group shadow"></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="col-md-4">
                         <div class="mb-3">
                             <label for="supplier_id" class="form-label">Supplier:</label>
-                            <select id="supplier_id" name="supplier_id" class="form-select">
-                                <option value="">Select Supplier</option>
-                                {% for supplier in suppliers %}
-                                <option value="{{ supplier.id }}">{{ supplier.name }}</option>
-                                {% endfor %}
-                            </select>
+                            <div class="position-relative">
+                                <input type="text" id="supplier_search" class="form-control" placeholder="Search suppliers..." autocomplete="off">
+                                <input type="hidden" id="supplier_id" name="supplier_id">
+                                <div id="supplier_search_results" class="position-absolute w-100 mt-1 d-none" style="z-index: 1050;">
+                                    <div class="list-group shadow"></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="col-md-4">
@@ -55,6 +63,7 @@
                     <thead>
                         <tr>
                             <th>ID</th>
+                            <th>Name</th>
                             <th>Customer</th>
                             <th>Supplier</th>
                             <th>Entered Date</th>
@@ -65,6 +74,7 @@
                         {% for excess_list in excess_lists %}
                         <tr>
                             <td>{{ excess_list.id }}</td>
+                            <td>{{ excess_list.name or '—' }}</td>
                             <td>{{ excess_list.customer_name or 'N/A' }}</td>
                             <td>{{ excess_list.supplier_name or 'N/A' }}</td>
                             <td>{{ excess_list.entered_date }}</td>
@@ -80,8 +90,86 @@
     </div>
 </div>
 
-<script>    document.addEventListener('DOMContentLoaded', function() {
+<script>
+    function initLookupSearch(options) {
+        const input = document.getElementById(options.inputId);
+        const hidden = document.getElementById(options.hiddenId);
+        const results = document.getElementById(options.resultsId);
+        const list = results ? results.querySelector('.list-group') : null;
+        let timer;
+
+        if (!input || !hidden || !results || !list) {
+            return;
+        }
+
+        input.addEventListener('input', function() {
+            const query = input.value.trim();
+            hidden.value = '';
+            clearTimeout(timer);
+
+            if (query.length < 2) {
+                results.classList.add('d-none');
+                list.innerHTML = '';
+                return;
+            }
+
+            timer = setTimeout(() => {
+                fetch(`${options.endpoint}?q=${encodeURIComponent(query)}&limit=${options.limit || 15}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        list.innerHTML = '';
+                        if (!data || data.length === 0) {
+                            const emptyItem = document.createElement('div');
+                            emptyItem.className = 'list-group-item text-muted';
+                            emptyItem.textContent = 'No results found';
+                            list.appendChild(emptyItem);
+                        } else {
+                            data.forEach(item => {
+                                const button = document.createElement('button');
+                                button.type = 'button';
+                                button.className = 'list-group-item list-group-item-action';
+                                button.textContent = item.name;
+                                button.addEventListener('click', () => {
+                                    hidden.value = item.id;
+                                    input.value = item.name;
+                                    results.classList.add('d-none');
+                                    list.innerHTML = '';
+                                });
+                                list.appendChild(button);
+                            });
+                        }
+                        results.classList.remove('d-none');
+                    })
+                    .catch(() => {
+                        results.classList.add('d-none');
+                    });
+            }, 300);
+        });
+
+        document.addEventListener('click', function(event) {
+            if (!results.contains(event.target) && event.target !== input) {
+                results.classList.add('d-none');
+            }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
         var today = new Date().toISOString().split('T')[0];
         document.getElementById('entered_date').value = today;
-    });</script>
+
+        initLookupSearch({
+            inputId: 'customer_search',
+            hiddenId: 'customer_id',
+            resultsId: 'customer_search_results',
+            endpoint: "{{ url_for('customers.customer_search') }}"
+        });
+
+        initLookupSearch({
+            inputId: 'supplier_search',
+            hiddenId: 'supplier_id',
+            resultsId: 'supplier_search_results',
+            endpoint: "{{ url_for('suppliers.supplier_search') }}"
+        });
+    });
+</script>
 {% endblock %}
