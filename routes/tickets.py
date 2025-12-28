@@ -151,6 +151,29 @@ def _fetch_workspaces_with_members():
     return workspaces
 
 
+def _fetch_workspace_chips(user_id):
+    rows = db_execute(
+        """
+        SELECT
+            tw.id,
+            tw.name,
+            COALESCE(COUNT(t.id), 0) AS assigned_count
+        FROM ticket_workspaces tw
+        JOIN ticket_workspace_members twm
+            ON twm.workspace_id = tw.id
+            AND twm.user_id = ?
+        LEFT JOIN tickets t
+            ON t.workspace_id = tw.id
+            AND t.assigned_user_id = ?
+        GROUP BY tw.id, tw.name
+        ORDER BY tw.name
+        """,
+        (user_id, user_id),
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
+
+
 def _fetch_updates(ticket_id):
     rows = db_execute(
         """
@@ -518,6 +541,7 @@ def list_tickets():
     statuses = _fetch_statuses()
     users = _fetch_users()
     workspaces = _fetch_workspaces()
+    workspace_chips = _fetch_workspace_chips(user_id)
     default_status_id = None
     for status in statuses:
         if not status.get('is_closed'):
@@ -571,6 +595,7 @@ def list_tickets():
         statuses=statuses,
         users=users,
         workspaces=workspaces,
+        workspace_chips=workspace_chips,
         show_closed=show_closed,
         only_mine=only_mine,
         created_by_me=created_by_me,

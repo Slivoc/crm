@@ -10,6 +10,17 @@
             <h1 class="page-title">
                 <i class="bi bi-ticket-detailed me-2"></i>Tickets
             </h1>
+            <div class="workspace-badges">
+                <a class="workspace-chip{% if not workspace_filter_id %} is-active{% endif %}" href="{{ url_for('tickets.list_tickets', only_mine=1 if only_mine else None, created_by_me=1 if created_by_me else None, show_closed=1 if show_closed else None) }}">
+                    All workspaces
+                </a>
+                {% for workspace in workspace_chips %}
+                <a class="workspace-chip{% if workspace_filter_id and workspace.id == workspace_filter_id|int %} is-active{% endif %}" href="{{ url_for('tickets.list_tickets', workspace_id=workspace.id, only_mine=1 if only_mine else None, created_by_me=1 if created_by_me else None, show_closed=1 if show_closed else None) }}">
+                    <span class="workspace-name">{{ workspace.name }}</span>
+                    <span class="workspace-count">{{ workspace.assigned_count }}</span>
+                </a>
+                {% endfor %}
+            </div>
         </div>
         <div class="header-actions">
             <a href="{{ url_for('tickets.manage_workspaces') }}" class="btn btn-outline-secondary me-2">
@@ -37,17 +48,6 @@
                     <input type="checkbox" name="show_closed" value="1" {% if show_closed %}checked{% endif %}>
                     <span><i class="bi bi-check-circle me-1"></i>Show closed</span>
                 </label>
-            </div>
-            <div class="filter-select">
-                <label class="visually-hidden" for="workspaceFilter">Workspace</label>
-                <select class="form-select form-select-sm" id="workspaceFilter" name="workspace_id">
-                    <option value="">All workspaces</option>
-                    {% for workspace in workspaces %}
-                        <option value="{{ workspace.id }}" {% if workspace_filter_id and workspace.id == workspace_filter_id|int %}selected{% endif %}>
-                            {{ workspace.name }}
-                        </option>
-                    {% endfor %}
-                </select>
             </div>
             <button type="submit" class="btn btn-sm btn-outline-secondary">
                 <i class="bi bi-funnel me-1"></i>Apply
@@ -265,11 +265,68 @@
     margin-bottom: 20px;
 }
 
+.header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
 .page-title {
     font-size: 1.5rem;
     font-weight: 600;
     margin: 0;
     color: #212529;
+}
+
+.workspace-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.workspace-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid #e1e6ee;
+    background: #f3f5f8;
+    color: #5c6670;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.15s ease;
+}
+
+.workspace-chip:hover {
+    border-color: #cfd6df;
+    color: #1a73e8;
+}
+
+.workspace-chip.is-active {
+    background: #fff4d6;
+    border-color: #f2c96d;
+    color: #8a6d1f;
+}
+
+.workspace-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: #e9ecef;
+    color: #6c757d;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.workspace-chip.is-active .workspace-count {
+    background: rgba(138, 109, 31, 0.15);
+    color: #8a6d1f;
 }
 
 .tickets-filters {
@@ -289,9 +346,6 @@
     flex-wrap: wrap;
 }
 
-.filter-select {
-    min-width: 200px;
-}
 
 .filter-chip {
     display: inline-flex;
@@ -790,13 +844,6 @@ document.querySelectorAll('.filter-chip input').forEach(input => {
         input.closest('form').submit();
     });
 });
-
-const workspaceFilter = document.getElementById('workspaceFilter');
-if (workspaceFilter) {
-    workspaceFilter.addEventListener('change', () => {
-        workspaceFilter.closest('form').submit();
-    });
-}
 
 // Highlight overdue items
 document.querySelectorAll('.meta-item[data-due-date]').forEach(item => {
