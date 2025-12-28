@@ -18,7 +18,7 @@
         <div class="card">
             <div class="card-body">
                 <h5 class="card-title mb-3">Create Workspace</h5>
-                <form method="post" action="{{ url_for('tickets.manage_workspaces') }}">
+                <form method="post" action="{{ url_for('tickets.manage_workspaces') }}" id="workspaceCreateForm">
                     <div class="mb-3">
                         <label class="form-label" for="workspaceName">Workspace name</label>
                         <input type="text" class="form-control" id="workspaceName" name="name" placeholder="Customer Services" required>
@@ -40,6 +40,13 @@
                         <i class="bi bi-plus-lg me-1"></i>Create Workspace
                     </button>
                 </form>
+                <div class="workspace-logs" id="workspaceLogCard" hidden>
+                    <div class="workspace-logs-header">
+                        <span>Server logs</span>
+                        <span class="workspace-logs-status" id="workspaceLogStatus">Waiting</span>
+                    </div>
+                    <pre class="workspace-logs-body" id="workspaceLogOutput"></pre>
+                </div>
             </div>
         </div>
 
@@ -47,7 +54,7 @@
             {% for workspace in workspaces %}
                 <div class="card workspace-card">
                     <div class="card-body">
-                        <form method="post" action="{{ url_for('tickets.update_workspace', workspace_id=workspace.id) }}">
+                        <form method="post" action="{{ url_for('tickets.update_workspace', workspace_id=workspace.id) }}" class="workspace-update-form">
                             <div class="d-flex justify-content-between align-items-start mb-3">
                                 <div class="flex-grow-1">
                                     <label class="form-label">Workspace name</label>
@@ -143,6 +150,40 @@
     margin: 0;
 }
 
+.workspace-logs {
+    margin-top: 16px;
+    border: 1px solid #dee2e6;
+    border-radius: 12px;
+    padding: 12px;
+    background: #f8f9fa;
+}
+
+.workspace-logs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.workspace-logs-status {
+    font-size: 0.85rem;
+    color: #0f5132;
+}
+
+.workspace-logs-status.is-error {
+    color: #842029;
+}
+
+.workspace-logs-body {
+    margin: 0;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow: auto;
+}
+
 @media (max-width: 992px) {
     .workspace-grid {
         grid-template-columns: 1fr;
@@ -151,6 +192,65 @@
 </style>
 
 <script>
+const logCard = document.getElementById('workspaceLogCard');
+const logOutput = document.getElementById('workspaceLogOutput');
+const logStatus = document.getElementById('workspaceLogStatus');
+const createForm = document.getElementById('workspaceCreateForm');
+
+const showWorkspaceLogs = (message, logs, isSuccess) => {
+    if (!logCard || !logOutput || !logStatus) {
+        return;
+    }
+    const timestamp = new Date().toLocaleTimeString();
+    logStatus.textContent = `${isSuccess ? 'Success' : 'Error'} at ${timestamp}`;
+    logStatus.classList.toggle('is-error', !isSuccess);
+    const lines = [];
+    if (message) {
+        lines.push(message);
+    }
+    if (Array.isArray(logs)) {
+        lines.push(...logs);
+    }
+    logOutput.textContent = lines.join('\n');
+    logCard.hidden = false;
+};
+
+const submitWorkspaceForm = async (form, successNote) => {
+    try {
+        const response = await fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        });
+        const payload = await response.json();
+        const isSuccess = response.ok && payload && payload.success;
+        const message = payload?.message || successNote || 'Request complete.';
+        const logs = payload?.logs || [];
+        showWorkspaceLogs(message, logs, isSuccess);
+        if (isSuccess && form === createForm) {
+            form.reset();
+        }
+    } catch (error) {
+        showWorkspaceLogs('Request failed.', [error?.message || 'Unexpected error'], false);
+    }
+};
+
+if (createForm) {
+    createForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        submitWorkspaceForm(createForm, 'Workspace created.');
+    });
+}
+
+document.querySelectorAll('.workspace-update-form').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        submitWorkspaceForm(form, 'Workspace updated.');
+    });
+});
+
 document.querySelectorAll('.member-pill').forEach(pill => {
     pill.addEventListener('click', (event) => {
         if (event.target.tagName === 'INPUT') {

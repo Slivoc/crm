@@ -27,6 +27,26 @@ def _parse_bool(value):
     return str(value).lower() in ('1', 'true', 'yes', 'on')
 
 
+def _wants_json():
+    return (
+        request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.accept_mimetypes.best == 'application/json'
+    )
+
+
+def _workspace_response(success, message, status=200, logs=None, **data):
+    if _wants_json():
+        payload = {
+            'success': success,
+            'message': message,
+            'logs': logs or [],
+        }
+        payload.update(data)
+        return jsonify(payload), status
+    flash(message, 'success' if success else 'error')
+    return redirect(url_for('tickets.manage_workspaces'))
+
+
 def _ticket_visibility_clause(user_id, is_admin):
     if is_admin:
         return "", []
@@ -1022,11 +1042,12 @@ def add_ticket_update(ticket_id):
 @login_required
 def manage_workspaces():
     if request.method == 'POST':
+        logs = ['Create workspace request received.']
         name = request.form.get('name', '').strip()
         member_ids = [int(uid) for uid in request.form.getlist('member_ids') if uid.isdigit()]
         if not name:
-            flash('Workspace name is required.', 'error')
-            return redirect(url_for('tickets.manage_workspaces'))
+            logs.append('Validation failed: workspace name missing.')
+            return _workspace_response(False, 'Workspace name is required.', status=400, logs=logs)
 
         try:
             row = db_execute(
@@ -1039,9 +1060,10 @@ def manage_workspaces():
                 fetch="one",
                 commit=True,
             )
-        except Exception:
-            flash('Workspace name already exists.', 'error')
-            return redirect(url_for('tickets.manage_workspaces'))
+            logs.append('Workspace insert succeeded.')
+        except Exception as exc:
+            logs.append(f'Workspace insert failed: {exc}')
+            return _workspace_response(False, 'Workspace name already exists.', status=400, logs=logs)
         workspace_id = row.get('id', list(row.values())[0]) if row else None
         if workspace_id and member_ids:
             db_execute(
@@ -1053,8 +1075,14 @@ def manage_workspaces():
                 many=True,
                 commit=True,
             )
-        flash('Workspace created.', 'success')
-        return redirect(url_for('tickets.manage_workspaces'))
+            logs.append(f'Added {len(member_ids)} members.')
+        logs.append(f'Workspace id: {workspace_id}')
+        return _workspace_response(
+            True,
+            'Workspace created.',
+            logs=logs,
+            workspace={'id': workspace_id, 'name': name, 'member_ids': member_ids},
+        )
 
     users = _fetch_users()
     workspaces = _fetch_workspaces_with_members()
@@ -1068,11 +1096,12 @@ def manage_workspaces():
 @tickets_bp.route('/workspaces/<int:workspace_id>', methods=['POST'])
 @login_required
 def update_workspace(workspace_id):
+    logs = [f'Update workspace {workspace_id} request received.']
     name = request.form.get('name', '').strip()
     member_ids = [int(uid) for uid in request.form.getlist('member_ids') if uid.isdigit()]
     if not name:
-        flash('Workspace name is required.', 'error')
-        return redirect(url_for('tickets.manage_workspaces'))
+        logs.append('Validation failed: workspace name missing.')
+        return _workspace_response(False, 'Workspace name is required.', status=400, logs=logs)
 
     try:
         db_execute(
@@ -1084,14 +1113,16 @@ def update_workspace(workspace_id):
             (name, workspace_id),
             commit=True,
         )
-    except Exception:
-        flash('Workspace name already exists.', 'error')
-        return redirect(url_for('tickets.manage_workspaces'))
+        logs.append('Workspace update succeeded.')
+    except Exception as exc:
+        logs.append(f'Workspace update failed: {exc}')
+        return _workspace_response(False, 'Workspace name already exists.', status=400, logs=logs)
     db_execute(
         "DELETE FROM ticket_workspace_members WHERE workspace_id = ?",
         (workspace_id,),
         commit=True,
     )
+    logs.append('Cleared existing members.')
     if member_ids:
         db_execute(
             """
@@ -1102,5 +1133,10 @@ def update_workspace(workspace_id):
             many=True,
             commit=True,
         )
-    flash('Workspace updated.', 'success')
-    return redirect(url_for('tickets.manage_workspaces'))
+        logs.append(f'Added {len(member_ids)} members.')
+    return _workspace_response(
+        True,
+        'Workspace updated.',
+        logs=logs,
+        workspace={'id': workspace_id, 'name': name, 'member_ids': member_ids},
+    )
