@@ -291,7 +291,9 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label"><strong>Body:</strong></label>
-                        <div class="p-2 border rounded" id="previewBody" style="min-height: 300px;"></div>
+                        <div class="p-2 border rounded" style="min-height: 300px;">
+                            <iframe id="previewBodyFrame" style="width: 100%; height: 320px; border: 0;"></iframe>
+                        </div>
                     </div>
                     <div class="alert alert-info">
                         <i class="fas fa-info-circle me-1"></i> This is a preview using the first selected contact's information.
@@ -1111,6 +1113,25 @@ function removeContact(contactId) {
         }
     }
 
+    function sanitizePreviewHtml(html) {
+        if (!html) return '';
+        return html.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '');
+    }
+
+    function normalizePreviewHtml(html) {
+        const safeHtml = sanitizePreviewHtml(html);
+        if (/<html[\s>]/i.test(safeHtml)) {
+            return safeHtml;
+        }
+        return `
+            <!doctype html>
+            <html>
+              <head><meta charset="utf-8"></head>
+              <body>${safeHtml}</body>
+            </html>
+        `;
+    }
+
     function previewEmail() {
         const contactIds = Object.keys(window.state.selectedContacts);
         if (contactIds.length === 0) {
@@ -1157,7 +1178,10 @@ function removeContact(contactId) {
 
             if (data.success) {
                 document.getElementById('previewSubject').textContent = data.data.subject;
-                document.getElementById('previewBody').innerHTML = data.data.body;
+                const frame = document.getElementById('previewBodyFrame');
+                if (frame) {
+                    frame.srcdoc = normalizePreviewHtml(data.data.body || '');
+                }
                 previewModal.show();
             } else {
                 alert('Error generating preview: ' + data.error);

@@ -31,6 +31,34 @@
         </div>
     </div>
 
+    <div class="ticket-context-bar">
+        <div class="context-item">
+            <span class="context-label">Created by</span>
+            <span class="context-value">
+                <i class="bi bi-person-circle me-1"></i>{{ ticket.created_by_name }}
+            </span>
+        </div>
+        <div class="context-item">
+            <span class="context-label">Assigned to</span>
+            <span class="context-value">
+                <i class="bi bi-person-check me-1"></i>{{ ticket.assigned_user_name or 'Unassigned' }}
+            </span>
+        </div>
+        <div class="context-item">
+            <span class="context-label">Parent task</span>
+            <span class="context-value">
+                {% if ticket.parent_ticket_id %}
+                    <i class="bi bi-diagram-2 me-1"></i>
+                    <a href="{{ url_for('tickets.view_ticket', ticket_id=ticket.parent_ticket_id) }}" class="context-link">
+                        #{{ ticket.parent_ticket_id }} {{ ticket.parent_title }}
+                    </a>
+                {% else %}
+                    <i class="bi bi-diagram-2 me-1"></i>No parent
+                {% endif %}
+            </span>
+        </div>
+    </div>
+
     <div class="ticket-layout">
         <!-- Main Content -->
         <div class="ticket-main">
@@ -275,6 +303,49 @@
     display: flex;
     align-items: center;
     gap: 12px;
+}
+
+.ticket-context-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    padding: 16px;
+    margin-bottom: 20px;
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    background: #f8f9fa;
+}
+
+.context-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.9rem;
+}
+
+.context-label {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.7rem;
+    color: #6c757d;
+    font-weight: 600;
+}
+
+.context-value {
+    color: #212529;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.context-link {
+    color: #1a73e8;
+    text-decoration: none;
+}
+
+.context-link:hover {
+    text-decoration: underline;
 }
 
 .status-badge {

@@ -416,6 +416,9 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-outline-primary" id="sendViaSystemBtn">
+                    Send via System
+                </button>
                 <button type="button" class="btn btn-primary" id="copyAndOpenBtn">
                     Copy & Open Outlook
                 </button>
@@ -905,6 +908,51 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
         } catch (e) {
             console.error(e);
             alert('Copy failed – please copy manually.');
+        }
+    });
+
+    // ---- Send via System ------------------------------------------
+    document.getElementById('sendViaSystemBtn').addEventListener('click', async function() {
+        if (!currentEmailData) return;
+
+        const btn = this;
+        const origHTML = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending...';
+        btn.disabled = true;
+
+        try {
+            const resp = await fetch('/parts_list/send-supplier-email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    recipient_email: currentEmailData.recipient_email,
+                    subject: currentEmailData.subject,
+                    body_html: currentEmailData.body_html
+                })
+            });
+            const data = await resp.json();
+
+            if (!data.success) {
+                throw new Error(data.error || 'Failed to send email');
+            }
+
+            await recordEmailSent(currentEmailData);
+
+            btn.innerHTML = 'Sent & Recorded!';
+            btn.classList.remove('btn-outline-primary');
+            btn.classList.add('btn-success');
+            setTimeout(() => {
+                bootstrap.Modal.getInstance('#supplierEmailModal').hide();
+                btn.innerHTML = origHTML;
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-outline-primary');
+                btn.disabled = false;
+            }, 1500);
+        } catch (e) {
+            console.error(e);
+            alert(e.message || 'Failed to send via system.');
+            btn.innerHTML = origHTML;
+            btn.disabled = false;
         }
     });
 

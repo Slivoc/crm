@@ -212,3 +212,53 @@ document.addEventListener('hide.bs.dropdown', function(e) {
         menu.removeAttribute('data-freed');
     }
 });
+
+// Collapse/expand subtasks
+document.querySelectorAll('.collapse-toggle').forEach(btn => {
+    const parentId = btn.dataset.targetParent;
+
+    // Restore state from localStorage
+    const isCollapsed = localStorage.getItem(`ticket-collapsed-${parentId}`) === 'true';
+    if (isCollapsed) {
+        btn.setAttribute('aria-expanded', 'false');
+        toggleSubtasks(parentId, false);
+    }
+
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const expanded = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', !expanded);
+        toggleSubtasks(parentId, !expanded);
+        localStorage.setItem(`ticket-collapsed-${parentId}`, expanded);
+    });
+});
+
+function toggleSubtasks(parentId, show) {
+    // Find all subtasks that belong to this parent (direct and nested)
+    const column = document.querySelector(`.collapse-toggle[data-target-parent="${parentId}"]`).closest('.ticket-column');
+    const allWrappers = column.querySelectorAll('.ticket-wrapper');
+    let capturing = false;
+    let parentDepth = 0;
+
+    allWrappers.forEach(wrapper => {
+        const ticketId = wrapper.querySelector('.ticket-card')?.dataset.ticketId;
+        const depth = parseInt(wrapper.dataset.depth) || 0;
+
+        if (ticketId === parentId) {
+            capturing = true;
+            parentDepth = depth;
+            return;
+        }
+
+        if (capturing) {
+            // Stop capturing when we hit a ticket at same or lower depth than parent
+            if (depth <= parentDepth) {
+                capturing = false;
+                return;
+            }
+            // This is a subtask of the parent
+            wrapper.classList.toggle('collapsed-child', !show);
+        }
+    });
+}

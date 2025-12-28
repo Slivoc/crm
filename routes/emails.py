@@ -23,8 +23,8 @@ from email.utils import parsedate_to_datetime
 import os
 import email  # Import the base email library
 import imaplib
-import smtplib
 import re
+import mimetypes
 from datetime import date, datetime
 from urllib.parse import quote
 from collections import defaultdict
@@ -41,9 +41,6 @@ from threading import Lock
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.header import decode_header
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.image import MIMEImage
 from email import message
 from email.parser import BytesParser  # Add this import
 from datetime import datetime
@@ -81,6 +78,7 @@ from models import (
     get_supplier_contact_by_email,
     get_contact_by_email
 )
+from routes.email_signatures import get_user_default_signature
 from hubspot_helpers import (
     get_or_create_hubspot_contact,
     get_or_create_hubspot_company,
@@ -160,6 +158,15 @@ def _parse_bool(value, default=False):
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_default_signature(user_id=None):
+    if user_id is None and current_user and getattr(current_user, "is_authenticated", False):
+        user_id = current_user.id
+    signature = get_user_default_signature(user_id) if user_id else None
+    if signature:
+        return signature
+    return get_email_signature_by_id(1)
 
 
 def _get_mailbox_settings(include_password=False):
@@ -601,6 +608,103 @@ def _build_msal_app(settings, cache=None):
         client_credential=settings.get("client_secret") or None,
         token_cache=cache,
     )
+
+
+def _graph_recipient(address):
+    normalized = _normalize_email_address(address)
+    if not normalized:
+        return None
+    return {"emailAddress": {"address": normalized}}
+
+
+def build_graph_inline_attachments():
+    uploads_dir = os.path.join(current_app.root_path, "uploads")
+    inline_specs = [
+        {"filename": "blimage001.jpg", "content_id": "image001"},
+        {"filename": "linkedin_icon.png", "content_id": "linkedin_icon"},
+    ]
+    attachments = []
+    for spec in inline_specs:
+        path = os.path.join(uploads_dir, spec["filename"])
+        if not os.path.exists(path):
+            continue
+        with open(path, "rb") as img:
+            img_data = img.read()
+        content_type, _ = mimetypes.guess_type(path)
+        attachments.append({
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": spec["filename"],
+            "contentId": spec["content_id"],
+            "contentType": content_type or "application/octet-stream",
+            "isInline": True,
+            "contentBytes": base64.b64encode(img_data).decode("ascii"),
+        })
+    return attachments
+
+
+def send_graph_email(subject, html_body, to_emails, *, cc_emails=None, bcc_emails=None, attachments=None, user_id=None):
+    settings = _get_graph_settings(include_secret=True)
+    if not settings.get("client_id") or not settings.get("tenant_id") or not settings.get("client_secret"):
+        return {"success": False, "error": "Graph settings are incomplete."}
+
+    cache = _load_graph_cache_for_user(user_id) if user_id else _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+    if not accounts:
+        return {"success": False, "error": "Graph mailbox is not connected for this user."}
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    if user_id:
+        _save_graph_cache_for_user(user_id, cache)
+    else:
+        _save_graph_cache(cache)
+    if not token or "access_token" not in token:
+        return {"success": False, "error": token.get("error_description") or "Unable to get Graph access token."}
+
+    to_list = [recipient for recipient in (_graph_recipient(addr) for addr in (to_emails or [])) if recipient]
+    if not to_list:
+        return {"success": False, "error": "No valid recipients provided."}
+
+    message = {
+        "subject": subject or "",
+        "body": {"contentType": "HTML", "content": html_body or ""},
+        "toRecipients": to_list,
+    }
+
+    if cc_emails:
+        cc_list = [recipient for recipient in (_graph_recipient(addr) for addr in cc_emails) if recipient]
+        if cc_list:
+            message["ccRecipients"] = cc_list
+
+    if bcc_emails:
+        bcc_list = [recipient for recipient in (_graph_recipient(addr) for addr in bcc_emails) if recipient]
+        if bcc_list:
+            message["bccRecipients"] = bcc_list
+
+    if attachments:
+        message["attachments"] = attachments
+
+    headers = {
+        "Authorization": f"Bearer {token['access_token']}",
+        "Content-Type": "application/json",
+    }
+    payload = {"message": message, "saveToSentItems": True}
+    resp = requests.post(
+        "https://graph.microsoft.com/v1.0/me/sendMail",
+        headers=headers,
+        json=payload,
+        timeout=20,
+    )
+    if resp.status_code >= 400:
+        try:
+            error_body = resp.json()
+        except ValueError:
+            error_body = {}
+        graph_error = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+        message_text = graph_error.get("message") or resp.text or "Graph send failed."
+        return {"success": False, "error": message_text, "status_code": resp.status_code}
+
+    return {"success": True}
 
 
 def _load_graph_cache_for_user(user_id):
@@ -2169,26 +2273,22 @@ def macro_upload_email(excess_list_id):
 @emails_bp.route('/emails/send_test_email', methods=['POST'])
 def send_test_email():
     try:
-        # Email details
-        to_address = 't.palmer@recitalia.it'
-        subject = 'Test Email from Flask App'
-        email_host = 'smtps.aruba.it'  # Hardcoded SMTP host
-        email_port = 465  # SSL port for SMTP
-        email_user = os.getenv('EMAIL_USER')
-        email_password = os.getenv('EMAIL_PASSWORD')
+        data = request.get_json(silent=True) or {}
+        to_address = (data.get("to_address") or "").strip()
+        if not to_address:
+            to_address = (session.get("graph_last_user") or "").strip()
+        if not to_address:
+            return jsonify({'success': False, 'error': 'Missing test recipient email'}), 400
 
-        # Create the email
-        msg = MIMEMultipart()
-        msg['From'] = email_user
-        msg['To'] = to_address
-        msg['Subject'] = subject
-        html_content = '<p>This is a test email sent from your Flask app.</p>'
-        msg.attach(MIMEText(html_content, 'html'))
-
-        # Connect to the SMTP server using SSL and send the email
-        with smtplib.SMTP_SSL(email_host, email_port) as server:  # Use SMTP_SSL for SSL connection
-            server.login(email_user, email_password)
-            server.send_message(msg)
+        subject = data.get("subject") or "Test Email from CRM"
+        html_content = data.get("html_body") or "<p>This is a test email sent from your CRM.</p>"
+        result = send_graph_email(
+            subject=subject,
+            html_body=html_content,
+            to_emails=[to_address],
+        )
+        if not result.get("success"):
+            return jsonify({'success': False, 'error': result.get("error", "Graph send failed")}), 500
 
         return jsonify({'success': True})
     except Exception as e:
@@ -2242,7 +2342,7 @@ def build_email_from_template(template_id):
             body = body.replace('{{today_date}}', datetime.now().strftime('%Y-%m-%d'))
 
             # Fetch email signature by ID 1
-            email_signature = get_email_signature_by_id(1)
+            email_signature = _get_default_signature()
             if email_signature:
                 # Convert CID references to actual image URLs for preview
                 signature_html = email_signature['signature_html']
@@ -2271,23 +2371,7 @@ def send_email_from_template(template_id):
     Send an email using a template with proper HTML formatting and embedded images
     """
     try:
-        # Email configuration
-        email_host = 'smtps.aruba.it'
-        email_port = 465
-        email_user = os.getenv('EMAIL_USER')
-        email_password = os.getenv('EMAIL_PASSWORD')
         bcc_email = "145554557@bcc.eu1.hubspot.com"
-        imap_host = 'imaps.aruba.it'  # Added IMAP host
-
-        if not all([email_user, email_password]):
-            error_msg = 'Email configuration is incomplete'
-            log_data = {
-                'template_id': template_id,
-                'status': 'error',
-                'error_message': error_msg
-            }
-            save_email_log(log_data)
-            return jsonify({'success': False, 'error': error_msg})
 
         # Get template and form data
         template = get_template_by_id(template_id)
@@ -2354,51 +2438,13 @@ def send_email_from_template(template_id):
         for placeholder, value in replacements.items():
             body = body.replace(placeholder, value)
 
-        # Create the email message
-        msg = MIMEMultipart('related')
-        msg['From'] = f"Tom Palmer <{email_user}>"
-        msg['To'] = contact_email
-        msg['Bcc'] = bcc_email
-        msg['Subject'] = subject
-        msg['Date'] = datetime.now().strftime('%a, %d %b %Y %H:%M:%S +0000')
-
-        msg_alternative = MIMEMultipart('alternative')
-        msg.attach(msg_alternative)
-
         # Fetch and attach the email signature
-        email_signature = get_email_signature_by_id(1)
+        email_signature = _get_default_signature()
         if email_signature:
             signature_html = email_signature['signature_html']
             body += signature_html
 
-        # Attach plain text and HTML versions
-        text_part = MIMEText(template['body'].strip(), 'plain')
-        html_part = MIMEText(body.strip(), 'html')
-        msg_alternative.attach(text_part)
-        msg_alternative.attach(html_part)
-
-        # Attach images
-        uploads_dir = os.path.join(current_app.root_path, 'uploads')
-
-        # Attach logo image
-        logo_path = os.path.join(uploads_dir, 'blimage001.jpg')
-        if os.path.exists(logo_path):
-            with open(logo_path, 'rb') as img:
-                img_data = img.read()
-                image = MIMEImage(img_data)
-                image.add_header('Content-ID', '<image001>')
-                image.add_header('Content-Disposition', 'inline')
-                msg.attach(image)
-
-        # Attach LinkedIn icon
-        linkedin_path = os.path.join(uploads_dir, 'linkedin_icon.png')
-        if os.path.exists(linkedin_path):
-            with open(linkedin_path, 'rb') as img:
-                img_data = img.read()
-                image = MIMEImage(img_data)
-                image.add_header('Content-ID', '<linkedin_icon>')
-                image.add_header('Content-Disposition', 'inline')
-                msg.attach(image)
+        attachments = build_graph_inline_attachments()
 
         # Try HubSpot operations
         hubspot_company_id = None
@@ -2412,27 +2458,15 @@ def send_email_from_template(template_id):
 
         # Send the email
         try:
-            with smtplib.SMTP_SSL(email_host, email_port) as server:
-                server.login(email_user, email_password)
-                server.send_message(msg)
-
-            try:
-                import imaplib
-                with imaplib.IMAP4_SSL(imap_host) as imap:
-                    imap.login(email_user, email_password)
-
-                    # Select the Sent folder (name might vary by email provider)
-                    sent_folder = '"Sent"'  # or 'Sent Items' or '[Gmail]/Sent Mail' depending on provider
-                    imap.select(sent_folder)
-
-                    # Convert the email message to string format
-                    email_str = msg.as_string().encode('utf-8')
-
-                    # Add the email to Sent folder
-                    imap.append(sent_folder, '\\Seen', imaplib.Time2Internaldate(time.time()), email_str)
-
-            except Exception as imap_error:
-                print(f"Warning: Failed to save to Sent folder: {str(imap_error)}")
+            result = send_graph_email(
+                subject=subject,
+                html_body=body.strip(),
+                to_emails=[contact_email],
+                bcc_emails=[bcc_email] if bcc_email else None,
+                attachments=attachments,
+            )
+            if not result.get("success"):
+                raise RuntimeError(result.get("error", "Graph send failed"))
 
             # Try to log to HubSpot if we have IDs
             if hubspot_contact_id:
@@ -2464,7 +2498,7 @@ def send_email_from_template(template_id):
             })
 
         except Exception as e:
-            error_msg = f'SMTP Error: {str(e)}'
+            error_msg = f'Graph Error: {str(e)}'
             log_data = {
                 'template_id': template_id,
                 'contact_id': contact_id,
@@ -3852,7 +3886,7 @@ def preview_email():
             body_html = body.replace('\n', '<br>')
 
             # Add email signature for preview
-            email_signature = get_email_signature_by_id(1)
+            email_signature = _get_default_signature()
             if email_signature:
                 signature_html = email_signature['signature_html']
                 # Convert CID references to actual image URLs for preview
@@ -3931,26 +3965,7 @@ def send_custom_email():
             processed_subject = processed_subject.replace(placeholder_pattern, str(value))
             processed_body = processed_body.replace(placeholder_pattern, str(value))
 
-        # Email configuration
-        email_host = 'smtps.aruba.it'
-        email_port = 465
-        email_user = os.getenv('EMAIL_USER')
-        email_password = os.getenv('EMAIL_PASSWORD')
         bcc_email = "145554557@bcc.eu1.hubspot.com"
-
-        if not all([email_user, email_password]):
-            return jsonify({'success': False, 'error': 'Email configuration is incomplete'}), 500
-
-        # Create the email message
-        msg = MIMEMultipart('related')
-        msg['From'] = f"Tom Palmer <{email_user}>"
-        msg['To'] = contact['email']
-        msg['Bcc'] = bcc_email
-        msg['Subject'] = processed_subject
-        msg['Date'] = datetime.now().strftime('%a, %d %b %Y %H:%M:%S +0000')
-
-        msg_alternative = MIMEMultipart('alternative')
-        msg.attach(msg_alternative)
 
         # Convert body to HTML
         body_html = processed_body.replace('\n', '<br>')
@@ -3971,44 +3986,21 @@ def send_custom_email():
         """
 
         # Add email signature
-        email_signature = get_email_signature_by_id(1)
+        email_signature = _get_default_signature()
         if email_signature:
             signature_html = email_signature['signature_html']
             body_html += signature_html
 
-        # Attach plain text and HTML versions
-        text_part = MIMEText(processed_body.strip(), 'plain')
-        html_part = MIMEText(body_html.strip(), 'html')
-        msg_alternative.attach(text_part)
-        msg_alternative.attach(html_part)
-
-        # Attach signature images
-        uploads_dir = os.path.join(current_app.root_path, 'uploads')
-
-        # Attach logo image
-        logo_path = os.path.join(uploads_dir, 'blimage001.jpg')
-        if os.path.exists(logo_path):
-            with open(logo_path, 'rb') as img:
-                img_data = img.read()
-                image = MIMEImage(img_data)
-                image.add_header('Content-ID', '<image001>')
-                image.add_header('Content-Disposition', 'inline')
-                msg.attach(image)
-
-        # Attach LinkedIn icon
-        linkedin_path = os.path.join(uploads_dir, 'linkedin_icon.png')
-        if os.path.exists(linkedin_path):
-            with open(linkedin_path, 'rb') as img:
-                img_data = img.read()
-                image = MIMEImage(img_data)
-                image.add_header('Content-ID', '<linkedin_icon>')
-                image.add_header('Content-Disposition', 'inline')
-                msg.attach(image)
-
-        # Send the email
-        with smtplib.SMTP_SSL(email_host, email_port) as server:
-            server.login(email_user, email_password)
-            server.send_message(msg)
+        attachments = build_graph_inline_attachments()
+        result = send_graph_email(
+            subject=processed_subject,
+            html_body=body_html.strip(),
+            to_emails=[contact['email']],
+            bcc_emails=[bcc_email] if bcc_email else None,
+            attachments=attachments,
+        )
+        if not result.get("success"):
+            return jsonify({'success': False, 'error': result.get("error", "Graph send failed")}), 500
 
         # Log the email
         log_data = {

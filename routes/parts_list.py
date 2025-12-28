@@ -18,6 +18,8 @@ from email import policy
 from email.message import EmailMessage
 import os
 import html
+from routes.emails import send_graph_email, build_graph_inline_attachments
+from routes.email_signatures import get_user_default_signature
 
 # Optional rich RTF→text converter; falls back to a lightweight stripper if missing
 try:
@@ -2722,6 +2724,15 @@ def generate_supplier_email():
             <p>Thanks,<br><br>{sender_name}</p>
         '''
 
+        signature = None
+        if current_user and getattr(current_user, "is_authenticated", False):
+            signature = get_user_default_signature(current_user.id)
+        else:
+            signature = get_user_default_signature()
+
+        if signature and signature.get('signature_html'):
+            body_html += signature['signature_html']
+
         return jsonify({
             'success': True,
             'supplier_id': supplier_id,
@@ -2735,6 +2746,39 @@ def generate_supplier_email():
     except Exception as e:
         logging.error(f'Error generating supplier email: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@parts_list_bp.route('/send-supplier-email', methods=['POST'])
+def send_supplier_email():
+    try:
+        data = request.get_json(force=True)
+        recipient_email = (data.get('recipient_email') or '').strip()
+        subject = (data.get('subject') or '').strip()
+        body_html = data.get('body_html') or ''
+
+        if not (recipient_email and subject and body_html):
+            return jsonify(success=False, error="recipient_email, subject, and body_html are required"), 400
+
+        if not current_user or not getattr(current_user, "is_authenticated", False):
+            return jsonify(success=False, error="You must be logged in to send emails"), 401
+
+        attachments = build_graph_inline_attachments()
+        result = send_graph_email(
+            subject=subject,
+            html_body=body_html,
+            to_emails=[recipient_email],
+            attachments=attachments,
+            user_id=current_user.id,
+        )
+
+        if not result.get("success"):
+            return jsonify(success=False, error=result.get("error", "Graph send failed")), 500
+
+        return jsonify(success=True)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, error=str(e)), 500
 
 # Updated routes for parts_list blueprint
 

@@ -243,6 +243,17 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         `;
     }
 
+    let excessDisplay = '-';
+    if (part.excess_count > 0 && part.lowest_excess_price !== null && part.lowest_excess_price !== undefined) {
+        const excessPrice = formatCurrencyWithCode(part.lowest_excess_price, part.lowest_excess_currency_code || 'GBP');
+        const supplierLine = part.lowest_excess_supplier
+            ? `<br><small class="text-muted" style="font-size: 0.75rem;">${escapeHtml(part.lowest_excess_supplier)}</small>`
+            : '';
+        excessDisplay = `<div style="font-weight: 600; color: #0d6efd;">${excessPrice}${supplierLine}</div>`;
+    } else if (part.excess_count > 0) {
+        excessDisplay = `<span class="text-muted">${part.excess_count} line${part.excess_count !== 1 ? 's' : ''}</span>`;
+    }
+
     const numericLineNumber = Number(part.line_number);
     const isSubLine = !!part.parent_line_id ||
         part.line_type === 'alternate' ||
@@ -349,6 +360,10 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
                 </span>
                 ${part.most_recent_po_supplier ? `<br><small class="text-muted" style="font-size: 0.75rem;">${escapeHtml(part.most_recent_po_supplier)}</small>` : ''}
             </div>
+        </td>
+        <td style="width: 170px; min-width: 170px;"
+            class="purchasing-col">
+            ${excessDisplay}
         </td>
 
          <td style="width: 150px; min-width: 150px; cursor: ${part.parts_list_quotes_count > 0 ? 'pointer' : 'default'};"
@@ -514,6 +529,15 @@ function formatCurrencyWithSymbol(value, symbol) {
     if (isNaN(numeric)) return '-';
     if (!symbol) return formatCurrency(numeric);
     return `${symbol}${numeric.toFixed(2)}`;
+}
+
+function formatCurrencyWithCode(value, code) {
+    if (value === null || value === undefined || value === '' || isNaN(value)) return '-';
+    const numeric = parseFloat(value);
+    if (isNaN(numeric)) return '-';
+    const currencyCode = code ? String(code).trim() : '';
+    const formatted = formatCurrency(numeric);
+    return currencyCode ? `${formatted} ${currencyCode}` : formatted;
 }
 
 function formatDate(dateStr) {

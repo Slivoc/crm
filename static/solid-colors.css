@@ -1145,3 +1145,47 @@ html .flex-shrink-0,
   box-shadow: none !important;
   border-right: none !important;
 }
+
+/* Collapse Toggle */
+.collapse-toggle {
+    position: absolute;
+    top: 12px;
+    right: 10px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: #e9ecef;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6c757d;
+    transition: all 0.15s;
+    padding: 0;
+    z-index: 2;
+}
+
+.collapse-toggle:hover {
+    background: #dee2e6;
+    color: #495057;
+}
+
+.collapse-toggle i {
+    transition: transform 0.2s;
+    font-size: 0.85rem;
+}
+
+.collapse-toggle[aria-expanded="false"] i {
+    transform: rotate(-90deg);
+}
+
+/* Adjust private badge position when collapse toggle exists */
+.ticket-card:has(.collapse-toggle) .private-badge {
+    right: 40px;
+}
+
+/* Hidden subtasks */
+.ticket-wrapper.collapsed-child {
+    display: none;
+}

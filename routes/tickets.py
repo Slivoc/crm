@@ -490,6 +490,7 @@ def list_tickets():
             parent_id = parent.get("parent_id")
             hop_count += 1
         ticket["parent_chain"] = " > ".join(reversed(chain_titles)) if chain_titles else None
+        ticket["depth"] = len(chain_titles)
         if ticket.get("parent_id") and ticket.get("parent_title"):
             ticket["parent_label"] = f"#{ticket['parent_id']} {ticket['parent_title']}"
         else:
@@ -558,6 +559,196 @@ def list_tickets():
     )
 
 
+@tickets_bp.route('/sidebar-tree', methods=['GET'])
+@login_required
+def sidebar_tree():
+    user_id = current_user.id
+    is_admin = _is_admin()
+    visibility_clause, visibility_params = _ticket_visibility_clause(user_id, is_admin)
+
+    statuses = _fetch_statuses()
+    status_by_id = {status['id']: status for status in statuses}
+    status_order = {status['id']: index for index, status in enumerate(statuses)}
+    return_status_id = next(
+        (status['id'] for status in statuses if status.get('name', '').lower() == 'returned'),
+        None,
+    )
+    close_status_id = next(
+        (status['id'] for status in statuses if status.get('is_closed')),
+        None,
+    )
+
+    assigned_rows = db_execute(
+        f"""
+        SELECT
+            t.id,
+            t.title,
+            t.status_id,
+            t.parent_ticket_id,
+            t.workspace_id,
+            t.assigned_user_id,
+            s.name AS status_name,
+            s.is_closed AS status_is_closed,
+            tw.name AS workspace_name
+        FROM tickets t
+        JOIN ticket_statuses s ON t.status_id = s.id
+        LEFT JOIN ticket_workspaces tw ON t.workspace_id = tw.id
+        WHERE t.assigned_user_id = ?
+          AND s.is_closed = FALSE
+        {visibility_clause}
+        """,
+        [user_id] + visibility_params,
+        fetch="all",
+    ) or []
+
+    assigned_tickets = [dict(row) for row in assigned_rows]
+    if not assigned_tickets:
+        return jsonify({
+            'success': True,
+            'workspaces': [],
+            'assigned_total': 0,
+            'return_status_id': return_status_id,
+            'close_status_id': close_status_id,
+        })
+
+    ticket_rows = {ticket['id']: ticket for ticket in assigned_tickets}
+    seen_ids = set(ticket_rows.keys())
+    to_fetch = {
+        ticket.get('parent_ticket_id')
+        for ticket in assigned_tickets
+        if ticket.get('parent_ticket_id')
+    }
+
+    while to_fetch:
+        batch = [ticket_id for ticket_id in to_fetch if ticket_id not in seen_ids]
+        to_fetch = set()
+        if not batch:
+            break
+        placeholders = ", ".join(["?"] * len(batch))
+        parent_rows = db_execute(
+            f"""
+            SELECT
+                t.id,
+                t.title,
+                t.status_id,
+                t.parent_ticket_id,
+                t.workspace_id,
+                t.assigned_user_id,
+                s.name AS status_name,
+                s.is_closed AS status_is_closed,
+                tw.name AS workspace_name
+            FROM tickets t
+            JOIN ticket_statuses s ON t.status_id = s.id
+            LEFT JOIN ticket_workspaces tw ON t.workspace_id = tw.id
+            WHERE t.id IN ({placeholders})
+              AND s.is_closed = FALSE
+            {visibility_clause}
+            """,
+            batch + visibility_params,
+            fetch="all",
+        ) or []
+        for row in parent_rows:
+            ticket = dict(row)
+            if ticket['id'] in seen_ids:
+                continue
+            ticket_rows[ticket['id']] = ticket
+            seen_ids.add(ticket['id'])
+            parent_id = ticket.get('parent_ticket_id')
+            if parent_id and parent_id not in seen_ids:
+                to_fetch.add(parent_id)
+
+    groups = {}
+    for ticket in assigned_tickets:
+        group_key = (ticket.get('workspace_id'), ticket.get('status_id'))
+        group = groups.setdefault(group_key, {
+            'workspace_id': ticket.get('workspace_id'),
+            'workspace_name': ticket.get('workspace_name') or 'No Workspace',
+            'status_id': ticket.get('status_id'),
+            'nodes': {},
+        })
+
+        path = []
+        current_id = ticket.get('id')
+        hop_count = 0
+        while current_id and hop_count < 10:
+            if current_id in path:
+                break
+            row = ticket_rows.get(current_id)
+            if not row:
+                break
+            path.append(current_id)
+            current_id = row.get('parent_ticket_id')
+            hop_count += 1
+
+        for ticket_id in path:
+            if ticket_id in group['nodes']:
+                continue
+            row = ticket_rows[ticket_id]
+            group['nodes'][ticket_id] = {
+                'id': row['id'],
+                'title': row['title'],
+                'parent_id': row.get('parent_ticket_id'),
+                'assigned_user_id': row.get('assigned_user_id'),
+                'is_assigned_to_me': row.get('assigned_user_id') == user_id,
+                'is_context_only': row.get('assigned_user_id') != user_id,
+                'status_id': row.get('status_id'),
+                'status_name': row.get('status_name'),
+            }
+
+    workspaces = {}
+    assigned_total = 0
+    for (workspace_id, status_id), group in groups.items():
+        status = status_by_id.get(status_id, {})
+        workspace = workspaces.setdefault(workspace_id, {
+            'id': workspace_id,
+            'name': group.get('workspace_name') or 'No Workspace',
+            'statuses': [],
+        })
+
+        nodes = group['nodes']
+        for node in nodes.values():
+            node['children'] = []
+        for node in nodes.values():
+            parent_id = node.get('parent_id')
+            if parent_id in nodes:
+                nodes[parent_id]['children'].append(node)
+
+        roots = [node for node in nodes.values() if node.get('parent_id') not in nodes]
+
+        def sort_nodes(items):
+            items.sort(key=lambda item: (item.get('title') or '').lower())
+            for item in items:
+                sort_nodes(item.get('children', []))
+
+        sort_nodes(roots)
+
+        assigned_count = sum(
+            1 for node in nodes.values()
+            if node.get('is_assigned_to_me') and node.get('status_id') == status_id
+        )
+        assigned_total += assigned_count
+
+        workspace['statuses'].append({
+            'id': status_id,
+            'name': status.get('name') or 'Status',
+            'tickets': roots,
+            'assigned_count': assigned_count,
+        })
+
+    workspace_list = list(workspaces.values())
+    workspace_list.sort(key=lambda item: (item.get('name') or '').lower())
+    for workspace in workspace_list:
+        workspace['statuses'].sort(key=lambda item: status_order.get(item['id'], 999))
+
+    return jsonify({
+        'success': True,
+        'workspaces': workspace_list,
+        'assigned_total': assigned_total,
+        'return_status_id': return_status_id,
+        'close_status_id': close_status_id,
+    })
+
+
 @tickets_bp.route('/<int:ticket_id>', methods=['GET'])
 @login_required
 def view_ticket(ticket_id):
@@ -583,6 +774,67 @@ def view_ticket(ticket_id):
         subjobs=subjobs,
         updates=updates,
     )
+
+
+@tickets_bp.route('/<int:ticket_id>/quick-status', methods=['POST'])
+@login_required
+def quick_status(ticket_id):
+    user_id = current_user.id
+    is_admin = _is_admin()
+
+    ticket = _fetch_ticket(ticket_id, user_id, is_admin)
+    if not ticket:
+        abort(403)
+
+    if not is_admin and ticket.get('assigned_user_id') != user_id:
+        return jsonify({'success': False, 'error': 'Ticket not assigned to you'}), 403
+
+    data = request.get_json(silent=True) or {}
+    status_id = data.get('status_id')
+    if not status_id:
+        return jsonify({'success': False, 'error': 'Status is required'}), 400
+
+    status_row = db_execute(
+        "SELECT name, is_closed FROM ticket_statuses WHERE id = ?",
+        (status_id,),
+        fetch="one",
+    )
+    if not status_row:
+        return jsonify({'success': False, 'error': 'Invalid status'}), 400
+
+    status_name = status_row.get('name') or ''
+    is_closed = bool(status_row.get('is_closed'))
+    closed_at = datetime.now() if is_closed else None
+    assigned_user_id = ticket.get('assigned_user_id')
+    if status_name.lower() == 'returned':
+        assigned_user_id = ticket.get('created_by_user_id')
+
+    db_execute(
+        """
+        UPDATE tickets
+        SET status_id = ?,
+            assigned_user_id = ?,
+            closed_at = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            int(status_id),
+            int(assigned_user_id) if assigned_user_id else None,
+            closed_at,
+            ticket_id,
+        ),
+        commit=True,
+    )
+
+    changes = [f"Status changed to {status_name}"]
+    if status_name.lower() == 'returned':
+        changes.append("Returned to creator")
+    if assigned_user_id != ticket.get('assigned_user_id'):
+        changes.append("Assignee updated")
+    _add_ticket_update(ticket_id, user_id, "; ".join(changes))
+
+    return jsonify({'success': True})
 
 
 @tickets_bp.route('/<int:ticket_id>/update', methods=['POST'])

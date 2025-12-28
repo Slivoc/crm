@@ -25,7 +25,8 @@ def _execute_with_cursor(cursor, query, params=None):
     if _using_postgres():
         # Translate ? placeholders to %s for Postgres
         query = query.replace('?', '%s')
-    return cursor.execute(query, params or ())
+    cursor.execute(query, params or ())
+    return cursor
 
 def is_mobile():
     user_agent = request.headers.get('User-Agent', '').lower()

@@ -79,6 +79,96 @@
             color: #0066cc;
         }
 
+        .ticket-sidebar {
+            font-size: 0.9rem;
+        }
+
+        .ticket-workspace,
+        .ticket-status {
+            margin-bottom: 0.5rem;
+        }
+
+        .ticket-summary {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.35rem 0.5rem;
+            border-radius: 8px;
+            background: #f8f9fa;
+            cursor: pointer;
+            border: 1px solid #e9ecef;
+            font-weight: 600;
+        }
+
+        .ticket-summary:hover {
+            background: #eef3f8;
+        }
+
+        .ticket-tree {
+            list-style: none;
+            padding-left: 0;
+            margin: 0.25rem 0 0.5rem;
+        }
+
+        .ticket-node {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.5rem;
+            padding: 0.25rem 0.35rem;
+            border-left: 2px solid #e9ecef;
+            margin-top: 0.2rem;
+        }
+
+        .ticket-node[data-depth="0"] {
+            border-left: none;
+        }
+
+        .ticket-title {
+            font-size: 0.85rem;
+            line-height: 1.2;
+        }
+
+        .ticket-title a {
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .ticket-title a:hover {
+            text-decoration: underline;
+        }
+
+        .ticket-branch {
+            color: #6c757d;
+            font-style: italic;
+        }
+
+        .ticket-actions {
+            display: flex;
+            gap: 0.25rem;
+            flex-shrink: 0;
+        }
+
+        .ticket-action-btn {
+            border: 1px solid #dee2e6;
+            background: #ffffff;
+            border-radius: 6px;
+            padding: 0.15rem 0.35rem;
+            font-size: 0.75rem;
+            color: #495057;
+        }
+
+        .ticket-action-btn:hover {
+            border-color: #0d6efd;
+            color: #0d6efd;
+            background: #f8f9ff;
+        }
+
+        .ticket-action-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
         .btn-toggle[aria-expanded="true"]::after {
             transform: rotate(180deg);
         }
@@ -646,29 +736,50 @@ input:-webkit-autofill {
             <!-- Always Visible Section -->
             <ul class="list-unstyled ps-0 always-visible">
                 <li class="mb-1">
-                    <a href="{{ url_for('dashboard.view_dashboard') }}" class="btn btn-toggle align-items-center rounded d-flex">
+                    {# <a href="{{ url_for('dashboard.view_dashboard') }}" class="btn btn-toggle align-items-center rounded d-flex">
                         <i class="bi bi-speedometer2 me-2"></i>
                         Main Dashboard
-                    </a>
+                    </a> #}
                     {% if current_user.is_authenticated %}
                     <a href="{{ url_for('salespeople.activity', salesperson_id=current_user.get_salesperson_id()) }}" class="btn btn-toggle align-items-center rounded d-flex">
                         <i class="bi bi-speedometer2 me-2"></i>
                         My CRM
                     </a>
-                    <a href="{{ url_for('tickets.list_tickets') }}" class="btn btn-toggle align-items-center rounded d-flex">
+                    <button class="btn btn-toggle align-items-center rounded collapsed d-flex w-100" data-bs-toggle="collapse" data-bs-target="#tickets-collapse" aria-expanded="false">
                         <i class="bi bi-ticket-perforated me-2"></i>
                         Tickets
-                    </a>
+                        <span class="badge bg-light text-dark ms-auto d-none" id="tickets-count-badge"></span>
+                    </button>
+                    <div class="collapse" id="tickets-collapse">
+                        <div class="ticket-sidebar px-2 pt-2" id="ticketsSidebarContent">
+                            <div class="text-muted small d-flex align-items-center">
+                                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                Loading tickets...
+                            </div>
+                        </div>
+                    </div>
                     {% endif %}
                 </li>
+            </ul>
 
+            <!-- Toggle Button -->
+            <!-- Replace the existing toggle button with: -->
+<div class="d-flex justify-content-center mb-3">
+    <button class="btn btn-outline-secondary btn-sm w-100" id="sidebarToggle" onclick="toggleSidebarSections()">
+        <i class="bi bi-chevron-down me-1"></i>
+        <span class="toggle-text">Show More</span>
+    </button>
+</div>
+
+            <!-- Collapsible Sections (Hidden by default) -->
+            <ul class="list-unstyled ps-0 collapsible-sections collapsed" id="collapsibleSections">
                 <!-- Projects section -->
                 <li class="mb-1">
                     <button class="btn btn-toggle align-items-center rounded collapsed d-flex" data-bs-toggle="collapse" data-bs-target="#projects-collapse" aria-expanded="false">
                         <i class="bi bi-kanban me-2"></i>
                         Projects
                     </button>
-                    <div class="collapse show" id="projects-collapse">
+                    <div class="collapse" id="projects-collapse">
                         <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
                             <li>
                                 <a href="#" class="link-dark text-decoration-none dropdown-toggle d-flex align-items-center justify-content-between px-3 py-2 bg-light rounded"
@@ -705,19 +816,6 @@ input:-webkit-autofill {
                         </ul>
                     </div>
                 </li>
-            </ul>
-
-            <!-- Toggle Button -->
-            <!-- Replace the existing toggle button with: -->
-<div class="d-flex justify-content-center mb-3">
-    <button class="btn btn-outline-secondary btn-sm w-100" id="sidebarToggle" onclick="toggleSidebarSections()">
-        <i class="bi bi-chevron-down me-1"></i>
-        <span class="toggle-text">Show More</span>
-    </button>
-</div>
-
-            <!-- Collapsible Sections (Hidden by default) -->
-            <ul class="list-unstyled ps-0 collapsible-sections collapsed" id="collapsibleSections">
                 <li class="mb-1">
                     <button class="btn btn-toggle align-items-center rounded collapsed d-flex" data-bs-toggle="collapse" data-bs-target="#sales-collapse" aria-expanded="false">
                         <i class="bi bi-graph-up me-2"></i>
@@ -1000,6 +1098,11 @@ input:-webkit-autofill {
 
                 <!-- Shortcuts (right-aligned) -->
                 <div class="d-flex gap-2 position-relative">
+                    {% if current_user.is_authenticated %}
+                    <a href="{{ url_for('tickets.list_tickets') }}" class="btn btn-outline-secondary" title="Tickets">
+                        <i class="bi bi-ticket-perforated"></i>
+                    </a>
+                    {% endif %}
                     <a href="{{ url_for('emails.mailbox_page') }}" class="btn btn-outline-secondary" title="Mailbox">
                         <i class="bi bi-envelope"></i>
                     </a>
@@ -1767,6 +1870,182 @@ function initializeSidebarState() {
         toggleIcon.classList.add('bi-chevron-down');
     }
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    const ticketsCollapse = document.getElementById('tickets-collapse');
+    const ticketsContent = document.getElementById('ticketsSidebarContent');
+    const ticketsCountBadge = document.getElementById('tickets-count-badge');
+    if (!ticketsCollapse || !ticketsContent) {
+        return;
+    }
+
+    let isLoading = false;
+    let returnStatusId = null;
+    let closeStatusId = null;
+
+    const escapeHtml = (value) => {
+        const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+        return String(value || '').replace(/[&<>"']/g, (char) => map[char]);
+    };
+
+    const renderTicketNode = (node, depth, groupStatusId) => {
+        const isContext = node.is_context_only;
+        const statusBadge = node.status_id && node.status_id !== groupStatusId
+            ? `<span class="badge bg-secondary ms-2">${escapeHtml(node.status_name || '')}</span>`
+            : '';
+        const actions = isContext
+            ? ''
+            : `
+                <div class="ticket-actions">
+                    <a class="ticket-action-btn" href="/tickets/${node.id}" title="Update">
+                        <i class="bi bi-pencil"></i>
+                    </a>
+                    ${returnStatusId ? `
+                        <button class="ticket-action-btn" type="button" data-ticket-action="return" data-ticket-id="${node.id}" title="Return">
+                            <i class="bi bi-arrow-counterclockwise"></i>
+                        </button>` : ''}
+                    ${closeStatusId ? `
+                        <button class="ticket-action-btn" type="button" data-ticket-action="close" data-ticket-id="${node.id}" title="Close">
+                            <i class="bi bi-check2-circle"></i>
+                        </button>` : ''}
+                </div>
+            `;
+
+        const children = (node.children || []).map(child => renderTicketNode(child, depth + 1, groupStatusId)).join('');
+        return `
+            <li>
+                <div class="ticket-node ${isContext ? 'ticket-branch' : ''}" data-depth="${depth}" style="margin-left: ${depth * 12}px;">
+                    <div class="ticket-title">
+                        <a href="/tickets/${node.id}">#${node.id} ${escapeHtml(node.title || 'Untitled')}</a>
+                        ${statusBadge}
+                    </div>
+                    ${actions}
+                </div>
+                ${children ? `<ul class="ticket-tree">${children}</ul>` : ''}
+            </li>
+        `;
+    };
+
+    const renderStatus = (status, workspaceKey) => {
+        const statusId = status.id;
+        const targetId = `ticket-status-${workspaceKey}-${statusId}`;
+        const ticketList = (status.tickets || []).map(node => renderTicketNode(node, 0, statusId)).join('');
+        const countBadge = status.assigned_count ? `<span class="badge bg-primary">${status.assigned_count}</span>` : '';
+        return `
+            <div class="ticket-status">
+                <div class="ticket-summary" role="button" data-bs-toggle="collapse" data-bs-target="#${targetId}" aria-expanded="true">
+                    <span>${escapeHtml(status.name || 'Status')}</span>
+                    ${countBadge}
+                </div>
+                <div class="collapse show" id="${targetId}">
+                    ${ticketList ? `<ul class="ticket-tree">${ticketList}</ul>` : '<div class="text-muted small px-2 py-1">No tickets</div>'}
+                </div>
+            </div>
+        `;
+    };
+
+    const renderWorkspace = (workspace) => {
+        const workspaceKey = workspace.id === null || workspace.id === undefined ? 'none' : workspace.id;
+        const targetId = `ticket-workspace-${workspaceKey}`;
+        const statuses = (workspace.statuses || []).map(status => renderStatus(status, workspaceKey)).join('');
+        return `
+            <div class="ticket-workspace">
+                <div class="ticket-summary" role="button" data-bs-toggle="collapse" data-bs-target="#${targetId}" aria-expanded="true">
+                    <span>${escapeHtml(workspace.name || 'Workspace')}</span>
+                    <i class="bi bi-chevron-down"></i>
+                </div>
+                <div class="collapse show" id="${targetId}">
+                    ${statuses}
+                </div>
+            </div>
+        `;
+    };
+
+    const renderTickets = (data) => {
+        returnStatusId = data.return_status_id || null;
+        closeStatusId = data.close_status_id || null;
+        const total = data.assigned_total || 0;
+        if (ticketsCountBadge) {
+            if (total > 0) {
+                ticketsCountBadge.textContent = total;
+                ticketsCountBadge.classList.remove('d-none');
+            } else {
+                ticketsCountBadge.classList.add('d-none');
+            }
+        }
+
+        if (!data.workspaces || data.workspaces.length === 0) {
+            ticketsContent.innerHTML = '<div class="text-muted small px-2 py-1">No open tickets assigned to you.</div>';
+            return;
+        }
+
+        const header = '<div class="px-1 pb-2"><a class="link-dark text-decoration-none" href="/tickets/">View all tickets</a></div>';
+        ticketsContent.innerHTML = header + data.workspaces.map(renderWorkspace).join('');
+    };
+
+    const loadTickets = async () => {
+        if (isLoading) {
+            return;
+        }
+        isLoading = true;
+        ticketsContent.innerHTML = `
+            <div class="text-muted small d-flex align-items-center">
+                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                Loading tickets...
+            </div>
+        `;
+        try {
+            const response = await fetch('/tickets/sidebar-tree');
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.error || 'Failed to load tickets');
+            }
+            renderTickets(data);
+        } catch (error) {
+            console.error('Failed to load tickets:', error);
+            ticketsContent.innerHTML = '<div class="text-danger small px-2 py-1">Unable to load tickets.</div>';
+        } finally {
+            isLoading = false;
+        }
+    };
+
+    ticketsCollapse.addEventListener('shown.bs.collapse', loadTickets);
+    ticketsContent.addEventListener('click', async (event) => {
+        const actionBtn = event.target.closest('[data-ticket-action]');
+        if (!actionBtn) {
+            return;
+        }
+        event.preventDefault();
+        const ticketId = actionBtn.dataset.ticketId;
+        const action = actionBtn.dataset.ticketAction;
+        const statusId = action === 'return' ? returnStatusId : closeStatusId;
+        if (!statusId) {
+            alert('That action is not available yet.');
+            return;
+        }
+        if (action === 'close' && !confirm('Close this ticket?')) {
+            return;
+        }
+        actionBtn.disabled = true;
+        try {
+            const response = await fetch(`/tickets/${ticketId}/quick-status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status_id: statusId }),
+            });
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.error || 'Update failed');
+            }
+            await loadTickets();
+        } catch (error) {
+            console.error('Failed to update ticket:', error);
+            alert('Unable to update the ticket.');
+        } finally {
+            actionBtn.disabled = false;
+        }
+    });
+});
 
 
 document.addEventListener('DOMContentLoaded', function() {

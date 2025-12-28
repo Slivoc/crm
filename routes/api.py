@@ -1,20 +1,23 @@
 # In your Flask application, create a new blueprint for API routes
 from collections import defaultdict
-from flask import Blueprint, request, jsonify, current_app, url_for
+from flask import Blueprint, request, jsonify, current_app, url_for, session
 import base64
 import os
-import re
 import requests
 import extract_msg
 from datetime import datetime
 from db import db_cursor, execute as db_execute
 from models import delete_customer_tag, get_contacts_by_customer, insert_customer_tag, filter_tags_by_search, get_all_tags, update_customer_apollo_id, get_tags_by_customer_id, get_email_logs, get_customer_tags, get_customer_apollo_id, get_excess_stock_list_by_id, get_supplier_by_email, save_email_log, get_email_signature_by_id, get_template_by_id, get_contact_by_id, get_customer_by_id
-from routes.emails import clean_message_id, allowed_file, build_email_from_template, send_email_from_template
+from routes.emails import (
+    allowed_file,
+    build_email_from_template,
+    send_email_from_template,
+    send_graph_email,
+    build_graph_inline_attachments,
+)
+from flask_login import current_user
+from routes.email_signatures import get_user_default_signature
 import mimetypes
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.image import MIMEImage
 import uuid
 from hubspot_helpers import get_or_create_hubspot_contact, get_or_create_hubspot_company, log_email_to_hubspot
 
@@ -42,6 +45,15 @@ def _get_inserted_id(row, cur):
         return row[0]
     except Exception:
         return getattr(cur, 'lastrowid', None)
+
+
+def _get_default_signature():
+    signature = None
+    if current_user and getattr(current_user, "is_authenticated", False):
+        signature = get_user_default_signature(current_user.id)
+    if signature:
+        return signature
+    return get_email_signature_by_id(1)
 
 from functools import wraps
 
@@ -298,7 +310,7 @@ def preview_email():
         body_html = body.replace('\n', '<br>')
 
         # Add email signature
-        email_signature = get_email_signature_by_id(1)
+        email_signature = _get_default_signature()
         if email_signature:
             signature_html = email_signature.get('signature_html', '')
             # Convert CID references to actual image URLs for preview
@@ -327,18 +339,8 @@ def send_email():
     print(f"Starting email request {request_id}")
     """Send an email using the template and log to HubSpot"""
     try:
-        # Email configuration
-        email_host = 'smtps.aruba.it'
-        email_port = 465
-        email_user = os.getenv('EMAIL_USER')
-        email_password = os.getenv('EMAIL_PASSWORD')
-        imap_host = 'imaps.aruba.it'
-
-        if not all([email_user, email_password]):
-            error_msg = 'Email configuration is incomplete'
-            return jsonify({'success': False, 'error': error_msg})
-
         data = request.json
+        graph_user_id = data.get('graph_user_id') or getattr(current_user, "id", None)
         print("Received data:", data)
 
         template_id = data.get('template_id')
@@ -416,64 +418,17 @@ def send_email():
         for placeholder, value in replacements.items():
             body = body.replace(placeholder, value)
 
-        # Generate a unique Message-ID
-        # Generate a unique Message-ID
-        message_id_raw = f"{uuid.uuid4()}@recitalia.it"
-
-        # Create the email message
-        msg = MIMEMultipart('related')
-        msg['From'] = f"Tom Palmer <{email_user}>"
-        msg['To'] = contact_email
-        msg['Subject'] = subject
-        msg['Date'] = datetime.now().strftime('%a, %d %b %Y %H:%M:%S +0000')
-        msg['Message-ID'] = f"<{message_id_raw}>"
-
         # Add BCC
-        bcc_email = '145554557@bcc.eu1.hubspot.com'  # Replace with your email address for testing
-        msg['Bcc'] = bcc_email
-        print(f"BCC added: {msg['Bcc']}")
-
-        msg_alternative = MIMEMultipart('alternative')
-        msg.attach(msg_alternative)
+        bcc_email = '145554557@bcc.eu1.hubspot.com'
+        print(f"BCC added: {bcc_email}")
 
         # Fetch and attach the email signature
-        email_signature = get_email_signature_by_id(1)
+        email_signature = _get_default_signature()
         if email_signature:
             signature_html = email_signature['signature_html']
             body += signature_html
 
-        # Attach plain text and HTML versions
-        text_part = MIMEText(template['body'].strip(), 'plain')
-        html_part = MIMEText(body.strip(), 'html')
-        msg_alternative.attach(text_part)
-        msg_alternative.attach(html_part)
-
-        # Handle images
-        uploads_dir = os.path.join(current_app.root_path, 'uploads')
-
-        # Attach logo image
-        logo_path = os.path.join(uploads_dir, 'blimage001.jpg')
-        if os.path.exists(logo_path):
-            with open(logo_path, 'rb') as img:
-                img_data = img.read()
-                image = MIMEImage(img_data)
-                image.add_header('Content-ID', '<image001>')
-                image.add_header('Content-Disposition', 'inline')
-                msg.attach(image)
-        else:
-            print(f"Warning: Logo image not found at {logo_path}")
-
-        # Attach LinkedIn icon
-        linkedin_path = os.path.join(uploads_dir, 'linkedin_icon.png')
-        if os.path.exists(linkedin_path):
-            with open(linkedin_path, 'rb') as img:
-                img_data = img.read()
-                image = MIMEImage(img_data)
-                image.add_header('Content-ID', '<linkedin_icon>')
-                image.add_header('Content-Disposition', 'inline')
-                msg.attach(image)
-        else:
-            print(f"Warning: LinkedIn icon not found at {linkedin_path}")
+        attachments = build_graph_inline_attachments()
 
         print(f"Preparing to send email for request {request_id}")
 
@@ -494,98 +449,67 @@ def send_email():
         try:
             # Send the email
             print(f"Sending email for request {request_id}")
-            with smtplib.SMTP_SSL(email_host, email_port) as server:
-                server.login(email_user, email_password)
+            result = send_graph_email(
+                subject=subject,
+                html_body=body.strip(),
+                to_emails=[contact_email],
+                bcc_emails=[bcc_email] if bcc_email else None,
+                attachments=attachments,
+                user_id=graph_user_id,
+            )
+            if not result.get("success"):
+                raise RuntimeError(result.get("error", "Graph send failed"))
 
-                # Print the raw email headers and body for debugging
-                print("Generated Email Content:")
-                print(msg.as_string())
+            try:
+                print(f"Logging email to database for request {request_id}")
+                sent_folder = 'Sent Items'
+                sender_email = (session.get('graph_last_user') or '').strip() or None
+                email_data = {
+                    'message_id': None,
+                    'folder': sent_folder,
+                    'recipient_email': contact_email,
+                    'subject': subject,
+                    'sent_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'direction': 'sent',
+                    'sync_status': 'synced',
+                    'customer_id': customer_id if customer else None,
+                    'contact_id': contact_id
+                }
 
-                # Send the email
-                server.send_message(msg)
-
-                # Save to Sent folder via IMAP
-                try:
-                    print(f"Saving email to Sent folder for request {request_id}")
-                    import imaplib
-                    import time
-                    with imaplib.IMAP4_SSL(imap_host) as imap:
-                        imap.login(email_user, email_password)
-
-                        # Select the Sent folder
-                        sent_folder = 'INBOX.Sent'
-                        imap.select(sent_folder)
-
-                        # Convert the email message to string format
-                        email_str = msg.as_string().encode('utf-8')
-
-                        # Add the email to Sent folder
-                        imap.append(sent_folder, '\\Seen', imaplib.Time2Internaldate(time.time()), email_str)
-
-                    print(f"Successfully saved email to Sent folder for request {request_id}")
-
-                    # Add this new block for email logging with message_id instead of uid
-                    # Add this new block for email logging with message_id instead of uid
-                    try:
-                        print(f"Logging email to database for request {request_id}")
-
-                        # Extract the Message-ID from the headers for database storage
-                        message_id = msg['Message-ID']
-                        # Remove angle brackets if present
-                        if message_id.startswith('<') and message_id.endswith('>'):
-                            message_id = message_id[1:-1]
-
-                        print(f"Logging email with Message-ID: {message_id}")
-
-                        email_data = {
-                            'message_id': clean_message_id(msg['Message-ID']),  # Use the extracted Message-ID
-                            'folder': sent_folder,
-                            'recipient_email': contact_email,
-                            'subject': subject,
-                            'sent_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                            'direction': 'sent',
-                            'sync_status': 'synced',
-                            'customer_id': customer_id if customer else None,
-                            'contact_id': contact_id
-                        }
-
-                        with db_cursor(commit=True) as cur:
-                            _execute_with_cursor(
-                                cur,
-                                '''
-                                INSERT INTO emails (
-                                    customer_id,
-                                    contact_id,
-                                    sender_email,
-                                    recipient_email,
-                                    subject,
-                                    sent_date,
-                                    direction,
-                                    sync_status,
-                                    message_id,
-                                    folder
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                ''',
-                                (
-                                    email_data.get('customer_id'),
-                                    email_data.get('contact_id'),
-                                    email_user,
-                                    email_data.get('recipient_email'),
-                                    email_data.get('subject'),
-                                    email_data.get('sent_date'),
-                                    email_data.get('direction'),
-                                    email_data.get('sync_status'),
-                                    email_data.get('message_id'),
-                                    email_data.get('folder')
-                                )
-                            )
-                        print(f"Successfully logged email to database for request {request_id}")
-                    except Exception as db_error:
-                        print(f"Warning: Failed to log email to database for request {request_id}: {str(db_error)}")
-                        # Continue execution even if database logging fails
-
-                except Exception as imap_error:
-                    print(f"Warning: Failed to save to Sent folder for request {request_id}: {str(imap_error)}")
+                with db_cursor(commit=True) as cur:
+                    _execute_with_cursor(
+                        cur,
+                        '''
+                        INSERT INTO emails (
+                            customer_id,
+                            contact_id,
+                            sender_email,
+                            recipient_email,
+                            subject,
+                            sent_date,
+                            direction,
+                            sync_status,
+                            message_id,
+                            folder
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''',
+                        (
+                            email_data.get('customer_id'),
+                            email_data.get('contact_id'),
+                            sender_email,
+                            email_data.get('recipient_email'),
+                            email_data.get('subject'),
+                            email_data.get('sent_date'),
+                            email_data.get('direction'),
+                            email_data.get('sync_status'),
+                            email_data.get('message_id'),
+                            email_data.get('folder')
+                        )
+                    )
+                print(f"Successfully logged email to database for request {request_id}")
+            except Exception as db_error:
+                print(f"Warning: Failed to log email to database for request {request_id}: {str(db_error)}")
+                # Continue execution even if database logging fails
 
             # Try to log to HubSpot if we have IDs
             if hubspot_contact_id:
@@ -621,7 +545,7 @@ def send_email():
             })
 
         except Exception as e:
-            error_msg = f'SMTP Error: {str(e)}'
+            error_msg = f'Graph Error: {str(e)}'
             log_data = {
                 'template_id': template_id,
                 'contact_id': contact_id,
@@ -1232,18 +1156,8 @@ def send_custom_email():
     print(f"Starting custom email request {request_id}")
 
     try:
-        # Email configuration
-        email_host = 'smtps.aruba.it'
-        email_port = 465
-        email_user = os.getenv('EMAIL_USER')
-        email_password = os.getenv('EMAIL_PASSWORD')
-        imap_host = 'imaps.aruba.it'
-
-        if not all([email_user, email_password]):
-            error_msg = 'Email configuration is incomplete'
-            return jsonify({'success': False, 'error': error_msg})
-
         data = request.json
+        graph_user_id = data.get('graph_user_id') or getattr(current_user, "id", None)
         print("Received data:", data)
 
         subject = data.get('subject')
@@ -1320,69 +1234,16 @@ def send_custom_email():
             body = body.replace(placeholder, value)
 
         # Add signature if needed
-        email_signature = get_email_signature_by_id(1)
+        email_signature = _get_default_signature()
         if email_signature:
             signature_html = email_signature.get('signature_html', '')
             body += signature_html
 
-        # Generate a unique Message-ID
-        message_id_raw = f"{uuid.uuid4()}@recitalia.it"
-
-        # Create the email message
-        msg = MIMEMultipart('related')
-        msg['From'] = f"Tom Palmer <{email_user}>"
-        msg['To'] = contact_email
-        msg['Subject'] = subject
-        msg['Date'] = datetime.now().strftime('%a, %d %b %Y %H:%M:%S +0000')
-        msg['Message-ID'] = f"<{message_id_raw}>"
-
         # Add BCC
-        bcc_email = '145554557@bcc.eu1.hubspot.com'  # Replace with your email address for testing
-        msg['Bcc'] = bcc_email
-        print(f"BCC added: {msg['Bcc']}")
+        bcc_email = '145554557@bcc.eu1.hubspot.com'
+        print(f"BCC added: {bcc_email}")
 
-        msg_alternative = MIMEMultipart('alternative')
-        msg.attach(msg_alternative)
-
-        # Create plain text version by stripping HTML tags
-        plain_text = re.sub('<.*?>', '', body)
-        plain_text = plain_text.replace('&nbsp;', ' ')
-        plain_text = plain_text.replace('&amp;', '&')
-        plain_text = plain_text.replace('&lt;', '<')
-        plain_text = plain_text.replace('&gt;', '>')
-
-        # Attach plain text and HTML versions
-        text_part = MIMEText(plain_text.strip(), 'plain')
-        html_part = MIMEText(body.strip(), 'html')
-        msg_alternative.attach(text_part)
-        msg_alternative.attach(html_part)
-
-        # Handle images
-        uploads_dir = os.path.join(current_app.root_path, 'uploads')
-
-        # Attach logo image
-        logo_path = os.path.join(uploads_dir, 'blimage001.jpg')
-        if os.path.exists(logo_path):
-            with open(logo_path, 'rb') as img:
-                img_data = img.read()
-                image = MIMEImage(img_data)
-                image.add_header('Content-ID', '<image001>')
-                image.add_header('Content-Disposition', 'inline')
-                msg.attach(image)
-        else:
-            print(f"Warning: Logo image not found at {logo_path}")
-
-        # Attach LinkedIn icon
-        linkedin_path = os.path.join(uploads_dir, 'linkedin_icon.png')
-        if os.path.exists(linkedin_path):
-            with open(linkedin_path, 'rb') as img:
-                img_data = img.read()
-                image = MIMEImage(img_data)
-                image.add_header('Content-ID', '<linkedin_icon>')
-                image.add_header('Content-Disposition', 'inline')
-                msg.attach(image)
-        else:
-            print(f"Warning: LinkedIn icon not found at {linkedin_path}")
+        attachments = build_graph_inline_attachments()
 
         print(f"Preparing to send email for request {request_id}")
 
@@ -1403,97 +1264,68 @@ def send_custom_email():
         try:
             # Send the email
             print(f"Sending email for request {request_id}")
-            with smtplib.SMTP_SSL(email_host, email_port) as server:
-                server.login(email_user, email_password)
+            result = send_graph_email(
+                subject=subject,
+                html_body=body.strip(),
+                to_emails=[contact_email],
+                bcc_emails=[bcc_email] if bcc_email else None,
+                attachments=attachments,
+                user_id=graph_user_id,
+            )
+            if not result.get("success"):
+                raise RuntimeError(result.get("error", "Graph send failed"))
 
-                # Print the raw email headers and body for debugging
-                print("Generated Email Content:")
-                print(msg.as_string())
+            try:
+                print(f"Logging email to database for request {request_id}")
+                sent_folder = 'Sent Items'
+                sender_email = (session.get('graph_last_user') or '').strip() or None
+                email_data = {
+                    'message_id': None,
+                    'folder': sent_folder,
+                    'recipient_email': contact_email,
+                    'subject': subject,
+                    'sent_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'direction': 'sent',
+                    'sync_status': 'synced',
+                    'customer_id': customer_id if customer else None,
+                    'contact_id': contact_id
+                }
 
-                # Send the email
-                server.send_message(msg)
+                with db_cursor(commit=True) as cur:
+                    _execute_with_cursor(
+                        cur,
+                        '''
+                        INSERT INTO emails (
+                            customer_id,
+                            contact_id,
+                            sender_email,
+                            recipient_email,
+                            subject,
+                            sent_date,
+                            direction,
+                            sync_status,
+                            message_id,
+                            folder
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''',
+                        (
+                            email_data.get('customer_id'),
+                            email_data.get('contact_id'),
+                            sender_email,
+                            email_data.get('recipient_email'),
+                            email_data.get('subject'),
+                            email_data.get('sent_date'),
+                            email_data.get('direction'),
+                            email_data.get('sync_status'),
+                            email_data.get('message_id'),
+                            email_data.get('folder')
+                        )
+                    )
+                print(f"Successfully logged email to database for request {request_id}")
 
-                # Save to Sent folder via IMAP
-                try:
-                    print(f"Saving email to Sent folder for request {request_id}")
-                    import imaplib
-                    import time
-                    with imaplib.IMAP4_SSL(imap_host) as imap:
-                        imap.login(email_user, email_password)
-
-                        # Select the Sent folder
-                        sent_folder = 'INBOX.Sent'
-                        imap.select(sent_folder)
-
-                        # Convert the email message to string format
-                        email_str = msg.as_string().encode('utf-8')
-
-                        # Add the email to Sent folder
-                        imap.append(sent_folder, '\\Seen', imaplib.Time2Internaldate(time.time()), email_str)
-
-                    print(f"Successfully saved email to Sent folder for request {request_id}")
-
-                    # Add email logging with message_id
-                    try:
-                        print(f"Logging email to database for request {request_id}")
-
-                        # Clean message_id (remove angle brackets if present)
-                        message_id = msg['Message-ID']
-                        if message_id.startswith('<') and message_id.endswith('>'):
-                            message_id = message_id[1:-1]
-
-                        print(f"Logging email with Message-ID: {message_id}")
-
-                        email_data = {
-                            'message_id': message_id,
-                            'folder': sent_folder,
-                            'recipient_email': contact_email,
-                            'subject': subject,
-                            'sent_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                            'direction': 'sent',
-                            'sync_status': 'synced',
-                            'customer_id': customer_id if customer else None,
-                            'contact_id': contact_id
-                        }
-
-                        with db_cursor(commit=True) as cur:
-                            _execute_with_cursor(
-                                cur,
-                                '''
-                                INSERT INTO emails (
-                                    customer_id,
-                                    contact_id,
-                                    sender_email,
-                                    recipient_email,
-                                    subject,
-                                    sent_date,
-                                    direction,
-                                    sync_status,
-                                    message_id,
-                                    folder
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                ''',
-                                (
-                                    email_data.get('customer_id'),
-                                    email_data.get('contact_id'),
-                                    email_user,
-                                    email_data.get('recipient_email'),
-                                    email_data.get('subject'),
-                                    email_data.get('sent_date'),
-                                    email_data.get('direction'),
-                                    email_data.get('sync_status'),
-                                    email_data.get('message_id'),
-                                    email_data.get('folder')
-                                )
-                            )
-                        print(f"Successfully logged email to database for request {request_id}")
-
-                    except Exception as db_error:
-                        print(f"Warning: Failed to log email to database for request {request_id}: {str(db_error)}")
-                        # Continue execution even if database logging fails
-
-                except Exception as imap_error:
-                    print(f"Warning: Failed to save to Sent folder for request {request_id}: {str(imap_error)}")
+            except Exception as db_error:
+                print(f"Warning: Failed to log email to database for request {request_id}: {str(db_error)}")
+                # Continue execution even if database logging fails
 
             # Try to log to HubSpot if we have IDs
             if hubspot_contact_id:
@@ -1530,7 +1362,7 @@ def send_custom_email():
             })
 
         except Exception as e:
-            error_msg = f'SMTP Error: {str(e)}'
+            error_msg = f'Graph Error: {str(e)}'
             log_data = {
                 'template_id': None,
                 'contact_id': contact_id,

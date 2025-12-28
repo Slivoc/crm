@@ -1,6 +1,7 @@
 # email_signatures.py - Updated with user management
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
+from flask_login import current_user
 from db import execute as db_execute, db_cursor
 from datetime import datetime
 import os
@@ -34,7 +35,9 @@ def _serialize_signature(row):
 
 def get_current_user_id():
     """Get current user ID - replace this with your actual user system"""
-    return session.get('user_id', 1)  # Default to user 1 if no session
+    if current_user and getattr(current_user, "is_authenticated", False):
+        return getattr(current_user, "id", None)
+    return session.get('user_id')
 
 
 def get_email_signature_by_id(signature_id):
@@ -51,11 +54,22 @@ def get_user_default_signature(user_id=None):
     if user_id is None:
         user_id = get_current_user_id()
 
+    signature = None
+    if user_id is not None:
+        signature = _serialize_signature(db_execute("""
+            SELECT * FROM email_signatures 
+            WHERE user_id = ? AND is_default = TRUE
+            LIMIT 1
+        """, (user_id,), fetch='one'))
+
+    if signature:
+        return signature
+
     return _serialize_signature(db_execute("""
         SELECT * FROM email_signatures 
-        WHERE user_id = ? AND is_default = TRUE
+        WHERE user_id IS NULL AND is_default = TRUE
         LIMIT 1
-    """, (user_id,), fetch='one'))
+    """, fetch='one'))
 
 
 def get_all_email_signatures(user_id=None):

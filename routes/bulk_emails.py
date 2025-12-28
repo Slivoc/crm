@@ -1,4 +1,5 @@
 from flask import Blueprint, render_template, request, jsonify, current_app
+from flask_login import current_user
 from models import get_contact_by_id
 from routes.emails import get_all_templates, get_template_by_id, get_email_signature_by_id
 from db import execute as db_execute
@@ -112,7 +113,8 @@ def bulk_send_email():
                             'subject': custom_subject,
                             'body': custom_body,
                             'contact_id': contact_id,
-                            'customer_id': customer_id
+                            'customer_id': customer_id,
+                            'graph_user_id': getattr(current_user, "id", None)
                         }),
                         content_type='application/json'
                 ) as ctx:
@@ -133,7 +135,8 @@ def bulk_send_email():
                         data=json.dumps({
                             'template_id': template_id,
                             'contact_id': contact_id,
-                            'customer_id': customer_id
+                            'customer_id': customer_id,
+                            'graph_user_id': getattr(current_user, "id", None)
                         }),
                         content_type='application/json'
                 ) as ctx:

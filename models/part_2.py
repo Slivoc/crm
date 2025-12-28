@@ -1262,7 +1262,8 @@ def get_excess_list_by_id1(list_id):
 
 def get_excess_stock_list_by_id(excess_list_id):
     row = db_execute('''
-        SELECT id, email, customer_id, supplier_id, entered_date, status, upload_date
+        SELECT id, email, customer_id, supplier_id, entered_date, status, upload_date,
+               mapping, mapping_header_row
         FROM excess_stock_lists 
         WHERE id = ?
     ''', (excess_list_id,), fetch='one')
@@ -1276,6 +1277,8 @@ def get_excess_stock_list_by_id(excess_list_id):
         'entered_date': row['entered_date'],
         'status': row['status'],
         'upload_date': row['upload_date'],
+        'mapping': row.get('mapping') if isinstance(row, dict) else row['mapping'],
+        'mapping_header_row': row.get('mapping_header_row') if isinstance(row, dict) else row['mapping_header_row'],
     }
 
 

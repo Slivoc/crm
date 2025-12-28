@@ -28,6 +28,7 @@ class EmailModal {
         this.previewBtn = this.modal.querySelector('.preview-btn');
         this.sendBtn = this.modal.querySelector('.send-btn');
         this.outlookBtn = this.modal.querySelector('.outlook-btn');
+        this.sendSystemBtn = this.modal.querySelector('.send-system-btn');
         this.loadingSpinner = this.modal.querySelector('.loading-spinner');
 
         // Recipients elements
@@ -607,6 +608,12 @@ class EmailModal {
                 self.sendEmail();
             });
         }
+        if (this.sendSystemBtn) {
+            this.sendSystemBtn.addEventListener('click', function() {
+                console.log("Send via system button clicked");
+                self.sendAllViaSystem();
+            });
+        }
 
         // Outlook button click
         if (this.outlookBtn) {
@@ -1071,9 +1078,17 @@ class EmailModal {
         if (hasPreview && hasRecipients) {
             if (this.sendBtn) this.sendBtn.classList.add('d-none');
             this.outlookBtn.classList.remove('d-none');
+            if (this.sendSystemBtn) {
+                if (this.recipients.length > 1) {
+                    this.sendSystemBtn.classList.remove('d-none');
+                } else {
+                    this.sendSystemBtn.classList.add('d-none');
+                }
+            }
         } else {
             if (this.sendBtn) this.sendBtn.classList.add('d-none');
             this.outlookBtn.classList.add('d-none');
+            if (this.sendSystemBtn) this.sendSystemBtn.classList.add('d-none');
         }
     }
 
@@ -2310,6 +2325,115 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
     async sendEmail() {
         alert('Direct send is not available. Please use "Open in Outlook" instead.');
         return;
+    }
+
+    async sendAllViaSystem() {
+        try {
+            if (this.recipients.length === 0) {
+                this.showToast('No recipients selected', 'warning');
+                return;
+            }
+
+            const emailSubject = this.modal.querySelector('.email-subject');
+            const emailBody = this.modal.querySelector('.email-body');
+
+            if (!emailSubject || !emailBody || this.previewSection.classList.contains('d-none')) {
+                this.showToast('Please preview the email before sending', 'warning');
+                return;
+            }
+
+            const baseSubject = emailSubject.textContent;
+            const baseBodyHtml = emailBody.innerHTML;
+            const templateId = this.templateSelect ? this.templateSelect.value : '';
+
+            if (!this.isCustomEmail && !templateId) {
+                this.showToast('Please select a template first', 'warning');
+                return;
+            }
+
+            const confirmSend = confirm(`Send ${this.recipients.length} emails via the system now?`);
+            if (!confirmSend) {
+                return;
+            }
+
+            if (this.sendSystemBtn) {
+                this.sendSystemBtn.disabled = true;
+                this.sendSystemBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Sending...';
+            }
+
+            let successCount = 0;
+            let failureCount = 0;
+
+            for (const recipient of this.recipients) {
+                if (!recipient.email) {
+                    failureCount += 1;
+                    continue;
+                }
+
+                try {
+                    const personalizedContent = await this.personalizeContentForRecipient(
+                        recipient,
+                        baseSubject,
+                        baseBodyHtml
+                    );
+
+                    let endpoint = '';
+                    let payload = {};
+
+                    if (this.isCustomEmail) {
+                        endpoint = '/api/send-custom-email';
+                        payload = {
+                            contact_id: recipient.id,
+                            customer_id: recipient.customerId || this.customerData?.id || '',
+                            subject: personalizedContent.subject,
+                            body: personalizedContent.bodyHtml
+                        };
+                    } else {
+                        endpoint = '/api/send-email';
+                        payload = {
+                            contact_id: recipient.id,
+                            customer_id: recipient.customerId || this.customerData?.id || '',
+                            template_id: templateId
+                        };
+                    }
+
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const result = await response.json();
+                    if (!response.ok || !result.success) {
+                        throw new Error(result.error || `Send failed (${response.status})`);
+                    }
+
+                    await this.logCustomerUpdate(recipient, personalizedContent.subject);
+                    successCount += 1;
+                } catch (error) {
+                    console.error('System send failed for recipient:', recipient, error);
+                    failureCount += 1;
+                }
+            }
+
+            if (failureCount === 0) {
+                this.showToast(`Sent ${successCount} emails via system`, 'success');
+            } else {
+                this.showToast(`Sent ${successCount} emails, ${failureCount} failed`, 'warning');
+            }
+
+            this.closeModal();
+        } catch (error) {
+            console.error('Send all via system failed:', error);
+            this.showToast(error.message || 'Failed to send via system', 'error');
+        } finally {
+            if (this.sendSystemBtn) {
+                this.sendSystemBtn.disabled = false;
+                this.sendSystemBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i>Send All via System';
+            }
+        }
     }
 
     closeModal() {

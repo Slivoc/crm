@@ -4,6 +4,35 @@
 {% block title %}Email Signatures{% endblock %}
 
 {% block content %}
+<style>
+.signature-table {
+    table-layout: fixed;
+    width: 100%;
+}
+.signature-table th,
+.signature-table td {
+    vertical-align: top;
+}
+.signature-preview {
+    max-height: 90px;
+    overflow: hidden;
+    border: 1px solid #eee;
+    padding: 8px;
+    font-size: 12px;
+    word-break: break-word;
+}
+.signature-preview iframe {
+    width: 100%;
+    height: 80px;
+    border: 0;
+}
+.signature-default-row {
+    background: #f6f7f9;
+}
+.signature-actions .btn {
+    margin-bottom: 4px;
+}
+</style>
 <div class="container mt-4">
     <h1><i class="fas fa-signature"></i> Email Signatures</h1>
 
@@ -42,7 +71,7 @@
                     <div class="col-md-6 mb-3">
                         <label class="form-label">Preview</label>
                         <div id="preview" style="border: 1px solid #ddd; padding: 15px; background: white; min-height: 200px; border-radius: 5px;">
-                            <em class="text-muted">Preview will appear here...</em>
+                            <iframe id="signaturePreviewFrame" style="width: 100%; height: 220px; border: 0;"></iframe>
                         </div>
                     </div>
                 </div>
@@ -67,7 +96,7 @@
         <div class="card-body">
             {% if signatures %}
                 <div class="table-responsive">
-                    <table class="table table-striped">
+                    <table class="table table-striped signature-table">
                         <thead>
                             <tr>
                                 <th>Name</th>
@@ -79,7 +108,7 @@
                         </thead>
                         <tbody>
                             {% for signature in signatures %}
-                            <tr class="{{ 'table-success' if signature.is_default else '' }}">
+                            <tr class="{{ 'signature-default-row' if signature.is_default else '' }}">
                                 <td>
                                     <strong>{{ signature.name }}</strong>
                                     {% if signature.is_default %}
@@ -87,13 +116,14 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    <div style="max-height: 100px; overflow: hidden; border: 1px solid #eee; padding: 8px; font-size: 12px;">
-                                        {{ signature.signature_html|safe }}
-                                    </div>
+                                    <div class="signature-preview" data-signature-id="{{ signature.id }}"></div>
+                                    <script type="application/json"
+                                            class="signature-preview-data"
+                                            data-signature-id="{{ signature.id }}">{{ signature.signature_html|tojson }}</script>
                                 </td>
                                 <td>
                                     {% if signature.is_default %}
-                                        <span class="badge bg-success">Default</span>
+                                        <span class="badge bg-secondary">Default</span>
                                     {% else %}
                                         <form method="POST" action="{{ url_for('signatures.set_signature_default', signature_id=signature.id) }}" style="display: inline;">
                                             <button type="submit" class="btn btn-sm btn-outline-primary">
@@ -103,10 +133,12 @@
                                     {% endif %}
                                 </td>
                                 <td>{{ signature.created_at }}</td>
-                                <td>
-                                    <div class="btn-group" role="group">
-                                        <button class="btn btn-sm btn-primary"
-                                                onclick="editSignature({{ signature.id }}, '{{ signature.name|e }}', {{ signature.signature_html|tojson }}, {{ signature.is_default|tojson }})">
+                                <td class="signature-actions">
+                                    <div class="btn-group" role="group" aria-label="Signature actions">
+                                        <button class="btn btn-sm btn-primary edit-signature-btn"
+                                                data-signature-id="{{ signature.id }}"
+                                                data-signature-name="{{ signature.name|e }}"
+                                                data-signature-default="{{ 'true' if signature.is_default else 'false' }}">
                                             <i class="fas fa-edit"></i> Edit
                                         </button>
 
@@ -147,9 +179,39 @@
 </div>
 
 <script>
+function sanitizeSignatureHtml(html) {
+    if (!html) return '';
+    return html.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '');
+}
+
+function normalizeSignatureHtml(html) {
+    const safeHtml = sanitizeSignatureHtml(html);
+    if (/<html[\s>]/i.test(safeHtml)) {
+        return safeHtml;
+    }
+    return `
+        <!doctype html>
+        <html>
+          <head><meta charset="utf-8"></head>
+          <body>${safeHtml}</body>
+        </html>
+    `;
+}
+
 function updatePreview() {
     const html = document.getElementById('signature_html').value;
-    document.getElementById('preview').innerHTML = html || '<em class="text-muted">Preview will appear here...</em>';
+    const frame = document.getElementById('signaturePreviewFrame');
+    if (!frame) {
+        return;
+    }
+    const placeholder = `
+        <!doctype html>
+        <html>
+          <head><meta charset="utf-8"></head>
+          <body><em class="text-muted">Preview will appear here...</em></body>
+        </html>
+    `;
+    frame.srcdoc = html ? normalizeSignatureHtml(html) : placeholder;
 }
 
 function editSignature(id, name, html, isDefault) {
@@ -171,7 +233,47 @@ function resetForm() {
     updatePreview();
 }
 
+function getSignatureHtmlById(id) {
+    const script = document.querySelector(`.signature-preview-data[data-signature-id="${id}"]`);
+    if (!script) {
+        return '';
+    }
+    try {
+        return JSON.parse(script.textContent || '""');
+    } catch (error) {
+        console.warn('Failed to parse signature HTML for preview.', error);
+        return script.textContent || '';
+    }
+}
+
 // Auto-update preview
 document.getElementById('signature_html').addEventListener('input', updatePreview);
+
+// Render existing previews safely
+document.querySelectorAll('.signature-preview').forEach(preview => {
+    const html = getSignatureHtmlById(preview.dataset.signatureId);
+    const frame = document.createElement('iframe');
+    frame.srcdoc = html ? normalizeSignatureHtml(html) : `
+        <!doctype html>
+        <html>
+          <head><meta charset="utf-8"></head>
+          <body><em class="text-muted">No preview</em></body>
+        </html>
+    `;
+    preview.innerHTML = '';
+    preview.appendChild(frame);
+});
+
+// Bind edit buttons
+document.querySelectorAll('.edit-signature-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        editSignature(
+            btn.dataset.signatureId,
+            btn.dataset.signatureName || '',
+            getSignatureHtmlById(btn.dataset.signatureId),
+            btn.dataset.signatureDefault === 'true'
+        );
+    });
+});
 </script>
 {% endblock %}

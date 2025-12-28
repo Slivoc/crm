@@ -70,53 +70,101 @@
                     </div>
                     <div class="column-body">
                         {% for ticket in status_tickets %}
-                            <div class="ticket-card{% if ticket.parent_id %} subtask-card{% endif %}" data-ticket-id="{{ ticket.id }}">
-                                <a href="{{ url_for('tickets.view_ticket', ticket_id=ticket.id) }}" class="ticket-title">
-                                    {% if ticket.email_subject %}
-                                        <i class="bi bi-envelope me-1 text-muted"></i>
+                            {% set depth = ticket.depth|default(0) %}
+                            {% set is_subtask = depth > 0 %}
+                            
+                            {# Find which ancestor depths have siblings coming after this ticket #}
+                            {% set continue_at = namespace(depths=[], stop=false) %}
+                            {% for future_ticket in status_tickets[loop.index:] %}
+                                {% if not continue_at.stop %}
+                                    {% set fd = future_ticket.depth|default(0) %}
+                                    {% if fd == 0 %}
+                                        {% set continue_at.stop = true %}
+                                    {% elif fd <= depth and fd not in continue_at.depths %}
+                                        {% set continue_at.depths = continue_at.depths + [fd] %}
                                     {% endif %}
-                                    {{ ticket.title }}
-                                </a>
-                                {% if ticket.parent_id %}
-                                    <div class="ticket-parent">
-                                        <i class="bi bi-diagram-2 me-1"></i>
-                                        Subtask of {{ ticket.parent_chain or ticket.parent_label or ticket.parent_title }}
-                                    </div>
                                 {% endif %}
-                                <div class="ticket-meta">
-                                    {% if ticket.assigned_user_name %}
-                                        <span class="meta-item">
-                                            <i class="bi bi-person"></i>
-                                            {{ ticket.assigned_user_name }}
-                                        </span>
-                                    {% else %}
-                                        <span class="meta-item unassigned">
-                                            <i class="bi bi-person-dash"></i>
-                                            Unassigned
-                                        </span>
+                            {% endfor %}
+                            
+                            {% set has_sibling_after = namespace(value=false, done=false) %}
+                            {% for future_ticket in status_tickets[loop.index:] %}
+                                {% if not has_sibling_after.done %}
+                                    {% set fd = future_ticket.depth|default(0) %}
+                                    {% if fd == depth %}
+                                        {% set has_sibling_after.value = true %}
+                                        {% set has_sibling_after.done = true %}
+                                    {% elif fd < depth %}
+                                        {% set has_sibling_after.done = true %}
                                     {% endif %}
-                                    {% if ticket.due_date %}
-                                        <span class="meta-item" data-due-date="{{ ticket.due_date }}">
-                                            <i class="bi bi-calendar"></i>
-                                            {{ ticket.due_date.strftime('%d %b') if ticket.due_date else '' }}
-                                        </span>
+                                {% endif %}
+                            {% endfor %}
+                            {% set is_last_in_branch = is_subtask and not has_sibling_after.value %}
+                            <div class="ticket-wrapper{% if is_subtask %} subtask-wrapper depth-{{ depth }}{% endif %}{% if is_last_in_branch %} last-in-branch{% endif %}" data-parent-id="{{ ticket.parent_id or '' }}" data-depth="{{ depth }}" style="{% if depth > 0 %}margin-left: {{ depth * 20 }}px;{% endif %}">
+                                {% if is_subtask %}
+                                <div class="branch-connector">
+                                    <div class="branch-line-vertical"></div>
+                                    <div class="branch-line-horizontal"></div>
+                                </div>
+                                {% endif %}
+                                {# Continuation lines for ancestor levels with more siblings #}
+                                {% for cd in continue_at.depths %}
+                                    {% if cd < depth %}
+                                    <div class="branch-continuation" style="left: {{ (cd - depth) * 20 }}px;"></div>
                                     {% endif %}
-                                    {% if ticket.workspace_name %}
-                                        <span class="meta-item workspace-item">
-                                            <i class="bi bi-collection"></i>
-                                            {{ ticket.workspace_name }}
-                                        </span>
+                                {% endfor %}
+                                <div class="ticket-card{% if is_subtask %} subtask-card{% endif %}" data-ticket-id="{{ ticket.id }}">
+                                    {% if ticket.subjob_count %}
+                                    <button type="button" class="collapse-toggle" data-target-parent="{{ ticket.id }}" aria-expanded="true" title="Toggle subtasks">
+                                        <i class="bi bi-chevron-down"></i>
+                                    </button>
+                                    {% endif %}
+                                    <a href="{{ url_for('tickets.view_ticket', ticket_id=ticket.id) }}" class="ticket-title">
+                                        {% if ticket.email_subject %}
+                                            <i class="bi bi-envelope me-1 text-muted"></i>
+                                        {% endif %}
+                                        {{ ticket.title }}
+                                    </a>
+                                    {% if is_subtask %}
+                                        <div class="ticket-parent">
+                                            <i class="bi bi-corner-down-right me-1"></i>
+                                            {{ ticket.parent_label or ticket.parent_title }}
+                                        </div>
+                                    {% endif %}
+                                    <div class="ticket-meta">
+                                        {% if ticket.assigned_user_name %}
+                                            <span class="meta-item">
+                                                <i class="bi bi-person"></i>
+                                                {{ ticket.assigned_user_name }}
+                                            </span>
+                                        {% else %}
+                                            <span class="meta-item unassigned">
+                                                <i class="bi bi-person-dash"></i>
+                                                Unassigned
+                                            </span>
+                                        {% endif %}
+                                        {% if ticket.due_date %}
+                                            <span class="meta-item" data-due-date="{{ ticket.due_date }}">
+                                                <i class="bi bi-calendar"></i>
+                                                {{ ticket.due_date.strftime('%d %b') if ticket.due_date else '' }}
+                                            </span>
+                                        {% endif %}
+                                        {% if ticket.workspace_name %}
+                                            <span class="meta-item workspace-item">
+                                                <i class="bi bi-collection"></i>
+                                                {{ ticket.workspace_name }}
+                                            </span>
+                                        {% endif %}
+                                    </div>
+                                    {% if ticket.subjob_count %}
+                                        <div class="subjob-progress">
+                                            <div class="progress-bar" style="width: {{ (ticket.closed_subjob_count / ticket.subjob_count * 100) | int }}%"></div>
+                                            <span class="progress-text">{{ ticket.closed_subjob_count }}/{{ ticket.subjob_count }} subtasks</span>
+                                        </div>
+                                    {% endif %}
+                                    {% if ticket.is_private %}
+                                        <span class="private-badge"><i class="bi bi-lock"></i></span>
                                     {% endif %}
                                 </div>
-                                {% if ticket.subjob_count %}
-                                    <div class="subjob-progress">
-                                        <div class="progress-bar" style="width: {{ (ticket.closed_subjob_count / ticket.subjob_count * 100) | int }}%"></div>
-                                        <span class="progress-text">{{ ticket.closed_subjob_count }}/{{ ticket.subjob_count }} subtasks</span>
-                                    </div>
-                                {% endif %}
-                                {% if ticket.is_private %}
-                                    <span class="private-badge"><i class="bi bi-lock"></i></span>
-                                {% endif %}
                             </div>
                         {% else %}
                             <div class="empty-column">
@@ -303,6 +351,7 @@
     align-items: center;
     padding: 16px;
     border-bottom: 1px solid #e9ecef;
+    background: #f2f6fb;
 }
 
 .column-title {
@@ -338,9 +387,10 @@
     flex: 1;
     padding: 12px;
     overflow-y: auto;
+    overflow-x: visible;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 0;
 }
 
 .empty-column {
@@ -358,23 +408,93 @@
     margin-bottom: 8px;
 }
 
+/* Ticket Wrapper with Tree Structure */
+.ticket-wrapper {
+    position: relative;
+    padding-bottom: 10px;
+    overflow: visible;
+}
+
+.subtask-wrapper {
+    padding-left: 14px;
+}
+
+/* Branch connector lines */
+.branch-connector {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 14px;
+    pointer-events: none;
+}
+
+.branch-line-vertical {
+    position: absolute;
+    left: 0;
+    top: -10px;
+    bottom: 50%;
+    width: 3px;
+    border-radius: 1px;
+}
+
+.branch-line-horizontal {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 14px;
+    height: 3px;
+    border-radius: 1px;
+    transform: translateY(-50%);
+}
+
+/* Continue the vertical line for siblings */
+.subtask-wrapper:not(.last-in-branch) .branch-line-vertical {
+    bottom: -10px;
+}
+
+/* L-shape for last item in branch */
+.subtask-wrapper.last-in-branch .branch-line-vertical {
+    border-bottom-left-radius: 4px;
+}
+
+/* Continuation lines for ancestor levels */
+.branch-continuation {
+    position: absolute;
+    top: -10px;
+    bottom: -10px;
+    width: 3px;
+    background: rgba(94, 188, 103, 0.35);
+    pointer-events: none;
+}
+
+.branch-line-vertical,
+.branch-line-horizontal,
+.branch-continuation {
+    background: #bfe7c5;
+}
+
+
+
+
 /* Ticket Card */
 .ticket-card {
-    background: #fff;
-    border: 1px solid #e9ecef;
+    background: #fdfcff;
+    border: 1px solid #e1e6ee;
     border-radius: 10px;
     padding: 14px;
     position: relative;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
     transition: box-shadow 0.15s, transform 0.15s;
 }
 
 .subtask-card {
-    border-left: 4px solid #1a73e8;
-    background: #f9fbff;
+    border-left: 5px solid #bfe7c5;
+    background: #fcfcff;
 }
 
 .ticket-card:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 6px 14px rgba(16, 24, 40, 0.12);
     transform: translateY(-1px);
 }
 
@@ -393,9 +513,18 @@
 }
 
 .ticket-parent {
-    font-size: 0.75rem;
-    color: #6c757d;
+    font-size: 0.7rem;
+    color: #1a73e8;
     margin-bottom: 8px;
+    padding: 2px 6px;
+    background: #e8f0fe;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .ticket-meta {
@@ -506,6 +635,141 @@
     background: #adb5bd;
 }
 
+/* Pastel column themes */
+.ticket-column:nth-child(6n + 1) {
+    background: #f7fafc;
+}
+
+.ticket-column:nth-child(6n + 1) .column-header {
+    background: #eef4ff;
+}
+
+.ticket-column:nth-child(6n + 1) .ticket-card {
+    background: #fbfcff;
+}
+
+.ticket-column:nth-child(6n + 2) {
+    background: #f9faf6;
+}
+
+.ticket-column:nth-child(6n + 2) .column-header {
+    background: #f0f7e8;
+}
+
+.ticket-column:nth-child(6n + 2) .ticket-card {
+    background: #fcfdf9;
+}
+
+.ticket-column:nth-child(6n + 3) {
+    background: #faf7fb;
+}
+
+.ticket-column:nth-child(6n + 3) .column-header {
+    background: #f6ecfb;
+}
+
+.ticket-column:nth-child(6n + 3) .ticket-card {
+    background: #fdfbff;
+}
+
+.ticket-column:nth-child(6n + 4) {
+    background: #fbf7f5;
+}
+
+.ticket-column:nth-child(6n + 4) .column-header {
+    background: #ffece3;
+}
+
+.ticket-column:nth-child(6n + 4) .ticket-card {
+    background: #fffbf9;
+}
+
+.ticket-column:nth-child(6n + 5) {
+    background: #f6faf9;
+}
+
+.ticket-column:nth-child(6n + 5) .column-header {
+    background: #e9f7f2;
+}
+
+.ticket-column:nth-child(6n + 5) .ticket-card {
+    background: #fbfefd;
+}
+
+.ticket-column:nth-child(6n + 6) {
+    background: #faf7f0;
+}
+
+.ticket-column:nth-child(6n + 6) .column-header {
+    background: #fff4d6;
+}
+
+.ticket-column:nth-child(6n + 6) .ticket-card {
+    background: #fffdf6;
+}
+
+/* Collapse Toggle */
+.collapse-toggle {
+    position: absolute;
+    top: 12px;
+    right: 10px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: #e9ecef;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6c757d;
+    transition: all 0.15s;
+    padding: 0;
+    z-index: 2;
+}
+
+.collapse-toggle:hover {
+    background: #dee2e6;
+    color: #495057;
+}
+
+.collapse-toggle i {
+    transition: transform 0.2s;
+    font-size: 0.85rem;
+}
+
+.collapse-toggle[aria-expanded="false"] i {
+    transform: rotate(-90deg);
+}
+
+/* Adjust private badge position when collapse toggle exists */
+.ticket-card:has(.collapse-toggle) .private-badge {
+    right: 40px;
+}
+
+/* Hidden subtasks */
+.ticket-wrapper.collapsed-child {
+    display: none;
+}
+
+/* Parent ticket indicator dot */
+.ticket-wrapper[data-depth="0"] .ticket-card::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #1a73e8;
+}
+
+/* Need a bit of left margin to show the dot */
+.ticket-wrapper[data-depth="0"] {
+    margin-left: 8px;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .ticket-board {
@@ -542,6 +806,59 @@ document.querySelectorAll('.meta-item[data-due-date]').forEach(item => {
     if (dueDate < today) {
         item.classList.add('overdue');
     }
+    // Collapse/expand subtasks
+document.querySelectorAll('.collapse-toggle').forEach(btn => {
+    const parentId = btn.dataset.targetParent;
+    
+    // Restore state from localStorage
+    const isCollapsed = localStorage.getItem(`ticket-collapsed-${parentId}`) === 'true';
+    if (isCollapsed) {
+        btn.setAttribute('aria-expanded', 'false');
+        toggleSubtasks(parentId, false);
+    }
+    
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const expanded = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', !expanded);
+        toggleSubtasks(parentId, !expanded);
+        localStorage.setItem(`ticket-collapsed-${parentId}`, expanded);
+    });
+});
+
+function toggleSubtasks(parentId, show) {
+    // Find all subtasks that belong to this parent (direct and nested)
+    const btn = document.querySelector(`.collapse-toggle[data-target-parent="${parentId}"]`);
+    if (!btn) return;
+    
+    const column = btn.closest('.ticket-column');
+    const allWrappers = column.querySelectorAll('.ticket-wrapper');
+    let capturing = false;
+    let parentDepth = 0;
+    
+    allWrappers.forEach(wrapper => {
+        const ticketCard = wrapper.querySelector('.ticket-card');
+        const ticketId = ticketCard?.dataset.ticketId;
+        const depth = parseInt(wrapper.dataset.depth) || 0;
+        
+        if (ticketId === parentId) {
+            capturing = true;
+            parentDepth = depth;
+            return;
+        }
+        
+        if (capturing) {
+            // Stop capturing when we hit a ticket at same or lower depth than parent
+            if (depth <= parentDepth) {
+                capturing = false;
+                return;
+            }
+            // This is a subtask of the parent
+            wrapper.classList.toggle('collapsed-child', !show);
+        }
+    });
+}
 });
 </script>
 {% endblock %}

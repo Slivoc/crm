@@ -171,6 +171,37 @@ def process_excess_list():
         except ValueError:
             return None
 
+    def _parse_quantity(value):
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            if abs(value) > 2147483647:
+                return None
+            return value
+        if isinstance(value, float):
+            if not value.is_integer():
+                return None
+            value_int = int(value)
+            if abs(value_int) > 2147483647:
+                return None
+            return value_int
+        text = str(value).strip()
+        if text == '':
+            return None
+        text = text.replace(',', '')
+        try:
+            qty = float(text)
+        except ValueError:
+            return None
+        if not qty.is_integer():
+            return None
+        qty_int = int(qty)
+        if abs(qty_int) > 2147483647:
+            return None
+        return qty_int
+
     currency_rows = db_execute(
         "SELECT id, currency_code, symbol FROM currencies",
         fetch='all',
@@ -195,7 +226,7 @@ def process_excess_list():
         return currency_map.get(text)
 
     # Process each row based on the user's mapping
-    for row in data:
+    for row_index, row in enumerate(data):
         try:
             if base_part_index is not None and base_part_index >= len(row):
                 continue
@@ -215,7 +246,9 @@ def process_excess_list():
             base_part_number = create_base_part_number(raw_part_number)
             part_number = str(raw_part_number).strip()
 
-            quantity = row[quantity_index]
+            quantity = _parse_quantity(row[quantity_index])
+            if quantity is None:
+                continue
             manufacturer = row[manufacturer_index] if manufacturer_index is not None else None
             date_code = row[date_code_index] if date_code_index is not None else None
             unit_price = _parse_unit_price(row[unit_price_index]) if unit_price_index is not None else None
