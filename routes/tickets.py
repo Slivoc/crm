@@ -166,25 +166,32 @@ def _fetch_ticket_objects(ticket_ids):
     rows = db_execute(
         f"""
         SELECT
-            tobj.ticket_id,
-            tobj.object_type,
-            tobj.object_id,
-            CASE
-                WHEN tobj.object_type = 'customer' THEN c.name
-                WHEN tobj.object_type = 'supplier' THEN s.name
-                ELSE NULL
-            END AS object_name
-        FROM ticket_objects tobj
-        LEFT JOIN customers c
-            ON tobj.object_type = 'customer' AND tobj.object_id = c.id
-        LEFT JOIN suppliers s
-            ON tobj.object_type = 'supplier' AND tobj.object_id = s.id
-        WHERE tobj.ticket_id IN ({placeholders})
+            linked.ticket_id,
+            linked.object_type,
+            linked.object_id,
+            linked.object_name
+        FROM (
+            SELECT
+                tobj.ticket_id,
+                tobj.object_type,
+                tobj.object_id,
+                CASE
+                    WHEN tobj.object_type = 'customer' THEN c.name
+                    WHEN tobj.object_type = 'supplier' THEN s.name
+                    ELSE NULL
+                END AS object_name
+            FROM ticket_objects tobj
+            LEFT JOIN customers c
+                ON tobj.object_type = 'customer' AND tobj.object_id = c.id
+            LEFT JOIN suppliers s
+                ON tobj.object_type = 'supplier' AND tobj.object_id = s.id
+            WHERE tobj.ticket_id IN ({placeholders})
+        ) linked
         ORDER BY
-            tobj.object_type,
-            CASE WHEN object_name IS NULL THEN 1 ELSE 0 END,
-            object_name,
-            tobj.object_id
+            linked.object_type,
+            CASE WHEN linked.object_name IS NULL THEN 1 ELSE 0 END,
+            linked.object_name,
+            linked.object_id
         """,
         ticket_ids,
         fetch="all",
