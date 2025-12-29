@@ -28,6 +28,9 @@
             {% if ticket.is_private %}
                 <span class="private-badge"><i class="bi bi-lock me-1"></i>Private</span>
             {% endif %}
+            {% if ticket.linked_objects %}
+                <span class="badge bg-info text-dark ms-2"><i class="bi bi-link-45deg me-1"></i>{{ ticket.linked_objects|length }} linked</span>
+            {% endif %}
         </div>
     </div>
 
@@ -58,6 +61,9 @@
             </span>
         </div>
     </div>
+
+    {% set customer_link_ids = (ticket.linked_objects or []) | selectattr('object_type', 'equalto', 'customer') | map(attribute='object_id') | list %}
+    {% set supplier_link_ids = (ticket.linked_objects or []) | selectattr('object_type', 'equalto', 'supplier') | map(attribute='object_id') | list %}
 
     <div class="ticket-layout">
         <!-- Main Content -->
@@ -117,6 +123,48 @@
                             <input type="date" class="form-control" name="due_date" value="{{ ticket.due_date or '' }}">
                         </div>
                     </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Customers</label>
+                            <select class="form-select" name="customer_ids" multiple>
+                                {% for customer in customers %}
+                                    <option value="{{ customer.id }}" {% if customer.id in customer_link_ids %}selected{% endif %}>
+                                        {{ customer.name }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Select all customers related to this ticket.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Suppliers</label>
+                            <select class="form-select" name="supplier_ids" multiple>
+                                {% for supplier in suppliers %}
+                                    <option value="{{ supplier.id }}" {% if supplier.id in supplier_link_ids %}selected{% endif %}>
+                                        {{ supplier.name }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Select all suppliers related to this ticket.</div>
+                        </div>
+                    </div>
+
+                    {% if ticket.linked_objects %}
+                        <div class="mb-3">
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for obj in ticket.linked_objects %}
+                                    <span class="badge bg-light text-dark border">
+                                        {% if obj.object_type == 'customer' %}
+                                            <i class="bi bi-people-fill me-1"></i>
+                                        {% elif obj.object_type == 'supplier' %}
+                                            <i class="bi bi-truck me-1"></i>
+                                        {% endif %}
+                                        {{ obj.object_name or ('#' ~ obj.object_id) }}
+                                    </span>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    {% endif %}
 
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" name="is_private" value="1" id="editPrivate" {% if ticket.is_private %}checked{% endif %}>

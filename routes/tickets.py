@@ -83,6 +83,8 @@ def _fetch_ticket(ticket_id, user_id, is_admin):
     if not row:
         return None
     ticket = dict(row)
+    linked = _fetch_ticket_objects([ticket_id])
+    ticket["linked_objects"] = linked.get(ticket_id, [])
     if ticket.get('parent_ticket_id') and ticket.get('parent_is_private') and not is_admin:
         if user_id not in (ticket.get('parent_created_by_user_id'), ticket.get('parent_assigned_user_id')):
             return None
@@ -139,6 +141,124 @@ def _fetch_workspaces():
         fetch="all",
     ) or []
     return [dict(row) for row in rows]
+
+
+def _fetch_customers_for_links():
+    rows = db_execute(
+        "SELECT id, name FROM customers ORDER BY name",
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _fetch_suppliers_for_links():
+    rows = db_execute(
+        "SELECT id, name FROM suppliers ORDER BY name",
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _fetch_ticket_objects(ticket_ids):
+    if not ticket_ids:
+        return {}
+    placeholders = ", ".join(["?"] * len(ticket_ids))
+    rows = db_execute(
+        f"""
+        SELECT
+            tobj.ticket_id,
+            tobj.object_type,
+            tobj.object_id,
+            CASE
+                WHEN tobj.object_type = 'customer' THEN c.name
+                WHEN tobj.object_type = 'supplier' THEN s.name
+                ELSE NULL
+            END AS object_name
+        FROM ticket_objects tobj
+        LEFT JOIN customers c
+            ON tobj.object_type = 'customer' AND tobj.object_id = c.id
+        LEFT JOIN suppliers s
+            ON tobj.object_type = 'supplier' AND tobj.object_id = s.id
+        WHERE tobj.ticket_id IN ({placeholders})
+        ORDER BY
+            tobj.object_type,
+            CASE WHEN object_name IS NULL THEN 1 ELSE 0 END,
+            object_name,
+            tobj.object_id
+        """,
+        ticket_ids,
+        fetch="all",
+    ) or []
+    by_ticket = {}
+    for row in rows:
+        by_ticket.setdefault(row["ticket_id"], []).append({
+            "object_type": row["object_type"],
+            "object_id": row["object_id"],
+            "object_name": row["object_name"],
+        })
+    return by_ticket
+
+
+def _parse_id_list(raw_values):
+    ids = []
+    seen = set()
+    for value in raw_values or []:
+        try:
+            int_value = int(value)
+        except (TypeError, ValueError):
+            continue
+        if int_value in seen:
+            continue
+        ids.append(int_value)
+        seen.add(int_value)
+    return ids
+
+
+def _sync_ticket_objects(ticket_id, customer_ids, supplier_ids):
+    desired = set()
+    for cid in customer_ids:
+        desired.add(("customer", cid))
+    for sid in supplier_ids:
+        desired.add(("supplier", sid))
+
+    existing_rows = db_execute(
+        "SELECT object_type, object_id FROM ticket_objects WHERE ticket_id = ?",
+        (ticket_id,),
+        fetch="all",
+    ) or []
+    existing = set()
+    for row in existing_rows:
+        try:
+            existing.add((row["object_type"], int(row["object_id"])))
+        except (TypeError, ValueError):
+            continue
+
+    to_remove = existing - desired
+    to_add = desired - existing
+
+    if to_remove:
+        db_execute(
+            """
+            DELETE FROM ticket_objects
+            WHERE ticket_id = ?
+              AND object_type = ?
+              AND object_id = ?
+            """,
+            [(ticket_id, obj_type, obj_id) for obj_type, obj_id in to_remove],
+            many=True,
+            commit=not to_add,
+        )
+
+    if to_add:
+        db_execute(
+            """
+            INSERT INTO ticket_objects (ticket_id, object_type, object_id, created_at, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            [(ticket_id, obj_type, obj_id) for obj_type, obj_id in to_add],
+            many=True,
+            commit=True,
+        )
 
 
 def _fetch_workspaces_with_members():
@@ -403,6 +523,8 @@ def list_tickets():
         status_id = request.form.get('status_id')
         due_date = request.form.get('due_date') or None
         is_private = bool(request.form.get('is_private'))
+        customer_ids = _parse_id_list(request.form.getlist('customer_ids'))
+        supplier_ids = _parse_id_list(request.form.getlist('supplier_ids'))
 
         if not title:
             flash('Title is required.', 'error')
@@ -449,6 +571,8 @@ def list_tickets():
             commit=True,
         )
         ticket_id = row.get('id', list(row.values())[0]) if row else None
+        if ticket_id:
+            _sync_ticket_objects(ticket_id, customer_ids, supplier_ids)
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
     show_closed = _parse_bool(request.args.get('show_closed'))
@@ -457,6 +581,12 @@ def list_tickets():
     if request.args.get('only_mine') is None and request.args.get('created_by_me') is None:
         only_mine = True
     workspace_filter_id = request.args.get('workspace_id') or None
+    customer_filter_id = request.args.get('customer_id') or None
+    supplier_filter_id = request.args.get('supplier_id') or None
+    if customer_filter_id and not str(customer_filter_id).isdigit():
+        customer_filter_id = None
+    if supplier_filter_id and not str(supplier_filter_id).isdigit():
+        supplier_filter_id = None
 
     visibility_clause, visibility_params = _ticket_visibility_clause(user_id, is_admin)
     closed_clause = "" if show_closed else "AND s.is_closed = FALSE"
@@ -478,6 +608,21 @@ def list_tickets():
     if workspace_filter_id:
         workspace_clause = "AND t.workspace_id = ?"
         workspace_params = [int(workspace_filter_id)]
+
+    object_filter_clause = ""
+    object_filter_params = []
+    if customer_filter_id and str(customer_filter_id).isdigit():
+        object_filter_clause += (
+            "AND EXISTS (SELECT 1 FROM ticket_objects o "
+            "WHERE o.ticket_id = t.id AND o.object_type = 'customer' AND o.object_id = ?)"
+        )
+        object_filter_params.append(int(customer_filter_id))
+    if supplier_filter_id and str(supplier_filter_id).isdigit():
+        object_filter_clause += (
+            "AND EXISTS (SELECT 1 FROM ticket_objects o "
+            "WHERE o.ticket_id = t.id AND o.object_type = 'supplier' AND o.object_id = ?)"
+        )
+        object_filter_params.append(int(supplier_filter_id))
 
     parent_visibility_clause = ""
     parent_visibility_params = []
@@ -526,16 +671,20 @@ def list_tickets():
         {closed_clause}
         {mine_clause}
         {workspace_clause}
+        {object_filter_clause}
         ORDER BY
             CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END,
             t.due_date ASC,
             t.updated_at DESC
         """,
-        visibility_params + parent_visibility_params + mine_params + workspace_params,
+        visibility_params + parent_visibility_params + mine_params + workspace_params + object_filter_params,
         fetch="all",
     ) or []
 
     tickets = [dict(row) for row in rows]
+    linked_by_ticket = _fetch_ticket_objects([ticket["id"] for ticket in tickets])
+    for ticket in tickets:
+        ticket["linked_objects"] = linked_by_ticket.get(ticket["id"], [])
     ticket_lookup = {ticket["id"]: ticket for ticket in tickets}
     for ticket in tickets:
         chain_titles = []
@@ -557,6 +706,8 @@ def list_tickets():
     statuses = _fetch_statuses()
     users = _fetch_users()
     workspaces = _fetch_workspaces()
+    customers = _fetch_customers_for_links()
+    suppliers = _fetch_suppliers_for_links()
     workspace_defaults = {
         workspace['id']: workspace.get('default_assignee_id')
         for workspace in workspaces
@@ -620,8 +771,12 @@ def list_tickets():
         only_mine=only_mine,
         created_by_me=created_by_me,
         workspace_filter_id=workspace_filter_id,
+        customer_filter_id=customer_filter_id,
+        supplier_filter_id=supplier_filter_id,
         default_status_id=default_status_id,
         workspace_defaults=workspace_defaults,
+        customers=customers,
+        suppliers=suppliers,
     )
 
 
@@ -830,6 +985,8 @@ def view_ticket(ticket_id):
     workspaces = _fetch_workspaces()
     subjobs = _fetch_subjobs(ticket_id, user_id, is_admin)
     updates = _fetch_updates(ticket_id)
+    customers = _fetch_customers_for_links()
+    suppliers = _fetch_suppliers_for_links()
 
     return render_template(
         'ticket_edit.html',
@@ -839,6 +996,8 @@ def view_ticket(ticket_id):
         workspaces=workspaces,
         subjobs=subjobs,
         updates=updates,
+        customers=customers,
+        suppliers=suppliers,
     )
 
 
@@ -920,6 +1079,8 @@ def update_ticket(ticket_id):
     status_id = request.form.get('status_id')
     due_date = request.form.get('due_date') or None
     is_private = bool(request.form.get('is_private'))
+    customer_ids = _parse_id_list(request.form.getlist('customer_ids'))
+    supplier_ids = _parse_id_list(request.form.getlist('supplier_ids'))
 
     if not title:
         flash('Title is required.', 'error')
@@ -996,6 +1157,19 @@ def update_ticket(ticket_id):
             changes.append(f"Workspace set to {workspace_name or 'workspace #' + str(workspace_id)}")
         else:
             changes.append("Workspace cleared")
+    existing_customers = {
+        obj.get("object_id")
+        for obj in ticket.get("linked_objects", [])
+        if obj.get("object_type") == "customer"
+    }
+    existing_suppliers = {
+        obj.get("object_id")
+        for obj in ticket.get("linked_objects", [])
+        if obj.get("object_type") == "supplier"
+    }
+    if set(customer_ids) != existing_customers or set(supplier_ids) != existing_suppliers:
+        changes.append("Linked objects updated")
+    _sync_ticket_objects(ticket_id, customer_ids, supplier_ids)
     if changes:
         _add_ticket_update(ticket_id, user_id, "; ".join(changes))
 
