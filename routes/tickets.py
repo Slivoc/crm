@@ -143,17 +143,33 @@ def _fetch_workspaces():
     return [dict(row) for row in rows]
 
 
-def _fetch_customers_for_links():
+def _fetch_linked_filter_options(
+    object_type,
+    table_name,
+    visibility_clause,
+    parent_visibility_clause,
+    closed_clause,
+    mine_clause,
+    workspace_clause,
+    params,
+):
     rows = db_execute(
-        "SELECT id, name FROM customers ORDER BY name",
-        fetch="all",
-    ) or []
-    return [dict(row) for row in rows]
-
-
-def _fetch_suppliers_for_links():
-    rows = db_execute(
-        "SELECT id, name FROM suppliers ORDER BY name",
+        f"""
+        SELECT DISTINCT x.id, x.name
+        FROM ticket_objects o
+        JOIN tickets t ON o.ticket_id = t.id
+        JOIN {table_name} x ON o.object_id = x.id
+        JOIN ticket_statuses s ON t.status_id = s.id
+        LEFT JOIN tickets pt ON t.parent_ticket_id = pt.id
+        WHERE o.object_type = ?
+        {visibility_clause}
+        {parent_visibility_clause}
+        {closed_clause}
+        {mine_clause}
+        {workspace_clause}
+        ORDER BY x.name
+        """,
+        [object_type] + params,
         fetch="all",
     ) or []
     return [dict(row) for row in rows]
@@ -713,8 +729,27 @@ def list_tickets():
     statuses = _fetch_statuses()
     users = _fetch_users()
     workspaces = _fetch_workspaces()
-    customers = _fetch_customers_for_links()
-    suppliers = _fetch_suppliers_for_links()
+    filter_params = visibility_params + parent_visibility_params + mine_params + workspace_params
+    customers = _fetch_linked_filter_options(
+        "customer",
+        "customers",
+        visibility_clause,
+        parent_visibility_clause,
+        closed_clause,
+        mine_clause,
+        workspace_clause,
+        filter_params,
+    )
+    suppliers = _fetch_linked_filter_options(
+        "supplier",
+        "suppliers",
+        visibility_clause,
+        parent_visibility_clause,
+        closed_clause,
+        mine_clause,
+        workspace_clause,
+        filter_params,
+    )
     workspace_defaults = {
         workspace['id']: workspace.get('default_assignee_id')
         for workspace in workspaces
@@ -992,9 +1027,6 @@ def view_ticket(ticket_id):
     workspaces = _fetch_workspaces()
     subjobs = _fetch_subjobs(ticket_id, user_id, is_admin)
     updates = _fetch_updates(ticket_id)
-    customers = _fetch_customers_for_links()
-    suppliers = _fetch_suppliers_for_links()
-
     return render_template(
         'ticket_edit.html',
         ticket=ticket,
@@ -1003,8 +1035,6 @@ def view_ticket(ticket_id):
         workspaces=workspaces,
         subjobs=subjobs,
         updates=updates,
-        customers=customers,
-        suppliers=suppliers,
     )
 
 

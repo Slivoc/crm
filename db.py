@@ -96,7 +96,10 @@ class PostgresConnectionWrapper:
         """Execute query with automatic placeholder translation."""
         translated = self._translate_query(query)
         cur = self._conn.cursor()
-        cur.execute(translated, params or ())
+        if params is None:
+            cur.execute(translated)
+        else:
+            cur.execute(translated, params)
         return cur
 
     def cursor(self):
@@ -130,7 +133,9 @@ class PostgresCursorWrapper:
 
     def execute(self, query: str, params=None):
         translated = self._translate(query)
-        return self._cursor.execute(translated, params or ())
+        if params is None:
+            return self._cursor.execute(translated)
+        return self._cursor.execute(translated, params)
 
     def executemany(self, query: str, params_list):
         translated = self._translate(query)
@@ -197,7 +202,10 @@ def _execute_base(query: str, params=None, many: bool = False, fetch: Optional[s
         if many:
             cur.executemany(prepared_query, params or [])
         else:
-            cur.execute(prepared_query, params or [])
+            if params is None:
+                cur.execute(prepared_query)
+            else:
+                cur.execute(prepared_query, params)
 
         if fetch == 'one':
             return cur.fetchone()
@@ -220,7 +228,10 @@ def _execute_with_cursor(cursor, query: str, params=None):
     """
     is_pg = _using_postgres()
     prepared_query = _prepare_query(query, is_pg)
-    cursor.execute(prepared_query, params or ())
+    if params is None:
+        cursor.execute(prepared_query)
+    else:
+        cursor.execute(prepared_query, params)
     return cursor
 
 

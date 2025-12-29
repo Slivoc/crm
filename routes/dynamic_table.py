@@ -31,7 +31,10 @@ def _prepare_query(query: str) -> str:
 
 
 def _execute_with_cursor(cur, query: str, params=None):
-    cur.execute(_prepare_query(query), params or [])
+    if params is None:
+        cur.execute(_prepare_query(query))
+    else:
+        cur.execute(_prepare_query(query), params)
     return cur
 def generate_sql_query(user_query):
     # Database structure with full schema
@@ -39,8 +42,10 @@ def generate_sql_query(user_query):
     Table: customers (id, name, primary_contact_id, payment_terms, incoterms, salesperson_id, status_id, currency_id, system_code, estimated_revenue, country, logo_url)
     Table: contacts (id, customer_id, name, email)
     Table: customer_status (id, status)
-    Table: rfqs (id, customer_id, entered_date, customer_ref, currency, status, salesperson_id)
-    Table: rfq_lines (id, rfq_id, base_part_number, quantity, chosen_supplier, cost, supplier_lead_time, margin, price, manufacturer_id)
+    Table: cqs (id, cq_number, customer_id, status, entry_date, due_date, currency_id, sales_person, created_at, updated_at)
+    Table: cq_lines (id, cq_id, base_part_number, part_number, description, condition_code, quantity_requested, quantity_quoted, quantity_allocated, unit_of_measure, unit_cost, unit_price, total_price, lead_days, sales_person, is_no_quote, line_number, serial_number)
+    Table: vqs (id, vq_number, supplier_id, status, entry_date, expiration_date, currency_id, created_at)
+    Table: vq_lines (id, vq_id, base_part_number, part_number, pn_quoted, description, condition_code, quantity_quoted, quantity_requested, unit_of_measure, lead_days, vendor_price, item_total, line_number, quoted_date)
     Table: part_numbers (base_part_number, part_number, system_part_number, stock, datecode, target_price, SPQ, packaging, rohs, category_id)
     Table: manufacturers (id, name)
     Table: part_manufacturers (base_part_number, manufacturer_id)
@@ -50,15 +55,11 @@ def generate_sql_query(user_query):
     Table: customer_industry_tags (customer_id, tag_id)
     Table: salespeople (id, name)
     Table: files (id, filename, filepath, upload_date)
-    Table: rfq_files (rfq_id, file_id)
     Table: offers (id, supplier_id, valid_to, supplier_reference, file_id, price, lead_time, currency_id)
     Table: offer_files (offer_id, file_id)
-    Table: requisitions (id, rfq_id, supplier_id, date, base_part_number, quantity, rfq_line_id)
     Table: statuses (id, status)
     Table: customer_part_numbers (id, base_part_number, customer_part_number, customer_id)
     Table: currencies (id, currency_code, exchange_rate_to_eur, symbol)
-    Table: top_level_requisitions (id, created_at, reference)
-    Table: requisition_references (id, top_level_requisition_id, requisition_id)
     Table: sales_orders (id, sales_order_ref, customer_id, customer_po_ref, salesperson_id, contact_name, date_entered, incoterms, payment_terms, sales_status_id, currency_id, shipping_address_id, invoicing_address_id, updated_at, total_value)
     Table: sales_order_lines (id, sales_order_id, line_number, base_cost, price, quantity, delivery_date, requested_date, promise_date, ship_date, sales_status_id, note, rfq_line_id, updated_at, base_part_number)
     Table: customer_addresses (id, customer_id, address, city, postal_code, country, is_default_shipping, is_default_invoicing)
@@ -74,6 +75,16 @@ def generate_sql_query(user_query):
     Table: excess_stock_lines (id, excess_stock_list_id, base_part_number, quantity, date_code, manufacturer)
     Table: part_categories (category_id, category_name, description, created_at)
     Table: stock_movements (movement_id, base_part_number, movement_type, quantity, datecode, cost_per_unit, movement_date reference, notes, available_quantity, parent_movement_id)
+    Table: parts_lists (id, name, customer_id, salesperson_id, status_id, notes, date_created, date_modified, contact_id)
+    Table: parts_list_lines (id, parts_list_id, line_number, customer_part_number, base_part_number, quantity, parent_line_id, line_type, chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days, customer_notes, internal_notes, date_created, date_modified, chosen_qty)
+    Table: parts_list_statuses (id, name, display_order)
+    Table: parts_list_supplier_quotes (id, parts_list_id, supplier_id, quote_reference, quote_date, currency_id, notes, date_created, date_modified, created_by_user_id)
+    Table: parts_list_supplier_quote_lines (id, supplier_quote_id, parts_list_line_id, quoted_part_number, manufacturer, quantity_quoted, unit_price, lead_time_days, condition_code, certifications, is_no_bid, line_notes, date_created, date_modified)
+    Table: parts_list_line_suppliers (id, parts_list_line_id, supplier_id, supplier_name, cost, currency_id, lead_days, source_type, source_reference, condition_code, notes, is_preferred)
+    Table: parts_list_line_supplier_emails (id, parts_list_line_id, supplier_id, date_sent, sent_by_user_id, email_subject, email_body, recipient_email, recipient_name, notes)
+    Table: parts_list_line_suggested_suppliers (id, parts_list_line_id, supplier_id, source_type, date_added)
+    Table: parts_list_no_response_dismissals (id, email_id, dismissed_at)
+    Table: customer_quote_lines (id, parts_list_line_id, display_part_number, quoted_part_number, manufacturer, base_cost_gbp, margin_percent, quote_price_gbp, is_no_bid, line_notes, date_created, date_modified, delivery_per_unit, delivery_per_line, quoted_status, lead_days, standard_condition, standard_certs)
     Important Notes:
     - The base_part_number field is used across multiple tables as a reference
     - Columns like system_part_number in part_numbers are distinct fields
@@ -84,7 +95,7 @@ def generate_sql_query(user_query):
     Given this database schema:
     {db_structure}
 
-    Task: Generate a SQLite query for this request: "{user_query}"
+    Task: Generate a PostgreSQL query for this request: "{user_query}"
 
     Important rules:
     1. Never compare a column to itself (e.g., avoid 'WHERE column = column')
@@ -157,9 +168,28 @@ def execute_query(sql_query):
         try:
             _execute_with_cursor(cur, sql_query)
 
-            # Fetch dynamically generated column names
-            columns = [description[0] for description in cur.description]
             rows = cur.fetchall()  # list[dict] on Postgres RealDictCursor, sqlite3.Row on SQLite
+            current_app.logger.debug(
+                "Dynamic query cursor description: %s",
+                getattr(cur, "description", None)
+            )
+            if rows:
+                current_app.logger.debug(
+                    "Dynamic query first row type: %s, value: %s",
+                    type(rows[0]),
+                    rows[0]
+                )
+
+            # Fetch dynamically generated column names with fallbacks.
+            columns = []
+            if rows and hasattr(rows[0], 'keys'):
+                columns = list(rows[0].keys())
+            elif cur.description:
+                for desc in cur.description:
+                    if isinstance(desc, (list, tuple)) and desc:
+                        columns.append(desc[0])
+                    elif hasattr(desc, 'name'):
+                        columns.append(desc.name)
 
             # Normalize rows to list[dict]
             if not rows:
@@ -175,7 +205,11 @@ def execute_query(sql_query):
             return columns, rows_as_dicts
 
         except Exception as e:
-            current_app.logger.error(f"Error executing dynamic query: {str(e)} for query: {sql_query}")
+            current_app.logger.exception(
+                "Error executing dynamic query: %s for query: %s",
+                str(e),
+                sql_query
+            )
             raise
 
 

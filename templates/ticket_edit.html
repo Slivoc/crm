@@ -62,9 +62,6 @@
         </div>
     </div>
 
-    {% set customer_link_ids = (ticket.linked_objects or []) | selectattr('object_type', 'equalto', 'customer') | map(attribute='object_id') | list %}
-    {% set supplier_link_ids = (ticket.linked_objects or []) | selectattr('object_type', 'equalto', 'supplier') | map(attribute='object_id') | list %}
-
     <div class="ticket-layout">
         <!-- Main Content -->
         <div class="ticket-main">
@@ -126,25 +123,41 @@
 
                     <div class="row g-3 mb-3">
                         <div class="col-md-6">
-                            <label class="form-label">Customers</label>
-                            <select class="form-select" name="customer_ids" multiple>
-                                {% for customer in customers %}
-                                    <option value="{{ customer.id }}" {% if customer.id in customer_link_ids %}selected{% endif %}>
-                                        {{ customer.name }}
-                                    </option>
+                            <label class="form-label" for="ticketCustomerSearch">Customers</label>
+                            <div class="position-relative">
+                                <input type="text" class="form-control" id="ticketCustomerSearch" placeholder="Search customers..." autocomplete="off">
+                                <div id="ticketCustomerResults" class="position-absolute w-100 mt-1 d-none" style="z-index: 1050;">
+                                    <div class="list-group shadow"></div>
+                                </div>
+                            </div>
+                            <div id="ticketCustomerSelected" class="selected-chips">
+                                {% for obj in ticket.linked_objects if obj.object_type == 'customer' %}
+                                    <span class="selected-chip" data-id="{{ obj.object_id }}">
+                                        <span>{{ obj.object_name or ('#' ~ obj.object_id) }}</span>
+                                        <button type="button" class="remove-chip" aria-label="Remove">&times;</button>
+                                        <input type="hidden" name="customer_ids" value="{{ obj.object_id }}">
+                                    </span>
                                 {% endfor %}
-                            </select>
+                            </div>
                             <div class="form-text">Select all customers related to this ticket.</div>
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Suppliers</label>
-                            <select class="form-select" name="supplier_ids" multiple>
-                                {% for supplier in suppliers %}
-                                    <option value="{{ supplier.id }}" {% if supplier.id in supplier_link_ids %}selected{% endif %}>
-                                        {{ supplier.name }}
-                                    </option>
+                            <label class="form-label" for="ticketSupplierSearch">Suppliers</label>
+                            <div class="position-relative">
+                                <input type="text" class="form-control" id="ticketSupplierSearch" placeholder="Search suppliers..." autocomplete="off">
+                                <div id="ticketSupplierResults" class="position-absolute w-100 mt-1 d-none" style="z-index: 1050;">
+                                    <div class="list-group shadow"></div>
+                                </div>
+                            </div>
+                            <div id="ticketSupplierSelected" class="selected-chips">
+                                {% for obj in ticket.linked_objects if obj.object_type == 'supplier' %}
+                                    <span class="selected-chip" data-id="{{ obj.object_id }}">
+                                        <span>{{ obj.object_name or ('#' ~ obj.object_id) }}</span>
+                                        <button type="button" class="remove-chip" aria-label="Remove">&times;</button>
+                                        <input type="hidden" name="supplier_ids" value="{{ obj.object_id }}">
+                                    </span>
                                 {% endfor %}
-                            </select>
+                            </div>
                             <div class="form-text">Select all suppliers related to this ticket.</div>
                         </div>
                     </div>
@@ -495,6 +508,34 @@
     box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.1);
 }
 
+.selected-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.selected-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: #e8f0fe;
+    color: #1a73e8;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.selected-chip .remove-chip {
+    border: none;
+    background: transparent;
+    color: #1a73e8;
+    padding: 0;
+    line-height: 1;
+    cursor: pointer;
+}
+
 /* Email source */
 .email-source-info {
     display: flex;
@@ -662,4 +703,137 @@
     border-radius: 0;
 }
 </style>
+
+<script>
+function initMultiLookupSearch(options) {
+    const input = document.getElementById(options.inputId);
+    const results = document.getElementById(options.resultsId);
+    const selected = document.getElementById(options.selectedId);
+    const list = results ? results.querySelector('.list-group') : null;
+    let timer;
+
+    if (!input || !results || !selected || !list) {
+        return;
+    }
+
+    const selectedIds = new Set(
+        Array.from(selected.querySelectorAll(`input[name="${options.fieldName}"]`)).map(input => input.value)
+    );
+
+    const removeExisting = () => {
+        selected.querySelectorAll('.remove-chip').forEach(button => {
+            button.addEventListener('click', () => {
+                const chip = button.closest('.selected-chip');
+                if (!chip) {
+                    return;
+                }
+                selectedIds.delete(chip.dataset.id);
+                chip.remove();
+            });
+        });
+    };
+
+    const addChip = (item) => {
+        const id = String(item.id);
+        if (selectedIds.has(id)) {
+            return;
+        }
+        selectedIds.add(id);
+
+        const chip = document.createElement('span');
+        chip.className = 'selected-chip';
+        chip.dataset.id = id;
+
+        const text = document.createElement('span');
+        text.textContent = item.name;
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'remove-chip';
+        remove.setAttribute('aria-label', 'Remove');
+        remove.innerHTML = '&times;';
+        remove.addEventListener('click', () => {
+            selectedIds.delete(id);
+            chip.remove();
+        });
+
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = options.fieldName;
+        hidden.value = id;
+
+        chip.appendChild(text);
+        chip.appendChild(remove);
+        chip.appendChild(hidden);
+        selected.appendChild(chip);
+    };
+
+    removeExisting();
+
+    input.addEventListener('input', () => {
+        const query = input.value.trim();
+        clearTimeout(timer);
+
+        if (query.length < (options.minChars || 2)) {
+            results.classList.add('d-none');
+            list.innerHTML = '';
+            return;
+        }
+
+        timer = setTimeout(() => {
+            fetch(`${options.endpoint}?q=${encodeURIComponent(query)}&limit=${options.limit || 10}`)
+                .then(response => response.json())
+                .then(data => {
+                    list.innerHTML = '';
+                    if (!data || data.length === 0) {
+                        const emptyItem = document.createElement('div');
+                        emptyItem.className = 'list-group-item text-muted';
+                        emptyItem.textContent = 'No results found';
+                        list.appendChild(emptyItem);
+                    } else {
+                        data.forEach(item => {
+                            const button = document.createElement('button');
+                            button.type = 'button';
+                            button.className = 'list-group-item list-group-item-action';
+                            button.textContent = item.name;
+                            button.addEventListener('click', () => {
+                                addChip(item);
+                                input.value = '';
+                                results.classList.add('d-none');
+                                list.innerHTML = '';
+                            });
+                            list.appendChild(button);
+                        });
+                    }
+                    results.classList.remove('d-none');
+                })
+                .catch(() => {
+                    results.classList.add('d-none');
+                });
+        }, 250);
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!results.contains(event.target) && event.target !== input) {
+            results.classList.add('d-none');
+        }
+    });
+}
+
+initMultiLookupSearch({
+    inputId: 'ticketCustomerSearch',
+    resultsId: 'ticketCustomerResults',
+    selectedId: 'ticketCustomerSelected',
+    endpoint: "{{ url_for('customers.customer_search') }}",
+    fieldName: 'customer_ids'
+});
+
+initMultiLookupSearch({
+    inputId: 'ticketSupplierSearch',
+    resultsId: 'ticketSupplierResults',
+    selectedId: 'ticketSupplierSelected',
+    endpoint: "{{ url_for('suppliers.supplier_search') }}",
+    fieldName: 'supplier_ids'
+});
+</script>
 {% endblock %}
