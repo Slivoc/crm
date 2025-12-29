@@ -24,6 +24,16 @@
                         <input type="text" class="form-control" id="workspaceName" name="name" placeholder="Customer Services" required>
                     </div>
                     <div class="mb-3">
+                        <label class="form-label" for="workspaceDefaultAssignee">Default assignee (optional)</label>
+                        <select class="form-select" id="workspaceDefaultAssignee" name="default_assignee_id">
+                            <option value="">No default</option>
+                            {% for user in users %}
+                                <option value="{{ user.id }}">{{ user.username }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Auto-populates new tickets created in this workspace.</div>
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label">Members</label>
                         <div class="member-grid">
                             {% for user in users %}
@@ -63,6 +73,16 @@
                                 <button type="submit" class="btn btn-outline-primary ms-3">
                                     <i class="bi bi-save me-1"></i>Save
                                 </button>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label" for="workspace-default-{{ workspace.id }}">Default assignee (optional)</label>
+                                <select class="form-select" id="workspace-default-{{ workspace.id }}" name="default_assignee_id">
+                                    <option value="">No default</option>
+                                    {% for user in users %}
+                                        <option value="{{ user.id }}" {% if workspace.default_assignee_id == user.id %}selected{% endif %}>{{ user.username }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">Auto-populates new tickets created in this workspace.</div>
                             </div>
                             <label class="form-label">Members</label>
                             <div class="member-grid">

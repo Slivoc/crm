@@ -272,6 +272,24 @@
                             <textarea class="form-control" id="ticketDescription" name="description" rows="4" placeholder="Add details about this ticket..."></textarea>
                         </div>
                         <div class="col-md-6">
+                            <label class="form-label" for="ticketCustomers">Customers</label>
+                            <select class="form-select" id="ticketCustomers" name="customer_ids" multiple>
+                                {% for customer in customers %}
+                                    <option value="{{ customer.id }}">{{ customer.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Select one or more customers linked to this ticket.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="ticketSuppliers">Suppliers</label>
+                            <select class="form-select" id="ticketSuppliers" name="supplier_ids" multiple>
+                                {% for supplier in suppliers %}
+                                    <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Select one or more suppliers linked to this ticket.</div>
+                        </div>
+                        <div class="col-md-6">
                             <label class="form-label" for="ticketDueDate">Due Date</label>
                             <input type="date" class="form-control" id="ticketDueDate" name="due_date">
                         </div>
@@ -990,23 +1008,23 @@ function toggleSubtasks(parentId, show) {
     // Find all subtasks that belong to this parent (direct and nested)
     const btn = document.querySelector(`.collapse-toggle[data-target-parent="${parentId}"]`);
     if (!btn) return;
-    
+
     const column = btn.closest('.ticket-column');
     const allWrappers = column.querySelectorAll('.ticket-wrapper');
     let capturing = false;
     let parentDepth = 0;
-    
+
     allWrappers.forEach(wrapper => {
         const ticketCard = wrapper.querySelector('.ticket-card');
         const ticketId = ticketCard?.dataset.ticketId;
         const depth = parseInt(wrapper.dataset.depth) || 0;
-        
+
         if (ticketId === parentId) {
             capturing = true;
             parentDepth = depth;
             return;
         }
-        
+
         if (capturing) {
             // Stop capturing when we hit a ticket at same or lower depth than parent
             if (depth <= parentDepth) {

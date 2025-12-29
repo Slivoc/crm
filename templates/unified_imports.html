@@ -21,6 +21,9 @@
                 </div>
                 <div class="card-body">
                     <p class="card-text">Import sales orders from your ERP system.</p>
+                    <p class="text-muted small mb-3">
+                        Latest record: {{ latest_dates.sales_orders or 'No records yet' }}
+                    </p>
                     <form id="soForm" enctype="multipart/form-data">
                         <div class="mb-3">
                             <input type="file" class="form-control" name="file" accept=".csv" required>
@@ -47,6 +50,9 @@
                 </div>
                 <div class="card-body">
                     <p class="card-text">Import purchase orders from your ERP system.</p>
+                    <p class="text-muted small mb-3">
+                        Latest record: {{ latest_dates.purchase_orders or 'No records yet' }}
+                    </p>
                     <form id="poForm" enctype="multipart/form-data">
                         <div class="mb-3">
                             <input type="file" class="form-control" name="file" accept=".csv" required>
@@ -73,6 +79,9 @@
                 </div>
                 <div class="card-body">
                     <p class="card-text">Import vendor quotes from your ERP system.</p>
+                    <p class="text-muted small mb-3">
+                        Latest record: {{ latest_dates.vendor_quotes or 'No records yet' }}
+                    </p>
                     <form id="vqForm" enctype="multipart/form-data">
                         <div class="mb-3">
                             <input type="file" class="form-control" name="file" accept=".csv" required>
@@ -99,6 +108,9 @@
                 </div>
                 <div class="card-body">
                     <p class="card-text">Import customer quotes from your ERP system.</p>
+                    <p class="text-muted small mb-3">
+                        Latest record: {{ latest_dates.customer_quotes or 'No records yet' }}
+                    </p>
                     <form id="cqForm" enctype="multipart/form-data">
                         <div class="mb-3">
                             <input type="file" class="form-control" name="file" accept=".csv" required>
@@ -132,6 +144,9 @@
                 <div class="card-body">
                     <p class="card-text text-danger"><strong>Warning:</strong> This will REPLACE all existing stock levels!</p>
                     <p class="card-text small">Required columns: <code>partNumber</code>, <code>remainingQty</code>, <code>unitCost</code> (optional)</p>
+                    <p class="text-muted small mb-3">
+                        Latest record: {{ latest_dates.stock_levels or 'No records yet' }}
+                    </p>
                     <form id="stockForm" enctype="multipart/form-data">
                         <div class="mb-3">
                             <input type="file" class="form-control" name="file" accept=".csv" required>

@@ -90,6 +90,8 @@ def _fetch_ticket(ticket_id, user_id, is_admin):
     if not row:
         return None
     ticket = dict(row)
+    linked = _fetch_ticket_objects([ticket_id])
+    ticket["linked_objects"] = linked.get(ticket_id, [])
     if ticket.get('parent_ticket_id') and ticket.get('parent_is_private') and not is_admin:
         if user_id not in (ticket.get('parent_created_by_user_id'), ticket.get('parent_assigned_user_id')):
             return None
@@ -138,7 +140,27 @@ def _fetch_users():
 
 def _fetch_workspaces():
     rows = db_execute(
-        "SELECT id, name FROM ticket_workspaces ORDER BY name",
+        """
+        SELECT id, name, default_assignee_id
+        FROM ticket_workspaces
+        ORDER BY name
+        """,
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _fetch_customers_for_links():
+    rows = db_execute(
+        "SELECT id, name FROM customers ORDER BY name",
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _fetch_suppliers_for_links():
+    rows = db_execute(
+        "SELECT id, name FROM suppliers ORDER BY name",
         fetch="all",
     ) or []
     return [dict(row) for row in rows]
@@ -409,13 +431,21 @@ def list_tickets():
     is_admin = _is_admin()
 
     if request.method == 'POST':
+        workspaces = _fetch_workspaces()
+        workspace_lookup = {workspace['id']: workspace for workspace in workspaces}
         title = request.form.get('title', '').strip()
         description = request.form.get('description', '').strip()
         assigned_user_id = request.form.get('assigned_user_id') or None
         workspace_id = request.form.get('workspace_id') or None
+        if not workspace_id:
+            workspace_filter = request.args.get('workspace_id', '')
+            if str(workspace_filter).isdigit():
+                workspace_id = workspace_filter
         status_id = request.form.get('status_id')
         due_date = request.form.get('due_date') or None
         is_private = bool(request.form.get('is_private'))
+        customer_ids = _parse_id_list(request.form.getlist('customer_ids'))
+        supplier_ids = _parse_id_list(request.form.getlist('supplier_ids'))
 
         if not title:
             flash('Title is required.', 'error')
@@ -424,6 +454,12 @@ def list_tickets():
         if not status_id:
             flash('Status is required.', 'error')
             return redirect(url_for('tickets.list_tickets'))
+
+        if not assigned_user_id and workspace_id and str(workspace_id).isdigit():
+            workspace = workspace_lookup.get(int(workspace_id))
+            default_assignee_id = workspace.get('default_assignee_id') if workspace else None
+            if default_assignee_id:
+                assigned_user_id = str(default_assignee_id)
 
         row = db_execute(
             """
@@ -456,6 +492,8 @@ def list_tickets():
             commit=True,
         )
         ticket_id = row.get('id', list(row.values())[0]) if row else None
+        if ticket_id:
+            _sync_ticket_objects(ticket_id, customer_ids, supplier_ids)
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
     show_closed = _parse_bool(request.args.get('show_closed'))
@@ -584,6 +622,7 @@ def list_tickets():
         {closed_clause}
         {mine_clause}
         {workspace_clause}
+        {object_filter_clause}
         ORDER BY
             CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END,
             t.due_date ASC,
@@ -665,6 +704,12 @@ def list_tickets():
     statuses = _fetch_statuses()
     users = _fetch_users()
     workspaces = _fetch_workspaces()
+    customers = _fetch_customers_for_links()
+    suppliers = _fetch_suppliers_for_links()
+    workspace_defaults = {
+        workspace['id']: workspace.get('default_assignee_id')
+        for workspace in workspaces
+    }
     workspace_chips = _fetch_workspace_chips(user_id)
     default_status_id = None
     for status in statuses:
@@ -724,6 +769,8 @@ def list_tickets():
         only_mine=only_mine,
         created_by_me=created_by_me,
         workspace_filter_id=workspace_filter_id,
+        customer_filter_id=customer_filter_id,
+        supplier_filter_id=supplier_filter_id,
         default_status_id=default_status_id,
         object_type_filter=object_type,
         object_ids_filter=object_ids,
@@ -937,6 +984,8 @@ def view_ticket(ticket_id):
     workspaces = _fetch_workspaces()
     subjobs = _fetch_subjobs(ticket_id, user_id, is_admin)
     updates = _fetch_updates(ticket_id)
+    customers = _fetch_customers_for_links()
+    suppliers = _fetch_suppliers_for_links()
 
     return render_template(
         'ticket_edit.html',
@@ -946,6 +995,8 @@ def view_ticket(ticket_id):
         workspaces=workspaces,
         subjobs=subjobs,
         updates=updates,
+        customers=customers,
+        suppliers=suppliers,
     )
 
 
@@ -1027,6 +1078,8 @@ def update_ticket(ticket_id):
     status_id = request.form.get('status_id')
     due_date = request.form.get('due_date') or None
     is_private = bool(request.form.get('is_private'))
+    customer_ids = _parse_id_list(request.form.getlist('customer_ids'))
+    supplier_ids = _parse_id_list(request.form.getlist('supplier_ids'))
 
     if not title:
         flash('Title is required.', 'error')
@@ -1103,6 +1156,19 @@ def update_ticket(ticket_id):
             changes.append(f"Workspace set to {workspace_name or 'workspace #' + str(workspace_id)}")
         else:
             changes.append("Workspace cleared")
+    existing_customers = {
+        obj.get("object_id")
+        for obj in ticket.get("linked_objects", [])
+        if obj.get("object_type") == "customer"
+    }
+    existing_suppliers = {
+        obj.get("object_id")
+        for obj in ticket.get("linked_objects", [])
+        if obj.get("object_type") == "supplier"
+    }
+    if set(customer_ids) != existing_customers or set(supplier_ids) != existing_suppliers:
+        changes.append("Linked objects updated")
+    _sync_ticket_objects(ticket_id, customer_ids, supplier_ids)
     if changes:
         _add_ticket_update(ticket_id, user_id, "; ".join(changes))
 
@@ -1198,6 +1264,8 @@ def manage_workspaces():
         logs = ['Create workspace request received.']
         name = request.form.get('name', '').strip()
         member_ids = [int(uid) for uid in request.form.getlist('member_ids') if uid.isdigit()]
+        default_assignee_id = request.form.get('default_assignee_id')
+        default_assignee_id = int(default_assignee_id) if default_assignee_id and str(default_assignee_id).isdigit() else None
         if not name:
             logs.append('Validation failed: workspace name missing.')
             return _workspace_response(False, 'Workspace name is required.', status=400, logs=logs)
@@ -1205,11 +1273,11 @@ def manage_workspaces():
         try:
             row = db_execute(
                 """
-                INSERT INTO ticket_workspaces (name, created_by_user_id, created_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO ticket_workspaces (name, created_by_user_id, default_assignee_id, created_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                 RETURNING id
                 """,
-                (name, current_user.id),
+                (name, current_user.id, default_assignee_id),
                 fetch="one",
                 commit=True,
             )
@@ -1234,7 +1302,12 @@ def manage_workspaces():
             True,
             'Workspace created.',
             logs=logs,
-            workspace={'id': workspace_id, 'name': name, 'member_ids': member_ids},
+            workspace={
+                'id': workspace_id,
+                'name': name,
+                'member_ids': member_ids,
+                'default_assignee_id': default_assignee_id,
+            },
         )
 
     users = _fetch_users()
@@ -1252,6 +1325,8 @@ def update_workspace(workspace_id):
     logs = [f'Update workspace {workspace_id} request received.']
     name = request.form.get('name', '').strip()
     member_ids = [int(uid) for uid in request.form.getlist('member_ids') if uid.isdigit()]
+    default_assignee_id = request.form.get('default_assignee_id')
+    default_assignee_id = int(default_assignee_id) if default_assignee_id and str(default_assignee_id).isdigit() else None
     if not name:
         logs.append('Validation failed: workspace name missing.')
         return _workspace_response(False, 'Workspace name is required.', status=400, logs=logs)
@@ -1260,10 +1335,10 @@ def update_workspace(workspace_id):
         db_execute(
             """
             UPDATE ticket_workspaces
-            SET name = ?
+            SET name = ?, default_assignee_id = ?
             WHERE id = ?
             """,
-            (name, workspace_id),
+            (name, default_assignee_id, workspace_id),
             commit=True,
         )
         logs.append('Workspace update succeeded.')
@@ -1291,5 +1366,10 @@ def update_workspace(workspace_id):
         True,
         'Workspace updated.',
         logs=logs,
-        workspace={'id': workspace_id, 'name': name, 'member_ids': member_ids},
+        workspace={
+            'id': workspace_id,
+            'name': name,
+            'member_ids': member_ids,
+            'default_assignee_id': default_assignee_id,
+        },
     )
