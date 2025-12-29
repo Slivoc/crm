@@ -47,6 +47,13 @@ def _workspace_response(success, message, status=200, logs=None, **data):
     return redirect(url_for('tickets.manage_workspaces'))
 
 
+def _filter_error(message, status=400):
+    if _wants_json():
+        return jsonify({'success': False, 'error': message}), status
+    flash(message, 'error')
+    return redirect(url_for('tickets.list_tickets'))
+
+
 def _ticket_visibility_clause(user_id, is_admin):
     if is_admin:
         return "", []
@@ -132,6 +139,22 @@ def _fetch_users():
 def _fetch_workspaces():
     rows = db_execute(
         "SELECT id, name FROM ticket_workspaces ORDER BY name",
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _fetch_customers_for_filter():
+    rows = db_execute(
+        "SELECT id, name FROM customers ORDER BY name",
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _fetch_suppliers_for_filter():
+    rows = db_execute(
+        "SELECT id, name FROM suppliers ORDER BY name",
         fetch="all",
     ) or []
     return [dict(row) for row in rows]
@@ -441,6 +464,30 @@ def list_tickets():
     if request.args.get('only_mine') is None and request.args.get('created_by_me') is None:
         only_mine = True
     workspace_filter_id = request.args.get('workspace_id') or None
+    object_type = (request.args.get('object_type') or '').strip().lower() or None
+    raw_object_ids = request.args.getlist('object_id') or []
+    if not raw_object_ids and request.args.get('object_id'):
+        raw_object_ids = [request.args.get('object_id')]
+    object_ids = []
+    invalid_object_id = None
+    for raw_id in raw_object_ids:
+        try:
+            parsed_id = int(raw_id)
+        except (TypeError, ValueError):
+            invalid_object_id = raw_id
+            break
+        if parsed_id <= 0:
+            invalid_object_id = raw_id
+            break
+        object_ids.append(parsed_id)
+
+    valid_object_types = {'customer', 'supplier'}
+    if object_type and object_type not in valid_object_types:
+        return _filter_error("Invalid object_type. Must be 'customer' or 'supplier'.")
+    if object_ids and not object_type:
+        return _filter_error("Select an object type (customer or supplier) before choosing linked objects.")
+    if invalid_object_id is not None:
+        return _filter_error(f"Invalid object_id '{invalid_object_id}'. Object IDs must be positive integers.")
 
     visibility_clause, visibility_params = _ticket_visibility_clause(user_id, is_admin)
     closed_clause = "" if show_closed else "AND s.is_closed = FALSE"
@@ -462,6 +509,20 @@ def list_tickets():
     if workspace_filter_id:
         workspace_clause = "AND t.workspace_id = ?"
         workspace_params = [int(workspace_filter_id)]
+
+    object_filter_join = ""
+    object_filter_params = []
+    if object_type:
+        object_filter_join = (
+            "JOIN ticket_objects tobj_filter "
+            "ON tobj_filter.ticket_id = t.id "
+            "AND tobj_filter.object_type = ?"
+        )
+        object_filter_params.append(object_type)
+        if object_ids:
+            placeholders = ", ".join(["?"] * len(object_ids))
+            object_filter_join += f" AND tobj_filter.object_id IN ({placeholders})"
+            object_filter_params.extend(object_ids)
 
     parent_visibility_clause = ""
     parent_visibility_params = []
@@ -487,8 +548,12 @@ def list_tickets():
             pt.parent_ticket_id AS parent_parent_id,
             tw.name AS workspace_name,
             COALESCE(sc.subjob_count, 0) AS subjob_count,
-            COALESCE(sc.closed_subjob_count, 0) AS closed_subjob_count
+            COALESCE(sc.closed_subjob_count, 0) AS closed_subjob_count,
+            COALESCE(tolink.link_count, 0) AS link_count,
+            COALESCE(tolink.customer_link_count, 0) AS customer_link_count,
+            COALESCE(tolink.supplier_link_count, 0) AS supplier_link_count
         FROM tickets t
+        {object_filter_join}
         JOIN ticket_statuses s ON t.status_id = s.id
         JOIN users cu ON t.created_by_user_id = cu.id
         LEFT JOIN users au ON t.assigned_user_id = au.id
@@ -504,6 +569,15 @@ def list_tickets():
             WHERE t2.parent_ticket_id IS NOT NULL
             GROUP BY t2.parent_ticket_id
         ) sc ON sc.parent_ticket_id = t.id
+        LEFT JOIN (
+            SELECT
+                tobj.ticket_id,
+                COUNT(*) AS link_count,
+                SUM(CASE WHEN tobj.object_type = 'customer' THEN 1 ELSE 0 END) AS customer_link_count,
+                SUM(CASE WHEN tobj.object_type = 'supplier' THEN 1 ELSE 0 END) AS supplier_link_count
+            FROM ticket_objects tobj
+            GROUP BY tobj.ticket_id
+        ) tolink ON tolink.ticket_id = t.id
         WHERE 1 = 1
         {visibility_clause}
         {parent_visibility_clause}
@@ -515,11 +589,61 @@ def list_tickets():
             t.due_date ASC,
             t.updated_at DESC
         """,
-        visibility_params + parent_visibility_params + mine_params + workspace_params,
+        object_filter_params
+        + visibility_params
+        + parent_visibility_params
+        + mine_params
+        + workspace_params,
         fetch="all",
     ) or []
 
     tickets = [dict(row) for row in rows]
+    for ticket in tickets:
+        ticket["link_counts"] = {
+            "total": int(ticket.get("link_count") or 0),
+            "customer": int(ticket.get("customer_link_count") or 0),
+            "supplier": int(ticket.get("supplier_link_count") or 0),
+        }
+
+    ticket_ids = [ticket["id"] for ticket in tickets]
+    links_by_ticket = {}
+    if ticket_ids:
+        placeholders = ", ".join(["?"] * len(ticket_ids))
+        link_rows = db_execute(
+            f"""
+            SELECT
+                tobj.ticket_id,
+                tobj.object_type,
+                tobj.object_id,
+                COALESCE(c.name, s.name) AS object_name
+            FROM ticket_objects tobj
+            LEFT JOIN customers c
+                ON tobj.object_type = 'customer' AND tobj.object_id = c.id
+            LEFT JOIN suppliers s
+                ON tobj.object_type = 'supplier' AND tobj.object_id = s.id
+            WHERE tobj.ticket_id IN ({placeholders})
+            """,
+            ticket_ids,
+            fetch="all",
+        ) or []
+        for row in link_rows:
+            ticket_id = row.get("ticket_id")
+            if ticket_id is None:
+                continue
+            ticket_links = links_by_ticket.setdefault(ticket_id, {"customer": [], "supplier": []})
+            object_type_key = row.get("object_type")
+            if object_type_key not in ("customer", "supplier"):
+                continue
+            ticket_links[object_type_key].append(
+                {
+                    "id": row.get("object_id"),
+                    "name": row.get("object_name"),
+                }
+            )
+
+    for ticket in tickets:
+        ticket["links"] = links_by_ticket.get(ticket["id"], {"customer": [], "supplier": []})
+
     ticket_lookup = {ticket["id"]: ticket for ticket in tickets}
     for ticket in tickets:
         chain_titles = []
@@ -601,6 +725,10 @@ def list_tickets():
         created_by_me=created_by_me,
         workspace_filter_id=workspace_filter_id,
         default_status_id=default_status_id,
+        object_type_filter=object_type,
+        object_ids_filter=object_ids,
+        customers_for_filter=_fetch_customers_for_filter(),
+        suppliers_for_filter=_fetch_suppliers_for_filter(),
     )
 
 

@@ -49,6 +49,31 @@
                     <span><i class="bi bi-check-circle me-1"></i>Show closed</span>
                 </label>
             </div>
+            <div class="filter-selects">
+                <div class="filter-select">
+                    <label class="form-label mb-1 small text-muted">Linked object type</label>
+                    <select class="form-select form-select-sm" name="object_type" id="objectTypeFilter">
+                        <option value="">Any</option>
+                        <option value="customer" {% if object_type_filter == 'customer' %}selected{% endif %}>Customer</option>
+                        <option value="supplier" {% if object_type_filter == 'supplier' %}selected{% endif %}>Supplier</option>
+                    </select>
+                </div>
+                <div class="filter-select">
+                    <label class="form-label mb-1 small text-muted">Linked objects</label>
+                    <select class="form-select form-select-sm" name="object_id" id="objectIdFilter" multiple size="5">
+                        {% for customer in customers_for_filter %}
+                            <option value="{{ customer.id }}" data-type="customer" {% if customer.id in object_ids_filter %}selected{% endif %}>
+                                Customer: {{ customer.name }}
+                            </option>
+                        {% endfor %}
+                        {% for supplier in suppliers_for_filter %}
+                            <option value="{{ supplier.id }}" data-type="supplier" {% if supplier.id in object_ids_filter %}selected{% endif %}>
+                                Supplier: {{ supplier.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
             <button type="submit" class="btn btn-sm btn-outline-secondary">
                 <i class="bi bi-funnel me-1"></i>Apply
             </button>
@@ -155,6 +180,24 @@
                                             </span>
                                         {% endif %}
                                     </div>
+                                    {% set link_counts = ticket.link_counts or {} %}
+                                    {% set ticket_links = ticket.links or {} %}
+                                    {% if link_counts.customer or link_counts.supplier %}
+                                        <div class="ticket-links">
+                                            {% if link_counts.customer %}
+                                                <span class="ticket-link-badge customer" title="Linked customers: {{ ticket_links.customer | map(attribute='name') | join(', ') }}">
+                                                    <i class="bi bi-building"></i>
+                                                    {{ link_counts.customer }}
+                                                </span>
+                                            {% endif %}
+                                            {% if link_counts.supplier %}
+                                                <span class="ticket-link-badge supplier" title="Linked suppliers: {{ ticket_links.supplier | map(attribute='name') | join(', ') }}">
+                                                    <i class="bi bi-truck"></i>
+                                                    {{ link_counts.supplier }}
+                                                </span>
+                                            {% endif %}
+                                        </div>
+                                    {% endif %}
                                     {% if ticket.subjob_count %}
                                         <div class="subjob-progress">
                                             <div class="progress-bar" style="width: {{ (ticket.closed_subjob_count / ticket.subjob_count * 100) | int }}%"></div>
@@ -256,6 +299,22 @@
 <style>
 .tickets-container {
     padding: 0;
+}
+
+.filter-selects {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.filter-select {
+    min-width: 180px;
+}
+
+.filter-select select {
+    min-width: 220px;
 }
 
 .tickets-header {
@@ -613,6 +672,35 @@
     padding: 2px 8px;
 }
 
+.ticket-links {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.ticket-link-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: #eef2f7;
+    color: #495057;
+}
+
+.ticket-link-badge.customer {
+    background: #e8f0fe;
+    color: #1a73e8;
+}
+
+.ticket-link-badge.supplier {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
 .subjob-progress {
     margin-top: 10px;
     background: #e9ecef;
@@ -838,6 +926,28 @@
 </style>
 
 <script>
+// Linked object filter toggle
+const objectTypeSelect = document.getElementById('objectTypeFilter');
+const objectIdSelect = document.getElementById('objectIdFilter');
+
+function syncObjectOptions() {
+    if (!objectIdSelect) return;
+    const selectedType = (objectTypeSelect?.value || '').trim();
+    objectIdSelect.querySelectorAll('option').forEach(option => {
+        const matches = !selectedType || option.dataset.type === selectedType;
+        option.hidden = !matches;
+        option.disabled = !matches;
+        if (!matches && option.selected) {
+            option.selected = false;
+        }
+    });
+}
+
+if (objectTypeSelect && objectIdSelect) {
+    syncObjectOptions();
+    objectTypeSelect.addEventListener('change', syncObjectOptions);
+}
+
 // Auto-submit filter form when checkboxes change
 document.querySelectorAll('.filter-chip input').forEach(input => {
     input.addEventListener('change', () => {
@@ -853,17 +963,19 @@ document.querySelectorAll('.meta-item[data-due-date]').forEach(item => {
     if (dueDate < today) {
         item.classList.add('overdue');
     }
-    // Collapse/expand subtasks
+});
+
+// Collapse/expand subtasks
 document.querySelectorAll('.collapse-toggle').forEach(btn => {
     const parentId = btn.dataset.targetParent;
-    
+
     // Restore state from localStorage
     const isCollapsed = localStorage.getItem(`ticket-collapsed-${parentId}`) === 'true';
     if (isCollapsed) {
         btn.setAttribute('aria-expanded', 'false');
         toggleSubtasks(parentId, false);
     }
-    
+
     btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -906,6 +1018,5 @@ function toggleSubtasks(parentId, show) {
         }
     });
 }
-});
 </script>
 {% endblock %}
