@@ -592,6 +592,7 @@ document.addEventListener('DOMContentLoaded', function() {
         let conditionFilled = false;
         let certsFilled = false;
         let notesFilled = false;
+        let manufacturerFilled = false;
 
         document.querySelectorAll('.quote-row').forEach(row => {
             const cached = rowCache.get(row);
@@ -609,10 +610,12 @@ document.addEventListener('DOMContentLoaded', function() {
             const conditionVal = (elements.standardCondition && elements.standardCondition.value.trim()) || (lineData.supplier_condition_code || '').toString().trim();
             const certsVal = (elements.standardCerts && elements.standardCerts.value.trim()) || (lineData.supplier_certifications || '').toString().trim();
             const notesVal = elements.lineNotes ? elements.lineNotes.value.trim() : '';
+            const manufacturerVal = (elements.manufacturer && elements.manufacturer.value.trim()) || (lineData.manufacturer || '').toString().trim();
 
             if (conditionVal) conditionFilled = true;
             if (certsVal) certsFilled = true;
             if (notesVal) notesFilled = true;
+            if (manufacturerVal) manufacturerFilled = true;
         });
 
         if (pnDiff) {
@@ -634,6 +637,10 @@ document.addEventListener('DOMContentLoaded', function() {
         if (notesFilled) {
             const notesCheckbox = document.getElementById('col-notes');
             if (notesCheckbox) notesCheckbox.checked = true;
+        }
+        if (manufacturerFilled) {
+            const mfrCheckbox = document.getElementById('col-manufacturer');
+            if (mfrCheckbox) mfrCheckbox.checked = true;
         }
     }
 
@@ -707,6 +714,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (selectedCols.line_total) headers += `<th align="right" style="${hStyle}">Line Total (${displayCurrencyCode})</th>`;
         if (selectedCols.lead_days) headers += `<th align="left" style="${hStyle}">Lead (days)</th>`;
         if (selectedCols.quoted_on) headers += `<th align="left" style="${hStyle}">Quoted On</th>`;
+        if (selectedCols.manufacturer) headers += `<th align="left" style="${hStyle}">Mfr</th>`;
         if (selectedCols.condition) headers += `<th align="left" style="${hStyle}">Condition</th>`;
         if (selectedCols.certs) headers += `<th align="left" style="${hStyle}">Certs</th>`;
         if (selectedCols.notes) headers += `<th align="left" style="${hStyle}">Notes</th>`;
@@ -771,6 +779,9 @@ document.addEventListener('DOMContentLoaded', function() {
             if (selectedCols.line_total) html += `<td align="right" style="${rowStyle}">${lineTotalDisplay}</td>`;
             if (selectedCols.lead_days) html += `<td align="left" style="${rowStyle}">${elements.leadDays.value || ''}</td>`;
             if (selectedCols.quoted_on) html += `<td align="left" style="${rowStyle}">${formatQuotedOn(lineData.quoted_on)}</td>`;
+            const manufacturerVal = (elements.manufacturer && elements.manufacturer.value.trim()) || lineData.manufacturer || '';
+
+            if (selectedCols.manufacturer) html += `<td align="left" style="${rowStyle}">${manufacturerVal}</td>`;
             if (selectedCols.condition) html += `<td align="left" style="${rowStyle}">${conditionValue || ''}</td>`;
             if (selectedCols.certs) html += `<td align="left" style="${rowStyle}">${certsValue || ''}</td>`;
             if (selectedCols.notes) html += `<td align="left" style="${rowStyle}">${elements.lineNotes.value || ''}</td>`;

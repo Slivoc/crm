@@ -1669,6 +1669,19 @@ def customer_quote_simple(list_id):
                                  sql.id DESC
                         LIMIT 1
                     ) AS supplier_certifications,
+                    (
+                        SELECT sql.manufacturer
+                        FROM parts_list_supplier_quote_lines sql
+                        JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                        WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                          AND sql.is_no_bid = FALSE
+                          AND sql.manufacturer IS NOT NULL
+                          AND TRIM(sql.manufacturer) != ''
+                        ORDER BY sq.quote_date DESC,
+                                 sql.date_modified DESC,
+                                 sql.id DESC
+                        LIMIT 1
+                    ) AS supplier_manufacturer,
                     (SELECT sql.quoted_part_number 
                      FROM parts_list_supplier_quote_lines sql
                      JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
@@ -1722,6 +1735,11 @@ def customer_quote_simple(list_id):
                     (line_dict.get('standard_certs') or '').strip()
                     or (line_dict.get('supplier_certifications') or '').strip()
                     or (line_dict.get('supplier_standard_certs') or '').strip()
+                )
+
+                line_dict['manufacturer'] = (
+                    (line_dict.get('manufacturer') or '').strip()
+                    or (line_dict.get('supplier_manufacturer') or '').strip()
                 )
 
                 if not line_dict['display_part_number']:
