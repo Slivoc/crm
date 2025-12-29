@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, abort, flash, jsonify
 from db import execute as db_execute
@@ -47,6 +48,80 @@ def _workspace_response(success, message, status=200, logs=None, **data):
     return redirect(url_for('tickets.manage_workspaces'))
 
 
+def _coerce_id_list(values):
+    ids = []
+    for value in values or []:
+        if value is None:
+            continue
+        if isinstance(value, str):
+            parts = [part.strip() for chunk in value.split(",") for part in chunk.split() if part.strip()]
+        else:
+            parts = [value]
+        for part in parts:
+            try:
+                parsed = int(part)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                ids.append(parsed)
+    return ids
+
+
+def _normalize_ticket_objects(linked_objects, *, customer_ids=None, supplier_ids=None):
+    normalized = []
+    seen = set()
+
+    def _add(obj_type, obj_id):
+        try:
+            parsed_id = int(obj_id)
+        except (TypeError, ValueError):
+            return
+        if parsed_id <= 0:
+            return
+        key = (obj_type, parsed_id)
+        if key in seen:
+            return
+        seen.add(key)
+        normalized.append({'object_type': obj_type, 'object_id': parsed_id})
+
+    for obj in linked_objects or []:
+        if not isinstance(obj, dict):
+            continue
+        raw_type = obj.get('object_type') or obj.get('type') or obj.get('objectType')
+        obj_id = obj.get('object_id') or obj.get('id') or obj.get('objectId')
+        if not raw_type:
+            continue
+        obj_type = str(raw_type).strip().lower()
+        if obj_type not in ('customer', 'supplier'):
+            continue
+        _add(obj_type, obj_id)
+
+    for cid in _coerce_id_list(customer_ids):
+        _add('customer', cid)
+    for sid in _coerce_id_list(supplier_ids):
+        _add('supplier', sid)
+    return normalized
+
+
+def _extract_ticket_objects(payload=None):
+    payload = payload or {}
+    linked_objects = payload.get('linked_objects') or payload.get('objects') or payload.get('links')
+    if linked_objects is None:
+        raw = request.form.get('linked_objects')
+        if raw:
+            try:
+                linked_objects = json.loads(raw)
+            except ValueError:
+                linked_objects = None
+    customer_ids = payload.get('customer_ids') or request.form.getlist('customer_ids')
+    supplier_ids = payload.get('supplier_ids') or request.form.getlist('supplier_ids')
+    return _normalize_ticket_objects(
+        linked_objects,
+        customer_ids=customer_ids,
+        supplier_ids=supplier_ids,
+    )
+
+
 def _ticket_visibility_clause(user_id, is_admin):
     if is_admin:
         return "", []
@@ -86,7 +161,113 @@ def _fetch_ticket(ticket_id, user_id, is_admin):
     if ticket.get('parent_ticket_id') and ticket.get('parent_is_private') and not is_admin:
         if user_id not in (ticket.get('parent_created_by_user_id'), ticket.get('parent_assigned_user_id')):
             return None
+    ticket['linked_objects'] = _fetch_ticket_objects([ticket_id]).get(ticket_id, [])
     return ticket
+
+
+def _fetch_ticket_objects(ticket_ids):
+    if not ticket_ids:
+        return {}
+    placeholders = ", ".join(["?"] * len(ticket_ids))
+    objects_by_ticket = {ticket_id: [] for ticket_id in ticket_ids}
+    try:
+        rows = db_execute(
+            f"""
+            SELECT ticket_id, object_type, object_id
+            FROM ticket_objects
+            WHERE ticket_id IN ({placeholders})
+            """,
+            ticket_ids,
+            fetch="all",
+        ) or []
+    except Exception:
+        return objects_by_ticket
+    customer_ids = set()
+    supplier_ids = set()
+    for row in rows:
+        if row['object_type'] == 'customer':
+            customer_ids.add(row['object_id'])
+        elif row['object_type'] == 'supplier':
+            supplier_ids.add(row['object_id'])
+
+    customer_names = {}
+    supplier_names = {}
+    if customer_ids:
+        cust_placeholders = ", ".join(["?"] * len(customer_ids))
+        cust_rows = db_execute(
+            f"SELECT id, name FROM customers WHERE id IN ({cust_placeholders})",
+            list(customer_ids),
+            fetch="all",
+        ) or []
+        customer_names = {row['id']: row.get('name') for row in cust_rows}
+    if supplier_ids:
+        supp_placeholders = ", ".join(["?"] * len(supplier_ids))
+        supp_rows = db_execute(
+            f"SELECT id, name FROM suppliers WHERE id IN ({supp_placeholders})",
+            list(supplier_ids),
+            fetch="all",
+        ) or []
+        supplier_names = {row['id']: row.get('name') for row in supp_rows}
+
+    for row in rows:
+        name = None
+        if row['object_type'] == 'customer':
+            name = customer_names.get(row['object_id'])
+        elif row['object_type'] == 'supplier':
+            name = supplier_names.get(row['object_id'])
+        objects_by_ticket[row['ticket_id']].append({
+            'object_type': row['object_type'],
+            'object_id': row['object_id'],
+            'name': name,
+        })
+
+    for values in objects_by_ticket.values():
+        values.sort(key=lambda item: (item.get('object_type'), (item.get('name') or '').lower(), item.get('object_id')))
+    return objects_by_ticket
+
+
+def _replace_ticket_objects(ticket_id, linked_objects):
+    desired_set = {
+        (obj['object_type'], obj['object_id'])
+        for obj in linked_objects or []
+        if obj.get('object_type') in ('customer', 'supplier') and obj.get('object_id') is not None
+    }
+    existing_rows = db_execute(
+        "SELECT object_type, object_id FROM ticket_objects WHERE ticket_id = ?",
+        (ticket_id,),
+        fetch="all",
+    ) or []
+    existing_set = {(row['object_type'], row['object_id']) for row in existing_rows}
+
+    to_insert = desired_set
+    to_delete = existing_set - desired_set
+    added = desired_set - existing_set
+
+    if to_insert:
+        db_execute(
+            """
+            INSERT INTO ticket_objects (ticket_id, object_type, object_id, created_at, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (ticket_id, object_type, object_id)
+            DO UPDATE SET updated_at = EXCLUDED.updated_at
+            """,
+            [(ticket_id, obj_type, obj_id) for (obj_type, obj_id) in to_insert],
+            many=True,
+            commit=True,
+        )
+
+    if to_delete:
+        db_execute(
+            "DELETE FROM ticket_objects WHERE ticket_id = ? AND object_type = ? AND object_id = ?",
+            [(ticket_id, obj_type, obj_id) for (obj_type, obj_id) in to_delete],
+            many=True,
+            commit=True,
+        )
+
+    return {
+        'added': added,
+        'removed': to_delete,
+    }
 
 
 def _fetch_subjobs(parent_ticket_id, user_id, is_admin):
@@ -220,6 +401,7 @@ def create_from_email():
     """Create a ticket from an email message."""
     user_id = current_user.id
     data = request.get_json(silent=True) or {}
+    linked_objects = _extract_ticket_objects(data)
 
     email_message_id = data.get('message_id', '').strip()
     email_conversation_id = data.get('conversation_id', '').strip()
@@ -336,6 +518,9 @@ def create_from_email():
     if not ticket_id:
         return jsonify({'success': False, 'error': 'Failed to create ticket'}), 500
 
+    if linked_objects:
+        _replace_ticket_objects(ticket_id, linked_objects)
+
     return jsonify({
         'success': True,
         'ticket_id': ticket_id,
@@ -386,19 +571,25 @@ def list_tickets():
     is_admin = _is_admin()
 
     if request.method == 'POST':
-        title = request.form.get('title', '').strip()
-        description = request.form.get('description', '').strip()
-        assigned_user_id = request.form.get('assigned_user_id') or None
-        workspace_id = request.form.get('workspace_id') or None
-        status_id = request.form.get('status_id')
-        due_date = request.form.get('due_date') or None
-        is_private = bool(request.form.get('is_private'))
+        payload = request.get_json(silent=True) if request.is_json else None
+        title = str((payload.get('title') if payload else request.form.get('title')) or '').strip()
+        description = str((payload.get('description') if payload else request.form.get('description')) or '').strip()
+        assigned_user_id = (payload.get('assigned_user_id') if payload else request.form.get('assigned_user_id')) or None
+        workspace_id = (payload.get('workspace_id') if payload else request.form.get('workspace_id')) or None
+        status_id = payload.get('status_id') if payload else request.form.get('status_id')
+        due_date = (payload.get('due_date') if payload else request.form.get('due_date')) or None
+        is_private = _parse_bool(payload.get('is_private')) if payload else bool(request.form.get('is_private'))
+        linked_objects = _extract_ticket_objects(payload)
 
         if not title:
+            if _wants_json():
+                return jsonify({'success': False, 'error': 'Title is required.'}), 400
             flash('Title is required.', 'error')
             return redirect(url_for('tickets.list_tickets'))
 
         if not status_id:
+            if _wants_json():
+                return jsonify({'success': False, 'error': 'Status is required.'}), 400
             flash('Status is required.', 'error')
             return redirect(url_for('tickets.list_tickets'))
 
@@ -433,6 +624,13 @@ def list_tickets():
             commit=True,
         )
         ticket_id = row.get('id', list(row.values())[0]) if row else None
+        _replace_ticket_objects(ticket_id, linked_objects)
+        if _wants_json():
+            return jsonify({
+                'success': True,
+                'ticket_id': ticket_id,
+                'linked_objects': _fetch_ticket_objects([ticket_id]).get(ticket_id, []),
+            })
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
     show_closed = _parse_bool(request.args.get('show_closed'))
@@ -891,20 +1089,27 @@ def update_ticket(ticket_id):
     ticket = _fetch_ticket(ticket_id, user_id, is_admin)
     if not ticket:
         abort(403)
+    existing_linked_objects = _fetch_ticket_objects([ticket_id]).get(ticket_id, [])
+    payload = request.get_json(silent=True) if request.is_json else None
 
-    title = request.form.get('title', '').strip()
-    description = request.form.get('description', '').strip()
-    assigned_user_id = request.form.get('assigned_user_id') or None
-    workspace_id = request.form.get('workspace_id') or None
-    status_id = request.form.get('status_id')
-    due_date = request.form.get('due_date') or None
-    is_private = bool(request.form.get('is_private'))
+    title = str((payload.get('title') if payload else request.form.get('title')) or '').strip()
+    description = str((payload.get('description') if payload else request.form.get('description')) or '').strip()
+    assigned_user_id = (payload.get('assigned_user_id') if payload else request.form.get('assigned_user_id')) or None
+    workspace_id = (payload.get('workspace_id') if payload else request.form.get('workspace_id')) or None
+    status_id = payload.get('status_id') if payload else request.form.get('status_id')
+    due_date = (payload.get('due_date') if payload else request.form.get('due_date')) or None
+    is_private = _parse_bool(payload.get('is_private')) if payload else bool(request.form.get('is_private'))
+    linked_objects = _extract_ticket_objects(payload)
 
     if not title:
+        if _wants_json():
+            return jsonify({'success': False, 'error': 'Title is required.'}), 400
         flash('Title is required.', 'error')
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
     if not status_id:
+        if _wants_json():
+            return jsonify({'success': False, 'error': 'Status is required.'}), 400
         flash('Status is required.', 'error')
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
@@ -948,6 +1153,8 @@ def update_ticket(ticket_id):
         commit=True,
     )
 
+    object_changes = _replace_ticket_objects(ticket_id, linked_objects)
+
     changes = []
     if int(status_id) != ticket.get('status_id'):
         changes.append(f"Status changed to {status_name}")
@@ -975,9 +1182,37 @@ def update_ticket(ticket_id):
             changes.append(f"Workspace set to {workspace_name or 'workspace #' + str(workspace_id)}")
         else:
             changes.append("Workspace cleared")
+    if object_changes['added'] or object_changes['removed']:
+        current_objects = _fetch_ticket_objects([ticket_id]).get(ticket_id, [])
+        name_lookup = {
+            (obj['object_type'], obj['object_id']): obj.get('name')
+            for obj in current_objects + existing_linked_objects
+        }
+
+        def _format_label(obj_tuple):
+            label = name_lookup.get(obj_tuple)
+            if label:
+                return f"{obj_tuple[0]}: {label}"
+            return f"{obj_tuple[0]} #{obj_tuple[1]}"
+
+        added_labels = [_format_label(item) for item in sorted(object_changes['added'])]
+        removed_labels = [_format_label(item) for item in sorted(object_changes['removed'])]
+        change_parts = []
+        if added_labels:
+            change_parts.append(f"added {', '.join(added_labels)}")
+        if removed_labels:
+            change_parts.append(f"removed {', '.join(removed_labels)}")
+        if change_parts:
+            changes.append(f"Linked objects updated ({'; '.join(change_parts)})")
     if changes:
         _add_ticket_update(ticket_id, user_id, "; ".join(changes))
 
+    if _wants_json():
+        return jsonify({
+            'success': True,
+            'ticket_id': ticket_id,
+            'linked_objects': _fetch_ticket_objects([ticket_id]).get(ticket_id, []),
+        })
     return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
 
@@ -991,23 +1226,29 @@ def add_subjob(ticket_id):
     if not parent:
         abort(403)
 
-    title = request.form.get('title', '').strip()
-    description = request.form.get('description', '').strip()
-    assigned_user_id = request.form.get('assigned_user_id') or None
-    status_id = request.form.get('status_id')
-    due_date = request.form.get('due_date') or None
-    is_private = bool(request.form.get('is_private')) or bool(parent.get('is_private'))
+    payload = request.get_json(silent=True) if request.is_json else None
+    title = str((payload.get('title') if payload else request.form.get('title')) or '').strip()
+    description = str((payload.get('description') if payload else request.form.get('description')) or '').strip()
+    assigned_user_id = (payload.get('assigned_user_id') if payload else request.form.get('assigned_user_id')) or None
+    status_id = payload.get('status_id') if payload else request.form.get('status_id')
+    due_date = (payload.get('due_date') if payload else request.form.get('due_date')) or None
+    is_private = (_parse_bool(payload.get('is_private')) if payload else bool(request.form.get('is_private'))) or bool(parent.get('is_private'))
     workspace_id = parent.get('workspace_id')
+    linked_objects = _extract_ticket_objects(payload)
 
     if not title:
+        if _wants_json():
+            return jsonify({'success': False, 'error': 'Subjob title is required.'}), 400
         flash('Subjob title is required.', 'error')
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
     if not status_id:
+        if _wants_json():
+            return jsonify({'success': False, 'error': 'Status is required.'}), 400
         flash('Status is required.', 'error')
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
-    db_execute(
+    new_ticket_row = db_execute(
         """
         INSERT INTO tickets (
             title,
@@ -1023,6 +1264,7 @@ def add_subjob(ticket_id):
             updated_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        RETURNING id
         """,
         (
             title,
@@ -1035,11 +1277,23 @@ def add_subjob(ticket_id):
             is_private,
             ticket_id,
         ),
+        fetch="one",
         commit=True,
     )
 
+    new_ticket_id = new_ticket_row.get('id', list(new_ticket_row.values())[0]) if new_ticket_row else None
+
+    if linked_objects and new_ticket_id:
+        _replace_ticket_objects(new_ticket_id, linked_objects)
+
     _add_ticket_update(ticket_id, user_id, f"Subjob added: {title}")
 
+    if _wants_json():
+        return jsonify({
+            'success': True,
+            'ticket_id': new_ticket_id,
+            'linked_objects': _fetch_ticket_objects([new_ticket_id]).get(new_ticket_id, []) if new_ticket_id else [],
+        })
     return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
 
