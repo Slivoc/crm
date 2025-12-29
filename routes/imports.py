@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request, render_template, current_app, url_for, redirect
 import json
 from werkzeug.exceptions import BadRequest
-from datetime import datetime
+from datetime import date, datetime
 import os
 from werkzeug.utils import secure_filename
 
@@ -24,6 +24,62 @@ def _execute_with_cursor(cur, query, params=None):
     """Run a query on the provided cursor with placeholder translation."""
     cur.execute(_prepare_query(query), params or [])
     return cur
+
+
+def _parse_date(value):
+    """Normalize DB date/datetime/strings to a datetime for comparison."""
+    if not value:
+        return None
+
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+
+    value_str = str(value).strip()
+    if not value_str:
+        return None
+
+    for fmt in (
+        "%Y-%m-%d",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+        "%m/%d/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M:%S",
+    ):
+        try:
+            return datetime.strptime(value_str, fmt)
+        except ValueError:
+            continue
+
+    try:
+        return datetime.fromisoformat(value_str)
+    except ValueError:
+        return None
+
+
+def _format_latest(value):
+    """Return a friendly date string for display or None."""
+    parsed = _parse_date(value)
+    return parsed.strftime("%b %d, %Y") if parsed else None
+
+
+def _get_latest_date(query):
+    """Fetch MAX(date) style queries and normalize the result."""
+    row = db_execute(query, fetch='one')
+    if not row:
+        return None
+
+    latest = row['latest'] if isinstance(row, dict) else row[0]
+    return _parse_date(latest)
+
+
+def _combine_latest(*values):
+    """Return the most recent non-null datetime from provided values."""
+    filtered = [v for v in values if v]
+    return max(filtered) if filtered else None
 
 
 class ImportHelpers:
@@ -314,5 +370,20 @@ def list_stock_movement_imports():
 
 @imports_bp.route('/unified', methods=['GET'])
 def unified_imports():
-    """Show unified imports page with all import types"""
-    return render_template('unified_imports.html')
+    """Show unified imports page with all import types and latest record dates."""
+    latest_sales_orders = _get_latest_date("SELECT MAX(date_entered) AS latest FROM sales_orders")
+    latest_purchase_orders = _get_latest_date("SELECT MAX(date_issued) AS latest FROM purchase_orders")
+    latest_vq_entry = _get_latest_date("SELECT MAX(entry_date) AS latest FROM vqs")
+    latest_vq_line = _get_latest_date("SELECT MAX(quoted_date) AS latest FROM vq_lines")
+    latest_cqs = _get_latest_date("SELECT MAX(entry_date) AS latest FROM cqs")
+    latest_stock = _get_latest_date("SELECT MAX(movement_date) AS latest FROM stock_movements")
+
+    latest_dates = {
+        'sales_orders': _format_latest(latest_sales_orders),
+        'purchase_orders': _format_latest(latest_purchase_orders),
+        'vendor_quotes': _format_latest(_combine_latest(latest_vq_entry, latest_vq_line)),
+        'customer_quotes': _format_latest(latest_cqs),
+        'stock_levels': _format_latest(latest_stock),
+    }
+
+    return render_template('unified_imports.html', latest_dates=latest_dates)

@@ -49,6 +49,30 @@
                     <span><i class="bi bi-check-circle me-1"></i>Show closed</span>
                 </label>
             </div>
+            <div class="row g-3 align-items-end mt-2">
+                <div class="col-md-4 col-lg-3">
+                    <label class="form-label mb-1">Customer</label>
+                    <select class="form-select form-select-sm" name="customer_id">
+                        <option value="">Any</option>
+                        {% for customer in customers %}
+                            <option value="{{ customer.id }}" {% if customer_filter_id and customer.id == customer_filter_id|int %}selected{% endif %}>
+                                {{ customer.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4 col-lg-3">
+                    <label class="form-label mb-1">Supplier</label>
+                    <select class="form-select form-select-sm" name="supplier_id">
+                        <option value="">Any</option>
+                        {% for supplier in suppliers %}
+                            <option value="{{ supplier.id }}" {% if supplier_filter_id and supplier.id == supplier_filter_id|int %}selected{% endif %}>
+                                {{ supplier.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
             <button type="submit" class="btn btn-sm btn-outline-secondary">
                 <i class="bi bi-funnel me-1"></i>Apply
             </button>
@@ -155,6 +179,22 @@
                                             </span>
                                         {% endif %}
                                     </div>
+                                    {% set customer_links = (ticket.linked_objects or []) | selectattr('object_type', 'equalto', 'customer') | list %}
+                                    {% set supplier_links = (ticket.linked_objects or []) | selectattr('object_type', 'equalto', 'supplier') | list %}
+                                    {% if customer_links or supplier_links %}
+                                        <div class="ticket-links mt-2">
+                                            {% if customer_links %}
+                                                <span class="badge bg-info text-dark me-1">
+                                                    <i class="bi bi-people-fill me-1"></i>{{ customer_links|length }} customer{{ '' if customer_links|length == 1 else 's' }}
+                                                </span>
+                                            {% endif %}
+                                            {% if supplier_links %}
+                                                <span class="badge bg-secondary text-light">
+                                                    <i class="bi bi-truck me-1"></i>{{ supplier_links|length }} supplier{{ '' if supplier_links|length == 1 else 's' }}
+                                                </span>
+                                            {% endif %}
+                                        </div>
+                                    {% endif %}
                                     {% if ticket.subjob_count %}
                                         <div class="subjob-progress">
                                             <div class="progress-bar" style="width: {{ (ticket.closed_subjob_count / ticket.subjob_count * 100) | int }}%"></div>
@@ -227,6 +267,24 @@
                         <div class="col-12">
                             <label class="form-label" for="ticketDescription">Description</label>
                             <textarea class="form-control" id="ticketDescription" name="description" rows="4" placeholder="Add details about this ticket..."></textarea>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="ticketCustomers">Customers</label>
+                            <select class="form-select" id="ticketCustomers" name="customer_ids" multiple>
+                                {% for customer in customers %}
+                                    <option value="{{ customer.id }}">{{ customer.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Select one or more customers linked to this ticket.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="ticketSuppliers">Suppliers</label>
+                            <select class="form-select" id="ticketSuppliers" name="supplier_ids" multiple>
+                                {% for supplier in suppliers %}
+                                    <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Select one or more suppliers linked to this ticket.</div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="ticketDueDate">Due Date</label>
@@ -838,6 +896,44 @@
 </style>
 
 <script>
+const workspaceDefaults = {{ workspace_defaults|tojson }};
+const workspaceFilterId = "{{ workspace_filter_id or '' }}";
+const workspaceSelect = document.getElementById('ticketWorkspace');
+const assigneeSelect = document.getElementById('ticketAssignee');
+let lastAutoAssigned = null;
+
+const applyWorkspaceDefaults = (workspaceId) => {
+    if (!assigneeSelect) {
+        return;
+    }
+    const defaultAssigneeId = workspaceDefaults[workspaceId];
+    if (defaultAssigneeId) {
+        assigneeSelect.value = String(defaultAssigneeId);
+        lastAutoAssigned = defaultAssigneeId;
+    } else if (!assigneeSelect.value || assigneeSelect.value === String(lastAutoAssigned || '')) {
+        assigneeSelect.value = '';
+        lastAutoAssigned = null;
+    }
+};
+
+const newTicketModalEl = document.getElementById('newTicketModal');
+if (newTicketModalEl) {
+    newTicketModalEl.addEventListener('show.bs.modal', () => {
+        if (workspaceFilterId && workspaceSelect) {
+            workspaceSelect.value = workspaceFilterId;
+        }
+        if (workspaceSelect) {
+            applyWorkspaceDefaults(workspaceSelect.value || null);
+        }
+    });
+}
+
+if (workspaceSelect) {
+    workspaceSelect.addEventListener('change', () => {
+        applyWorkspaceDefaults(workspaceSelect.value || null);
+    });
+}
+
 // Auto-submit filter form when checkboxes change
 document.querySelectorAll('.filter-chip input').forEach(input => {
     input.addEventListener('change', () => {
@@ -853,17 +949,19 @@ document.querySelectorAll('.meta-item[data-due-date]').forEach(item => {
     if (dueDate < today) {
         item.classList.add('overdue');
     }
-    // Collapse/expand subtasks
+});
+
+// Collapse/expand subtasks
 document.querySelectorAll('.collapse-toggle').forEach(btn => {
     const parentId = btn.dataset.targetParent;
-    
+
     // Restore state from localStorage
     const isCollapsed = localStorage.getItem(`ticket-collapsed-${parentId}`) === 'true';
     if (isCollapsed) {
         btn.setAttribute('aria-expanded', 'false');
         toggleSubtasks(parentId, false);
     }
-    
+
     btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -878,23 +976,23 @@ function toggleSubtasks(parentId, show) {
     // Find all subtasks that belong to this parent (direct and nested)
     const btn = document.querySelector(`.collapse-toggle[data-target-parent="${parentId}"]`);
     if (!btn) return;
-    
+
     const column = btn.closest('.ticket-column');
     const allWrappers = column.querySelectorAll('.ticket-wrapper');
     let capturing = false;
     let parentDepth = 0;
-    
+
     allWrappers.forEach(wrapper => {
         const ticketCard = wrapper.querySelector('.ticket-card');
         const ticketId = ticketCard?.dataset.ticketId;
         const depth = parseInt(wrapper.dataset.depth) || 0;
-        
+
         if (ticketId === parentId) {
             capturing = true;
             parentDepth = depth;
             return;
         }
-        
+
         if (capturing) {
             // Stop capturing when we hit a ticket at same or lower depth than parent
             if (depth <= parentDepth) {
@@ -906,6 +1004,5 @@ function toggleSubtasks(parentId, show) {
         }
     });
 }
-});
 </script>
 {% endblock %}
