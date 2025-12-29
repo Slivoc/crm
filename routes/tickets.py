@@ -1,6 +1,7 @@
+import json
 from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, abort, flash, jsonify
-from db import execute as db_execute
+from db import execute as db_execute, db_cursor
 from routes.auth import login_required, current_user
 from models import Permission
 
@@ -67,13 +68,19 @@ def _fetch_ticket(ticket_id, user_id, is_admin):
             pt.is_private AS parent_is_private,
             pt.created_by_user_id AS parent_created_by_user_id,
             pt.assigned_user_id AS parent_assigned_user_id,
-            tw.name AS workspace_name
+            tw.name AS workspace_name,
+            COALESCE(tlc.link_count, 0) AS link_count
         FROM tickets t
         JOIN ticket_statuses s ON t.status_id = s.id
         JOIN users cu ON t.created_by_user_id = cu.id
         LEFT JOIN users au ON t.assigned_user_id = au.id
         LEFT JOIN tickets pt ON t.parent_ticket_id = pt.id
         LEFT JOIN ticket_workspaces tw ON t.workspace_id = tw.id
+        LEFT JOIN (
+            SELECT ticket_id, COUNT(*) AS link_count
+            FROM ticket_links
+            GROUP BY ticket_id
+        ) tlc ON tlc.ticket_id = t.id
         WHERE t.id = ?
         {visibility_clause}
         """,
@@ -83,6 +90,7 @@ def _fetch_ticket(ticket_id, user_id, is_admin):
     if not row:
         return None
     ticket = dict(row)
+    ticket["link_count"] = int(ticket.get("link_count") or 0)
     if ticket.get('parent_ticket_id') and ticket.get('parent_is_private') and not is_admin:
         if user_id not in (ticket.get('parent_created_by_user_id'), ticket.get('parent_assigned_user_id')):
             return None
@@ -149,6 +157,141 @@ def _fetch_workspaces_with_members():
     for workspace in workspaces:
         workspace["member_ids"] = members_by_workspace.get(workspace["id"], set())
     return workspaces
+
+
+def _fetch_customers_for_links():
+    rows = db_execute(
+        "SELECT id, name FROM customers ORDER BY name",
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _fetch_suppliers_for_links():
+    rows = db_execute(
+        "SELECT id, name FROM suppliers ORDER BY name",
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _parse_links_payload(raw_value):
+    if not raw_value:
+        return []
+    try:
+        payload = json.loads(raw_value)
+    except Exception:
+        return []
+    links = []
+    seen = set()
+    for item in payload if isinstance(payload, list) else []:
+        link_type = (item.get('type') or '').lower()
+        object_id = item.get('id')
+        try:
+            object_id = int(object_id)
+        except (TypeError, ValueError):
+            continue
+        if link_type not in ('customer', 'supplier'):
+            continue
+        key = (link_type, object_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append({'link_type': link_type, 'object_id': object_id})
+    return links
+
+
+def _filter_valid_links(links):
+    customers = [link['object_id'] for link in links if link['link_type'] == 'customer']
+    suppliers = [link['object_id'] for link in links if link['link_type'] == 'supplier']
+    valid_customers = set()
+    valid_suppliers = set()
+
+    if customers:
+        placeholders = ", ".join(["?"] * len(customers))
+        rows = db_execute(
+            f"SELECT id FROM customers WHERE id IN ({placeholders})",
+            customers,
+            fetch="all",
+        ) or []
+        valid_customers = {row['id'] for row in rows}
+
+    if suppliers:
+        placeholders = ", ".join(["?"] * len(suppliers))
+        rows = db_execute(
+            f"SELECT id FROM suppliers WHERE id IN ({placeholders})",
+            suppliers,
+            fetch="all",
+        ) or []
+        valid_suppliers = {row['id'] for row in rows}
+
+    filtered = []
+    for link in links:
+        if link['link_type'] == 'customer' and link['object_id'] not in valid_customers:
+            continue
+        if link['link_type'] == 'supplier' and link['object_id'] not in valid_suppliers:
+            continue
+        filtered.append(link)
+    return filtered
+
+
+def _apply_ticket_links(ticket_id, links):
+    if ticket_id is None:
+        return
+    links = _filter_valid_links(links)
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            "SELECT id, link_type, object_id FROM ticket_links WHERE ticket_id = ?",
+            (ticket_id,),
+        )
+        rows = cur.fetchall() or []
+        existing = {(row["link_type"], row["object_id"]): row["id"] for row in rows}
+        desired = {(link["link_type"], link["object_id"]) for link in links}
+
+        to_delete = [link_id for key, link_id in existing.items() if key not in desired]
+        if to_delete:
+            placeholders = ", ".join(["?"] * len(to_delete))
+            cur.execute(
+                f"DELETE FROM ticket_links WHERE id IN ({placeholders})",
+                to_delete,
+            )
+
+        to_insert = [
+            link for link in links
+            if (link["link_type"], link["object_id"]) not in existing
+        ]
+        if to_insert:
+            cur.executemany(
+                """
+                INSERT INTO ticket_links (ticket_id, link_type, object_id)
+                VALUES (?, ?, ?)
+                """,
+                [(ticket_id, link["link_type"], link["object_id"]) for link in to_insert],
+            )
+
+
+def _fetch_ticket_links(ticket_id):
+    rows = db_execute(
+        """
+        SELECT
+            tl.id,
+            tl.link_type,
+            tl.object_id,
+            CASE
+                WHEN tl.link_type = 'customer' THEN c.name
+                WHEN tl.link_type = 'supplier' THEN s.name
+                ELSE NULL
+            END AS object_name
+        FROM ticket_links tl
+        LEFT JOIN customers c ON tl.link_type = 'customer' AND c.id = tl.object_id
+        LEFT JOIN suppliers s ON tl.link_type = 'supplier' AND s.id = tl.object_id
+        WHERE tl.ticket_id = ?
+        ORDER BY tl.created_at, tl.id
+        """,
+        (ticket_id,),
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
 
 
 def _fetch_workspace_chips(user_id):
@@ -393,6 +536,7 @@ def list_tickets():
         status_id = request.form.get('status_id')
         due_date = request.form.get('due_date') or None
         is_private = bool(request.form.get('is_private'))
+        linked_items = _parse_links_payload(request.form.get('linked_items'))
 
         if not title:
             flash('Title is required.', 'error')
@@ -433,6 +577,8 @@ def list_tickets():
             commit=True,
         )
         ticket_id = row.get('id', list(row.values())[0]) if row else None
+        if ticket_id is not None:
+            _apply_ticket_links(ticket_id, linked_items)
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
     show_closed = _parse_bool(request.args.get('show_closed'))
@@ -487,7 +633,8 @@ def list_tickets():
             pt.parent_ticket_id AS parent_parent_id,
             tw.name AS workspace_name,
             COALESCE(sc.subjob_count, 0) AS subjob_count,
-            COALESCE(sc.closed_subjob_count, 0) AS closed_subjob_count
+            COALESCE(sc.closed_subjob_count, 0) AS closed_subjob_count,
+            COALESCE(tlc.link_count, 0) AS link_count
         FROM tickets t
         JOIN ticket_statuses s ON t.status_id = s.id
         JOIN users cu ON t.created_by_user_id = cu.id
@@ -504,6 +651,11 @@ def list_tickets():
             WHERE t2.parent_ticket_id IS NOT NULL
             GROUP BY t2.parent_ticket_id
         ) sc ON sc.parent_ticket_id = t.id
+        LEFT JOIN (
+            SELECT ticket_id, COUNT(*) AS link_count
+            FROM ticket_links
+            GROUP BY ticket_id
+        ) tlc ON tlc.ticket_id = t.id
         WHERE 1 = 1
         {visibility_clause}
         {parent_visibility_clause}
@@ -522,6 +674,7 @@ def list_tickets():
     tickets = [dict(row) for row in rows]
     ticket_lookup = {ticket["id"]: ticket for ticket in tickets}
     for ticket in tickets:
+        ticket["link_count"] = int(ticket.get("link_count") or 0)
         chain_titles = []
         parent_id = ticket.get("parent_id")
         hop_count = 0
@@ -542,6 +695,8 @@ def list_tickets():
     users = _fetch_users()
     workspaces = _fetch_workspaces()
     workspace_chips = _fetch_workspace_chips(user_id)
+    customers = _fetch_customers_for_links()
+    suppliers = _fetch_suppliers_for_links()
     default_status_id = None
     for status in statuses:
         if not status.get('is_closed'):
@@ -601,6 +756,8 @@ def list_tickets():
         created_by_me=created_by_me,
         workspace_filter_id=workspace_filter_id,
         default_status_id=default_status_id,
+        customers=customers,
+        suppliers=suppliers,
     )
 
 
@@ -809,6 +966,10 @@ def view_ticket(ticket_id):
     workspaces = _fetch_workspaces()
     subjobs = _fetch_subjobs(ticket_id, user_id, is_admin)
     updates = _fetch_updates(ticket_id)
+    ticket_links = _fetch_ticket_links(ticket_id)
+    customers = _fetch_customers_for_links()
+    suppliers = _fetch_suppliers_for_links()
+    ticket["link_count"] = len(ticket_links)
 
     return render_template(
         'ticket_edit.html',
@@ -818,6 +979,9 @@ def view_ticket(ticket_id):
         workspaces=workspaces,
         subjobs=subjobs,
         updates=updates,
+        ticket_links=ticket_links,
+        customers=customers,
+        suppliers=suppliers,
     )
 
 
@@ -899,6 +1063,10 @@ def update_ticket(ticket_id):
     status_id = request.form.get('status_id')
     due_date = request.form.get('due_date') or None
     is_private = bool(request.form.get('is_private'))
+    linked_items = _parse_links_payload(request.form.get('linked_items'))
+    current_links = _fetch_ticket_links(ticket_id)
+    current_link_pairs = {(link.get("link_type"), link.get("object_id")) for link in current_links}
+    desired_link_pairs = {(link.get("link_type"), link.get("object_id")) for link in linked_items}
 
     if not title:
         flash('Title is required.', 'error')
@@ -948,6 +1116,8 @@ def update_ticket(ticket_id):
         commit=True,
     )
 
+    _apply_ticket_links(ticket_id, linked_items)
+
     changes = []
     if int(status_id) != ticket.get('status_id'):
         changes.append(f"Status changed to {status_name}")
@@ -975,6 +1145,8 @@ def update_ticket(ticket_id):
             changes.append(f"Workspace set to {workspace_name or 'workspace #' + str(workspace_id)}")
         else:
             changes.append("Workspace cleared")
+    if current_link_pairs != desired_link_pairs:
+        changes.append("Links updated")
     if changes:
         _add_ticket_update(ticket_id, user_id, "; ".join(changes))
 

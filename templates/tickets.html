@@ -118,6 +118,16 @@
                                         <i class="bi bi-chevron-down"></i>
                                     </button>
                                     {% endif %}
+                                    <div class="ticket-flags">
+                                        {% if ticket.link_count %}
+                                            <span class="linked-badge" title="Linked records">
+                                                <i class="bi bi-link-45deg me-1"></i>{{ ticket.link_count }}
+                                            </span>
+                                        {% endif %}
+                                        {% if ticket.is_private %}
+                                            <span class="private-badge"><i class="bi bi-lock"></i></span>
+                                        {% endif %}
+                                    </div>
                                     <a href="{{ url_for('tickets.view_ticket', ticket_id=ticket.id) }}" class="ticket-title">
                                         {% if ticket.email_subject %}
                                             <i class="bi bi-envelope me-1 text-muted"></i>
@@ -160,9 +170,6 @@
                                             <div class="progress-bar" style="width: {{ (ticket.closed_subjob_count / ticket.subjob_count * 100) | int }}%"></div>
                                             <span class="progress-text">{{ ticket.closed_subjob_count }}/{{ ticket.subjob_count }} subtasks</span>
                                         </div>
-                                    {% endif %}
-                                    {% if ticket.is_private %}
-                                        <span class="private-badge"><i class="bi bi-lock"></i></span>
                                     {% endif %}
                                 </div>
                             </div>
@@ -238,6 +245,35 @@
                                 <label class="form-check-label" for="ticketPrivate">
                                     <i class="bi bi-lock me-1"></i>Private ticket
                                 </label>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="newTicketLinkManager">Links</label>
+                            <div class="link-manager" id="newTicketLinkManager">
+                                <div class="link-chip-list" data-empty="No links added yet">
+                                    <span class="text-muted small">No links added yet</span>
+                                </div>
+                                <div class="row g-2 align-items-end mt-1">
+                                    <div class="col-md-3">
+                                        <label class="form-label small mb-1" for="newLinkType">Type</label>
+                                        <select class="form-select form-select-sm link-type-select" id="newLinkType">
+                                            <option value="customer">Customer</option>
+                                            <option value="supplier">Supplier</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-7">
+                                        <label class="form-label small mb-1" for="newLinkObject">Customer / Supplier</label>
+                                        <select class="form-select form-select-sm link-object-select" id="newLinkObject">
+                                            <option value="">Select a customer</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-2 d-grid">
+                                        <button type="button" class="btn btn-outline-primary btn-sm add-link-btn">
+                                            <i class="bi bi-plus-lg me-1"></i>Add
+                                        </button>
+                                    </div>
+                                </div>
+                                <input type="hidden" name="linked_items" id="newTicketLinksInput" value="[]">
                             </div>
                         </div>
                     </div>
@@ -639,12 +675,80 @@
     color: #495057;
 }
 
-.private-badge {
+.ticket-flags {
     position: absolute;
     top: 10px;
     right: 10px;
-    color: #6c757d;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 2;
+}
+
+.linked-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: #e8f0fe;
+    color: #1a73e8;
+    border-radius: 12px;
     font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.ticket-flags .private-badge {
+    position: static;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: #f8f9fa;
+    color: #6c757d;
+    border-radius: 12px;
+    font-size: 0.75rem;
+}
+
+.private-badge i {
+    line-height: 1;
+}
+
+.link-manager {
+    background: #f8f9fa;
+    border: 1px dashed #dee2e6;
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.link-chip-list {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 32px;
+}
+
+.link-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: #eef2f7;
+    color: #495057;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    border: 1px solid #dde3ea;
+}
+
+.link-chip .remove-link {
+    border: none;
+    background: transparent;
+    color: #6c757d;
+    padding: 0;
+    line-height: 1;
+}
+
+.link-chip .remove-link:hover {
+    color: #dc3545;
 }
 
 /* Modal Styles */
@@ -796,8 +900,8 @@
     transform: rotate(-90deg);
 }
 
-/* Adjust private badge position when collapse toggle exists */
-.ticket-card:has(.collapse-toggle) .private-badge {
+/* Adjust badge position when collapse toggle exists */
+.ticket-card:has(.collapse-toggle) .ticket-flags {
     right: 40px;
 }
 
@@ -838,74 +942,200 @@
 </style>
 
 <script>
-// Auto-submit filter form when checkboxes change
-document.querySelectorAll('.filter-chip input').forEach(input => {
-    input.addEventListener('change', () => {
-        input.closest('form').submit();
-    });
-});
+const linkOptions = {
+    customers: {{ customers | tojson }},
+    suppliers: {{ suppliers | tojson }},
+};
 
-// Highlight overdue items
-document.querySelectorAll('.meta-item[data-due-date]').forEach(item => {
-    const dueDate = new Date(item.dataset.dueDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (dueDate < today) {
-        item.classList.add('overdue');
-    }
-    // Collapse/expand subtasks
-document.querySelectorAll('.collapse-toggle').forEach(btn => {
-    const parentId = btn.dataset.targetParent;
-    
-    // Restore state from localStorage
-    const isCollapsed = localStorage.getItem(`ticket-collapsed-${parentId}`) === 'true';
-    if (isCollapsed) {
-        btn.setAttribute('aria-expanded', 'false');
-        toggleSubtasks(parentId, false);
-    }
-    
-    btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const expanded = btn.getAttribute('aria-expanded') === 'true';
-        btn.setAttribute('aria-expanded', !expanded);
-        toggleSubtasks(parentId, !expanded);
-        localStorage.setItem(`ticket-collapsed-${parentId}`, expanded);
-    });
-});
+function setupLinkManager(containerId, options) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
 
-function toggleSubtasks(parentId, show) {
-    // Find all subtasks that belong to this parent (direct and nested)
-    const btn = document.querySelector(`.collapse-toggle[data-target-parent="${parentId}"]`);
-    if (!btn) return;
-    
-    const column = btn.closest('.ticket-column');
-    const allWrappers = column.querySelectorAll('.ticket-wrapper');
-    let capturing = false;
-    let parentDepth = 0;
-    
-    allWrappers.forEach(wrapper => {
-        const ticketCard = wrapper.querySelector('.ticket-card');
-        const ticketId = ticketCard?.dataset.ticketId;
-        const depth = parseInt(wrapper.dataset.depth) || 0;
-        
-        if (ticketId === parentId) {
-            capturing = true;
-            parentDepth = depth;
+    const typeSelect = container.querySelector('.link-type-select');
+    const objectSelect = container.querySelector('.link-object-select');
+    const addButton = container.querySelector('.add-link-btn');
+    const chips = container.querySelector('.link-chip-list');
+    const hiddenInput = container.querySelector('input[name="linked_items"]');
+
+    const optionLookup = {
+        customer: options.customers || [],
+        supplier: options.suppliers || [],
+    };
+
+    let links = (options.initialLinks || []).map(link => ({
+        type: (link.type || '').toLowerCase() || 'customer',
+        id: Number(link.id),
+        name: link.name || '',
+    }));
+
+    const findLabel = (type, id) => {
+        const list = optionLookup[type] || [];
+        const match = list.find(item => String(item.id) === String(id));
+        return match ? match.name : `#${id}`;
+    };
+
+    const syncInput = () => {
+        if (hiddenInput) {
+            hiddenInput.value = JSON.stringify(
+                links.map(link => ({type: link.type, id: link.id, name: link.name || findLabel(link.type, link.id)}))
+            );
+        }
+    };
+
+    const renderOptions = () => {
+        const type = ((typeSelect && typeSelect.value) ? typeSelect.value : 'customer').toLowerCase();
+        const list = optionLookup[type] || [];
+        if (!objectSelect) return;
+        objectSelect.innerHTML = '';
+
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = type === 'supplier' ? 'Select a supplier' : 'Select a customer';
+        objectSelect.appendChild(placeholder);
+
+        list.forEach(item => {
+            const opt = document.createElement('option');
+            opt.value = item.id;
+            opt.textContent = item.name;
+            objectSelect.appendChild(opt);
+        });
+    };
+
+    const renderChips = () => {
+        if (!chips) return;
+        chips.innerHTML = '';
+        if (!links.length) {
+            const empty = document.createElement('span');
+            empty.className = 'text-muted small';
+            empty.textContent = chips.dataset.empty || 'No links added yet';
+            chips.appendChild(empty);
             return;
         }
-        
-        if (capturing) {
-            // Stop capturing when we hit a ticket at same or lower depth than parent
-            if (depth <= parentDepth) {
-                capturing = false;
-                return;
-            }
-            // This is a subtask of the parent
-            wrapper.classList.toggle('collapsed-child', !show);
+        links.forEach((link, index) => {
+            const chip = document.createElement('span');
+            chip.className = 'link-chip';
+
+            const icon = document.createElement('i');
+            icon.className = link.type === 'supplier' ? 'bi bi-truck' : 'bi bi-building';
+            chip.appendChild(icon);
+
+            const label = document.createElement('span');
+            label.textContent = link.name || findLabel(link.type, link.id);
+            chip.appendChild(label);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'remove-link';
+            removeBtn.setAttribute('aria-label', 'Remove link');
+            removeBtn.innerHTML = '&times;';
+            removeBtn.addEventListener('click', () => {
+                links.splice(index, 1);
+                renderChips();
+                syncInput();
+            });
+            chip.appendChild(removeBtn);
+
+            chips.appendChild(chip);
+        });
+    };
+
+    if (addButton) {
+        addButton.addEventListener('click', () => {
+            const type = ((typeSelect && typeSelect.value) ? typeSelect.value : 'customer').toLowerCase();
+            const selectedId = objectSelect ? objectSelect.value : '';
+            if (!selectedId) return;
+            const exists = links.some(link => link.type === type && String(link.id) === String(selectedId));
+            if (exists) return;
+
+            links.push({
+                type,
+                id: Number(selectedId),
+                name: findLabel(type, selectedId),
+            });
+            renderChips();
+            syncInput();
+        });
+    }
+
+    if (typeSelect) {
+        typeSelect.addEventListener('change', renderOptions);
+    }
+
+    renderOptions();
+    renderChips();
+    syncInput();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.filter-chip input').forEach(input => {
+        input.addEventListener('change', () => {
+            input.closest('form').submit();
+        });
+    });
+
+    document.querySelectorAll('.meta-item[data-due-date]').forEach(item => {
+        const dueDate = new Date(item.dataset.dueDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (dueDate < today) {
+            item.classList.add('overdue');
         }
     });
-}
+
+    const toggleSubtasks = (parentId, show) => {
+        const btn = document.querySelector(`.collapse-toggle[data-target-parent="${parentId}"]`);
+        if (!btn) return;
+        
+        const column = btn.closest('.ticket-column');
+        const allWrappers = column.querySelectorAll('.ticket-wrapper');
+        let capturing = false;
+        let parentDepth = 0;
+        
+        allWrappers.forEach(wrapper => {
+            const ticketCard = wrapper.querySelector('.ticket-card');
+            const ticketId = ticketCard ? ticketCard.dataset.ticketId : null;
+            const depth = parseInt(wrapper.dataset.depth) || 0;
+            
+            if (ticketId === parentId) {
+                capturing = true;
+                parentDepth = depth;
+                return;
+            }
+            
+            if (capturing) {
+                if (depth <= parentDepth) {
+                    capturing = false;
+                    return;
+                }
+                wrapper.classList.toggle('collapsed-child', !show);
+            }
+        });
+    };
+
+    document.querySelectorAll('.collapse-toggle').forEach(btn => {
+        const parentId = btn.dataset.targetParent;
+        
+        const isCollapsed = localStorage.getItem(`ticket-collapsed-${parentId}`) === 'true';
+        if (isCollapsed) {
+            btn.setAttribute('aria-expanded', 'false');
+            toggleSubtasks(parentId, false);
+        }
+        
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const expanded = btn.getAttribute('aria-expanded') === 'true';
+            btn.setAttribute('aria-expanded', !expanded);
+            toggleSubtasks(parentId, !expanded);
+            localStorage.setItem(`ticket-collapsed-${parentId}`, expanded);
+        });
+    });
+
+    setupLinkManager('newTicketLinkManager', {
+        customers: linkOptions.customers,
+        suppliers: linkOptions.suppliers,
+        initialLinks: [],
+    });
 });
 </script>
 {% endblock %}

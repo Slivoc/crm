@@ -22,6 +22,9 @@
             <span class="status-badge {% if ticket.status_is_closed %}closed{% endif %}">
                 {{ ticket.status_name }}
             </span>
+            {% if ticket.link_count %}
+                <span class="linked-badge"><i class="bi bi-link-45deg me-1"></i>{{ ticket.link_count }} linked</span>
+            {% endif %}
             {% if ticket.workspace_name %}
                 <span class="workspace-badge"><i class="bi bi-collection me-1"></i>{{ ticket.workspace_name }}</span>
             {% endif %}
@@ -123,6 +126,44 @@
                         <label class="form-check-label" for="editPrivate">
                             <i class="bi bi-lock me-1"></i>Private ticket
                         </label>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label" for="editLinkManager">Links</label>
+                        <div class="link-manager" id="editLinkManager">
+                            <div class="link-chip-list" data-empty="No links added yet">
+                                {% for link in ticket_links %}
+                                    <span class="link-chip">
+                                        <i class="bi {% if link.link_type == 'supplier' %}bi-truck{% else %}bi-building{% endif %}"></i>
+                                        <span>{{ link.object_name or ('#' ~ link.object_id) }}</span>
+                                        <button type="button" class="remove-link" aria-label="Remove link">&times;</button>
+                                    </span>
+                                {% else %}
+                                    <span class="text-muted small">No links added yet</span>
+                                {% endfor %}
+                            </div>
+                            <div class="row g-2 align-items-end mt-1">
+                                <div class="col-md-3">
+                                    <label class="form-label small mb-1" for="editLinkType">Type</label>
+                                    <select class="form-select form-select-sm link-type-select" id="editLinkType">
+                                        <option value="customer">Customer</option>
+                                        <option value="supplier">Supplier</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-7">
+                                    <label class="form-label small mb-1" for="editLinkObject">Customer / Supplier</label>
+                                    <select class="form-select form-select-sm link-object-select" id="editLinkObject">
+                                        <option value="">Select a customer</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2 d-grid">
+                                    <button type="button" class="btn btn-outline-primary btn-sm add-link-btn">
+                                        <i class="bi bi-plus-lg me-1"></i>Add
+                                    </button>
+                                </div>
+                            </div>
+                            <input type="hidden" name="linked_items" id="editTicketLinksInput" value="[]">
+                        </div>
                     </div>
 
                     <div class="d-flex justify-content-between align-items-center">
@@ -364,6 +405,18 @@
     color: #198754;
 }
 
+.linked-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: #e8f0fe;
+    color: #1a73e8;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
 .workspace-badge {
     display: inline-flex;
     align-items: center;
@@ -445,6 +498,44 @@
 .description-input:focus {
     border-color: #1a73e8;
     box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.1);
+}
+
+.link-manager {
+    background: #f8f9fa;
+    border: 1px dashed #dee2e6;
+    border-radius: 10px;
+    padding: 12px;
+}
+
+.link-chip-list {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 32px;
+}
+
+.link-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: #eef2f7;
+    color: #495057;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    border: 1px solid #dde3ea;
+}
+
+.link-chip .remove-link {
+    border: none;
+    background: transparent;
+    color: #6c757d;
+    padding: 0;
+    line-height: 1;
+}
+
+.link-chip .remove-link:hover {
+    color: #dc3545;
 }
 
 /* Email source */
@@ -614,4 +705,144 @@
     border-radius: 0;
 }
 </style>
+
+<script>
+const linkOptions = {
+    customers: {{ customers | tojson }},
+    suppliers: {{ suppliers | tojson }},
+};
+
+const existingLinks = ({{ ticket_links | tojson }} || []).map(link => ({
+    type: link.link_type,
+    id: link.object_id,
+    name: link.object_name,
+}));
+
+function setupLinkManager(containerId, options) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const typeSelect = container.querySelector('.link-type-select');
+    const objectSelect = container.querySelector('.link-object-select');
+    const addButton = container.querySelector('.add-link-btn');
+    const chips = container.querySelector('.link-chip-list');
+    const hiddenInput = container.querySelector('input[name="linked_items"]');
+
+    const optionLookup = {
+        customer: options.customers || [],
+        supplier: options.suppliers || [],
+    };
+
+    let links = (options.initialLinks || []).map(link => ({
+        type: (link.type || '').toLowerCase() || 'customer',
+        id: Number(link.id),
+        name: link.name || '',
+    }));
+
+    const findLabel = (type, id) => {
+        const list = optionLookup[type] || [];
+        const match = list.find(item => String(item.id) === String(id));
+        return match ? match.name : `#${id}`;
+    };
+
+    const syncInput = () => {
+        if (hiddenInput) {
+            hiddenInput.value = JSON.stringify(
+                links.map(link => ({type: link.type, id: link.id, name: link.name || findLabel(link.type, link.id)}))
+            );
+        }
+    };
+
+    const renderOptions = () => {
+        const type = ((typeSelect && typeSelect.value) ? typeSelect.value : 'customer').toLowerCase();
+        const list = optionLookup[type] || [];
+        if (!objectSelect) return;
+        objectSelect.innerHTML = '';
+
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = type === 'supplier' ? 'Select a supplier' : 'Select a customer';
+        objectSelect.appendChild(placeholder);
+
+        list.forEach(item => {
+            const opt = document.createElement('option');
+            opt.value = item.id;
+            opt.textContent = item.name;
+            objectSelect.appendChild(opt);
+        });
+    };
+
+    const renderChips = () => {
+        if (!chips) return;
+        chips.innerHTML = '';
+        if (!links.length) {
+            const empty = document.createElement('span');
+            empty.className = 'text-muted small';
+            empty.textContent = chips.dataset.empty || 'No links added yet';
+            chips.appendChild(empty);
+            return;
+        }
+        links.forEach((link, index) => {
+            const chip = document.createElement('span');
+            chip.className = 'link-chip';
+
+            const icon = document.createElement('i');
+            icon.className = link.type === 'supplier' ? 'bi bi-truck' : 'bi bi-building';
+            chip.appendChild(icon);
+
+            const label = document.createElement('span');
+            label.textContent = link.name || findLabel(link.type, link.id);
+            chip.appendChild(label);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'remove-link';
+            removeBtn.setAttribute('aria-label', 'Remove link');
+            removeBtn.innerHTML = '&times;';
+            removeBtn.addEventListener('click', () => {
+                links.splice(index, 1);
+                renderChips();
+                syncInput();
+            });
+            chip.appendChild(removeBtn);
+
+            chips.appendChild(chip);
+        });
+    };
+
+    if (addButton) {
+        addButton.addEventListener('click', () => {
+            const type = ((typeSelect && typeSelect.value) ? typeSelect.value : 'customer').toLowerCase();
+            const selectedId = objectSelect ? objectSelect.value : '';
+            if (!selectedId) return;
+            const exists = links.some(link => link.type === type && String(link.id) === String(selectedId));
+            if (exists) return;
+
+            links.push({
+                type,
+                id: Number(selectedId),
+                name: findLabel(type, selectedId),
+            });
+            renderChips();
+            syncInput();
+        });
+    }
+
+    if (typeSelect) {
+        typeSelect.addEventListener('change', renderOptions);
+    }
+
+    renderOptions();
+    renderChips();
+    syncInput();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    setupLinkManager('editLinkManager', {
+        customers: linkOptions.customers,
+        suppliers: linkOptions.suppliers,
+        initialLinks: existingLinks,
+    });
+});
+</script>
 {% endblock %}
