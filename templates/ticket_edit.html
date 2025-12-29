@@ -145,9 +145,13 @@
                 <form method="post" action="{{ url_for('tickets.add_ticket_update', ticket_id=ticket.id) }}" class="update-form mb-4">
                     <div class="input-group">
                         <input type="text" class="form-control" name="update_text" placeholder="Add an update or comment..." required>
+                        <input type="hidden" name="status_on_submit" value="">
                         <button type="submit" class="btn btn-outline-primary">
                             <i class="bi bi-send"></i>
                         </button>
+                    </div>
+                    <div class="form-text text-muted small mt-1">
+                        Press <strong>Shift + Enter</strong> to submit and mark this ticket as {{ in_progress_status_name }}.
                     </div>
                 </form>
 
@@ -614,4 +618,28 @@
     border-radius: 0;
 }
 </style>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const updateForm = document.querySelector('.update-form');
+    const updateInput = updateForm?.querySelector('input[name="update_text"]');
+    const statusField = updateForm?.querySelector('input[name="status_on_submit"]');
+    const statusSelect = document.querySelector('select[name="status_id"]');
+    const inProgressStatusId = {{ in_progress_status_id or 'null' }};
+
+    if (!updateForm || !updateInput || !statusField || inProgressStatusId == null) {
+        return;
+    }
+
+    updateInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && event.shiftKey) {
+            event.preventDefault();
+            statusField.value = inProgressStatusId;
+            if (statusSelect) {
+                statusSelect.value = inProgressStatusId;
+            }
+            updateForm.submit();
+        }
+    });
+});
+</script>
 {% endblock %}

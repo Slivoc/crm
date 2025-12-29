@@ -805,6 +805,10 @@ def view_ticket(ticket_id):
         abort(403)
 
     statuses = _fetch_statuses()
+    in_progress_status = next(
+        (status for status in statuses if (status.get('name') or '').lower() == 'in progress'),
+        None,
+    )
     users = _fetch_users()
     workspaces = _fetch_workspaces()
     subjobs = _fetch_subjobs(ticket_id, user_id, is_admin)
@@ -818,6 +822,8 @@ def view_ticket(ticket_id):
         workspaces=workspaces,
         subjobs=subjobs,
         updates=updates,
+        in_progress_status_id=in_progress_status['id'] if in_progress_status else None,
+        in_progress_status_name=in_progress_status['name'] if in_progress_status else 'In Progress',
     )
 
 
@@ -1057,6 +1063,47 @@ def add_ticket_update(ticket_id):
     if not update_text:
         flash('Update text is required.', 'error')
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
+
+    new_status_id = None
+    status_on_submit = request.form.get('status_on_submit')
+    try:
+        new_status_id = int(status_on_submit) if status_on_submit else None
+    except (TypeError, ValueError):
+        new_status_id = None
+
+    if new_status_id and new_status_id != ticket.get('status_id'):
+        status_row = db_execute(
+            "SELECT name, is_closed FROM ticket_statuses WHERE id = ?",
+            (new_status_id,),
+            fetch="one",
+        )
+        if status_row:
+            status_name = status_row.get('name') or ''
+            is_closed = bool(status_row.get('is_closed'))
+            closed_at = datetime.now() if is_closed else None
+            assigned_user_id = ticket.get('assigned_user_id')
+            if status_name.lower() == 'returned':
+                assigned_user_id = ticket.get('created_by_user_id')
+
+            db_execute(
+                """
+                UPDATE tickets
+                SET status_id = ?,
+                    assigned_user_id = ?,
+                    closed_at = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    new_status_id,
+                    assigned_user_id,
+                    closed_at,
+                    ticket_id,
+                ),
+                commit=True,
+            )
+            if status_name:
+                _add_ticket_update(ticket_id, user_id, f"Status changed to {status_name}")
 
     _add_ticket_update(ticket_id, user_id, update_text)
 
