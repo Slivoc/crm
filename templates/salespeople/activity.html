@@ -277,11 +277,43 @@
                                                         <i class="bi bi-envelope"></i>
                                                     </button>
                                                 </div>
-                                                <button class="btn btn-sm btn-link text-danger p-1"
-                                                        onclick="removeFromCallList({{ contact.call_list_id }})"
-                                                        title="Remove from call list">
-                                                    <i class="bi bi-x-circle"></i>
-                                                </button>
+                                                <div class="d-flex gap-1 justify-content-end align-items-center">
+                                                    <div class="dropdown">
+                                                        <button class="btn btn-sm btn-link text-secondary p-1 dropdown-toggle snooze-dropdown-toggle"
+                                                                type="button"
+                                                                data-bs-toggle="dropdown"
+                                                                aria-expanded="false"
+                                                                title="Snooze call list entry"
+                                                                aria-label="Snooze call list entry">
+                                                            <i class="bi bi-moon"></i>
+                                                        </button>
+                                                        <ul class="dropdown-menu dropdown-menu-end">
+                                                            <li>
+                                                                <button class="dropdown-item" type="button"
+                                                                        onclick="snoozeCallList({{ contact.call_list_id }}, 3)">
+                                                                    Snooze 3 days
+                                                                </button>
+                                                            </li>
+                                                            <li>
+                                                                <button class="dropdown-item" type="button"
+                                                                        onclick="snoozeCallList({{ contact.call_list_id }}, 7)">
+                                                                    Snooze 1 week
+                                                                </button>
+                                                            </li>
+                                                            <li>
+                                                                <button class="dropdown-item" type="button"
+                                                                        onclick="snoozeCallList({{ contact.call_list_id }}, 30)">
+                                                                    Snooze 1 month
+                                                                </button>
+                                                            </li>
+                                                        </ul>
+                                                    </div>
+                                                    <button class="btn btn-sm btn-link text-danger p-1"
+                                                            onclick="removeFromCallList({{ contact.call_list_id }})"
+                                                            title="Remove from call list">
+                                                        <i class="bi bi-x-circle"></i>
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -350,11 +382,43 @@
                                                             <i class="bi bi-envelope"></i>
                                                         </button>
                                                     </div>
-                                                    <button class="btn btn-sm btn-link text-danger p-1"
-                                                            onclick="removeFromCallList({{ contact.call_list_id }})"
-                                                            title="Remove from call list">
-                                                        <i class="bi bi-x-circle"></i>
-                                                    </button>
+                                                    <div class="d-flex gap-1 justify-content-end align-items-center">
+                                                        <div class="dropdown">
+                                                            <button class="btn btn-sm btn-link text-secondary p-1 dropdown-toggle snooze-dropdown-toggle"
+                                                                    type="button"
+                                                                    data-bs-toggle="dropdown"
+                                                                    aria-expanded="false"
+                                                                    title="Snooze call list entry"
+                                                                    aria-label="Snooze call list entry">
+                                                                <i class="bi bi-moon"></i>
+                                                            </button>
+                                                            <ul class="dropdown-menu dropdown-menu-end">
+                                                                <li>
+                                                                    <button class="dropdown-item" type="button"
+                                                                            onclick="snoozeCallList({{ contact.call_list_id }}, 3)">
+                                                                        Snooze 3 days
+                                                                    </button>
+                                                                </li>
+                                                                <li>
+                                                                    <button class="dropdown-item" type="button"
+                                                                            onclick="snoozeCallList({{ contact.call_list_id }}, 7)">
+                                                                        Snooze 1 week
+                                                                    </button>
+                                                                </li>
+                                                                <li>
+                                                                    <button class="dropdown-item" type="button"
+                                                                            onclick="snoozeCallList({{ contact.call_list_id }}, 30)">
+                                                                        Snooze 1 month
+                                                                    </button>
+                                                                </li>
+                                                            </ul>
+                                                        </div>
+                                                        <button class="btn btn-sm btn-link text-danger p-1"
+                                                                onclick="removeFromCallList({{ contact.call_list_id }})"
+                                                                title="Remove from call list">
+                                                            <i class="bi bi-x-circle"></i>
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
