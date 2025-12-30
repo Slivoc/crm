@@ -88,6 +88,75 @@
         </div>
     </div>
 
+    <!-- Signature Images -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="fas fa-image me-2"></i>Signature Images</h5>
+            <small class="text-muted">Stored safely in a dedicated folder</small>
+        </div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('signatures.upload_signature_image') }}" enctype="multipart/form-data" class="row g-3">
+                <div class="col-md-6">
+                    <label for="signature_image" class="form-label">Upload Image</label>
+                    <input type="file" class="form-control" id="signature_image" name="signature_image" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp" required>
+                    <div class="form-text">Accepted: PNG, JPG, GIF, WEBP, BMP. Files are stored under <code>/uploads/signatures</code>.</div>
+                </div>
+                <div class="col-md-6 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-upload"></i> Upload Image
+                    </button>
+                </div>
+            </form>
+
+            {% if signature_images %}
+                <hr>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th>Preview</th>
+                                <th>File</th>
+                                <th>Size</th>
+                                <th>Uploaded</th>
+                                <th>Insert</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for image in signature_images %}
+                            <tr>
+                                <td style="width: 120px;">
+                                    <img src="{{ image.url }}" alt="{{ image.filename }}" class="img-thumbnail" style="max-height: 80px;">
+                                </td>
+                                <td><code>{{ image.filename }}</code></td>
+                                <td>{{ image.size_kb }} KB</td>
+                                <td>{{ image.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                                <td>
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <button class="btn btn-outline-primary insert-image-btn"
+                                                data-url="{{ image.url }}"
+                                                data-filename="{{ image.filename }}">
+                                            <i class="fas fa-link"></i> Insert URL
+                                        </button>
+                                        <button class="btn btn-outline-secondary insert-image-html-btn"
+                                                data-url="{{ image.url }}"
+                                                data-filename="{{ image.filename }}">
+                                            <i class="fas fa-code"></i> Insert HTML
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-secondary mb-0">
+                    <i class="fas fa-info-circle me-2"></i>No signature images uploaded yet. Upload a common logo or social icon to reuse across signatures.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
     <!-- Signatures List -->
     <div class="card">
         <div class="card-header">
@@ -273,6 +342,36 @@ document.querySelectorAll('.edit-signature-btn').forEach(btn => {
             getSignatureHtmlById(btn.dataset.signatureId),
             btn.dataset.signatureDefault === 'true'
         );
+    });
+});
+
+// Insert image helpers
+function insertAtCursor(textarea, value) {
+    const start = textarea.selectionStart || 0;
+    const end = textarea.selectionEnd || 0;
+    const before = textarea.value.substring(0, start);
+    const after = textarea.value.substring(end);
+    textarea.value = before + value + after;
+    textarea.selectionStart = textarea.selectionEnd = start + value.length;
+    textarea.focus();
+    updatePreview();
+}
+
+document.querySelectorAll('.insert-image-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const url = btn.dataset.url;
+        const textarea = document.getElementById('signature_html');
+        insertAtCursor(textarea, url);
+    });
+});
+
+document.querySelectorAll('.insert-image-html-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const url = btn.dataset.url;
+        const filename = btn.dataset.filename || 'signature-image';
+        const html = `<img src=\"${url}\" alt=\"${filename}\" style=\"max-height:100px;\">`;
+        const textarea = document.getElementById('signature_html');
+        insertAtCursor(textarea, html);
     });
 });
 </script>
