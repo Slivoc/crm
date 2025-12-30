@@ -1,12 +1,16 @@
 # email_signatures.py - Updated with user management
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session
+from flask import Blueprint, render_template, request, redirect, url_for, flash, session, current_app, send_from_directory
 from flask_login import current_user
 from db import execute as db_execute, db_cursor
 from datetime import datetime
+from werkzeug.utils import secure_filename
 import os
+import uuid
 
 signatures_bp = Blueprint('signatures', __name__)
+
+ALLOWED_SIGNATURE_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
 
 
 def _using_postgres() -> bool:
@@ -31,6 +35,35 @@ def _serialize_signature(row):
         'user_id': data.get('user_id'),
         'is_default': data.get('is_default', False)
     }
+
+
+def _get_signature_upload_folder():
+    uploads_root = current_app.config.get('UPLOAD_FOLDER', 'uploads')
+    signatures_folder = os.path.join(current_app.root_path, uploads_root, 'signatures')
+    os.makedirs(signatures_folder, exist_ok=True)
+    return signatures_folder
+
+
+def _list_signature_images():
+    folder = _get_signature_upload_folder()
+    images = []
+    for entry in os.scandir(folder):
+        if not entry.is_file():
+            continue
+        _, ext = os.path.splitext(entry.name)
+        if ext.lower() not in ALLOWED_SIGNATURE_IMAGE_EXTENSIONS:
+            continue
+
+        stat = entry.stat()
+        images.append({
+            'filename': entry.name,
+            'url': url_for('signatures.signature_image', filename=entry.name),
+            'uploaded_at': datetime.fromtimestamp(stat.st_mtime),
+            'size_kb': round(stat.st_size / 1024, 1)
+        })
+
+    images.sort(key=lambda img: img['uploaded_at'], reverse=True)
+    return images
 
 
 def get_current_user_id():
@@ -114,7 +147,8 @@ def manage_signatures():
     """Single page to manage all signatures"""
     user_id = get_current_user_id()
     signatures = get_all_email_signatures(user_id)
-    return render_template('signatures.html', signatures=signatures)
+    signature_images = _list_signature_images()
+    return render_template('signatures.html', signatures=signatures, signature_images=signature_images)
 
 
 @signatures_bp.route('/save', methods=['POST'])
@@ -215,3 +249,37 @@ def delete_signature(signature_id):
         flash(f'Error deleting signature: {str(e)}', 'error')
 
     return redirect(url_for('signatures.manage_signatures'))
+
+
+@signatures_bp.route('/images/upload', methods=['POST'])
+def upload_signature_image():
+    """Upload an image for use in email signatures"""
+    file = request.files.get('signature_image')
+
+    if not file or not file.filename:
+        flash('Please choose an image to upload.', 'error')
+        return redirect(url_for('signatures.manage_signatures'))
+
+    filename = secure_filename(file.filename)
+    _, ext = os.path.splitext(filename)
+    if ext.lower() not in ALLOWED_SIGNATURE_IMAGE_EXTENSIONS:
+        allowed = ', '.join(sorted(ALLOWED_SIGNATURE_IMAGE_EXTENSIONS))
+        flash(f'Invalid file type. Allowed types: {allowed}', 'error')
+        return redirect(url_for('signatures.manage_signatures'))
+
+    unique_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}{ext.lower()}"
+
+    try:
+        save_path = os.path.join(_get_signature_upload_folder(), unique_name)
+        file.save(save_path)
+        flash('Image uploaded successfully. Use the image tools below to insert it into your signature.', 'success')
+    except Exception as e:
+        flash(f'Error uploading image: {str(e)}', 'error')
+
+    return redirect(url_for('signatures.manage_signatures'))
+
+
+@signatures_bp.route('/images/<path:filename>')
+def signature_image(filename):
+    """Serve images stored for email signatures"""
+    return send_from_directory(_get_signature_upload_folder(), filename)
