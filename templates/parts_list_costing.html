@@ -353,17 +353,34 @@
                         <!-- Stock -->
 <td>
     {% if line.stock_available and line.stock_available > 0 %}
+        {% set target_qty = line.chosen_qty or line.quantity %}
+        {% if line.stock_covering_qty and line.stock_covering_qty >= target_qty %}
+            {% set stock_cost = line.stock_cost_covering_qty %}
+            {% set stock_qty = line.stock_covering_qty %}
+            {% set stock_movement_id = line.stock_covering_movement_id %}
+            {% set stock_note = ' (covers required qty)' %}
+        {% elif line.stock_available >= target_qty and line.stock_highest_cost %}
+            {% set stock_cost = line.stock_highest_cost %}
+            {% set stock_qty = line.stock_available %}
+            {% set stock_movement_id = line.stock_highest_movement_id %}
+            {% set stock_note = ' (using highest available cost to stay safe)' %}
+        {% else %}
+            {% set stock_cost = None %}
+            {% set stock_qty = None %}
+            {% set stock_movement_id = None %}
+            {% set stock_note = '' %}
+        {% endif %}
         <div class="d-flex align-items-center gap-2">
             <span class="badge {{ 'bg-success' if line.stock_available >= (line.chosen_qty or line.quantity) else 'bg-warning' }}">
                 {{ line.stock_available }}
             </span>
-            {% if line.stock_cheapest_cost %}
+            {% if stock_cost %}
                 <button class="btn btn-sm btn-outline-primary use-stock-btn"
                         data-line-id="{{ line.id }}"
-                        data-stock-cost="{{ line.stock_cheapest_cost }}"
-                        data-stock-qty="{{ line.stock_available }}"
-                        data-movement-id="{{ line.stock_cheapest_movement_id }}"
-                        title="Use stock: £{{ '%.2f'|format(line.stock_cheapest_cost) }}">
+                        data-stock-cost="{{ stock_cost }}"
+                        data-stock-qty="{{ stock_qty }}"
+                        data-movement-id="{{ stock_movement_id }}"
+                        title="Use stock{{ stock_note }}: £{{ '%.2f'|format(stock_cost) }}">
                     <i class="bi bi-box-arrow-down"></i>
                 </button>
             {% endif %}

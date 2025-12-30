@@ -2275,20 +2275,52 @@ def parts_list_costing(list_id):
                  WHERE sm.base_part_number = pll.base_part_number
                    AND sm.movement_type = 'IN'
                    AND sm.available_quantity > 0) as stock_available,
-                (SELECT MIN(sm.cost_per_unit)
+                (SELECT SUM(sm.available_quantity * sm.cost_per_unit) / NULLIF(SUM(sm.available_quantity), 0)
                  FROM stock_movements sm
                  WHERE sm.base_part_number = pll.base_part_number
                    AND sm.movement_type = 'IN'
                    AND sm.available_quantity > 0
-                   AND sm.cost_per_unit > 0) as stock_cheapest_cost,
+                   AND sm.cost_per_unit > 0) as stock_weighted_cost,
+                (SELECT sm.cost_per_unit
+                 FROM stock_movements sm
+                 WHERE sm.base_part_number = pll.base_part_number
+                   AND sm.movement_type = 'IN'
+                   AND sm.available_quantity >= COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity)
+                   AND sm.cost_per_unit > 0
+                 ORDER BY sm.cost_per_unit ASC
+                 LIMIT 1) as stock_cost_covering_qty,
+                (SELECT sm.available_quantity
+                 FROM stock_movements sm
+                 WHERE sm.base_part_number = pll.base_part_number
+                   AND sm.movement_type = 'IN'
+                   AND sm.available_quantity >= COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity)
+                   AND sm.cost_per_unit > 0
+                 ORDER BY sm.cost_per_unit ASC
+                 LIMIT 1) as stock_covering_qty,
+                (SELECT sm.movement_id
+                 FROM stock_movements sm
+                 WHERE sm.base_part_number = pll.base_part_number
+                   AND sm.movement_type = 'IN'
+                   AND sm.available_quantity >= COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity)
+                   AND sm.cost_per_unit > 0
+                 ORDER BY sm.cost_per_unit ASC
+                 LIMIT 1) as stock_covering_movement_id,
+                (SELECT sm.cost_per_unit
+                 FROM stock_movements sm
+                 WHERE sm.base_part_number = pll.base_part_number
+                   AND sm.movement_type = 'IN'
+                   AND sm.available_quantity > 0
+                   AND sm.cost_per_unit > 0
+                 ORDER BY sm.cost_per_unit DESC
+                 LIMIT 1) as stock_highest_cost,
                 (SELECT sm.movement_id
                  FROM stock_movements sm
                  WHERE sm.base_part_number = pll.base_part_number
                    AND sm.movement_type = 'IN'
                    AND sm.available_quantity > 0
                    AND sm.cost_per_unit > 0
-                 ORDER BY sm.cost_per_unit ASC
-                 LIMIT 1) as stock_cheapest_movement_id
+                 ORDER BY sm.cost_per_unit DESC
+                 LIMIT 1) as stock_highest_movement_id
             FROM parts_list_lines pll
             WHERE pll.parts_list_id = ?
             ORDER BY pll.line_number ASC
