@@ -99,7 +99,7 @@ function displayCallList(data) {
             </div>
                 <div class="text-end">
                     <span class="badge bg-${badgeClass} mb-2">${daysWaiting} days</span>
-                    <div class="d-flex gap-1 justify-content-end mb-2">
+                    <div class="d-flex gap-1 justify-content-end align-items-center">
                         <button class="btn btn-sm btn-outline-primary contact-quick-action-btn"
                             data-contact-id="${contact.contact_id}"
                             data-customer-id="${contact.customer_id}"
@@ -129,6 +129,11 @@ function displayCallList(data) {
                             data-action="email"
                             title="Log Email">
                         <i class="bi bi-envelope"></i>
+                    </button>
+                    <button class="btn btn-sm btn-link text-danger p-1"
+                        onclick="removeFromCallList(${contact.call_list_id})"
+                        title="Remove from call list">
+                        <i class="bi bi-x-circle"></i>
                     </button>
                     <div class="dropdown">
                         <button class="btn btn-sm btn-link text-secondary p-1 dropdown-toggle snooze-dropdown-toggle"
@@ -160,12 +165,8 @@ function displayCallList(data) {
                             </li>
                         </ul>
                     </div>
+                    </div>
                 </div>
-                <button class="btn btn-sm btn-link text-danger p-1"
-                    onclick="removeFromCallList(${contact.call_list_id})"
-                    title="Remove from call list">
-                    <i class="bi bi-x-circle"></i>
-                </button>
             </div>
         </div>
     </div>
@@ -217,7 +218,7 @@ function displayCallList(data) {
                     ` : ''}
                 </div>
                 <div class="text-end">
-                    <div class="d-flex gap-1 justify-content-end mb-2">
+                    <div class="d-flex gap-1 justify-content-end align-items-center">
                         <button class="btn btn-sm btn-outline-primary contact-quick-action-btn"
                                 data-contact-id="${contact.contact_id}"
                                 data-customer-id="${contact.customer_id}"
@@ -248,6 +249,11 @@ function displayCallList(data) {
                                 title="Log Email">
                             <i class="bi bi-envelope"></i>
                         </button>
+                    <button class="btn btn-sm btn-link text-danger p-1"
+                            onclick="removeFromCallList(${contact.call_list_id})"
+                            title="Remove from call list">
+                        <i class="bi bi-x-circle"></i>
+                    </button>
                     <div class="dropdown">
                         <button class="btn btn-sm btn-link text-secondary p-1 dropdown-toggle snooze-dropdown-toggle"
                                 type="button"
@@ -279,11 +285,6 @@ function displayCallList(data) {
                         </ul>
                     </div>
                     </div>
-                    <button class="btn btn-sm btn-link text-danger p-1"
-                            onclick="removeFromCallList(${contact.call_list_id})"
-                            title="Remove from call list">
-                        <i class="bi bi-x-circle"></i>
-                    </button>
                 </div>
             </div>
         </div>

@@ -245,7 +245,7 @@
                                             </div>
                                             <div class="text-end">
                                                 <span class="badge bg-{{ badge_class }} mb-2">{{ days_waiting }} days</span>
-                                                <div class="d-flex gap-1 justify-content-end mb-2">
+                                                <div class="d-flex gap-1 justify-content-end align-items-center">
                                                     <button class="btn btn-sm btn-outline-primary contact-quick-action-btn"
                                                             data-contact-id="{{ contact.contact_id }}"
                                                             data-customer-id="{{ contact.customer_id }}"
@@ -276,8 +276,11 @@
                                                             title="Log Email">
                                                         <i class="bi bi-envelope"></i>
                                                     </button>
-                                                </div>
-                                                <div class="d-flex gap-1 justify-content-end align-items-center">
+                                                    <button class="btn btn-sm btn-link text-danger p-1"
+                                                            onclick="removeFromCallList({{ contact.call_list_id }})"
+                                                            title="Remove from call list">
+                                                        <i class="bi bi-x-circle"></i>
+                                                    </button>
                                                     <div class="dropdown">
                                                         <button class="btn btn-sm btn-link text-secondary p-1 dropdown-toggle snooze-dropdown-toggle"
                                                                 type="button"
@@ -308,11 +311,6 @@
                                                             </li>
                                                         </ul>
                                                     </div>
-                                                    <button class="btn btn-sm btn-link text-danger p-1"
-                                                            onclick="removeFromCallList({{ contact.call_list_id }})"
-                                                            title="Remove from call list">
-                                                        <i class="bi bi-x-circle"></i>
-                                                    </button>
                                                 </div>
                                             </div>
                                         </div>
@@ -350,7 +348,7 @@
                                                     {% endif %}
                                                 </div>
                                                 <div class="text-end">
-                                                    <div class="d-flex gap-1 justify-content-end mb-2">
+                                                    <div class="d-flex gap-1 justify-content-end align-items-center">
                                                         <button class="btn btn-sm btn-outline-primary contact-quick-action-btn"
                                                                 data-contact-id="{{ contact.contact_id }}"
                                                                 data-customer-id="{{ contact.customer_id }}"
@@ -381,8 +379,11 @@
                                                                 title="Log Email">
                                                             <i class="bi bi-envelope"></i>
                                                         </button>
-                                                    </div>
-                                                    <div class="d-flex gap-1 justify-content-end align-items-center">
+                                                        <button class="btn btn-sm btn-link text-danger p-1"
+                                                                onclick="removeFromCallList({{ contact.call_list_id }})"
+                                                                title="Remove from call list">
+                                                            <i class="bi bi-x-circle"></i>
+                                                        </button>
                                                         <div class="dropdown">
                                                             <button class="btn btn-sm btn-link text-secondary p-1 dropdown-toggle snooze-dropdown-toggle"
                                                                     type="button"
@@ -413,11 +414,6 @@
                                                                 </li>
                                                             </ul>
                                                         </div>
-                                                        <button class="btn btn-sm btn-link text-danger p-1"
-                                                                onclick="removeFromCallList({{ contact.call_list_id }})"
-                                                                title="Remove from call list">
-                                                            <i class="bi bi-x-circle"></i>
-                                                        </button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -565,6 +561,17 @@
 .days-waiting-badge-info {
     background-color: #0dcaf0;
     color: #000;
+}
+
+.snooze-dropdown-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.snooze-dropdown-toggle::after {
+    display: none;
 }
 </style>
 
