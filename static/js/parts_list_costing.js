@@ -959,6 +959,12 @@ function useStockForLine(lineId, stockCost, stockQty, movementId) {
     const row = document.querySelector(`tr[data-line-id="${lineId}"]`);
     if (!row) return;
 
+    const requestedQty = parseInt(row.querySelector('.badge[data-requested-qty]').dataset.requestedQty);
+    if (Number.isFinite(stockQty) && stockQty < requestedQty) {
+        showToast('Selected stock batch does not cover the required quantity. Please choose a full-quantity batch.', 'warning');
+        return;
+    }
+
     // Update cost input
     const costInput = row.querySelector('.cost-input');
     if (costInput) costInput.value = stockCost.toFixed(2);
@@ -969,9 +975,12 @@ function useStockForLine(lineId, stockCost, stockQty, movementId) {
 
     // Update chosen quantity to match stock if needed
     const chosenQtyInput = row.querySelector('.chosen-qty-input');
-    const requestedQty = parseInt(row.querySelector('.badge[data-requested-qty]').dataset.requestedQty);
-    if (chosenQtyInput && stockQty < requestedQty) {
-        chosenQtyInput.value = Math.min(stockQty, requestedQty);
+    if (chosenQtyInput) {
+        if (stockQty < requestedQty) {
+            chosenQtyInput.value = Math.min(stockQty, requestedQty);
+        } else {
+            chosenQtyInput.value = requestedQty;
+        }
     }
 
     // Clear supplier (stock doesn't have a supplier)
