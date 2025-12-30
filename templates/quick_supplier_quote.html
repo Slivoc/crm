@@ -219,12 +219,28 @@
         emailSourceStatus.classList.toggle('text-muted', !isError);
     }
 
+    function htmlToPlainText(html) {
+        if (!html) return '';
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+
+        doc.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+        doc.querySelectorAll('td, th').forEach(cell => cell.appendChild(doc.createTextNode('\t')));
+        doc.querySelectorAll('tr').forEach(row => row.appendChild(doc.createTextNode('\n')));
+        doc.querySelectorAll('p, div, li, ul, ol, table, thead, tbody, tfoot, section, article, header, footer, blockquote, pre').forEach(node => {
+            node.appendChild(doc.createTextNode('\n'));
+        });
+
+        let text = doc.body ? doc.body.textContent || '' : '';
+        text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        text = text.replace(/\n{3,}/g, '\n\n');
+        return text.trim();
+    }
+
     function parseEmailBodyText(message) {
         if (!message?.body) return '';
         if (message.body.contentType === 'text') return message.body.content || '';
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(message.body.content || '', 'text/html');
-        return doc.body?.textContent || '';
+        return htmlToPlainText(message.body.content || '');
     }
 
     function base64ToBlob(base64, contentType) {
