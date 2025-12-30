@@ -131,30 +131,31 @@ function displayCallList(data) {
                         <i class="bi bi-envelope"></i>
                     </button>
                     <div class="dropdown">
-                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                        <button class="btn btn-sm btn-link text-secondary p-1 dropdown-toggle snooze-dropdown-toggle"
                                 type="button"
                                 data-bs-toggle="dropdown"
                                 aria-expanded="false"
-                                title="Sleep from call list">
+                                title="Snooze call list entry"
+                                aria-label="Snooze call list entry">
                             <i class="bi bi-moon"></i>
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li>
                                 <button class="dropdown-item" type="button"
                                         onclick="snoozeCallList(${contact.call_list_id}, 3)">
-                                    Sleep 3 days
+                                    Snooze 3 days
                                 </button>
                             </li>
                             <li>
                                 <button class="dropdown-item" type="button"
                                         onclick="snoozeCallList(${contact.call_list_id}, 7)">
-                                    Sleep 1 week
+                                    Snooze 1 week
                                 </button>
                             </li>
                             <li>
                                 <button class="dropdown-item" type="button"
                                         onclick="snoozeCallList(${contact.call_list_id}, 30)">
-                                    Sleep 1 month
+                                    Snooze 1 month
                                 </button>
                             </li>
                         </ul>
@@ -247,35 +248,36 @@ function displayCallList(data) {
                                 title="Log Email">
                             <i class="bi bi-envelope"></i>
                         </button>
-                        <div class="dropdown">
-                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
-                                    type="button"
-                                    data-bs-toggle="dropdown"
-                                    aria-expanded="false"
-                                    title="Sleep from call list">
-                                <i class="bi bi-moon"></i>
-                            </button>
-                            <ul class="dropdown-menu dropdown-menu-end">
-                                <li>
-                                    <button class="dropdown-item" type="button"
-                                            onclick="snoozeCallList(${contact.call_list_id}, 3)">
-                                        Sleep 3 days
-                                    </button>
-                                </li>
-                                <li>
-                                    <button class="dropdown-item" type="button"
-                                            onclick="snoozeCallList(${contact.call_list_id}, 7)">
-                                        Sleep 1 week
-                                    </button>
-                                </li>
-                                <li>
-                                    <button class="dropdown-item" type="button"
-                                            onclick="snoozeCallList(${contact.call_list_id}, 30)">
-                                        Sleep 1 month
-                                    </button>
-                                </li>
-                            </ul>
-                        </div>
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-link text-secondary p-1 dropdown-toggle snooze-dropdown-toggle"
+                                type="button"
+                                data-bs-toggle="dropdown"
+                                aria-expanded="false"
+                                title="Snooze call list entry"
+                                aria-label="Snooze call list entry">
+                            <i class="bi bi-moon"></i>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li>
+                                <button class="dropdown-item" type="button"
+                                        onclick="snoozeCallList(${contact.call_list_id}, 3)">
+                                    Snooze 3 days
+                                </button>
+                            </li>
+                            <li>
+                                <button class="dropdown-item" type="button"
+                                        onclick="snoozeCallList(${contact.call_list_id}, 7)">
+                                    Snooze 1 week
+                                </button>
+                            </li>
+                            <li>
+                                <button class="dropdown-item" type="button"
+                                        onclick="snoozeCallList(${contact.call_list_id}, 30)">
+                                    Snooze 1 month
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
                     </div>
                     <button class="btn btn-sm btn-link text-danger p-1"
                             onclick="removeFromCallList(${contact.call_list_id})"
