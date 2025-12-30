@@ -4,7 +4,7 @@ import time
 import re
 import requests
 from flask import current_app, g, render_template, abort
-from db import get_db_connection, execute as db_execute, db_cursor
+from db import get_db_connection, execute as db_execute, db_cursor, CURRENCY_RATE_COLUMN
 from sqlalchemy import Column, String, Integer, Float, ForeignKey, create_engine, inspect, MetaData, Date, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
@@ -398,7 +398,7 @@ def fetch_live_exchange_rates():
 def get_currencies():
     """
     Get all currencies with their exchange rates
-    The exchange_rate_to_eur column is interpreted as exchange_rate_to_base
+    The exchange_rate_to_base column stores each rate to the base currency
     """
     db = get_db_connection()
     currencies = db_execute('SELECT * FROM currencies ORDER BY id', fetch="all")
@@ -424,13 +424,14 @@ def convert_currency(amount, from_currency, to_currency):
     db = get_db_connection()
 
     # Get rates (stored as rate to base currency)
+    rate_col = CURRENCY_RATE_COLUMN or 'exchange_rate_to_eur'
     from_rate = db.execute(
-        'SELECT exchange_rate_to_eur FROM currencies WHERE currency_code = ?',
+        f'SELECT {rate_col} FROM currencies WHERE currency_code = ?',
         (from_currency,)
     ).fetchone()
 
     to_rate = db.execute(
-        'SELECT exchange_rate_to_eur FROM currencies WHERE currency_code = ?',
+        f'SELECT {rate_col} FROM currencies WHERE currency_code = ?',
         (to_currency,)
     ).fetchone()
 
@@ -440,18 +441,18 @@ def convert_currency(amount, from_currency, to_currency):
         raise ValueError(f"Currency not found: {from_currency} or {to_currency}")
 
     # Convert: amount in from_currency -> base currency -> to_currency
-    # If exchange_rate_to_eur stores "1 BASE = X CURRENCY", then:
+    # If exchange_rate_to_base stores "1 BASE = X CURRENCY", then:
     # amount_in_base = amount / from_rate
     # amount_in_to = amount_in_base * to_rate
 
-    # If exchange_rate_to_eur stores "1 CURRENCY = X BASE", then:
+    # If exchange_rate_to_base stores "1 CURRENCY = X BASE", then:
     # amount_in_base = amount * from_rate
     # amount_in_to = amount_in_base / to_rate
 
     # Adjust based on how your rates are stored!
     # Assuming: exchange_rate_to_eur = "1 BASE = X CURRENCY"
-    base_amount = amount / from_rate['exchange_rate_to_eur']
-    converted = base_amount * to_rate['exchange_rate_to_eur']
+    base_amount = amount / from_rate[rate_col]
+    converted = base_amount * to_rate[rate_col]
 
     return converted
 

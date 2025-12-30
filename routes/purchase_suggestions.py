@@ -1,6 +1,7 @@
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
+from decimal import Decimal
 from math import ceil
 from flask import Blueprint, render_template, request, jsonify, session
 from db import db_cursor, execute as db_execute
@@ -15,6 +16,32 @@ def _using_postgres():
 
 def _prepare_query(query):
     return query.replace('?', '%s') if _using_postgres() else query
+
+
+def _stringify_date(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.strftime('%Y-%m-%d')
+    return str(value)
+
+
+def _coerce_numeric(value):
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
 
 
 def _execute_with_cursor(cur, query, params=None, fetch=None):
@@ -130,6 +157,8 @@ def upload_stock():
 
         print(f"DEBUG: Session updated with {len(session['uploaded_stock'])} parts")
 
+        for part in parts:
+            part['last_sale_date'] = _stringify_date(part.get('last_sale_date'))
         return jsonify({
             'success': True,
             'parts_loaded': len(processed_stock)
@@ -249,8 +278,6 @@ def purchase_suggestions():
         end_idx = start_idx + per_page
         paginated_data = data[start_idx:end_idx]
 
-        db.close()
-
         return render_template('purchase_stock_suggestions.html',
                                data=paginated_data,
                                total_parts=total_items,
@@ -280,7 +307,17 @@ def purchase_suggestions():
 
 
 def _load_part_view(cursor, sort_column, sort_direction, time_period_days, buffer_months, min_sales_threshold):
-    recent_sales_filter = f"AND so.date_entered >= date('now', '-{time_period_days} days')"
+    if _using_postgres():
+        recent_sales_filter = f"AND so.date_entered >= CURRENT_DATE - INTERVAL '{time_period_days} days'"
+    else:
+        recent_sales_filter = f"AND so.date_entered >= date('now', '-{time_period_days} days')"
+
+    if _using_postgres():
+        customer_names_expr = "STRING_AGG(DISTINCT c.name, ', ')"
+        bom_names_expr = "STRING_AGG(DISTINCT bh.name, ', ')"
+    else:
+        customer_names_expr = "GROUP_CONCAT(DISTINCT c.name)"
+        bom_names_expr = "GROUP_CONCAT(DISTINCT bh.name)"
 
     query = f'''
         SELECT 
@@ -294,8 +331,8 @@ def _load_part_view(cursor, sort_column, sort_direction, time_period_days, buffe
             AVG(sol.price) as avg_sale_price,
             MIN(sol.price) as min_sale_price,
             MAX(sol.price) as max_sale_price,
-            GROUP_CONCAT(DISTINCT c.name) as customer_names,
-            GROUP_CONCAT(DISTINCT bh.name) as bom_names
+            {customer_names_expr} as customer_names,
+            {bom_names_expr} as bom_names
         FROM part_numbers pn
         LEFT JOIN sales_order_lines sol ON pn.base_part_number = sol.base_part_number
         LEFT JOIN sales_orders so ON sol.sales_order_id = so.id
@@ -307,6 +344,8 @@ def _load_part_view(cursor, sort_column, sort_direction, time_period_days, buffe
     '''
 
     base_parts = [dict(row) for row in (_execute_with_cursor(cursor, query, fetch='all') or [])]
+    for part in base_parts:
+        part['last_sale_date'] = _stringify_date(part.get('last_sale_date'))
     months_in_period = time_period_days / 30.4375
     parts = []
 
@@ -326,10 +365,10 @@ def _load_part_view(cursor, sort_column, sort_direction, time_period_days, buffe
             fetch='one'
         )
 
-        stock_qty = stock_data['total_stock'] if (stock_data and stock_data['total_stock']) else 0
+        stock_qty = float(stock_data['total_stock']) if (stock_data and stock_data['total_stock']) else 0.0
         part['stock_quantity'] = stock_qty
 
-        qty_sold = part.get('total_quantity_sold', 0) or 0
+        qty_sold = float(part.get('total_quantity_sold') or 0)
         if qty_sold >= min_sales_threshold:
             avg_monthly_sales = qty_sold / months_in_period
             dynamic_threshold = avg_monthly_sales * buffer_months
@@ -351,15 +390,21 @@ def _load_part_view(cursor, sort_column, sort_direction, time_period_days, buffe
             recency_factor = 1.0
             if part.get('last_sale_date'):
                 try:
-                    last_sale = datetime.strptime(part['last_sale_date'], '%Y-%m-%d')
+                    last_sale_value = part['last_sale_date']
+                    if isinstance(last_sale_value, datetime):
+                        last_sale = last_sale_value
+                    elif isinstance(last_sale_value, date):
+                        last_sale = datetime.combine(last_sale_value, datetime.min.time())
+                    else:
+                        last_sale = datetime.strptime(str(last_sale_value), '%Y-%m-%d')
                     days_since = (datetime.now() - last_sale).days
                     recency_factor = max(0, 1 - (days_since / time_period_days))
                 except ValueError:
                     pass
 
-            avg_price = part.get('avg_sale_price', 0) or 0
-            customer_count = part.get('customer_count', 0) or 0
-            order_count = part.get('order_count', 0) or 0
+            avg_price = float(part.get('avg_sale_price') or 0)
+            customer_count = float(part.get('customer_count') or 0)
+            order_count = float(part.get('order_count') or 0)
 
             economic_demand = (qty_sold * avg_price * 0.2) / 1000
             customer_breadth = (customer_count * 10 * 0.4)
@@ -437,6 +482,8 @@ def get_vq_availability(cursor, base_part_number):
         return None
 
     vq_dict = dict(vq)
+    vq_dict['entry_date'] = _stringify_date(vq_dict.get('entry_date'))
+    vq_dict['expiration_date'] = _stringify_date(vq_dict.get('expiration_date'))
 
     # Convert vendor price to GBP for comparison with sales prices (which are in GBP)
     original_price = vq_dict.get('vendor_price')
@@ -484,7 +531,7 @@ def get_part_details(base_part_number):
 
             part_dict = dict(part_info)
 
-            sales_history = _execute_with_cursor(
+            sales_history_rows = _execute_with_cursor(
                 cursor,
                 '''
                 SELECT 
@@ -504,6 +551,14 @@ def get_part_details(base_part_number):
                 (base_part_number,),
                 fetch='all'
             ) or []
+            sales_history = []
+            for row in sales_history_rows:
+                sale = dict(row)
+                sale['price'] = _coerce_numeric(sale.get('price'))
+                sale['quantity'] = _coerce_numeric(sale.get('quantity'))
+                sale['line_total'] = _coerce_numeric(sale.get('line_total'))
+                sale['date_entered'] = _stringify_date(sale.get('date_entered'))
+                sales_history.append(sale)
 
             boms = _execute_with_cursor(
                 cursor,
@@ -523,7 +578,7 @@ def get_part_details(base_part_number):
                 fetch='all'
             ) or []
 
-            sales_summary = _execute_with_cursor(
+            sales_summary_raw = _execute_with_cursor(
                 cursor,
                 '''
                 SELECT 
@@ -541,6 +596,19 @@ def get_part_details(base_part_number):
                 (base_part_number,),
                 fetch='one'
             )
+
+            sales_summary = dict(sales_summary_raw) if sales_summary_raw else {}
+            numeric_summary_keys = [
+                'total_orders',
+                'total_customers',
+                'total_quantity_sold',
+                'avg_price',
+                'min_price',
+                'max_price'
+            ]
+            for key in numeric_summary_keys:
+                if key in sales_summary:
+                    sales_summary[key] = _coerce_numeric(sales_summary[key])
 
             vqs = []
             vqs_raw = _execute_with_cursor(
@@ -574,9 +642,12 @@ def get_part_details(base_part_number):
 
             for vq_raw in vqs_raw:
                 vq_dict = dict(vq_raw)
-                original_price = vq_dict.get('vendor_price')
+                original_price = _coerce_numeric(vq_dict.get('vendor_price'))
                 currency_code = vq_dict.get('currency_code', 'GBP')
                 currency_symbol = vq_dict.get('currency_symbol', '£')
+
+                vq_dict['entry_date'] = _stringify_date(vq_dict.get('entry_date'))
+                vq_dict['expiration_date'] = _stringify_date(vq_dict.get('expiration_date'))
 
                 if original_price and currency_code:
                     vq_dict['vendor_price_gbp'] = convert_vq_price_to_gbp(original_price, currency_code)
@@ -584,8 +655,9 @@ def get_part_details(base_part_number):
                     vq_dict['vendor_price_currency'] = currency_code
                     vq_dict['currency_symbol'] = currency_symbol
                 else:
-                    vq_dict['vendor_price_gbp'] = original_price
-                    vq_dict['vendor_price_original'] = original_price
+                    fallback_price = _coerce_numeric(vq_dict.get('vendor_price'))
+                    vq_dict['vendor_price_gbp'] = fallback_price
+                    vq_dict['vendor_price_original'] = fallback_price
                     vq_dict['vendor_price_currency'] = 'GBP'
                     vq_dict['currency_symbol'] = '£'
 
@@ -594,7 +666,7 @@ def get_part_details(base_part_number):
         return jsonify({
             'success': True,
             'part': part_dict,
-            'sales_history': [dict(row) for row in sales_history],
+            'sales_history': sales_history,
             'boms': [dict(row) for row in boms],
             'sales_summary': dict(sales_summary) if sales_summary else {},
             'vqs': vqs
@@ -627,7 +699,9 @@ def get_out_of_stock_parts():
                 GROUP BY pn.base_part_number
             '''
 
-            all_sold_parts = [dict(row) for row in (_execute_with_cursor(cursor, query, fetch='all') or [])]
+        all_sold_parts = [dict(row) for row in (_execute_with_cursor(cursor, query, fetch='all') or [])]
+        for part in all_sold_parts:
+            part['last_sale_date'] = _stringify_date(part.get('last_sale_date'))
 
         # Filter to only parts NOT in stock using same method as parts list
         out_of_stock = []
@@ -755,13 +829,17 @@ def get_customer_parts(customer_id):
                     vqs = get_multiple_vqs(cursor, part['base_part_number'], limit=3)
                     part['vq_available'] = vqs[0] if vqs else None
                     part['all_vqs'] = vqs
+                    part['last_sale_date'] = _stringify_date(part.get('last_sale_date'))
 
-        return jsonify({
-            'success': True,
-            'customer': {'id': customer['id'], 'name': customer['name']},
-            'parts': parts,
-            'total_parts': len(parts)
-        })
+            for part in parts:
+                part['last_sale_date'] = _stringify_date(part.get('last_sale_date'))
+
+            return jsonify({
+                'success': True,
+                'customer': {'id': customer['id'], 'name': customer['name']},
+                'parts': parts,
+                'total_parts': len(parts)
+            })
 
     except Exception as e:
         print(f"Error getting customer parts: {str(e)}")
@@ -1013,6 +1091,8 @@ def get_multiple_vqs(cursor, base_part_number, limit=3):
     vqs = []
     for vq_raw in vqs_raw:
         vq_dict = dict(vq_raw)
+        vq_dict['entry_date'] = _stringify_date(vq_dict.get('entry_date'))
+        vq_dict['expiration_date'] = _stringify_date(vq_dict.get('expiration_date'))
         original_price = vq_dict.get('vendor_price')
         currency_code = vq_dict.get('currency_code', 'GBP')
         currency_symbol = vq_dict.get('currency_symbol', '£')

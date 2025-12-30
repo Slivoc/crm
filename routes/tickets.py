@@ -867,11 +867,18 @@ def sidebar_tree():
         None,
     )
 
+    status_ids_to_include = []
+    if open_status_id and open_status_id not in status_ids_to_include:
+        status_ids_to_include.append(open_status_id)
+    if return_status_id and return_status_id not in status_ids_to_include:
+        status_ids_to_include.append(return_status_id)
+
     status_filter_clause = ""
     status_filter_params = []
-    if open_status_id:
-        status_filter_clause = " AND t.status_id IN (?)"
-        status_filter_params.append(open_status_id)
+    if status_ids_to_include:
+        placeholders = ", ".join(["?"] * len(status_ids_to_include))
+        status_filter_clause = f" AND t.status_id IN ({placeholders})"
+        status_filter_params.extend(status_ids_to_include)
 
     assigned_rows = db_execute(
         f"""

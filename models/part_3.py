@@ -1357,11 +1357,26 @@ def create_user(username, password, salesperson_id=None):
     user.set_password(password)
 
     try:
-        cursor = db.execute(
-            'INSERT INTO users (username, password_hash) VALUES (?, ?)',
-            (username, user.password_hash)
-        )
-        user_id = cursor.lastrowid
+        if _using_postgres():
+            cursor = db.execute(
+                'INSERT INTO users (username, password_hash) VALUES (?, ?) RETURNING id',
+                (username, user.password_hash)
+            )
+            row = cursor.fetchone()
+            user_id = None
+            if isinstance(row, dict):
+                user_id = row.get('id')
+            elif row:
+                user_id = row[0]
+        else:
+            cursor = db.execute(
+                'INSERT INTO users (username, password_hash) VALUES (?, ?)',
+                (username, user.password_hash)
+            )
+            user_id = cursor.lastrowid
+
+        if not user_id:
+            raise RuntimeError('Failed to determine new user ID')
 
         if salesperson_id:
             db.execute(

@@ -26,7 +26,7 @@ import imaplib
 import re
 import mimetypes
 from datetime import date, datetime
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlparse
 from collections import defaultdict
 import json
 from functools import wraps
@@ -267,7 +267,10 @@ def _decode_graph_next_link(token):
     if not token:
         return None
     try:
-        return base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8")
+        normalized = unquote(token)
+        padding = (-len(normalized)) % 4
+        normalized += "=" * padding
+        return base64.urlsafe_b64decode(normalized.encode("ascii")).decode("utf-8")
     except Exception:
         return None
 
@@ -1330,7 +1333,15 @@ def graph_messages():
             },
         }), 400
     if next_link:
-        if not next_link.startswith("https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages"):
+        parsed_next = urlparse(next_link)
+        if (
+            parsed_next.scheme != "https"
+            or parsed_next.netloc != "graph.microsoft.com"
+            or not (
+                parsed_next.path.startswith("/v1.0/me/mailFolders/")
+                or parsed_next.path.startswith("/v1.0/me/messages")
+            )
+        ):
             return jsonify({
                 "success": False,
                 "error": {

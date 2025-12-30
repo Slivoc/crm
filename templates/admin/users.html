@@ -4,6 +4,41 @@
 {% block content %}
 <div class="container">
     <h1>User Management</h1>
+    <div class="card mb-4">
+        <div class="card-body">
+            <h2 class="h5 mb-3">Create user and link salesperson</h2>
+            <form action="{{ url_for('admin.create_user_route') }}" method="post" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label for="username" class="form-label">Username</label>
+                    <input type="text" class="form-control" id="username" name="username" required>
+                </div>
+                <div class="col-md-3">
+                    <label for="password" class="form-label">Password</label>
+                    <input type="password" class="form-control" id="password" name="password" required>
+                </div>
+                <div class="col-md-3">
+                    <label for="salesperson_id" class="form-label">Existing salesperson</label>
+                    <select class="form-select" id="salesperson_id" name="salesperson_id">
+                        <option value="">None (leave blank)</option>
+                        {% for sp in salespeople %}
+                        <option value="{{ sp['id'] }}">{{ sp['name'] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="salesperson_name" class="form-label">New salesperson (optional)</label>
+                    <input type="text" class="form-control" id="salesperson_name" name="salesperson_name"
+                           placeholder="Create new salesperson and link">
+                    <div class="form-text">
+                        Provide a new name to create a salesperson automatically (takes priority over the dropdown).
+                    </div>
+                </div>
+                <div class="col-12">
+                    <button type="submit" class="btn btn-primary">Create user and link</button>
+                </div>
+            </form>
+        </div>
+    </div>
     <table class="table">
         <thead>
             <tr>

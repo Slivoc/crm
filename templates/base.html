@@ -740,8 +740,13 @@ input:-webkit-autofill {
                         <i class="bi bi-speedometer2 me-2"></i>
                         Main Dashboard
                     </a> #}
-                    {% if current_user.is_authenticated %}
-                    <a href="{{ url_for('salespeople.activity', salesperson_id=current_user.get_salesperson_id()) }}" class="btn btn-toggle align-items-center rounded d-flex">
+                {% if current_user.is_authenticated %}
+                    {% set my_salesperson_id = current_user.get_salesperson_id() %}
+                    {% if my_salesperson_id %}
+                        <a href="{{ url_for('salespeople.activity', salesperson_id=my_salesperson_id) }}" class="btn btn-toggle align-items-center rounded d-flex">
+                    {% else %}
+                        <a href="{{ url_for('salespeople.dashboard') }}" class="btn btn-toggle align-items-center rounded d-flex">
+                    {% endif %}
                         <i class="bi bi-speedometer2 me-2"></i>
                         My CRM
                     </a>
