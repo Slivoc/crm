@@ -1880,6 +1880,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     let isLoading = false;
+    let hasLoadedOnce = false;
     let returnStatusId = null;
     let closeStatusId = null;
 
@@ -2006,10 +2007,28 @@ document.addEventListener('DOMContentLoaded', function() {
             ticketsContent.innerHTML = '<div class="text-danger small px-2 py-1">Unable to load tickets.</div>';
         } finally {
             isLoading = false;
+            hasLoadedOnce = true;
+        }
+    };
+
+    const scheduleInitialLoad = () => {
+        if (hasLoadedOnce || isLoading) {
+            return;
+        }
+        const triggerLoad = () => {
+            if (!hasLoadedOnce && !isLoading) {
+                loadTickets();
+            }
+        };
+        if ('requestIdleCallback' in window) {
+            window.requestIdleCallback(triggerLoad, { timeout: 1000 });
+        } else {
+            setTimeout(triggerLoad, 200);
         }
     };
 
     ticketsCollapse.addEventListener('shown.bs.collapse', loadTickets);
+    scheduleInitialLoad();
     ticketsContent.addEventListener('click', async (event) => {
         const actionBtn = event.target.closest('[data-ticket-action]');
         if (!actionBtn) {
