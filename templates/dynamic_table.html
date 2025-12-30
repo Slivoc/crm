@@ -18,6 +18,93 @@
         let currentColumns = [];
         let currentRows = [];
 
+        // Database schema for hints
+        const dbSchema = {
+            customers: {
+                description: "Customer accounts and companies",
+                fields: {
+                    id: "Primary key",
+                    name: "Company name",
+                    primary_contact_id: "FK to contacts",
+                    payment_terms: "Payment terms text",
+                    incoterms: "Shipping terms",
+                    salesperson_id: "FK to salespeople",
+                    status_id: "FK to customer_status",
+                    currency_id: "FK to currencies",
+                    system_code: "ERP system code",
+                    estimated_revenue: "Estimated annual revenue",
+                    country: "Country name",
+                    logo_url: "Company logo URL"
+                }
+            },
+            contacts: {
+                description: "Contact people at customers",
+                fields: { id: "Primary key", customer_id: "FK to customers", name: "Full name", email: "Email address" }
+            },
+            salespeople: {
+                description: "Sales team members",
+                fields: { id: "Primary key", name: "Full name" }
+            },
+            sales_orders: {
+                description: "Customer sales orders",
+                fields: {
+                    id: "Primary key", sales_order_ref: "Order reference", customer_id: "FK to customers",
+                    customer_po_ref: "Customer PO number", salesperson_id: "FK to salespeople",
+                    date_entered: "Order date", total_value: "Order total"
+                }
+            },
+            sales_order_lines: {
+                description: "Lines within sales orders",
+                fields: {
+                    id: "Primary key", sales_order_id: "FK to sales_orders", line_number: "Line #",
+                    price: "Unit price", quantity: "Qty ordered", delivery_date: "Expected delivery",
+                    base_part_number: "Part identifier"
+                }
+            },
+            purchase_orders: {
+                description: "Supplier purchase orders",
+                fields: {
+                    id: "Primary key", purchase_order_ref: "PO reference", supplier_id: "FK to suppliers",
+                    date_issued: "PO date", total_value: "PO total"
+                }
+            },
+            suppliers: {
+                description: "Vendor/supplier companies",
+                fields: { id: "Primary key", name: "Company name", contact_name: "Primary contact", contact_email: "Email", currency: "Default currency" }
+            },
+            part_numbers: {
+                description: "Product catalog",
+                fields: {
+                    base_part_number: "Primary identifier", part_number: "Alternate PN", system_part_number: "ERP PN",
+                    stock: "Qty in stock", target_price: "Target cost", rohs: "RoHS compliant flag"
+                }
+            },
+            cqs: {
+                description: "Customer quotes",
+                fields: { id: "Primary key", cq_number: "Quote number", customer_id: "FK to customers", status: "Quote status", entry_date: "Date created", due_date: "Response due" }
+            },
+            cq_lines: {
+                description: "Lines within customer quotes",
+                fields: { id: "Primary key", cq_id: "FK to cqs", part_number: "Part requested", quantity_requested: "Qty", unit_price: "Quoted price", is_no_quote: "Unable to quote flag" }
+            },
+            vqs: {
+                description: "Vendor quotes received",
+                fields: { id: "Primary key", vq_number: "Quote number", supplier_id: "FK to suppliers", status: "Quote status", entry_date: "Date received" }
+            },
+            vq_lines: {
+                description: "Lines within vendor quotes",
+                fields: { id: "Primary key", vq_id: "FK to vqs", part_number: "Part quoted", vendor_price: "Quoted cost", quantity_quoted: "Qty available" }
+            },
+            parts_lists: {
+                description: "Parts list / BOM projects",
+                fields: { id: "Primary key", name: "List name", customer_id: "FK to customers", salesperson_id: "Assigned to", status_id: "Current status", date_created: "Created date" }
+            },
+            currencies: {
+                description: "Currency codes and rates",
+                fields: { id: "Primary key", currency_code: "ISO code (GBP, USD)", exchange_rate_to_eur: "FX rate", symbol: "Display symbol" }
+            }
+        };
+
         function updateSqlQueryDisplay(query) {
             const sqlQueryInput = document.getElementById('save_sql_query');
             const debugDisplay = document.getElementById('current-sql-query');
@@ -30,36 +117,119 @@
             }
         }
 
+        // Render schema hints panel
+        function renderSchemaHints() {
+            const container = document.getElementById('schema-hints-content');
+            if (!container) return;
+
+            let html = '';
+            for (const [table, info] of Object.entries(dbSchema)) {
+                html += `
+                    <div class="schema-table mb-2">
+                        <div class="schema-table-header d-flex align-items-center" 
+                             onclick="this.parentElement.classList.toggle('expanded')" 
+                             style="cursor: pointer;">
+                            <i class="bi bi-table me-2 text-primary"></i>
+                            <strong class="me-2">${table}</strong>
+                            <small class="text-muted">${info.description}</small>
+                            <i class="bi bi-chevron-down ms-auto schema-chevron"></i>
+                        </div>
+                        <div class="schema-fields ps-4 mt-1" style="display: none;">
+                            ${Object.entries(info.fields).map(([field, desc]) => `
+                                <div class="schema-field d-flex align-items-center py-1">
+                                    <code class="me-2 text-success" style="font-size: 0.85em;">${field}</code>
+                                    <small class="text-muted">${desc}</small>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+
+            // Add toggle behavior
+            container.querySelectorAll('.schema-table-header').forEach(header => {
+                header.addEventListener('click', function() {
+                    const fields = this.nextElementSibling;
+                    const chevron = this.querySelector('.schema-chevron');
+                    const isExpanded = fields.style.display !== 'none';
+                    fields.style.display = isExpanded ? 'none' : 'block';
+                    chevron.style.transform = isExpanded ? '' : 'rotate(180deg)';
+                });
+            });
+        }
+
         function updateChartFromDropdowns() {
-            if (!currentRows.length) return;
+            const chartContainer = document.getElementById('chart-container');
+            
+            if (!currentRows.length) {
+                // Show helpful message instead of blank chart
+                if (chartContainer) {
+                    chartContainer.innerHTML = `
+                        <div class="text-center text-muted py-5">
+                            <i class="bi bi-bar-chart fs-1 mb-3 d-block opacity-50"></i>
+                            <p>No data available for charting</p>
+                            <small>Run a query that returns numeric data to create charts</small>
+                        </div>
+                    `;
+                }
+                return;
+            }
+
+            // Restore canvas if needed
+            if (chartContainer && !document.getElementById('dynamicChart')) {
+                chartContainer.innerHTML = '<canvas id="dynamicChart"></canvas>';
+            }
 
             const labelCol1 = document.getElementById('label_column_1').value;
             const labelCol2 = document.getElementById('label_column_2').value;
             const valueCol1 = document.getElementById('value_column_1').value;
             const valueCol2 = document.getElementById('value_column_2').value;
             const chartType = document.getElementById('chart_type').value;
+            const aggregation = document.getElementById('aggregation_type')?.value || 'none';
+            const dateGrouping = document.getElementById('date_grouping')?.value || 'none';
 
-            const labels = labelCol2
-                ? currentRows.map(row => `${row[labelCol1]} - ${row[labelCol2]}`)
-                : currentRows.map(row => String(row[labelCol1]));
+            // Apply aggregation if selected
+            let processedData = [...currentRows];
+            let labels, datasets;
 
-            const datasets = [];
+            if (aggregation !== 'none' && labelCol1) {
+                const aggregated = aggregateData(processedData, labelCol1, valueCol1, aggregation, dateGrouping);
+                labels = aggregated.labels;
+                datasets = [{
+                    label: `${aggregation.toUpperCase()}(${valueCol1})`,
+                    data: aggregated.values
+                }];
 
-            // First dataset
-            datasets.push({
-                label: valueCol1,
-                data: currentRows.map(row => parseFloat(row[valueCol1]) || 0)
-            });
+                // Add second value column if present
+                if (valueCol2 && valueCol2 !== '') {
+                    const agg2 = aggregateData(processedData, labelCol1, valueCol2, aggregation, dateGrouping);
+                    datasets.push({
+                        label: `${aggregation.toUpperCase()}(${valueCol2})`,
+                        data: agg2.values
+                    });
+                }
+            } else {
+                labels = labelCol2
+                    ? currentRows.map(row => `${row[labelCol1] ?? ''} - ${row[labelCol2] ?? ''}`)
+                    : currentRows.map(row => String(row[labelCol1] ?? ''));
 
-            // Optional second dataset
-            if (valueCol2 && valueCol2 !== '') {
-                datasets.push({
-                    label: valueCol2,
-                    data: currentRows.map(row => parseFloat(row[valueCol2]) || 0)
-                });
+                datasets = [{
+                    label: valueCol1,
+                    data: currentRows.map(row => parseFloat(row[valueCol1]) || 0)
+                }];
+
+                if (valueCol2 && valueCol2 !== '') {
+                    datasets.push({
+                        label: valueCol2,
+                        data: currentRows.map(row => parseFloat(row[valueCol2]) || 0)
+                    });
+                }
             }
 
             const canvas = document.getElementById('dynamicChart');
+            if (!canvas) return;
+
             ChartUtils.createChart(canvas, {
                 type: chartType,
                 data: {
@@ -67,6 +237,73 @@
                     datasets: datasets
                 }
             });
+        }
+
+        // Aggregation helper function
+        function aggregateData(rows, labelCol, valueCol, aggregation, dateGrouping) {
+            const grouped = {};
+
+            rows.forEach(row => {
+                let key = row[labelCol];
+                
+                // Apply date grouping if the value looks like a date
+                if (dateGrouping !== 'none' && key) {
+                    const date = new Date(key);
+                    if (!isNaN(date.getTime())) {
+                        switch (dateGrouping) {
+                            case 'day':
+                                key = date.toISOString().split('T')[0];
+                                break;
+                            case 'week':
+                                const weekStart = new Date(date);
+                                weekStart.setDate(date.getDate() - date.getDay());
+                                key = `Week of ${weekStart.toISOString().split('T')[0]}`;
+                                break;
+                            case 'month':
+                                key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                                break;
+                            case 'quarter':
+                                const quarter = Math.floor(date.getMonth() / 3) + 1;
+                                key = `${date.getFullYear()} Q${quarter}`;
+                                break;
+                            case 'year':
+                                key = String(date.getFullYear());
+                                break;
+                        }
+                    }
+                }
+
+                if (!grouped[key]) {
+                    grouped[key] = [];
+                }
+                const val = parseFloat(row[valueCol]);
+                if (!isNaN(val)) {
+                    grouped[key].push(val);
+                }
+            });
+
+            const labels = Object.keys(grouped).sort();
+            const values = labels.map(label => {
+                const vals = grouped[label];
+                if (vals.length === 0) return 0;
+                
+                switch (aggregation) {
+                    case 'sum':
+                        return vals.reduce((a, b) => a + b, 0);
+                    case 'avg':
+                        return vals.reduce((a, b) => a + b, 0) / vals.length;
+                    case 'count':
+                        return vals.length;
+                    case 'min':
+                        return Math.min(...vals);
+                    case 'max':
+                        return Math.max(...vals);
+                    default:
+                        return vals[0];
+                }
+            });
+
+            return { labels, values };
         }
 
         function handleQuerySubmit(e) {
@@ -140,34 +377,80 @@
             });
         }
 
-       function updateTable(columns, rows) {
-    if (!columns.length || !rows.length) {
-        throw new Error("No data returned from query");
-    }
+        function updateTable(columns, rows) {
+            // Handle zero data gracefully
+            if (!columns.length && !rows.length) {
+                document.querySelector('#result-container').innerHTML = `
+                    <div class="alert alert-info d-flex align-items-center" role="alert">
+                        <i class="bi bi-info-circle-fill me-3 fs-4"></i>
+                        <div>
+                            <strong>No results found</strong>
+                            <p class="mb-0 mt-1">Your query executed successfully but returned no data. Try:</p>
+                            <ul class="mb-0 mt-2">
+                                <li>Broadening your search criteria</li>
+                                <li>Checking for typos in names or values</li>
+                                <li>Using different date ranges</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
 
-    const tableHTML = `
-        <div class="table-responsive">
-            <table class="table table-bordered table-striped">
-                <thead class="table-light">
-                    <tr>${columns.map(col => `<th>${col}</th>`).join('')}</tr>
-                </thead>
-                <tbody>
-                    ${rows.map(row => `
-                        <tr>${columns.map(col => {
-                            if (col === 'customer_id' && row[col] !== null) {
-    return `<td><a href="/customers/${row[col]}/edit">${row[col]}</a></td>`;
-} else {
-    return `<td>${row[col]}</td>`;
-}
+            // Handle case where columns exist but no rows
+            if (!rows.length) {
+                document.querySelector('#result-container').innerHTML = `
+                    <div class="alert alert-warning d-flex align-items-center" role="alert">
+                        <i class="bi bi-exclamation-triangle-fill me-3 fs-4"></i>
+                        <div>
+                            <strong>Query returned empty results</strong>
+                            <p class="mb-0 mt-1">The query structure is valid but no matching records were found.</p>
+                            <small class="text-muted d-block mt-2">Columns found: ${columns.join(', ')}</small>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
 
-                        }).join('')}</tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-    `;
-    document.querySelector('#result-container').innerHTML = tableHTML;
-}
+            // Show row count badge
+            const rowCountBadge = `<span class="badge bg-success mb-2">${rows.length} row${rows.length !== 1 ? 's' : ''} returned</span>`;
+
+            const tableHTML = `
+                ${rowCountBadge}
+                <div class="table-responsive">
+                    <table class="table table-bordered table-striped table-hover">
+                        <thead class="table-light">
+                            <tr>${columns.map(col => `<th><span class="d-flex align-items-center"><i class="bi bi-columns-gap me-1 text-muted small"></i>${col}</span></th>`).join('')}</tr>
+                        </thead>
+                        <tbody>
+                            ${rows.map(row => `
+                                <tr>${columns.map(col => {
+                                    const value = row[col];
+                                    // Format null/undefined values
+                                    if (value === null || value === undefined) {
+                                        return `<td class="text-muted fst-italic">null</td>`;
+                                    }
+                                    // Link customer_id to customer edit page
+                                    if (col === 'customer_id') {
+                                        return `<td><a href="/customers/${value}/edit" class="text-decoration-none">${value}</a></td>`;
+                                    }
+                                    // Link supplier_id to supplier edit page
+                                    if (col === 'supplier_id') {
+                                        return `<td><a href="/suppliers/${value}/edit" class="text-decoration-none">${value}</a></td>`;
+                                    }
+                                    // Format numbers
+                                    if (typeof value === 'number') {
+                                        return `<td class="text-end">${value.toLocaleString()}</td>`;
+                                    }
+                                    return `<td>${value}</td>`;
+                                }).join('')}</tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            document.querySelector('#result-container').innerHTML = tableHTML;
+        }
 
 
         function updateColumnDropdowns(columns) {
@@ -196,104 +479,325 @@
         saveForm.addEventListener("submit", handleSaveSubmit);
 
         ['label_column_1', 'label_column_2', 'value_column_1',
-         'value_column_2', 'chart_type'].forEach(id => {
-            document.getElementById(id).addEventListener('change', updateChartFromDropdowns);
+         'value_column_2', 'chart_type', 'aggregation_type', 'date_grouping'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('change', updateChartFromDropdowns);
+        });
+
+        // Initialize schema hints
+        renderSchemaHints();
+
+        // Toggle schema panel
+        const schemaToggle = document.getElementById('schema-toggle-btn');
+        const schemaPanel = document.getElementById('schema-hints-panel');
+        if (schemaToggle && schemaPanel) {
+            schemaToggle.addEventListener('click', function() {
+                schemaPanel.classList.toggle('show');
+                this.querySelector('i').classList.toggle('bi-chevron-down');
+                this.querySelector('i').classList.toggle('bi-chevron-up');
+            });
+        }
+
+        // Example query buttons
+        document.querySelectorAll('.example-query-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const query = this.dataset.query;
+                document.getElementById('query').value = query;
+            });
         });
     });
 
 
 </script>
+<style>
+    .schema-chevron {
+        transition: transform 0.2s ease;
+    }
+    .schema-table-header:hover {
+        background-color: rgba(0,0,0,0.02);
+        border-radius: 4px;
+    }
+    .schema-hints-panel {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.3s ease;
+    }
+    .schema-hints-panel.show {
+        max-height: 500px;
+        overflow-y: auto;
+    }
+    .example-query-btn {
+        font-size: 0.85em;
+    }
+    .example-query-btn:hover {
+        background-color: var(--bs-primary);
+        color: white;
+    }
+</style>
+
 <div class="container-fluid mt-4">
-    <div class="card mb-4 shadow-sm border-0">
-        <div class="card-header">
-            <strong>Dynamic Database Query</strong>
+    <div class="row">
+        <!-- Main Query Panel -->
+        <div class="col-lg-9">
+            <div class="card mb-4 shadow-sm border-0">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong><i class="bi bi-database me-2"></i>Dynamic Database Query</strong>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="schema-toggle-btn">
+                        <i class="bi bi-lightbulb me-1"></i>Show Schema Hints
+                        <i class="bi bi-chevron-down ms-1"></i>
+                    </button>
+                </div>
+                
+                <!-- Collapsible Schema Hints -->
+                <div id="schema-hints-panel" class="schema-hints-panel border-bottom bg-light">
+                    <div class="p-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0"><i class="bi bi-info-circle me-2 text-primary"></i>Available Tables & Fields</h6>
+                            <small class="text-muted">Click a table to expand its fields</small>
+                        </div>
+                        <div id="schema-hints-content" style="max-height: 350px; overflow-y: auto;"></div>
+                    </div>
+                </div>
+
+                <div class="card-body">
+                    <!-- Example Queries -->
+                    <div class="mb-3">
+                        <small class="text-muted d-block mb-2"><i class="bi bi-lightning me-1"></i>Quick examples (click to use):</small>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-outline-secondary btn-sm example-query-btn" 
+                                    data-query="Show me all customers in the UK">
+                                <i class="bi bi-geo-alt me-1"></i>UK Customers
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm example-query-btn"
+                                    data-query="Show total sales order value by customer">
+                                <i class="bi bi-cash me-1"></i>Sales by Customer
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm example-query-btn"
+                                    data-query="Show sales orders from the last 30 days">
+                                <i class="bi bi-calendar me-1"></i>Recent Orders
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm example-query-btn"
+                                    data-query="Show top 10 customers by total order value">
+                                <i class="bi bi-trophy me-1"></i>Top Customers
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm example-query-btn"
+                                    data-query="Show monthly sales totals for this year">
+                                <i class="bi bi-graph-up me-1"></i>Monthly Sales
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Query Input Field Form -->
+                    <form action="/dynamic/dynamic_query" method="POST" class="mb-3" id="query-form">
+                        <div class="mb-3">
+                            <label for="query" class="form-label">Enter your query in plain English:</label>
+                            <div class="input-group">
+                                <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                                <input type="text" id="query" name="query" class="form-control form-control-lg" 
+                                       value="{{ request.form.query }}"
+                                       placeholder="e.g., Show me all customers who ordered more than £10000 last month" required>
+                            </div>
+                            <small class="text-muted mt-1 d-block">
+                                <i class="bi bi-magic me-1"></i>AI will translate your request into SQL
+                            </small>
+                        </div>
+                        <button type="submit" name="run_query" id="run_query" class="btn btn-primary">
+                            <i class="bi bi-play-fill me-1"></i>Run Query
+                        </button>
+                    </form>
+
+                    <!-- Results container -->
+                    <div id="result-container">
+                        <div class="text-center text-muted py-5">
+                            <i class="bi bi-table fs-1 mb-3 d-block opacity-50"></i>
+                            <p>Enter a query above to see results</p>
+                        </div>
+                    </div>
+
+                    <!-- Customize section -->
+                    <div class="customize-section" style="display: none;">
+                        <hr class="my-4">
+                        <h5 class="mb-3"><i class="bi bi-bar-chart me-2"></i>Chart Builder</h5>
+                        
+                        <!-- Chart container -->
+                        <div id="chart-container" class="mb-4" style="height: 400px;">
+                            <canvas id="dynamicChart"></canvas>
+                        </div>
+
+                        <!-- Customize form -->
+                        <form action="/dynamic/dynamic_query" method="POST" class="mt-4" id="save-form">
+                            <input type="hidden" name="sql_query" id="save_sql_query">
+                            <input type="hidden" name="save_chart" value="1">
+
+                            <!-- Chart Type and Aggregation Row -->
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <div class="mb-3">
+                                        <label for="chart_type" class="form-label">
+                                            <i class="bi bi-pie-chart me-1"></i>Chart Type:
+                                        </label>
+                                        <select id="chart_type" name="chart_type" class="form-select" required>
+                                            <optgroup label="Comparison">
+                                                <option value="bar">Bar Chart</option>
+                                                <option value="line">Line Chart</option>
+                                                <option value="scatter">Scatter Plot</option>
+                                            </optgroup>
+                                            <optgroup label="Distribution">
+                                                <option value="pie">Pie Chart</option>
+                                                <option value="doughnut">Doughnut Chart</option>
+                                                <option value="polarArea">Polar Area</option>
+                                            </optgroup>
+                                            <optgroup label="Other">
+                                                <option value="radar">Radar Chart</option>
+                                            </optgroup>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="mb-3">
+                                        <label for="aggregation_type" class="form-label">
+                                            <i class="bi bi-calculator me-1"></i>Aggregation:
+                                        </label>
+                                        <select id="aggregation_type" name="aggregation_type" class="form-select">
+                                            <option value="none">None (raw data)</option>
+                                            <option value="sum">Sum</option>
+                                            <option value="avg">Average</option>
+                                            <option value="count">Count</option>
+                                            <option value="min">Minimum</option>
+                                            <option value="max">Maximum</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="mb-3">
+                                        <label for="date_grouping" class="form-label">
+                                            <i class="bi bi-calendar3 me-1"></i>Date Grouping:
+                                        </label>
+                                        <select id="date_grouping" name="date_grouping" class="form-select">
+                                            <option value="none">None</option>
+                                            <option value="day">By Day</option>
+                                            <option value="week">By Week</option>
+                                            <option value="month">By Month</option>
+                                            <option value="quarter">By Quarter</option>
+                                            <option value="year">By Year</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Label Columns -->
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="label_column_1" class="form-label">Primary Label Column (Required):</label>
+                                        <select id="label_column_1" name="label_column_1" class="form-select" required>
+                                        </select>
+                                        <small class="text-muted">Used for X-axis or chart labels</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="label_column_2" class="form-label">Secondary Label Column (Optional):</label>
+                                        <select id="label_column_2" name="label_column_2" class="form-select">
+                                            <option value="">None</option>
+                                        </select>
+                                        <small class="text-muted">Combines with primary label</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Value Columns -->
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="value_column_1" class="form-label">Primary Value Column (Required):</label>
+                                        <select id="value_column_1" name="value_column_1" class="form-select" required>
+                                        </select>
+                                        <small class="text-muted">Numeric column for chart values</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="value_column_2" class="form-label">Secondary Value Column (Optional):</label>
+                                        <select id="value_column_2" name="value_column_2" class="form-select">
+                                            <option value="">None</option>
+                                        </select>
+                                        <small class="text-muted">Second data series (dual-axis)</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Debug display -->
+                            <div class="mb-3 border rounded p-3 bg-light">
+                                <small class="text-muted d-block mb-2">
+                                    <i class="bi bi-code-slash me-1"></i>Generated SQL Query:
+                                </small>
+                                <pre id="current-sql-query" style="white-space: pre-wrap; font-size: 0.8em; background-color: #fff; padding: 10px; border-radius: 4px; margin-bottom: 0; border: 1px solid #dee2e6;"></pre>
+                            </div>
+
+                            <!-- Save Query -->
+                            <div class="mb-3">
+                                <label for="query_name" class="form-label">Save As:</label>
+                                <input type="text" id="query_name" name="query_name" class="form-control"
+                                       placeholder="Enter a name for this saved query/chart" required>
+                            </div>
+
+                            <button type="submit" class="btn btn-success">
+                                <i class="bi bi-save me-1"></i>Save Chart and Query
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="card-body">
-            <!-- Query Input Field Form -->
-            <form action="/dynamic/dynamic_query" method="POST" class="mb-3" id="query-form">
-                <div class="mb-3">
-                    <label for="query" class="form-label">Enter or modify your query:</label>
-                    <input type="text" id="query" name="query" class="form-control" value="{{ request.form.query }}"
-                           placeholder="e.g., Show me all customers who requested Amphenol parts" required>
+
+        <!-- Quick Tips Sidebar -->
+        <div class="col-lg-3">
+            <div class="card shadow-sm border-0 sticky-top" style="top: 20px;">
+                <div class="card-header">
+                    <strong><i class="bi bi-lightbulb me-2"></i>Query Tips</strong>
                 </div>
-                <button type="submit" name="run_query" id="run_query" class="btn btn-primary">Run Query</button>
-            </form>
-
-            <!-- Results container -->
-            <div id="result-container"></div>
-
-            <!-- Customize section -->
-            <div class="customize-section" style="display: none;">
-                <div class="mb-3 mt-5" style="height: 400px;">
-                    <h5>Dynamic Chart</h5>
-                    <canvas id="dynamicChart"></canvas>
-                </div>
-
-
-
-                <!-- Customize form -->
-                <form action="/dynamic/dynamic_query" method="POST" class="mt-4" id="save-form">
-                    <input type="hidden" name="sql_query" id="save_sql_query">
-                    <input type="hidden" name="save_chart" value="1">
-
+                <div class="card-body">
                     <div class="mb-3">
-                        <label for="chart_type" class="form-label">Select Chart Type:</label>
-                        <select id="chart_type" name="chart_type" class="form-select" required>
-                            <option value="bar">Bar Chart</option>
-                            <option value="line">Line Chart</option>
-                            <option value="pie">Pie Chart</option>
-                            <option value="scatter">Scatter Plot</option>
-                        </select>
+                        <h6 class="text-primary"><i class="bi bi-chat-dots me-1"></i>Natural Language</h6>
+                        <p class="small text-muted mb-2">Write queries in plain English:</p>
+                        <ul class="small text-muted ps-3">
+                            <li>"Show all customers in Germany"</li>
+                            <li>"List orders from last week"</li>
+                            <li>"Total sales by salesperson"</li>
+                        </ul>
                     </div>
-
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="label_column_1" class="form-label">Primary Label Column (Required):</label>
-                                <select id="label_column_1" name="label_column_1" class="form-select" required>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="label_column_2" class="form-label">Secondary Label Column (Optional):</label>
-                                <select id="label_column_2" name="label_column_2" class="form-select">
-                                    <option value="">None</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="value_column_1" class="form-label">Primary Value Column (Required):</label>
-                                <select id="value_column_1" name="value_column_1" class="form-select" required>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="value_column_2" class="form-label">Secondary Value Column (Optional):</label>
-                                <select id="value_column_2" name="value_column_2" class="form-select">
-                                    <option value="">None</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                <!-- Debug display -->
-                <div class="mb-3 mt-4 border rounded p-3">
-                    <small class="text-muted d-block mb-2">Current SQL Query:</small>
-                    <pre id="current-sql-query" style="white-space: pre-wrap; font-size: 0.8em; background-color: #f8f9fa; padding: 10px; border-radius: 4px; margin-bottom: 0;"></pre>
-                </div>
+                    <hr>
                     <div class="mb-3">
-                        <label for="query_name" class="form-label">Query Name:</label>
-                        <input type="text" id="query_name" name="query_name" class="form-control"
-                               placeholder="Enter a name for this query" required>
+                        <h6 class="text-success"><i class="bi bi-funnel me-1"></i>Filtering</h6>
+                        <p class="small text-muted mb-0">Add conditions like:</p>
+                        <ul class="small text-muted ps-3">
+                            <li>"where total > 1000"</li>
+                            <li>"from the last 30 days"</li>
+                            <li>"with status = 'Open'"</li>
+                        </ul>
                     </div>
-
-                    <button type="submit" class="btn btn-success">Save Chart and Query</button>
-                </form>
+                    <hr>
+                    <div class="mb-3">
+                        <h6 class="text-warning"><i class="bi bi-sort-down me-1"></i>Sorting & Limits</h6>
+                        <p class="small text-muted mb-0">Control results:</p>
+                        <ul class="small text-muted ps-3">
+                            <li>"top 10 by value"</li>
+                            <li>"sorted by date descending"</li>
+                            <li>"limit to 50 results"</li>
+                        </ul>
+                    </div>
+                    <hr>
+                    <div>
+                        <h6 class="text-info"><i class="bi bi-graph-up-arrow me-1"></i>Aggregations</h6>
+                        <p class="small text-muted mb-0">Summarize data:</p>
+                        <ul class="small text-muted ps-3">
+                            <li>"total value per customer"</li>
+                            <li>"average order size"</li>
+                            <li>"count of orders by month"</li>
+                        </ul>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

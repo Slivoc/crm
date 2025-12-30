@@ -163,6 +163,9 @@ def execute_query(sql_query):
 
     Important: dynamic SQL is inherently dangerous. We rely on validate_sql_query
     to enforce SELECT-only patterns and block obvious injection patterns.
+    
+    Returns (columns, rows) where both may be empty lists if no data found.
+    This is NOT an error condition - zero rows is a valid result.
     """
     with db_cursor() as cur:
         try:
@@ -181,18 +184,27 @@ def execute_query(sql_query):
                 )
 
             # Fetch dynamically generated column names with fallbacks.
+            # IMPORTANT: Get columns from cursor description even if no rows returned
             columns = []
-            if rows and hasattr(rows[0], 'keys'):
-                columns = list(rows[0].keys())
-            elif cur.description:
+            
+            # First try to get columns from cursor description (works even with empty results)
+            if cur.description:
                 for desc in cur.description:
                     if isinstance(desc, (list, tuple)) and desc:
                         columns.append(desc[0])
                     elif hasattr(desc, 'name'):
                         columns.append(desc.name)
+            
+            # Fallback: if we have rows but no columns yet, extract from first row
+            if not columns and rows and hasattr(rows[0], 'keys'):
+                columns = list(rows[0].keys())
 
             # Normalize rows to list[dict]
             if not rows:
+                # Empty result is valid - return columns (if found) with empty rows
+                current_app.logger.info(
+                    "Query returned 0 rows. Columns found: %s", columns
+                )
                 return columns, []
 
             first = rows[0]
@@ -202,6 +214,9 @@ def execute_query(sql_query):
                 # Fallback for tuple rows
                 rows_as_dicts = [dict(zip(columns, r)) for r in rows]
 
+            current_app.logger.info(
+                "Query returned %d rows with columns: %s", len(rows_as_dicts), columns
+            )
             return columns, rows_as_dicts
 
         except Exception as e:
