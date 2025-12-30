@@ -149,6 +149,18 @@
     white-space: pre-wrap;
     word-break: break-all;
 }
+
+.queue-card {
+    border-left: 4px solid #0d6efd;
+}
+
+.queue-card .chunk-header {
+    gap: 0.35rem;
+}
+
+.queue-card .queue-meta {
+    font-size: 0.8rem;
+}
 </style>
 {% endblock %}
 
@@ -440,6 +452,15 @@
                     <strong>ILS Limitation:</strong> ILS only allows 24 part numbers per search.
                     Your parts have been divided into chunks of 24. Copy each chunk and search in ILS.
                 </div>
+                <div id="ilsQueueWrapper" class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center queue-header mb-2">
+                        <strong class="mb-0">Queued ILS Chunks</strong>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="refreshIlsQueueBtn">
+                            Refresh queue
+                        </button>
+                    </div>
+                    <div id="ilsQueueContainer"></div>
+                </div>
                 <div id="chunksContainer"></div>
             </div>
             <div class="modal-footer">
@@ -459,6 +480,180 @@ document.addEventListener('DOMContentLoaded', function() {
     {% endif %}
 
     let currentEmailData = null;
+
+    const queueContext = {
+        listName: {{ list_name | tojson }},
+        customerName: {{ customer_name | tojson }},
+        pageMode: {{ mode | tojson }}
+    };
+
+    async function fetchIlsQueue() {
+        const resp = await fetch('/parts_list/ils-copy-queue');
+        if (!resp.ok) {
+            const message = await resp.text();
+            throw new Error(message || 'Failed to load ILS queue');
+        }
+        const data = await resp.json();
+        return Array.isArray(data.queue) ? data.queue : [];
+    }
+
+    function renderIlsQueue(entries) {
+        const queueContainer = document.getElementById('ilsQueueContainer');
+        if (!queueContainer) return;
+        queueContainer.innerHTML = '';
+
+        if (!entries.length) {
+            queueContainer.innerHTML = '<div class="alert alert-secondary mb-3">No queued ILS chunks.</div>';
+            return;
+        }
+
+        entries.forEach(entry => {
+            const badgeClass = entry.chunk_type === 'uncosted' ? 'bg-warning text-dark' : 'bg-success';
+            const badgeLabel = entry.chunk_type === 'uncosted' ? 'Uncosted' : 'Costed';
+            const owner = entry.created_by_username || 'Shared queue';
+            let createdLabel = 'Just now';
+            if (entry.created_at) {
+                const parsed = new Date(entry.created_at);
+                createdLabel = isNaN(parsed.getTime()) ? entry.created_at : parsed.toLocaleString();
+            }
+            const listLabel = entry.parts_list_name ? `${entry.parts_list_name} · ` : '';
+
+            const queueCard = document.createElement('div');
+            queueCard.className = 'chunk-card queue-card';
+            queueCard.innerHTML = `
+                <div class="chunk-header">
+                    <div>
+                        <strong>${badgeLabel} queue entry</strong>
+                        <div class="queue-meta text-muted">${listLabel}${owner} · ${createdLabel}</div>
+                    </div>
+                    <span class="badge ${badgeClass}">${entry.parts.length} parts</span>
+                </div>
+                <div class="chunk-content"></div>
+                <div class="text-end mt-2 d-flex gap-2 justify-content-end">
+                    <button type="button" class="btn btn-sm btn-outline-secondary copy-queue-btn" data-queue-id="${entry.id}">
+                        Copy chunk
+                    </button>
+                    <button type="button" class="btn btn-sm btn-danger clear-queue-btn" data-queue-id="${entry.id}">
+                        Clear
+                    </button>
+                </div>
+            `;
+
+            const chunkContent = queueCard.querySelector('.chunk-content');
+            if (chunkContent) {
+                chunkContent.textContent = entry.parts.join('\n');
+            }
+
+            queueContainer.appendChild(queueCard);
+        });
+
+        queueContainer.querySelectorAll('.copy-queue-btn').forEach(btn => {
+            btn.addEventListener('click', async function() {
+                const chunkContent = this.closest('.chunk-card')?.querySelector('.chunk-content');
+                const chunkText = chunkContent ? chunkContent.textContent.trim() : '';
+                const originalHTML = this.innerHTML;
+                try {
+                    await navigator.clipboard.writeText(chunkText);
+                    this.innerHTML = 'Copied!';
+                    this.classList.remove('btn-outline-secondary');
+                    this.classList.add('btn-outline-success');
+                    setTimeout(() => {
+                        this.innerHTML = originalHTML;
+                        this.classList.remove('btn-outline-success');
+                        this.classList.add('btn-outline-secondary');
+                    }, 2000);
+                } catch (error) {
+                    console.error('Queue copy failed', error);
+                    alert('Failed to copy the queued chunk.');
+                }
+            });
+        });
+
+        queueContainer.querySelectorAll('.clear-queue-btn').forEach(btn => {
+            btn.addEventListener('click', async function() {
+                const queueId = this.dataset.queueId;
+                if (!queueId) return;
+                const originalHTML = this.innerHTML;
+                this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Clearing...';
+                this.disabled = true;
+                try {
+                    await deleteQueueEntry(queueId);
+                    await refreshIlsQueue();
+                } catch (error) {
+                    console.error('Queue clear failed', error);
+                    alert(error.message || 'Failed to clear the queued chunk.');
+                    this.innerHTML = originalHTML;
+                    this.disabled = false;
+                }
+            });
+        });
+    }
+
+    async function refreshIlsQueue() {
+        const queueContainer = document.getElementById('ilsQueueContainer');
+        if (queueContainer) {
+            queueContainer.innerHTML = '<div class="alert alert-secondary mb-3">Loading shared queue...</div>';
+        }
+
+        try {
+            const entries = await fetchIlsQueue();
+            renderIlsQueue(entries);
+            return entries;
+        } catch (error) {
+            console.warn('Failed to refresh ILS queue', error);
+            if (queueContainer) {
+                queueContainer.innerHTML = `<div class="alert alert-warning mb-3">Unable to load queue: ${error.message}</div>`;
+            }
+            return [];
+        }
+    }
+
+    function buildQueueNote(chunk) {
+        const notes = [];
+        if (queueContext.listName) notes.push(`List: ${queueContext.listName}`);
+        if (queueContext.customerName) notes.push(`Customer: ${queueContext.customerName}`);
+        if (queueContext.pageMode) {
+            const modeLabel = queueContext.pageMode === 'ils' ? 'ILS mode' : queueContext.pageMode;
+            notes.push(`Mode: ${modeLabel}`);
+        }
+        notes.push(chunk.type === 'uncosted' ? 'Uncosted chunk' : 'Costed chunk');
+        notes.push(`${chunk.parts.length} parts`);
+        return notes.join(' | ');
+    }
+
+    async function addChunkToQueue(chunk) {
+        const resp = await fetch('/parts_list/ils-copy-queue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                parts_list_id: currentListId,
+                chunk_type: chunk.type,
+                parts: chunk.parts,
+                note: buildQueueNote(chunk)
+            })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            throw new Error(data.error || 'Unable to add chunk to queue');
+        }
+        return data.entry_id;
+    }
+
+    async function deleteQueueEntry(entryId) {
+        const resp = await fetch(`/parts_list/ils-copy-queue/${entryId}`, {
+            method: 'DELETE'
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            throw new Error(data.error || 'Unable to clear queue entry');
+        }
+        return true;
+    }
+
+    const refreshQueueBtn = document.getElementById('refreshIlsQueueBtn');
+    if (refreshQueueBtn) {
+        refreshQueueBtn.addEventListener('click', refreshIlsQueue);
+    }
 
     // ---- Mode Switcher --------------------------------------------
     window.switchMode = function(newMode) {
@@ -534,59 +729,60 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('filterPartNumber').addEventListener('input', applyFilters);
 
     // ---- Copy for ILS Button --------------------------------------
- document.getElementById('copyForILSBtn').addEventListener('click', function() {
-    {% if email_data and email_data.get('results') %}
-        const emailData = {{ email_data | tojson }};
-        const costedParts = new Set();
-        const uncostedParts = new Set();
+    document.getElementById('copyForILSBtn').addEventListener('click', async function() {
+        {% if email_data and email_data.get('results') %}
+            const emailData = {{ email_data | tojson }};
+            const costedParts = new Set();
+            const uncostedParts = new Set();
 
-        // Separate parts by costed status
-        emailData.results.forEach(part => {
-            if (part.input_part_number) {
-                if (part.has_chosen_cost) {
-                    costedParts.add(part.input_part_number);
-                } else {
-                    uncostedParts.add(part.input_part_number);
+            // Separate parts by costed status
+            emailData.results.forEach(part => {
+                if (part.input_part_number) {
+                    if (part.has_chosen_cost) {
+                        costedParts.add(part.input_part_number);
+                    } else {
+                        uncostedParts.add(part.input_part_number);
+                    }
                 }
+            });
+
+            if (costedParts.size === 0 && uncostedParts.size === 0) {
+                alert('No parts found in the list.');
+                return;
             }
-        });
 
-        if (costedParts.size === 0 && uncostedParts.size === 0) {
-            alert('No parts found in the list.');
-            return;
-        }
+            // Convert to arrays and sort
+            const sortedUncosted = Array.from(uncostedParts).sort();
+            const sortedCosted = Array.from(costedParts).sort();
 
-        // Convert to arrays and sort
-        const sortedUncosted = Array.from(uncostedParts).sort();
-        const sortedCosted = Array.from(costedParts).sort();
+            // Split into chunks of 24
+            const uncostedChunks = [];
+            for (let i = 0; i < sortedUncosted.length; i += 24) {
+                uncostedChunks.push({
+                    parts: sortedUncosted.slice(i, i + 24),
+                    type: 'uncosted'
+                });
+            }
 
-        // Split into chunks of 24
-        const uncostedChunks = [];
-        for (let i = 0; i < sortedUncosted.length; i += 24) {
-            uncostedChunks.push({
-                parts: sortedUncosted.slice(i, i + 24),
-                type: 'uncosted'
-            });
-        }
+            const costedChunks = [];
+            for (let i = 0; i < sortedCosted.length; i += 24) {
+                costedChunks.push({
+                    parts: sortedCosted.slice(i, i + 24),
+                    type: 'costed'
+                });
+            }
 
-        const costedChunks = [];
-        for (let i = 0; i < sortedCosted.length; i += 24) {
-            costedChunks.push({
-                parts: sortedCosted.slice(i, i + 24),
-                type: 'costed'
-            });
-        }
-
-        // Show modal with chunks (uncosted first, then costed)
-        showILSChunksModal([...uncostedChunks, ...costedChunks]);
-    {% else %}
-        alert('No parts data available. Please return to the parts list and try again.');
-    {% endif %}
-});
+            // Show modal with chunks (uncosted first, then costed)
+            await showILSChunksModal([...uncostedChunks, ...costedChunks]);
+        {% else %}
+            alert('No parts data available. Please return to the parts list and try again.');
+        {% endif %}
+    });
 
 
     // ---- Show ILS Chunks Modal ------------------------------------
-  function showILSChunksModal(chunks) {
+  async function showILSChunksModal(chunks) {
+    await refreshIlsQueue();
     const container = document.getElementById('chunksContainer');
     container.innerHTML = '';
 
@@ -647,14 +843,48 @@ document.addEventListener('DOMContentLoaded', function() {
                 <span class="badge ${badgeClass}">${chunkData.parts.length} parts</span>
             </div>
             <div class="chunk-content">${chunkText}</div>
-            <div class="text-end mt-2">
-                <button class="btn btn-sm btn-primary copy-chunk-btn" data-chunk-index="${globalIndex}">
+            <div class="text-end mt-2 d-flex gap-2 justify-content-end">
+                <button type="button" class="btn btn-sm btn-outline-secondary queue-chunk-btn" data-chunk-index="${globalIndex}">
+                    Queue Chunk
+                </button>
+                <button type="button" class="btn btn-sm btn-primary copy-chunk-btn" data-chunk-index="${globalIndex}">
                     📋 Copy Chunk
                 </button>
             </div>
         `;
 
         container.appendChild(chunkDiv);
+    });
+
+    document.querySelectorAll('.queue-chunk-btn').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const chunkIndex = parseInt(this.dataset.chunkIndex, 10);
+            const chunk = chunks[chunkIndex];
+            if (!chunk) return;
+            const button = this;
+            const originalHTML = button.innerHTML;
+            button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Queueing...';
+            button.disabled = true;
+
+            try {
+                await addChunkToQueue(chunk);
+                button.innerHTML = 'Queued';
+                button.classList.remove('btn-outline-secondary');
+                button.classList.add('btn-success');
+                await refreshIlsQueue();
+                setTimeout(() => {
+                    button.innerHTML = originalHTML;
+                    button.classList.remove('btn-success');
+                    button.classList.add('btn-outline-secondary');
+                    button.disabled = false;
+                }, 2000);
+            } catch (error) {
+                console.error('Queue chunk failed', error);
+                alert(error.message || 'Failed to queue chunk.');
+                button.innerHTML = originalHTML;
+                button.disabled = false;
+            }
+        });
     });
 
     // Add event listeners to copy buttons

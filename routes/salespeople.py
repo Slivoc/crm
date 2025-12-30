@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime, date, timedelta
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app, Response, stream_with_context
 from routes.auth import login_required, current_user
-from ai_helper import get_cached_news, get_top_customers_for_news, get_watched_customers_for_news, get_cache_key, cleanup_old_cache_files, fetch_customer_news_perplexity, process_customer_news_chatgpt, cache_news
+from ai_helper import get_cached_news, get_top_customers_for_news, get_watched_customers_for_news, get_cache_key, cleanup_old_cache_files, fetch_customer_news_perplexity, process_customer_news_chatgpt, cache_news, filter_duplicate_news, store_sent_news_items
 from routes.news_email import get_news_email_addresses, send_news_email
 from models import (get_salespeople, get_all_salespeople_with_contact_counts, get_call_list_contact_ids, add_to_call_list, remove_from_call_list,
     snooze_call_list_entry, get_call_list_with_communication_status, update_call_list_priority, update_call_list_notes, bulk_add_to_call_list, get_salesperson_recent_communications, get_communication_types_for_salesperson, delete_customer_tag, insert_customer_tags, get_all_tags, insert_customer_tag, get_engagement_settings, get_all_salespeople_with_customer_counts, get_priorities, save_engagement_settings, insert_salesperson, get_active_salespeople, get_engagement_metrics, toggle_salesperson_active, get_customer_contacts_with_communications, update_customer_field_value, get_all_contact_statuses, get_status_counts_for_salesperson, get_tags_by_customer_id, get_salesperson_customers_with_spend, get_salesperson_by_id, get_salesperson_contacts, get_contact_communications, get_salesperson_sales_by_date_range, get_salesperson_monthly_sales, get_accounts_monthly_sales,
@@ -3850,7 +3850,8 @@ def collect_customer_news(salesperson_id):
             'last_updated': datetime.now().isoformat(),
             'total_customers_checked': 0,
             'successful_customers': 0,
-            'total_news_items': 0
+            'total_news_items': 0,
+            'filtered_duplicates': 0
         }
 
     top_customers = get_watched_customers_for_news(salesperson_id, limit=25)
@@ -3860,7 +3861,8 @@ def collect_customer_news(salesperson_id):
             'last_updated': datetime.now().isoformat(),
             'total_customers_checked': 0,
             'successful_customers': 0,
-            'total_news_items': 0
+            'total_news_items': 0,
+            'filtered_duplicates': 0
         }
         cache_key = get_cache_key(salesperson_id)
         cache_news(cache_key, result)
@@ -3885,18 +3887,27 @@ def collect_customer_news(salesperson_id):
         except Exception:
             continue
 
+    # Sort by relevance and date
     all_news_items.sort(
         key=lambda x: (x.get('relevance_score', 0), x.get('published_date', '')),
         reverse=True
     )
-    final_news_items = all_news_items[:20]
+    
+    # Filter out duplicates (news that has already been sent)
+    original_count = len(all_news_items)
+    filtered_news_items = filter_duplicate_news(salesperson_id, all_news_items)
+    filtered_duplicates = original_count - len(filtered_news_items)
+    
+    # Take top 20 after filtering
+    final_news_items = filtered_news_items[:20]
 
     result = {
         'news_items': final_news_items,
         'last_updated': datetime.now().isoformat(),
         'total_customers_checked': len(top_customers),
         'successful_customers': successful_customers,
-        'total_news_items': len(final_news_items)
+        'total_news_items': len(final_news_items),
+        'filtered_duplicates': filtered_duplicates
     }
 
     cache_key = get_cache_key(salesperson_id)
@@ -3981,7 +3992,14 @@ def generate_news_stream(salesperson_id):
             key=lambda x: (x.get('relevance_score', 0), x.get('published_date', '')),
             reverse=True
         )
-        final_news_items = all_news_items[:20]
+        
+        # Filter out duplicates (news that has already been sent)
+        original_count = len(all_news_items)
+        filtered_news_items = filter_duplicate_news(salesperson_id, all_news_items)
+        filtered_duplicates = original_count - len(filtered_news_items)
+        
+        # Take top 20 after filtering
+        final_news_items = filtered_news_items[:20]
 
         # Cache the results
         result = {
@@ -3989,15 +4007,21 @@ def generate_news_stream(salesperson_id):
             'last_updated': datetime.now().isoformat(),
             'total_customers_checked': len(top_customers),
             'successful_customers': successful_customers,
-            'total_news_items': len(final_news_items)
+            'total_news_items': len(final_news_items),
+            'filtered_duplicates': filtered_duplicates
         }
 
-        cache_key = get_cache_key(salesperson_id)  # Changed from get_daily_cache_key
+        cache_key = get_cache_key(salesperson_id)
         cache_news(cache_key, result)
 
-        # Send completion
-        send_news_email(salesperson_id, salesperson.get('name') if salesperson else None, result)
-        yield f"data: {json.dumps({'status': 'completed', **result})}\n\n"
+        # Send completion email
+        email_sent = send_news_email(salesperson_id, salesperson.get('name') if salesperson else None, result)
+        
+        # Store sent news items to prevent future duplicates (only if email was sent)
+        if email_sent and final_news_items:
+            store_sent_news_items(salesperson_id, final_news_items)
+        
+        yield f"data: {json.dumps({'status': 'completed', 'filtered_duplicates': filtered_duplicates, **result})}\n\n"
 
     except Exception as e:
         yield f"data: {json.dumps({'status': 'error', 'error': str(e)})}\n\n"

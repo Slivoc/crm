@@ -7,6 +7,7 @@ import logging
 import os
 from datetime import datetime
 from difflib import SequenceMatcher  # For simple fuzzy similarity scoring
+from decimal import Decimal, InvalidOperation
 
 ils_bp = Blueprint('ils', __name__)
 
@@ -56,6 +57,23 @@ def _calculate_fuzzy_suggestions(ils_company, ils_cage, limit=5):
 
     suggestions.sort(key=lambda x: -x['similarity_score'])
     return suggestions[:limit]
+
+
+def _normalize_numeric_quantity(quantity_str):
+    """Return a canonical numeric string if the quantity is numeric, otherwise None."""
+    if not quantity_str:
+        return None
+
+    normalized = quantity_str.replace(',', '').strip()
+    if not normalized:
+        return None
+
+    try:
+        Decimal(normalized)
+    except InvalidOperation:
+        return None
+
+    return normalized
 
 
 def _scalar(query, params=None, key=None, default=None):
@@ -192,7 +210,9 @@ def parse_ils_csv(file_content):
     """
     Parse ILS CSV export and extract part availability data.
     Hard-coded based on ILS PartsAvailability format.
+    Returns tuple: (list of parsed rows, number of rows skipped due to invalid quantities).
     """
+    skipped_rows = 0
     # Skip first 3 header lines, actual headers are on line 4
     lines = file_content.strip().split('\n')
 
@@ -224,13 +244,19 @@ def parse_ils_csv(file_content):
         if not part_number:
             continue
 
+        quantity = safe_get('QTY')
+        normalized_quantity = _normalize_numeric_quantity(quantity)
+        if normalized_quantity is None:
+            skipped_rows += 1
+            continue
+
         result = {
             'item': safe_get('Item'),
             'company': safe_get('Company'),
             'cage_code': safe_get('CAGE'),
             'part_number': part_number,
             'alt_part_number': safe_get('AltPartNo'),
-            'quantity': safe_get('QTY'),
+            'quantity': normalized_quantity,
             'condition': safe_get('Cond'),
             'serial_number': safe_get('SerialNo'),
             'description': safe_get('Description'),
@@ -244,7 +270,7 @@ def parse_ils_csv(file_content):
         }
         results.append(result)
 
-    return results
+    return results, skipped_rows
 
 
 def get_or_create_supplier_mapping(cur, ils_company_name, ils_cage_code):
@@ -333,10 +359,16 @@ def upload_ils_csv():
         file_content = file.read().decode('utf-8')
 
         # Parse CSV
-        parsed_results = parse_ils_csv(file_content)
+        parsed_results, skipped_rows = parse_ils_csv(file_content)
+
+        if skipped_rows:
+            logging.info("Skipped %d ILS rows with non-numeric quantities", skipped_rows)
 
         if not parsed_results:
-            return jsonify({'success': False, 'error': 'No parts found in CSV'}), 400
+            error_msg = 'No valid parts found in CSV'
+            if skipped_rows:
+                error_msg = f'No valid parts found in CSV (skipped {skipped_rows} rows with non-numeric quantities)'
+            return jsonify({'success': False, 'error': error_msg}), 400
 
         # Save to database
         saved_count = save_ils_results(parsed_results)
@@ -351,7 +383,8 @@ def upload_ils_csv():
             'stats': {
                 'total_records': saved_count,
                 'unique_parts': unique_parts,
-                'unique_suppliers': unique_suppliers
+                'unique_suppliers': unique_suppliers,
+                'skipped_invalid_quantities': skipped_rows
             }
         })
 

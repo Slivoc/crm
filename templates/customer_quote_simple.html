@@ -398,16 +398,26 @@
         </td>
 
         <td>
+            {% set requested_or_customer = line.requested_part_number or line.customer_part_number %}
+            {% set supplier_diff = line.supplier_quoted_part_number and line.supplier_quoted_part_number != requested_or_customer %}
             <div class="d-flex align-items-center gap-1">
-                <span>{{ line.requested_part_number or line.customer_part_number }}</span>
+                <span>{{ requested_or_customer }}</span>
                 <button class="btn btn-sm icon-action-btn copy-part-number-btn"
-                        data-part-number="{{ line.requested_part_number or line.customer_part_number }}"
+                        data-part-number="{{ requested_or_customer }}"
                         title="Copy part number">
                     <i class="bi bi-clipboard"></i>
                 </button>
             </div>
-            {% if line.supplier_quoted_part_number and line.supplier_quoted_part_number != (line.requested_part_number or line.customer_part_number) %}
-            <span class="supplier-diff-note">Supplier: {{ line.supplier_quoted_part_number }}</span>
+            {% if supplier_diff %}
+            <div class="supplier-diff-note d-flex align-items-center gap-1">
+                <span>Supplier: {{ line.supplier_quoted_part_number | e }}</span>
+                <button type="button"
+                        class="btn btn-sm btn-outline-primary use-supplier-pn-btn"
+                        data-supplier-pn="{{ line.supplier_quoted_part_number | e }}"
+                        title="Use supplier quoted part number">
+                    Use supplier P/N
+                </button>
+            </div>
             {% endif %}
         </td>
 

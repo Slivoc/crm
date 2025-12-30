@@ -1072,3 +1072,294 @@ def cleanup_old_cache_files():
 
     except Exception as e:
         print(f"Cache cleanup error: {str(e)}")
+
+
+# ============================================================================
+# NEWS DEDUPLICATION FUNCTIONS
+# ============================================================================
+
+import hashlib
+
+
+def compute_news_hash(headline):
+    """Compute a hash of the headline for exact duplicate detection.
+    
+    Normalizes the headline (lowercase, strip whitespace, remove punctuation)
+    before hashing to catch near-exact duplicates.
+    """
+    import re
+    # Normalize: lowercase, remove punctuation, collapse whitespace
+    normalized = headline.lower().strip()
+    normalized = re.sub(r'[^\w\s]', '', normalized)
+    normalized = re.sub(r'\s+', ' ', normalized)
+    
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+
+def get_sent_news_hashes(salesperson_id, customer_id, days_back=90):
+    """Get hashes of news items sent to this salesperson for this customer.
+    
+    Returns a set of news_hash values for quick lookup.
+    """
+    db = get_db_connection()
+    try:
+        rows = db.execute("""
+            SELECT news_hash
+            FROM sent_customer_news
+            WHERE salesperson_id = ?
+            AND customer_id = ?
+            AND sent_at > NOW() - INTERVAL '%s days'
+        """.replace('?', '%s'), (salesperson_id, customer_id, days_back)).fetchall()
+        return {row['news_hash'] for row in rows}
+    except Exception as e:
+        print(f"Error getting sent news hashes: {str(e)}")
+        return set()
+    finally:
+        db.close()
+
+
+def get_recent_headlines_for_customer(salesperson_id, customer_id, limit=20):
+    """Get recent headlines sent for this customer to use in AI comparison.
+    
+    Returns list of headline strings.
+    """
+    db = get_db_connection()
+    try:
+        rows = db.execute("""
+            SELECT headline, sent_at
+            FROM sent_customer_news
+            WHERE salesperson_id = %s
+            AND customer_id = %s
+            ORDER BY sent_at DESC
+            LIMIT %s
+        """, (salesperson_id, customer_id, limit)).fetchall()
+        return [row['headline'] for row in rows]
+    except Exception as e:
+        print(f"Error getting recent headlines: {str(e)}")
+        return []
+    finally:
+        db.close()
+
+
+def store_sent_news_items(salesperson_id, news_items):
+    """Store news items that have been sent to prevent future duplicates.
+    
+    Args:
+        salesperson_id: ID of the salesperson
+        news_items: List of news item dicts with headline, summary, source, 
+                   published_date, customer_id
+    """
+    if not news_items:
+        return
+    
+    db = get_db_connection()
+    try:
+        for item in news_items:
+            news_hash = compute_news_hash(item.get('headline', ''))
+            customer_id = item.get('customer_id')
+            
+            if not customer_id:
+                continue
+            
+            # Parse published_date if it's a string
+            pub_date = item.get('published_date')
+            if isinstance(pub_date, str) and pub_date:
+                try:
+                    pub_date = datetime.strptime(pub_date, '%Y-%m-%d').date()
+                except:
+                    pub_date = None
+            
+            # Use INSERT ... ON CONFLICT to handle duplicates gracefully
+            db.execute("""
+                INSERT INTO sent_customer_news 
+                    (salesperson_id, customer_id, news_hash, headline, summary, source, published_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (salesperson_id, customer_id, news_hash) DO NOTHING
+            """, (
+                salesperson_id,
+                customer_id,
+                news_hash,
+                item.get('headline', '')[:500],  # Truncate if too long
+                item.get('summary', '')[:1000] if item.get('summary') else None,
+                item.get('source', '')[:255] if item.get('source') else None,
+                pub_date
+            ))
+        
+        db.commit()
+        print(f"Stored {len(news_items)} news items for salesperson {salesperson_id}")
+    except Exception as e:
+        print(f"Error storing sent news items: {str(e)}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        db.close()
+
+
+def check_semantic_duplicates_ai(new_headlines, previous_headlines, customer_name):
+    """Use AI to check if new headlines are semantically similar to previous ones.
+    
+    Args:
+        new_headlines: List of new headline strings to check
+        previous_headlines: List of previously sent headline strings
+        customer_name: Name of the customer for context
+        
+    Returns:
+        List of booleans, True if the headline at that index is genuinely NEW
+    """
+    if not new_headlines:
+        return []
+    
+    if not previous_headlines:
+        # No previous headlines to compare against - all are new
+        return [True] * len(new_headlines)
+    
+    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    
+    # Format previous headlines
+    prev_list = "\n".join([f"{i+1}. {h}" for i, h in enumerate(previous_headlines)])
+    
+    # Format new headlines
+    new_list = "\n".join([f"{i+1}. {h}" for i, h in enumerate(new_headlines)])
+    
+    system_message = """You are a news analyst. Determine which new headlines represent genuinely NEW stories vs duplicates/follow-ups of previously reported news.
+
+A headline is a DUPLICATE if:
+- It reports the same event/announcement as a previous headline
+- It's a follow-up or update to a previously reported story
+- It covers the same deal/contract/partnership/result
+
+A headline is NEW if:
+- It covers a completely different event or topic
+- It's about a genuinely new development
+
+Return ONLY a JSON array of booleans, where true = NEW story, false = DUPLICATE.
+Example: [true, false, true]
+
+The array MUST have exactly the same number of elements as new headlines provided."""
+
+    user_prompt = f"""Customer: {customer_name}
+
+Previously sent headlines (last 60 days):
+{prev_list}
+
+New headlines to evaluate:
+{new_list}
+
+For each new headline, is it genuinely NEW (true) or a duplicate/follow-up (false)?
+Return only the JSON array."""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # Using mini for cost efficiency
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.1
+        )
+        
+        response_text = response.choices[0].message.content.strip()
+        
+        # Parse the JSON array
+        result = json.loads(response_text)
+        
+        # Validate length matches
+        if len(result) != len(new_headlines):
+            print(f"Warning: AI returned {len(result)} results for {len(new_headlines)} headlines")
+            # Pad with True (assume new) if too short, or truncate if too long
+            if len(result) < len(new_headlines):
+                result.extend([True] * (len(new_headlines) - len(result)))
+            else:
+                result = result[:len(new_headlines)]
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error in AI semantic duplicate check: {str(e)}")
+        # On error, assume all are new to avoid losing news
+        return [True] * len(new_headlines)
+
+
+def filter_duplicate_news(salesperson_id, news_items):
+    """Filter out news items that have already been sent.
+    
+    Uses a two-pass approach:
+    1. Hash-based filtering for exact/near-exact duplicates (free)
+    2. AI-based filtering for semantic duplicates (smart)
+    
+    Args:
+        salesperson_id: ID of the salesperson
+        news_items: List of news item dicts
+        
+    Returns:
+        List of news items that are genuinely new
+    """
+    if not news_items:
+        return []
+    
+    # Group news items by customer
+    by_customer = {}
+    for item in news_items:
+        cid = item.get('customer_id')
+        if cid:
+            if cid not in by_customer:
+                by_customer[cid] = []
+            by_customer[cid].append(item)
+    
+    filtered_items = []
+    
+    for customer_id, items in by_customer.items():
+        # PASS 1: Hash-based filtering
+        sent_hashes = get_sent_news_hashes(salesperson_id, customer_id)
+        
+        hash_filtered = []
+        for item in items:
+            news_hash = compute_news_hash(item.get('headline', ''))
+            if news_hash not in sent_hashes:
+                hash_filtered.append(item)
+            else:
+                print(f"Hash-filtered duplicate: {item.get('headline', '')[:50]}...")
+        
+        if not hash_filtered:
+            continue
+        
+        # PASS 2: AI semantic filtering
+        previous_headlines = get_recent_headlines_for_customer(
+            salesperson_id, customer_id, limit=20
+        )
+        
+        if previous_headlines:
+            new_headlines = [item.get('headline', '') for item in hash_filtered]
+            customer_name = hash_filtered[0].get('customer_name', 'Unknown')
+            
+            is_new = check_semantic_duplicates_ai(
+                new_headlines, previous_headlines, customer_name
+            )
+            
+            for item, is_genuinely_new in zip(hash_filtered, is_new):
+                if is_genuinely_new:
+                    filtered_items.append(item)
+                else:
+                    print(f"AI-filtered semantic duplicate: {item.get('headline', '')[:50]}...")
+        else:
+            # No previous headlines, all items pass
+            filtered_items.extend(hash_filtered)
+    
+    print(f"News deduplication: {len(news_items)} -> {len(filtered_items)} items")
+    return filtered_items
+
+
+def cleanup_old_sent_news(days_to_keep=180):
+    """Remove sent news records older than specified days to prevent table bloat."""
+    db = get_db_connection()
+    try:
+        result = db.execute("""
+            DELETE FROM sent_customer_news
+            WHERE sent_at < NOW() - INTERVAL '%s days'
+        """, (days_to_keep,))
+        db.commit()
+        print(f"Cleaned up old sent news records")
+    except Exception as e:
+        print(f"Error cleaning up old sent news: {str(e)}")
+    finally:
+        db.close()

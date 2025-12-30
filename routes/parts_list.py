@@ -2499,6 +2499,113 @@ def email_suppliers():
                            status_name=list_header['status_name'] if list_header else None)
 
 
+@parts_list_bp.route('/ils-copy-queue', methods=['GET'])
+def get_ils_copy_queue():
+    """
+    Return the shared ILS copy queue for anyone to consume.
+    """
+    with db_cursor() as cursor:
+        rows = _execute_with_cursor(cursor, """
+            SELECT
+                q.id,
+                q.parts_list_id,
+                q.chunk_type,
+                q.parts_json,
+                q.note,
+                q.created_at,
+                u.username,
+                pl.name AS parts_list_name
+            FROM parts_list_ils_copy_queue q
+            LEFT JOIN users u ON u.id = q.created_by_user_id
+            LEFT JOIN parts_lists pl ON pl.id = q.parts_list_id
+            ORDER BY q.created_at DESC
+        """).fetchall()
+
+    queue = []
+    for row in rows or []:
+        parts = []
+        try:
+            parts = json.loads(row['parts_json'] or '[]')
+        except Exception:
+            logging.warning('Unable to decode parts_json for queue entry %s', row['id'])
+        created_at = row['created_at']
+        if created_at and hasattr(created_at, 'isoformat'):
+            created_at = created_at.isoformat()
+
+        queue.append({
+            'id': row['id'],
+            'parts_list_id': row['parts_list_id'],
+            'parts_list_name': row.get('parts_list_name'),
+            'chunk_type': row['chunk_type'],
+            'note': row['note'],
+            'parts': parts,
+            'created_at': created_at,
+            'created_by_username': row.get('username')
+        })
+
+    return jsonify(queue=queue)
+
+
+@parts_list_bp.route('/ils-copy-queue', methods=['POST'])
+def add_to_ils_copy_queue():
+    """
+    Persist a chunk of part numbers into the shared ILS queue.
+    """
+    data = request.get_json(force=True) or {}
+    parts = data.get('parts')
+    if not parts:
+        return jsonify(success=False, error='parts array is required'), 400
+
+    # Normalize incoming chunk data
+    if isinstance(parts, str):
+        parts = [parts]
+    else:
+        parts = list(parts)
+
+    sanitized_parts = [str(p) for p in parts if p]
+    if not sanitized_parts:
+        return jsonify(success=False, error='No valid part numbers provided'), 400
+
+    chunk_type = (data.get('chunk_type') or 'uncosted').lower()
+    if chunk_type not in {'uncosted', 'costed'}:
+        chunk_type = 'uncosted'
+
+    payload = (
+        data.get('parts_list_id'),
+        chunk_type,
+        json.dumps(sanitized_parts),
+        data.get('note'),
+        current_user.id if current_user.is_authenticated else session.get('user_id')
+    )
+
+    with db_cursor(commit=True) as cursor:
+        inserted = _execute_with_cursor(cursor, """
+            INSERT INTO parts_list_ils_copy_queue
+            (parts_list_id, chunk_type, parts_json, note, created_by_user_id)
+            VALUES (?, ?, ?, ?, ?)
+            RETURNING id
+        """, payload).fetchone()
+
+    entry_id = inserted['id'] if inserted else None
+    return jsonify(success=True, entry_id=entry_id)
+
+
+@parts_list_bp.route('/ils-copy-queue/<int:entry_id>', methods=['DELETE'])
+def clear_ils_copy_queue(entry_id):
+    """
+    Remove a queued chunk once it has been dispatched or is no longer needed.
+    """
+    with db_cursor(commit=True) as cursor:
+        result_cursor = _execute_with_cursor(cursor, """
+            DELETE FROM parts_list_ils_copy_queue
+            WHERE id = ?
+        """, (entry_id,))
+        if result_cursor.rowcount == 0:
+            return jsonify(success=False, error='Queue entry not found'), 404
+
+    return jsonify(success=True)
+
+
 def process_ils_suppliers(email_data, cursor, cutoff_date):
     """
     Process ILS supplier data (existing logic)

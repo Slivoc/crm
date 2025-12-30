@@ -404,6 +404,23 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- 6. EVENT LISTENERS ---
 
     document.getElementById('quoteTableBody').addEventListener('click', async function(e) {
+        const supplierBtn = e.target.closest('.use-supplier-pn-btn');
+        if (supplierBtn) {
+            const row = supplierBtn.closest('tr');
+            if (!row || row.dataset.locked === '1') return;
+            const cached = rowCache.get(row);
+            if (!cached) return;
+            const supplierPN = (supplierBtn.dataset.supplierPn || '').trim();
+            if (!supplierPN) return;
+            const displayInput = cached.elements.displayPartNumber;
+            if (!displayInput) return;
+            displayInput.value = supplierPN;
+            displayInput.classList.add('changed-input');
+            cached.lineData.display_part_number = supplierPN;
+            markUnsaved();
+            return;
+        }
+
         const btn = e.target.closest('.line-calc-btn');
         if (!btn) return;
 
