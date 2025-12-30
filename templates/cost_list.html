@@ -99,7 +99,15 @@
             <td>{{ line.requested_part_number or line.base_part_number }}</td>
             <td>{{ line.offered_part_number or 'Same as requested' }}</td>
             <td>{{ line.system_part_number }}</td>
-            <td>{{ line.chosen_supplier_name or line.supplier_name }}</td>
+            <td>
+                {% if line.chosen_supplier_name %}
+                    {{ line.chosen_supplier_name }}
+                {% elif line.supplier_name %}
+                    {{ line.supplier_name }}
+                {% elif line.chosen_source_type == 'stock' %}
+                    Stock
+                {% endif %}
+            </td>
             <td>{{ line.fornitore }}</td>
             <td>{{ line.quantity }}</td>
             <td>{{ line.cost }}</td>

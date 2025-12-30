@@ -1,4 +1,15 @@
 // ---------- DOM READY: attach listeners & init widgets ----------
+function setSupplierSourceBadge(row, source) {
+    if (!row) return;
+    const badge = row.querySelector('.supplier-source-badge');
+    if (!badge) return;
+    if (source === 'stock') {
+        badge.classList.remove('d-none');
+    } else {
+        badge.classList.add('d-none');
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     // Auto-calculate line totals when cost or quantity changes
     document.querySelectorAll('.cost-input').forEach(input => {
@@ -91,6 +102,23 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
     }
+
+    document.querySelectorAll('.supplier-select').forEach(select => {
+        select.addEventListener('change', function () {
+            const row = this.closest('tr');
+            if (!row) return;
+            if (this.value) {
+                row.dataset.costSource = '';
+                setSupplierSourceBadge(row, null);
+            } else if (row.dataset.costSource === 'stock') {
+                setSupplierSourceBadge(row, 'stock');
+            }
+        });
+    });
+
+    document.querySelectorAll('tr[data-cost-source="stock"]').forEach(row => {
+        setSupplierSourceBadge(row, 'stock');
+    });
 
     loadEmailedSuppliersForCosting();
 
@@ -363,6 +391,8 @@ function saveLineCost(lineId) {
     const currency_id = parseInt(row.querySelector('.currency-select').value);
     const lead_days = parseInt(row.querySelector('.lead-days-input').value) || null;
     const internal_notes = row.querySelector('.notes-input').value;
+    const sourceType = row.dataset.costSource || (cost ? 'manual' : null);
+    const sourceReference = row.dataset.costSourceRef || null;
 
     // Get chosen_qty if the input exists
     const chosenQtyInput = row.querySelector('.chosen-qty-input');
@@ -383,6 +413,8 @@ function saveLineCost(lineId) {
         chosen_qty: chosen_qty,
         internal_notes: internal_notes
     };
+    if (sourceType !== null) costData.source_type = sourceType;
+    if (sourceReference) costData.source_reference = sourceReference;
 
     fetch(`/parts_list/parts-lists/${listId}/lines/${lineId}/use-cost`, {
         method: 'POST',
@@ -874,6 +906,10 @@ function useQuoteForLine(lineId, quoteLineId, supplierId, supplierName, cost, cu
         }
     }
 
+    row.dataset.costSource = '';
+    row.dataset.costSourceRef = '';
+    setSupplierSourceBadge(row, null);
+
     // Update cost
     const costInput = row.querySelector('.cost-input');
     if (costInput) costInput.value = cost.toFixed(2);
@@ -986,13 +1022,16 @@ function useStockForLine(lineId, stockCost, stockQty, movementId) {
     // Clear supplier (stock doesn't have a supplier)
     const supplierSelect = row.querySelector('.supplier-select');
     if (supplierSelect && window.jQuery) {
+        row.dataset.costSource = 'stock';
+        row.dataset.costSourceRef = movementId || '';
         $(supplierSelect).val(null).trigger('change');
+        setSupplierSourceBadge(row, 'stock');
     }
-
-    // Add note about stock source
-    const notesInput = row.querySelector('.notes-input');
-    if (notesInput) {
-        notesInput.value = `Using stock (Movement: ${movementId})`;
+    if (supplierSelect && !window.jQuery) {
+        row.dataset.costSource = 'stock';
+        row.dataset.costSourceRef = movementId || '';
+        supplierSelect.value = '';
+        setSupplierSourceBadge(row, 'stock');
     }
 
     // Update line total

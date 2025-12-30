@@ -6,13 +6,23 @@ document.addEventListener('DOMContentLoaded', function() {
         const baseCurrency = CURRENCIES.find(c => (c.currency_code || '').toUpperCase() === 'GBP');
         return baseCurrency ? baseCurrency.id : 3;
     })();
-    let displayCurrencyId = (typeof CUSTOMER_CURRENCY_ID !== 'undefined' && CUSTOMER_CURRENCY_ID) ? CUSTOMER_CURRENCY_ID : BASE_CURRENCY_ID;
+    const CUSTOMER_CURRENCY_ID_NUMBER = (() => {
+        const parsed = Number.parseInt(CUSTOMER_CURRENCY_ID, 10);
+        return Number.isFinite(parsed) ? parsed : null;
+    })();
+    let displayCurrencyId = CUSTOMER_CURRENCY_ID_NUMBER || BASE_CURRENCY_ID;
     const currencySelect = document.getElementById('quoteCurrencySelect');
     if (currencySelect) {
-        const initialId = parseInt(currencySelect.value, 10);
-        displayCurrencyId = Number.isFinite(initialId) ? initialId : BASE_CURRENCY_ID;
+        if (CUSTOMER_CURRENCY_ID_NUMBER !== null) {
+            const hasCustomerCurrencyOption = Array.from(currencySelect.options).some(opt => Number.parseInt(opt.value, 10) === CUSTOMER_CURRENCY_ID_NUMBER);
+            if (hasCustomerCurrencyOption) {
+                currencySelect.value = CUSTOMER_CURRENCY_ID_NUMBER;
+            }
+        }
+        const initialId = Number.parseInt(currencySelect.value, 10);
+        displayCurrencyId = Number.isFinite(initialId) ? initialId : displayCurrencyId;
         currencySelect.addEventListener('change', function() {
-            const nextId = parseInt(this.value, 10);
+            const nextId = Number.parseInt(this.value, 10);
             displayCurrencyId = Number.isFinite(nextId) ? nextId : BASE_CURRENCY_ID;
             updateSummaryDisplay();
             const emailBody = document.getElementById('emailQuoteBody');
@@ -31,6 +41,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function getRequestedPartNumber(lineData) {
         return (lineData.requested_part_number || lineData.customer_part_number || '').toString().trim();
+    }
+
+    function getSupplierDisplay(lineData) {
+        const supplierName = (lineData.chosen_supplier_name || '').toString().trim();
+        if (supplierName) return supplierName;
+        if ((lineData.chosen_source_type || '').toString().toLowerCase() === 'stock') return 'Stock';
+        return '';
     }
 
     function getCurrencyMeta(currencyId) {
@@ -685,7 +702,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const { lineData, elements, lastIsNoBid } = cached;
 
             if (lastIsNoBid) return;
-            if (!lineData.chosen_supplier_name || lineData.chosen_supplier_name === '-') return;
+            const supplierDisplay = getSupplierDisplay(lineData);
+            if (!supplierDisplay) return;
 
             const effectiveQty = parseFloat(elements.chosenQty.value) || lineData.quantity;
             const unitCost = parseFloat(lineData.chosen_cost || 0);
@@ -700,7 +718,7 @@ document.addEventListener('DOMContentLoaded', function() {
               <td align="left" style="${cellStyle}">${lineData.line_number || ''}</td>
               <td align="left" style="${cellStyle}">${getRequestedPartNumber(lineData)}</td>
               <td align="right" style="${cellStyle}">${effectiveQty || ''}</td>
-              <td align="left" style="${cellStyle}">${lineData.chosen_supplier_name}</td>
+                <td align="left" style="${cellStyle}">${supplierDisplay}</td>
               <td align="right" style="${cellStyle}">${unitCost.toFixed(2)}</td>
               <td align="left" style="${cellStyle}">${currency}</td>
               <td align="right" style="${cellStyle}">${lineTotal.toFixed(2)}</td>
@@ -1081,43 +1099,44 @@ document.addEventListener('DOMContentLoaded', function() {
         finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-truck me-1"></i>Calculate Delivery'; }
     });
 
-    // Bulk Apply Margin
-    document.getElementById('bulk-apply-margin-btn').addEventListener('click', function() {
-        const modal = new bootstrap.Modal(document.getElementById('bulkMarginModal'));
-        document.getElementById('margin-input-step').style.display = 'block';
-        document.getElementById('margin-applying-step').style.display = 'none';
-        document.getElementById('margin-success-step').style.display = 'none';
-        document.getElementById('margin-modal-footer').style.display = 'flex';
-        modal.show();
-    });
+      // Bulk Apply Margin
+      const bulkMarginModalElement = document.getElementById('bulkMarginModal');
+      const bulkMarginModalInstance = bulkMarginModalElement ? bootstrap.Modal.getOrCreateInstance(bulkMarginModalElement) : null;
 
-    document.getElementById('apply-margin-btn').addEventListener('click', async function() {
-        const margin = parseFloat(document.getElementById('bulk-margin-input').value);
-        const scope = document.querySelector('input[name="bulk-margin-scope"]:checked').value;
-        if (isNaN(margin) || margin < 0 || margin >= 100) return alert('Invalid margin');
+      document.getElementById('bulk-apply-margin-btn').addEventListener('click', function() {
+          if (!bulkMarginModalInstance) return;
+          document.getElementById('margin-input-step').style.display = 'block';
+          document.getElementById('margin-applying-step').style.display = 'none';
+          document.getElementById('margin-modal-footer').style.display = 'flex';
+          bulkMarginModalInstance.show();
+      });
 
-        document.getElementById('margin-input-step').style.display = 'none';
-        document.getElementById('margin-modal-footer').style.display = 'none';
-        document.getElementById('margin-applying-step').style.display = 'block';
+      document.getElementById('apply-margin-btn').addEventListener('click', async function() {
+          const margin = parseFloat(document.getElementById('bulk-margin-input').value);
+          const scope = document.querySelector('input[name="bulk-margin-scope"]:checked').value;
+          if (isNaN(margin) || margin < 0 || margin >= 100) return alert('Invalid margin');
 
-        try {
-            const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/bulk-margin-apply`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ margin_percent: margin, scope: scope })
-            });
-            const result = await response.json();
-            if (result.success) {
-                document.getElementById('margin-applying-step').style.display = 'none';
-                document.getElementById('margin-success-step').style.display = 'block';
-                document.getElementById('success-message').textContent = `Updated ${result.updated_count} lines`;
-            } else { alert('Error: ' + result.message); window.location.reload(); }
-        } catch (e) { alert('Failed'); window.location.reload(); }
-    });
+          document.getElementById('margin-input-step').style.display = 'none';
+          document.getElementById('margin-modal-footer').style.display = 'none';
+          document.getElementById('margin-applying-step').style.display = 'block';
 
-    document.getElementById('reload-after-apply-btn').addEventListener('click', function() { window.location.reload(); });
+          try {
+              const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/bulk-margin-apply`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ margin_percent: margin, scope: scope })
+              });
+              const result = await response.json();
+              if (result.success) {
+                  document.getElementById('margin-applying-step').style.display = 'none';
+                  document.getElementById('margin-modal-footer').style.display = 'flex';
+                  bulkMarginModalInstance?.hide();
+                  window.location.reload();
+              } else { alert('Error: ' + result.message); window.location.reload(); }
+          } catch (e) { alert('Failed'); window.location.reload(); }
+      });
 
-    function setupDuplicateLineButtons() {
+      function setupDuplicateLineButtons() {
         document.querySelectorAll('.duplicate-line-btn').forEach(btn => {
             btn.addEventListener('click', async function() {
                 const lineId = this.dataset.lineId;

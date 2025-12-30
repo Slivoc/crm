@@ -310,9 +310,10 @@ def generate_analysis(list_id):
                 pll.customer_part_number,
                 pll.base_part_number,
                 pll.quantity,
-                pll.chosen_cost,
-                pll.chosen_qty,
-                s.name as chosen_supplier_name,
+                  pll.chosen_cost,
+                  pll.chosen_qty,
+                  pll.chosen_source_type,
+                  s.name as chosen_supplier_name,
                 pll.chosen_lead_days,
                 -- Stock
                 COALESCE((SELECT SUM(sm.available_quantity)

@@ -291,12 +291,13 @@
                     <i class="bi bi-table me-2" style="color:#0d6efd;"></i>
                     Customer Quote Lines
                 </h5>
+                {% set default_display_currency_id = customer_currency_id or 3 %}
                 <div class="d-flex flex-wrap gap-2">
                     <div class="d-flex align-items-center gap-2 me-2">
                         <label for="quoteCurrencySelect" class="form-label mb-0 small text-muted">Display currency</label>
                         <select id="quoteCurrencySelect" class="form-select form-select-sm" style="width:auto;">
                             {% for currency in currencies %}
-                                <option value="{{ currency.id }}" {% if currency.id == (customer_currency_id or 3) %}selected{% endif %}>{{ currency.currency_code }}</option>
+                                <option value="{{ currency.id }}" {% if currency.id == default_display_currency_id %}selected{% endif %}>{{ currency.currency_code }}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -450,7 +451,16 @@
 
         <td class="read-only">{{ line.stock_quantity or 0 }}</td>
 
-        <td class="read-only">{{ line.chosen_supplier_name or '-' }}</td>
+        {% set is_stock_source = line.chosen_source_type == 'stock' %}
+        <td class="read-only">
+            {% if line.chosen_supplier_name %}
+                {{ line.chosen_supplier_name }}
+            {% elif is_stock_source %}
+                <span class="badge bg-secondary">Stock</span>
+            {% else %}
+                -
+            {% endif %}
+        </td>
 
         <td class="read-only">{{ '%.2f'|format(line.chosen_cost or 0) }}</td>
 

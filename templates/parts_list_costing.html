@@ -85,6 +85,12 @@
     background-color: #fff3cd !important;
 }
 
+.supplier-source-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
 /* Additional styles for quote availability indicators */
 
 /* Tooltip styling for additional context */
@@ -241,8 +247,10 @@
                 </thead>
                 <tbody id="costing-table-body">
                     {% for line in lines %}
+                    {% set is_stock_source = line.chosen_source_type == 'stock' %}
                     <tr class="{{ 'has-cost' if line.chosen_cost else 'missing-cost' }}"
-                        data-line-id="{{ line.id }}">
+                        data-line-id="{{ line.id }}"
+                        data-cost-source="{{ 'stock' if is_stock_source else '' }}">
                         <td>{{ line.line_number }}</td>
                         <td>
                             <div class="d-flex align-items-center gap-1">
@@ -286,6 +294,8 @@
                                 <option value="">Select supplier...</option>
                             {% endif %}
                         </select>
+                        <span class="badge bg-secondary supplier-source-badge mt-1{{ '' if is_stock_source else ' d-none' }}"
+                              data-source="stock">Stock</span>
                         <select class="form-select form-select-sm emailed-supplier-line-select mt-1"
                                 data-line-id="{{ line.id }}"
                                 style="display: none;">

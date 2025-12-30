@@ -63,6 +63,8 @@
                 No Bid
             {% elif line.chosen_supplier_name %}
                 {{ line.chosen_supplier_name }}
+            {% elif line.chosen_source_type == 'stock' %}
+                Stock
             {% else %}
                 Select Offer
             {% endif %}
@@ -2259,4 +2261,3 @@ th.col-action, td.col-action {
   });
 </script>
 </body>
-

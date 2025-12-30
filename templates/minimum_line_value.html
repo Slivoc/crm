@@ -178,6 +178,8 @@
                     </h6>
                     {% if line.chosen_supplier_name %}
                         <small class="text-muted">Supplier: {{ line.chosen_supplier_name }}</small>
+                    {% elif line.chosen_source_type == 'stock' %}
+                        <small class="text-muted">Supplier: Stock</small>
                     {% endif %}
                 </div>
                 <div class="col-md-6 text-end">

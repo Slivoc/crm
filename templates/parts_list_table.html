@@ -489,7 +489,7 @@ document.addEventListener('DOMContentLoaded', function() {
         base_part_number: line.base_part_number || '',
         quantity: line.quantity || 1,
         chosen_cost: line.chosen_cost || null,
-        chosen_supplier_name: line.chosen_supplier_name || '',
+        chosen_supplier_name: line.chosen_supplier_name || (line.chosen_source_type === 'stock' ? 'Stock' : ''),
         notes: line.customer_notes || ''
     }));
 

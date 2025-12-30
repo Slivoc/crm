@@ -135,14 +135,27 @@
                    </select>
                  </div>
 
-                 <div class="mb-3">
-                   <label for="website" class="form-label">Website:</label>
-                   <input type="text" id="website" name="website" class="form-control"
-                          value="{{ customer.website }}" placeholder="https://example.com">
-                 </div>
+                <div class="mb-3">
+                  <label for="website" class="form-label">Website:</label>
+                  <input type="text" id="website" name="website" class="form-control"
+                         value="{{ customer.website }}" placeholder="https://example.com">
+                </div>
 
-                 <div class="mb-3">
-                   <label for="system_code" class="form-label">System Code:</label>
+                <div class="mb-3">
+                  <label for="currency_id" class="form-label">Default Currency:</label>
+                  <select id="currency_id" name="currency_id" class="form-select" {{ 'disabled' if not can_edit }}>
+                    <option value="">Use default currency</option>
+                    {% for currency in currencies %}
+                    <option value="{{ currency.id }}" {% if currency.id == customer.get('currency_id') %}selected{% endif %}>
+                      {{ currency.currency_code }}{% if currency.symbol %} ({{ currency.symbol }}){% endif %}
+                    </option>
+                    {% endfor %}
+                  </select>
+                  <small class="form-text text-muted">Preferred currency for quotes and invoices.</small>
+                </div>
+
+                <div class="mb-3">
+                  <label for="system_code" class="form-label">System Code:</label>
                    <input type="text"
                           id="system_code"
                           name="system_code"

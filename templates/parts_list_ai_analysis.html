@@ -179,6 +179,8 @@
                                 </span>
                                 {% if line.chosen_supplier_name %}
                                 <br><small class="text-muted">{{ line.chosen_supplier_name }}</small>
+                                {% elif line.chosen_source_type == 'stock' %}
+                                <br><small class="text-muted">Stock</small>
                                 {% endif %}
                                 {% else %}
                                 <span class="text-muted">-</span>

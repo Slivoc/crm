@@ -159,7 +159,7 @@ def insert_customer(name, notes=None, estimated_revenue=None, primary_contact_id
         raise RuntimeError("Failed to insert customer")
     return row.get('id', list(row.values())[0])
 
-def update_customer(customer_id, name, primary_contact_id, salesperson_id, payment_terms, incoterms, watch, website, notes=None, country=None, system_code=None):
+def update_customer(customer_id, name, primary_contact_id, salesperson_id, payment_terms, incoterms, watch, website, notes=None, country=None, system_code=None, currency_id=None):
     db_execute(
         """
         UPDATE customers 
@@ -172,10 +172,11 @@ def update_customer(customer_id, name, primary_contact_id, salesperson_id, payme
             website = ?,
             notes = ?,
             country = ?,
+            currency_id = ?,
             system_code = ?
         WHERE id = ?
         """,
-        (name, primary_contact_id, salesperson_id, payment_terms, incoterms, watch, website, notes, country, system_code, customer_id),
+        (name, primary_contact_id, salesperson_id, payment_terms, incoterms, watch, website, notes, country, currency_id, system_code, customer_id),
         commit=True,
     )
 

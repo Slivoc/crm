@@ -3964,62 +3964,6 @@ def remove_suggested_supplier(list_id, line_id, suggested_id):
         return jsonify(success=False, message=str(e)), 500
 
 
-def use_cost(list_id, line_id):
-    """
-    Update the chosen cost fields for a line.
-    Body JSON: {
-        supplier_id: int (optional, for ILS might not have one),
-        cost: float,
-        price: float (optional, for selling price if known),
-        currency_id: int,
-        lead_days: int (optional),
-        chosen_qty: int (optional, defaults to line quantity),
-        source_type: 'stock'|'vq'|'po'|'manual',
-        source_reference: str (optional, e.g., movement_id, vq_id)
-    }
-    """
-    try:
-        data = request.get_json(force=True)
-
-        supplier_id = data.get('supplier_id')
-        cost = data.get('cost')
-        price = data.get('price')
-        currency_id = data.get('currency_id')
-        lead_days = data.get('lead_days')
-        chosen_qty = data.get('chosen_qty')  # ADD THIS LINE
-
-        if cost is None:
-            return jsonify(success=False, message="cost is required"), 400
-
-        with db_cursor(commit=True) as cur:
-            # Verify line belongs to list
-            line = _execute_with_cursor(cur, """
-                SELECT id FROM parts_list_lines 
-                WHERE id = ? AND parts_list_id = ?
-            """, (line_id, list_id)).fetchone()
-
-            if not line:
-                return jsonify(success=False, message="Line not found"), 404
-
-            # Update the chosen fields
-            _execute_with_cursor(cur, """
-                UPDATE parts_list_lines
-                SET chosen_supplier_id = ?,
-                    chosen_cost = ?,
-                    chosen_price = ?,
-                    chosen_currency_id = ?,
-                    chosen_lead_days = ?,
-                    chosen_qty = ?,
-                    date_modified = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (supplier_id, cost, price, currency_id, lead_days, chosen_qty, line_id))
-
-        return jsonify(success=True, message="Cost updated successfully")
-
-    except Exception as e:
-        logging.exception(e)
-        return jsonify(success=False, message=str(e)), 500
-
 @parts_list_bp.route('/parts-lists/<int:list_id>/lines/<int:line_id>/supplier-emails/add', methods=['POST'])
 def record_supplier_email(list_id, line_id):
     """
@@ -5948,6 +5892,10 @@ def use_cost(list_id, line_id):
         currency_code = data.get('currency_code')
         lead_days = data.get('lead_days')
         chosen_qty = data.get('chosen_qty')
+        source_type = (data.get('source_type') or '').strip().lower() or None
+        source_reference = data.get('source_reference')
+        source_type_provided = 'source_type' in data
+        source_reference_provided = 'source_reference' in data
 
         if cost is None:
             logging.warning(f"No cost provided in use_cost: {data}")
@@ -5976,17 +5924,33 @@ def use_cost(list_id, line_id):
             logging.info(
                 f"Updating line {line_id} with supplier: {supplier_id}, cost: {cost}, price: {price}, currency: {currency_id}, lead_days: {lead_days}, qty: {chosen_qty}")
 
-            _execute_with_cursor(cur, """
-                UPDATE parts_list_lines
-                SET chosen_supplier_id = ?,
-                    chosen_cost = ?,
-                    chosen_price = ?,
-                    chosen_currency_id = ?,
-                    chosen_lead_days = ?,
-                    chosen_qty = ?,
-                    date_modified = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (supplier_id, cost, price, currency_id, lead_days, chosen_qty, line_id))
+            update_source = source_type_provided or source_reference_provided
+            if update_source:
+                _execute_with_cursor(cur, """
+                    UPDATE parts_list_lines
+                    SET chosen_supplier_id = ?,
+                        chosen_cost = ?,
+                        chosen_price = ?,
+                        chosen_currency_id = ?,
+                        chosen_lead_days = ?,
+                        chosen_qty = ?,
+                        chosen_source_type = ?,
+                        chosen_source_reference = ?,
+                        date_modified = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (supplier_id, cost, price, currency_id, lead_days, chosen_qty, source_type, source_reference, line_id))
+            else:
+                _execute_with_cursor(cur, """
+                    UPDATE parts_list_lines
+                    SET chosen_supplier_id = ?,
+                        chosen_cost = ?,
+                        chosen_price = ?,
+                        chosen_currency_id = ?,
+                        chosen_lead_days = ?,
+                        chosen_qty = ?,
+                        date_modified = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (supplier_id, cost, price, currency_id, lead_days, chosen_qty, line_id))
 
             logging.info(f"Update complete - rows affected: {cur.rowcount}")
 

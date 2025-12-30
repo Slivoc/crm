@@ -1,7 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, request, g, current_app
 import logging
 from db import execute as db_execute, db_cursor
-from models import get_contact_status_by_id, get_contact_communications, get_customer_development_plan, update_customer_development_answer, delete_customer_development_answer, update_contact_status, add_contact_ajax, get_all_contacts_by_status, get_all_contact_statuses, get_all_contact_status_counts, get_customer_contacts, get_all_contacts_filtered, get_all_contact_lists, create_contact_list, delete_contact_list, get_contact_list_by_id, add_contacts_to_list, remove_contacts_from_list, get_lists_by_contact_id, update_contact_list_name, remove_contacts_from_list, get_contacts_by_ids, get_customer_domains, get_tag_description, Permission, get_all_company_types, get_available_company_types, abort, get_company_types_by_customer_id, remove_customer_company_type, insert_customer_company_type, get_rfqs_by_customer_id, get_sales_orders_by_customer_id, update_customer_apollo_id, get_customer_tags, get_templates_by_tags, update_contact, update_customer_enrichment, get_customer, get_customer_data, get_available_tags, get_customers_by_country, get_nested_tags, get_child_tags, get_customers_by_tag, get_customers_by_tags, get_customers_by_continent, get_available_countries, get_countries_by_continent, get_customer_statuses, get_continents, get_status_name, insert_customer_tag, get_all_customers, get_all_tags, get_customers_by_tag, get_latest_activity, get_customers_with_status_and_updates,  get_tag_description, insert_customer_tags, insert_customer_industry, delete_customer_industries, get_industries, get_customer_industry, update_customer_industry, delete_customer_tags, get_tags_by_customer_id, get_updates_by_customer_id, get_addresses_by_customer, insert_update, get_contact_by_id, get_customers, get_salespeople, get_salesperson_by_id, get_customer_by_id, get_contacts_by_customer, insert_customer, update_customer, insert_contact
+from models import get_contact_status_by_id, get_contact_communications, get_customer_development_plan, update_customer_development_answer, delete_customer_development_answer, update_contact_status, add_contact_ajax, get_all_contacts_by_status, get_all_contact_statuses, get_all_contact_status_counts, get_customer_contacts, get_all_contacts_filtered, get_all_contact_lists, create_contact_list, delete_contact_list, get_contact_list_by_id, add_contacts_to_list, remove_contacts_from_list, get_lists_by_contact_id, update_contact_list_name, remove_contacts_from_list, get_contacts_by_ids, get_customer_domains, get_tag_description, Permission, get_all_company_types, get_available_company_types, abort, get_company_types_by_customer_id, remove_customer_company_type, insert_customer_company_type, get_rfqs_by_customer_id, get_sales_orders_by_customer_id, update_customer_apollo_id, get_customer_tags, get_templates_by_tags, update_contact, update_customer_enrichment, get_customer, get_customer_data, get_available_tags, get_customers_by_country, get_nested_tags, get_child_tags, get_customers_by_tag, get_customers_by_tags, get_customers_by_continent, get_available_countries, get_countries_by_continent, get_customer_statuses, get_continents, get_status_name, insert_customer_tag, get_all_customers, get_all_tags, get_customers_by_tag, get_latest_activity, get_customers_with_status_and_updates,  get_tag_description, insert_customer_tags, insert_customer_industry, delete_customer_industries, get_industries, get_customer_industry, update_customer_industry, delete_customer_tags, get_tags_by_customer_id, get_updates_by_customer_id, get_addresses_by_customer, insert_update, get_contact_by_id, get_customers, get_salespeople, get_currencies, get_salesperson_by_id, get_customer_by_id, get_contacts_by_customer, insert_customer, update_customer, insert_contact
 from jinja2 import TemplateNotFound
 from ai_helper import start_bulk_enrichment, generate_industry_insights, generate_preview_prompt, enrich_customer_data, validate_enrichment_data, generate_industry_insights_with_custom_prompt
 from http import HTTPStatus
@@ -259,6 +259,7 @@ def edit_customer(customer_id):
             print(f"Salesperson ID: {request.form.get('salesperson_id')}", flush=True)
             print(f"Country: {request.form.get('country')}", flush=True)
             print(f"System Code: {request.form.get('system_code')}", flush=True)
+            print(f"Currency ID: {request.form.get('currency_id')}", flush=True)
 
             name = request.form['name']
             primary_contact_id = request.form.get('primary_contact_id') or None
@@ -270,6 +271,11 @@ def edit_customer(customer_id):
             watch = request.form.get('watch') == 'on'
             country = request.form.get('country', '').upper()  # Store as uppercase ISO code
             system_code = request.form.get('system_code', '').strip()  # Added system_code
+            currency_raw = request.form.get('currency_id')
+            try:
+                currency_id = int(currency_raw) if currency_raw and currency_raw.strip() else None
+            except (ValueError, TypeError):
+                currency_id = None
 
             # Handle website
             website = request.form.get('website', '').strip()
@@ -297,7 +303,7 @@ def edit_customer(customer_id):
 
             # You'll need to update the update_customer function to include system_code
             update_customer(customer_id, name, primary_contact_id, salesperson_id,
-                            payment_terms, incoterms, watch, website, notes, country, system_code)
+                            payment_terms, incoterms, watch, website, notes, country, system_code, currency_id)
 
             # Fix the indentation issue below - this code should be inside the try block
             # but before the return statement
@@ -369,6 +375,7 @@ def edit_customer(customer_id):
 
     # Load countries for the template
     countries = load_countries()
+    currencies = get_currencies()
 
     development_plan = get_customer_development_plan(customer_id)
 
@@ -389,6 +396,7 @@ def edit_customer(customer_id):
                            customer_notes=get_customer_notes(customer_id),
                            sales_orders=sales_orders,
                            countries=countries,  # Add countries to template context
+                           currencies=currencies,
                            page=page,
                            per_page=per_page,
                            breadcrumbs=breadcrumbs,
@@ -508,12 +516,46 @@ def update_development_answer(customer_id):
 
 @customers_bp.route('/<int:customer_id>/update', methods=['POST'])
 def update_customer_route(customer_id):
+    existing_customer = get_customer_by_id(customer_id) or {}
     name = request.form['name']
     primary_contact_id = request.form['primary_contact_id'] or None
     salesperson_id = request.form.get('salesperson_id')
     payment_terms = request.form['payment_terms']
     incoterms = request.form['incoterms']
-    update_customer(customer_id, name, primary_contact_id, salesperson_id, payment_terms, incoterms)
+    currency_id_raw = request.form.get('currency_id')
+    try:
+        currency_id = int(currency_id_raw) if currency_id_raw else None
+    except (ValueError, TypeError):
+        currency_id = None
+    watch_field = request.form.get('watch')
+    if watch_field is not None:
+        watch = watch_field == 'on'
+    else:
+        watch = bool(existing_customer.get('watch'))
+
+    website = request.form.get('website')
+    if website is None:
+        website = existing_customer.get('website', '')
+
+    notes = request.form.get('notes')
+    if notes is None:
+        notes = existing_customer.get('notes', '')
+
+    country = request.form.get('country')
+    if country is None:
+        country = existing_customer.get('country')
+    elif country:
+        country = country.upper()
+
+    system_code = request.form.get('system_code')
+    if system_code is None:
+        system_code = existing_customer.get('system_code', '')
+
+    if currency_id is None:
+        currency_id = existing_customer.get('currency_id')
+
+    update_customer(customer_id, name, primary_contact_id, salesperson_id,
+                    payment_terms, incoterms, watch, website, notes, country, system_code, currency_id)
     return redirect(url_for('customers.edit_customer', customer_id=customer_id))
 
 

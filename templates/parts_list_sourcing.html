@@ -351,14 +351,16 @@
     {% if line.chosen_cost %}
         <br>
         <span class="badge bg-success mt-1 cost-badge"
-              title="Chosen cost{% if line.chosen_supplier_name %} from {{ line.chosen_supplier_name }}{% endif %}">
-            {{ line.chosen_currency_code or 'GBP' }} {{ "%.2f"|format(line.chosen_cost) }}
-        </span>
+              title="Chosen cost{% if line.chosen_supplier_name %} from {{ line.chosen_supplier_name }}{% elif line.chosen_source_type == 'stock' %} from Stock{% endif %}">
+              {{ line.chosen_currency_code or 'GBP' }} {{ "%.2f"|format(line.chosen_cost) }}
+          </span>
         {% if line.chosen_supplier_name %}
             <br><small class="text-muted">{{ line.chosen_supplier_name }}</small>
+        {% elif line.chosen_source_type == 'stock' %}
+            <br><small class="text-muted">Stock</small>
         {% endif %}
-    {% endif %}
-</td>
+      {% endif %}
+  </td>
                             <td class="text-center"><span class="badge bg-secondary">{{ line.quantity }}</span></td>
 
                             <!-- STOCK -->
