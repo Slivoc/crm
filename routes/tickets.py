@@ -854,6 +854,10 @@ def sidebar_tree():
     statuses = _fetch_statuses()
     status_by_id = {status['id']: status for status in statuses}
     status_order = {status['id']: index for index, status in enumerate(statuses)}
+    open_status_id = next(
+        (status['id'] for status in statuses if status.get('name', '').lower() == 'open'),
+        None,
+    )
     return_status_id = next(
         (status['id'] for status in statuses if status.get('name', '').lower() == 'returned'),
         None,
@@ -862,6 +866,12 @@ def sidebar_tree():
         (status['id'] for status in statuses if status.get('is_closed')),
         None,
     )
+
+    status_filter_clause = ""
+    status_filter_params = []
+    if open_status_id:
+        status_filter_clause = " AND t.status_id IN (?)"
+        status_filter_params.append(open_status_id)
 
     assigned_rows = db_execute(
         f"""
@@ -880,9 +890,10 @@ def sidebar_tree():
         LEFT JOIN ticket_workspaces tw ON t.workspace_id = tw.id
         WHERE t.assigned_user_id = ?
           AND s.is_closed = FALSE
+          {status_filter_clause}
         {visibility_clause}
         """,
-        [user_id] + visibility_params,
+        [user_id] + status_filter_params + visibility_params,
         fetch="all",
     ) or []
 
@@ -927,9 +938,10 @@ def sidebar_tree():
             LEFT JOIN ticket_workspaces tw ON t.workspace_id = tw.id
             WHERE t.id IN ({placeholders})
               AND s.is_closed = FALSE
+              {status_filter_clause}
             {visibility_clause}
             """,
-            batch + visibility_params,
+            batch + status_filter_params + visibility_params,
             fetch="all",
         ) or []
         for row in parent_rows:
