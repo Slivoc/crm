@@ -84,13 +84,14 @@
         {% for status in statuses %}
             {% if show_closed or not status.is_closed %}
                 {% set status_tickets = tickets_by_status.get(status.id, []) %}
+                {% set status_count = status_tickets | selectattr('is_context_only', 'equalto', False) | list | length %}
                 <div class="ticket-column" data-status-id="{{ status.id }}">
                     <div class="column-header">
                         <div class="column-title">
                             <span class="status-dot {% if status.is_closed %}closed{% endif %}"></span>
                             <span>{{ status.name }}</span>
                         </div>
-                        <span class="column-count">{{ status_tickets | length }}</span>
+                        <span class="column-count">{{ status_count }}</span>
                     </div>
                     <div class="column-body">
                         {% for ticket in status_tickets %}
@@ -136,7 +137,12 @@
                                     <div class="branch-continuation" style="left: {{ (cd - depth) * 20 }}px;"></div>
                                     {% endif %}
                                 {% endfor %}
-                                <div class="ticket-card{% if is_subtask %} subtask-card{% endif %}" data-ticket-id="{{ ticket.id }}">
+                                <div class="ticket-card{% if is_subtask %} subtask-card{% endif %}{% if ticket.is_context_only %} context-only{% endif %}" data-ticket-id="{{ ticket.id }}">
+                                    {% if ticket.is_context_only %}
+                                        <div class="ticket-context-note">
+                                            Parent in {{ ticket.status_name or 'another status' }}
+                                        </div>
+                                    {% endif %}
                                     {% if ticket.subjob_count %}
                                     <button type="button" class="collapse-toggle" data-target-parent="{{ ticket.id }}" aria-expanded="true" title="Toggle subtasks">
                                         <i class="bi bi-chevron-down"></i>
@@ -650,6 +656,18 @@
     background: #fcfcff;
 }
 
+.ticket-card.context-only {
+    background: #f4f6f9;
+    border-style: dashed;
+    box-shadow: none;
+    opacity: 0.65;
+}
+
+.ticket-card.context-only:hover {
+    box-shadow: none;
+    transform: none;
+}
+
 .ticket-card:hover {
     box-shadow: 0 6px 14px rgba(16, 24, 40, 0.12);
     transform: translateY(-1px);
@@ -667,6 +685,19 @@
 
 .ticket-title:hover {
     color: #1a73e8;
+}
+
+.ticket-card.context-only .ticket-title,
+.ticket-card.context-only .ticket-title:hover {
+    color: #6c757d;
+}
+
+.ticket-context-note {
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #6c757d;
+    margin-bottom: 6px;
 }
 
 .ticket-parent {

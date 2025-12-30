@@ -726,6 +726,7 @@ def list_tickets():
             ticket["parent_label"] = f"#{ticket['parent_id']} {ticket['parent_title']}"
         else:
             ticket["parent_label"] = None
+        ticket["is_context_only"] = False
     statuses = _fetch_statuses()
     users = _fetch_users()
     workspaces = _fetch_workspaces()
@@ -768,6 +769,27 @@ def list_tickets():
 
     for status_id, group in status_groups.items():
         group_ids = {ticket["id"] for ticket in group}
+        expanded_group = list(group)
+        expanded_ids = set(group_ids)
+
+        for ticket in group:
+            parent_id = ticket.get("parent_id")
+            hop_count = 0
+            while parent_id and hop_count < 5:
+                parent = ticket_lookup.get(parent_id)
+                if not parent:
+                    break
+                if parent_id not in expanded_ids:
+                    context_ticket = dict(parent)
+                    context_ticket["is_context_only"] = True
+                    context_ticket["context_for_status_id"] = status_id
+                    expanded_group.append(context_ticket)
+                    expanded_ids.add(parent_id)
+                parent_id = parent.get("parent_id")
+                hop_count += 1
+
+        group = expanded_group
+        group_ids = expanded_ids
         children_by_parent = {}
         for ticket in group:
             parent_id = ticket.get("parent_id")
