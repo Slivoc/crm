@@ -59,6 +59,43 @@
                 </div>
             </div>
         </div>
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title mb-2">My notifications</h5>
+                <p class="text-muted small mb-3">Choose which workspace assignments send you an email.</p>
+                {% if notification_prefs %}
+                    <div class="notification-pref-list">
+                        {% for pref in notification_prefs %}
+                            <form class="notification-pref-form" data-workspace-id="{{ pref.workspace_id }}">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <div>
+                                        <div class="fw-semibold">{{ pref.workspace_name }}</div>
+                                        <div class="text-muted small">You are a member.</div>
+                                    </div>
+                                    <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
+                                </div>
+                                <div class="form-check mb-1">
+                                    <input class="form-check-input" type="checkbox" id="notify-tickets-{{ pref.workspace_id }}" name="notify_ticket_assignments" value="1" {% if pref.notify_ticket_assignments %}checked{% endif %}>
+                                    <label class="form-check-label" for="notify-tickets-{{ pref.workspace_id }}">
+                                        Email me for new tickets assigned to me
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="notify-tasks-{{ pref.workspace_id }}" name="notify_task_assignments" value="1" {% if pref.notify_task_assignments %}checked{% endif %}>
+                                    <label class="form-check-label" for="notify-tasks-{{ pref.workspace_id }}">
+                                        Email me for tasks/subtasks assigned to me
+                                    </label>
+                                </div>
+                                <div class="notification-status text-success small d-none" data-pref-status="success">Saved</div>
+                                <div class="notification-status text-danger small d-none" data-pref-status="error"></div>
+                            </form>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted small mb-0">Join a workspace to manage notification preferences.</p>
+                {% endif %}
+            </div>
+        </div>
 
         <div class="workspace-list">
             {% for workspace in workspaces %}
@@ -204,6 +241,23 @@
     overflow: auto;
 }
 
+.notification-pref-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.notification-pref-form {
+    border: 1px solid #dee2e6;
+    border-radius: 12px;
+    padding: 12px;
+    background: #f8f9fa;
+}
+
+.notification-status:not(.d-none) {
+    margin-top: 6px;
+}
+
 @media (max-width: 992px) {
     .workspace-grid {
         grid-template-columns: 1fr;
@@ -283,6 +337,48 @@ document.querySelectorAll('.member-pill').forEach(pill => {
         }
         checkbox.checked = !checkbox.checked;
         checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+});
+
+document.querySelectorAll('.notification-pref-form').forEach((form) => {
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const workspaceId = form.dataset.workspaceId;
+        const successEl = form.querySelector('[data-pref-status="success"]');
+        const errorEl = form.querySelector('[data-pref-status="error"]');
+        if (successEl) successEl.classList.add('d-none');
+        if (errorEl) {
+            errorEl.classList.add('d-none');
+            errorEl.textContent = '';
+        }
+
+        const ticketsChecked = form.querySelector('input[name="notify_ticket_assignments"]')?.checked;
+        const tasksChecked = form.querySelector('input[name="notify_task_assignments"]')?.checked;
+        const formData = new FormData();
+        formData.set('notify_ticket_assignments', ticketsChecked ? '1' : '0');
+        formData.set('notify_task_assignments', tasksChecked ? '1' : '0');
+
+        try {
+            const response = await fetch(`/tickets/workspaces/${workspaceId}/notifications`, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            });
+            const payload = await response.json();
+            if (response.ok && payload?.success) {
+                if (successEl) successEl.classList.remove('d-none');
+            } else if (errorEl) {
+                errorEl.textContent = payload?.message || 'Unable to save preferences.';
+                errorEl.classList.remove('d-none');
+            }
+        } catch (error) {
+            if (errorEl) {
+                errorEl.textContent = error?.message || 'Unable to save preferences.';
+                errorEl.classList.remove('d-none');
+            }
+        }
     });
 });
 </script>
