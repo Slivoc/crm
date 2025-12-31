@@ -3,6 +3,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, abort,
 from db import execute as db_execute
 from routes.auth import login_required, current_user
 from models import Permission
+from routes.portal_admin import send_email
 
 
 tickets_bp = Blueprint('tickets', __name__)
@@ -125,7 +126,7 @@ def _fetch_statuses():
 
 def _fetch_users():
     rows = db_execute(
-        "SELECT id, username FROM users ORDER BY username",
+        "SELECT id, username, email FROM users ORDER BY username",
         fetch="all",
     ) or []
     return [dict(row) for row in rows]
@@ -319,6 +320,104 @@ def _fetch_workspace_chips(user_id):
         fetch="all",
     ) or []
     return [dict(row) for row in rows]
+
+
+def _fetch_workspace_notifications(user_id):
+    rows = db_execute(
+        """
+        SELECT
+            tw.id AS workspace_id,
+            tw.name AS workspace_name,
+            COALESCE(twm.notify_ticket_assignments, FALSE) AS notify_ticket_assignments,
+            COALESCE(twm.notify_task_assignments, FALSE) AS notify_task_assignments
+        FROM ticket_workspace_members twm
+        JOIN ticket_workspaces tw ON tw.id = twm.workspace_id
+        WHERE twm.user_id = ?
+        ORDER BY tw.name
+        """,
+        (user_id,),
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _get_workspace_notification_preferences(user_id, workspace_id):
+    row = db_execute(
+        """
+        SELECT
+            COALESCE(notify_ticket_assignments, FALSE) AS notify_ticket_assignments,
+            COALESCE(notify_task_assignments, FALSE) AS notify_task_assignments
+        FROM ticket_workspace_members
+        WHERE workspace_id = ? AND user_id = ?
+        """,
+        (workspace_id, user_id),
+        fetch="one",
+    ) or {}
+    return {
+        "tickets": bool(row.get("notify_ticket_assignments", False)),
+        "tasks": bool(row.get("notify_task_assignments", False)),
+    }
+
+
+def _get_user_contact(user_id):
+    row = db_execute(
+        "SELECT username, email FROM users WHERE id = ?",
+        (user_id,),
+        fetch="one",
+    )
+    if not row:
+        return None
+    return {
+        "username": row.get("username"),
+        "email": (row.get("email") or "").strip(),
+    }
+
+
+def _fetch_workspace_name(workspace_id):
+    if not workspace_id:
+        return None
+    row = db_execute(
+        "SELECT name FROM ticket_workspaces WHERE id = ?",
+        (workspace_id,),
+        fetch="one",
+    )
+    return row.get("name") if row else None
+
+
+def _notify_assignment(ticket_id, assignee_id, workspace_id, title, is_task, workspace_lookup=None):
+    if not assignee_id or not workspace_id:
+        return
+    preferences = _get_workspace_notification_preferences(assignee_id, workspace_id)
+    wants_notification = preferences["tasks"] if is_task else preferences["tickets"]
+    if not wants_notification:
+        return
+
+    contact = _get_user_contact(assignee_id)
+    if not contact or not contact.get("email"):
+        return
+
+    workspace_name = None
+    if workspace_lookup and workspace_id in workspace_lookup:
+        workspace_name = workspace_lookup[workspace_id].get("name")
+    if not workspace_name:
+        workspace_name = _fetch_workspace_name(workspace_id) or "workspace"
+
+    ticket_url = url_for('tickets.view_ticket', ticket_id=ticket_id, _external=True)
+    subject = f"New {'task' if is_task else 'ticket'} assigned: #{ticket_id}"
+    greeting = contact.get("username") or "there"
+    html_body = (
+        f"<p>Hi {greeting},</p>"
+        f"<p>You have been assigned a {'task' if is_task else 'ticket'} in the <strong>{workspace_name}</strong> workspace.</p>"
+        f"<p><strong>#{ticket_id} {title}</strong></p>"
+        f'<p><a href="{ticket_url}">View in Sproutt</a></p>'
+    )
+    text_body = (
+        f"Hi {greeting},\n\n"
+        f"You have been assigned a {'task' if is_task else 'ticket'} in the {workspace_name} workspace.\n"
+        f"#{ticket_id} {title}\n\n"
+        f"Open: {ticket_url}"
+    )
+    send_email(contact["email"], subject, html_body, text_body)
 
 
 def _fetch_updates(ticket_id):
@@ -596,6 +695,15 @@ def list_tickets():
         ticket_id = row.get('id', list(row.values())[0]) if row else None
         if ticket_id:
             _sync_ticket_objects(ticket_id, customer_ids, supplier_ids)
+            if assigned_user_id:
+                _notify_assignment(
+                    ticket_id,
+                    int(assigned_user_id),
+                    int(workspace_id) if workspace_id else None,
+                    title,
+                    False,
+                    workspace_lookup,
+                )
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
     show_closed = _parse_bool(request.args.get('show_closed'))
@@ -1136,6 +1244,15 @@ def quick_status(ticket_id):
     if assigned_user_id != ticket.get('assigned_user_id'):
         changes.append("Assignee updated")
     _add_ticket_update(ticket_id, user_id, "; ".join(changes))
+    if assigned_user_id and assigned_user_id != ticket.get('assigned_user_id'):
+        _notify_assignment(
+            ticket_id,
+            assigned_user_id,
+            ticket.get("workspace_id"),
+            ticket.get("title") or "Ticket",
+            bool(ticket.get("parent_ticket_id")),
+            None,
+        )
 
     return jsonify({'success': True})
 
@@ -1250,6 +1367,16 @@ def update_ticket(ticket_id):
     _sync_ticket_objects(ticket_id, customer_ids, supplier_ids)
     if changes:
         _add_ticket_update(ticket_id, user_id, "; ".join(changes))
+    new_assignee_id = int(assigned_user_id) if assigned_user_id else None
+    if new_assignee_id and new_assignee_id != ticket.get('assigned_user_id'):
+        _notify_assignment(
+            ticket_id,
+            new_assignee_id,
+            int(workspace_id) if workspace_id else ticket.get("workspace_id"),
+            title,
+            bool(ticket.get("parent_ticket_id")),
+            None,
+        )
 
     return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
@@ -1280,7 +1407,7 @@ def add_subjob(ticket_id):
         flash('Status is required.', 'error')
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
-    db_execute(
+    row = db_execute(
         """
         INSERT INTO tickets (
             title,
@@ -1296,6 +1423,7 @@ def add_subjob(ticket_id):
             updated_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        RETURNING id
         """,
         (
             title,
@@ -1308,10 +1436,21 @@ def add_subjob(ticket_id):
             is_private,
             ticket_id,
         ),
+        fetch="one",
         commit=True,
     )
+    subjob_id = row.get('id', list(row.values())[0]) if row else None
 
     _add_ticket_update(ticket_id, user_id, f"Subjob added: {title}")
+    if assigned_user_id and subjob_id:
+        _notify_assignment(
+            subjob_id,
+            int(assigned_user_id),
+            int(workspace_id) if workspace_id else None,
+            title,
+            True,
+            None,
+        )
 
     return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
@@ -1368,8 +1507,15 @@ def manage_workspaces():
         if workspace_id and member_ids:
             db_execute(
                 """
-                INSERT INTO ticket_workspace_members (workspace_id, user_id, created_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO ticket_workspace_members (
+                    workspace_id,
+                    user_id,
+                    notify_ticket_assignments,
+                    notify_task_assignments,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, FALSE, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 [(workspace_id, member_id) for member_id in member_ids],
                 many=True,
@@ -1391,10 +1537,12 @@ def manage_workspaces():
 
     users = _fetch_users()
     workspaces = _fetch_workspaces_with_members()
+    notification_prefs = _fetch_workspace_notifications(current_user.id)
     return render_template(
         'ticket_workspaces.html',
         workspaces=workspaces,
         users=users,
+        notification_prefs=notification_prefs,
     )
 
 
@@ -1424,6 +1572,25 @@ def update_workspace(workspace_id):
     except Exception as exc:
         logs.append(f'Workspace update failed: {exc}')
         return _workspace_response(False, 'Workspace name already exists.', status=400, logs=logs)
+    existing_members = db_execute(
+        """
+        SELECT
+            user_id,
+            COALESCE(notify_ticket_assignments, FALSE) AS notify_ticket_assignments,
+            COALESCE(notify_task_assignments, FALSE) AS notify_task_assignments
+        FROM ticket_workspace_members
+        WHERE workspace_id = ?
+        """,
+        (workspace_id,),
+        fetch="all",
+    ) or []
+    existing_pref_map = {
+        row["user_id"]: {
+            "notify_ticket_assignments": bool(row.get("notify_ticket_assignments")),
+            "notify_task_assignments": bool(row.get("notify_task_assignments")),
+        }
+        for row in existing_members
+    }
     db_execute(
         "DELETE FROM ticket_workspace_members WHERE workspace_id = ?",
         (workspace_id,),
@@ -1433,10 +1600,25 @@ def update_workspace(workspace_id):
     if member_ids:
         db_execute(
             """
-            INSERT INTO ticket_workspace_members (workspace_id, user_id, created_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO ticket_workspace_members (
+                workspace_id,
+                user_id,
+                notify_ticket_assignments,
+                notify_task_assignments,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            [(workspace_id, member_id) for member_id in member_ids],
+            [
+                (
+                    workspace_id,
+                    member_id,
+                    existing_pref_map.get(member_id, {}).get("notify_ticket_assignments", False),
+                    existing_pref_map.get(member_id, {}).get("notify_task_assignments", False),
+                )
+                for member_id in member_ids
+            ],
             many=True,
             commit=True,
         )
@@ -1452,3 +1634,32 @@ def update_workspace(workspace_id):
             'default_assignee_id': default_assignee_id,
         },
     )
+
+
+@tickets_bp.route('/workspaces/<int:workspace_id>/notifications', methods=['POST'])
+@login_required
+def update_workspace_notifications(workspace_id):
+    user_id = current_user.id
+    row = db_execute(
+        "SELECT 1 FROM ticket_workspace_members WHERE workspace_id = ? AND user_id = ?",
+        (workspace_id, user_id),
+        fetch="one",
+    )
+    if not row:
+        return jsonify({'success': False, 'message': 'You must be a member of this workspace.'}), 403
+
+    payload = request.get_json(silent=True) or request.form
+    notify_tickets = _parse_bool(payload.get('notify_ticket_assignments'))
+    notify_tasks = _parse_bool(payload.get('notify_task_assignments'))
+    db_execute(
+        """
+        UPDATE ticket_workspace_members
+        SET notify_ticket_assignments = ?,
+            notify_task_assignments = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE workspace_id = ? AND user_id = ?
+        """,
+        (notify_tickets, notify_tasks, workspace_id, user_id),
+        commit=True,
+    )
+    return jsonify({'success': True, 'message': 'Notification preferences saved.'})

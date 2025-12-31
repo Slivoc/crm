@@ -1,0 +1,8 @@
+ALTER TABLE ticket_workspace_members
+ADD COLUMN IF NOT EXISTS notify_ticket_assignments BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE ticket_workspace_members
+ADD COLUMN IF NOT EXISTS notify_task_assignments BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE ticket_workspace_members
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
