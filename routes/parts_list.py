@@ -946,6 +946,61 @@ def _normalize_optional_text(value):
     return text
 
 
+def _standardize_certifications(raw_value, existing_notes=None):
+    """Standardize certification text to a few clear categories.
+
+    - Prefer concise values like "OEM certs", "EASA Form 1", "8130-3", or "no trace".
+    - Move compliance/test-report details to notes so the certifications column stays clean.
+    """
+    normalized = _normalize_optional_text(raw_value)
+    notes_parts = []
+    if existing_notes:
+        notes_parts.append(existing_notes)
+
+    def append_note(text):
+        if text:
+            notes_parts.append(text)
+
+    # Route DFARS, ITAR, or test-report details to notes instead of certifications
+    if normalized:
+        lower_value = normalized.lower()
+        compliance_terms = (
+            'dfar', 'dfars', 'itar', 'test report', 'bench test', 'functional test',
+            'burn in', 'burn-in', 'analysis report', 'ndt', 'x-ray', 'ultrasonic'
+        )
+        if any(term in lower_value for term in compliance_terms):
+            append_note(normalized)
+            normalized = None
+
+    if normalized:
+        lower_value = normalized.lower()
+
+        if any(term in lower_value for term in (
+            'no trace', 'no cert', 'no certs', 'no certification', 'trace not',
+            'trace unavailable', 'trace unknown', 'no paperwork'
+        )):
+            normalized = "no trace"
+        elif 'easa' in lower_value and 'form' in lower_value:
+            normalized = "EASA Form 1"
+        elif '8130' in lower_value:
+            normalized = "8130-3"
+        elif 'dual release' in lower_value or ('dual' in lower_value and 'release' in lower_value):
+            normalized = "Dual release (8130/EASA)"
+        elif 'distributor' in lower_value and ('c of c' in lower_value or 'coc' in lower_value):
+            normalized = "no trace"
+        elif any(term in lower_value for term in (
+            'oem', 'factory', 'manufacturer trace', 'mfr trace', 'mfg trace',
+            'full trace', 'traceable to oem', 'factory trace', 'factory new trace',
+            'manufacturer c of c', 'mfr c of c', 'mfg c of c', 'c of c', 'coc'
+        )):
+            normalized = "OEM certs"
+    else:
+        normalized = "no trace"
+
+    combined_notes = '; '.join([note for note in notes_parts if note]) or None
+    return normalized, combined_notes
+
+
 _CURRENCY_CODE_PATTERN = re.compile(
     r'\b(USD|EUR|GBP|CAD|AUD|NZD|CHF|JPY|CNY|SEK|NOK|DKK|SGD|HKD|INR|KRW|MXN|BRL|AED|SAR|ZAR|TRY|PLN|CZK|HUF|RON)\b',
     re.IGNORECASE,
@@ -1020,9 +1075,9 @@ Each object should have:
 - price: Unit price (decimal number, extract just the number)
 - lead_time_days: Lead time in days (integer, null if not specified)
 - condition: Condition code like "NE", "OH", "SV", "AR" (use null if not specified)
-- certifications: Any certification text mentioned (e.g., "8130-3", "Dual Release", "EASA Form 1") (use null if not specified)
+- certifications: Keep this concise. Prefer "OEM certs" if there is full trace to OEM/manufacturer. Use "EASA Form 1" or "8130-3" when those certificates are mentioned. Use "Dual release (8130/EASA)" if both are present. If there is no trace or only distributor C of C, set to "no trace". Omit DFARS/ITAR/testing notes from this field.
 - is_no_bid: true if supplier declined to quote this part, false otherwise
-- notes: Any additional relevant notes about this line
+- notes: Any additional relevant notes about this line. If DFARS/ITAR compliance, test reports, or other paperwork details are mentioned, put them here instead of certifications.
 
 Look for common patterns:
 - "No quote", "Not available", "NQ", "N/A" = is_no_bid: true
@@ -1129,6 +1184,7 @@ Extract all quoted items into a JSON array."""
                     is_no_bid = bool(is_no_bid_raw)
 
                 notes = str(item.get('notes', '')).strip() or None
+                certifications, notes = _standardize_certifications(certifications, notes)
 
                 cleaned_item = {
                     'part_number': part_number,
