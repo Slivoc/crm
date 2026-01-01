@@ -258,7 +258,10 @@ def _encode_graph_next_link(link):
     if not link:
         return None
     try:
-        return base64.urlsafe_b64encode(link.encode("utf-8")).decode("ascii")
+        # Encode the full next link URL as base64 for safe transport
+        encoded = base64.urlsafe_b64encode(link.encode("utf-8")).decode("ascii")
+        # Remove padding to avoid issues with URL encoding
+        return encoded.rstrip('=')
     except Exception:
         return None
 
@@ -267,11 +270,15 @@ def _decode_graph_next_link(token):
     if not token:
         return None
     try:
+        # The token comes URL-encoded from the frontend, so decode it first
         normalized = unquote(token)
+        # Add base64 padding if needed
         padding = (-len(normalized)) % 4
         normalized += "=" * padding
         return base64.urlsafe_b64decode(normalized.encode("ascii")).decode("utf-8")
-    except Exception:
+    except Exception as e:
+        # Log the error to help with debugging
+        current_app.logger.error(f"Failed to decode pagination token: {e}, token: {token[:50] if token else None}")
         return None
 
 
@@ -417,6 +424,90 @@ def _record_graph_contact_communications(messages, mailbox_email, salesperson_id
     with db_cursor(commit=True) as cursor:
         cursor.executemany(_prepare_placeholders(insert_query), insert_rows)
     return len(insert_rows)
+
+
+def sync_graph_mailbox_emails():
+    """
+    Background job to sync and cache emails for all connected users.
+    This should be run periodically (e.g., every 5-15 minutes) to keep the cache fresh.
+    """
+    settings = _get_graph_settings(include_secret=True)
+    user_rows = db_execute("SELECT user_id FROM graph_token_cache", fetch="all") or []
+    totals = {
+        "users": 0,
+        "messages_synced": 0,
+        "errors": 0,
+    }
+
+    for row in user_rows:
+        user_id = row.get("user_id") if isinstance(row, dict) else row[0]
+        if not user_id:
+            continue
+
+        totals["users"] += 1
+
+        try:
+            cache = _load_graph_cache_for_user(user_id)
+            app = _build_msal_app(settings, cache=cache)
+            accounts = app.get_accounts()
+            if not accounts:
+                continue
+
+            token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+            _save_graph_cache_for_user(user_id, cache)
+
+            if not token or "access_token" not in token:
+                totals["errors"] += 1
+                _update_sync_status(user_id, success=False, error="Failed to get access token")
+                continue
+
+            headers = {"Authorization": f"Bearer {token['access_token']}"}
+
+            # Fetch latest emails (first 50)
+            params = {
+                "$top": "50",
+                "$select": (
+                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
+                    "bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
+                ),
+                "$orderby": "receivedDateTime desc",
+            }
+
+            resp = requests.get(
+                "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages",
+                headers=headers,
+                params=params,
+                timeout=20,
+            )
+
+            if resp.status_code >= 400:
+                totals["errors"] += 1
+                _update_sync_status(user_id, success=False, error=f"Graph API error: {resp.status_code}")
+                continue
+
+            try:
+                body = resp.json() if resp.content else {}
+            except ValueError:
+                totals["errors"] += 1
+                _update_sync_status(user_id, success=False, error="Invalid JSON response")
+                continue
+
+            messages = body.get("value", []) if isinstance(body, dict) else []
+
+            if messages:
+                _cache_email_messages(user_id, messages)
+                totals["messages_synced"] += len(messages)
+                _update_sync_status(user_id, success=True)
+
+        except Exception as exc:
+            totals["errors"] += 1
+            current_app.logger.error(f"Email sync failed for user {user_id}: {exc}")
+            try:
+                _update_sync_status(user_id, success=False, error=str(exc))
+            except:
+                pass
+
+    return totals
 
 
 def sync_graph_mailbox_contacts():
@@ -784,6 +875,132 @@ def _save_graph_delta_state(user_id, delta_link=None, mailbox_email=None):
             updated_at = CURRENT_TIMESTAMP
         """,
         (user_id, delta_link, mailbox_email),
+        commit=True,
+    )
+
+
+def _cache_email_messages(user_id, messages):
+    """Cache email messages to the database for faster loading"""
+    if not messages or not user_id:
+        return
+
+    for msg in messages:
+        if not isinstance(msg, dict) or not msg.get('id'):
+            continue
+
+        message_id = msg.get('id')
+        from_data = msg.get('from', {})
+        sender_addr = from_data.get('emailAddress', {}) if isinstance(from_data, dict) else {}
+
+        db_execute(
+            """
+            INSERT INTO graph_email_cache (
+                user_id, message_id, conversation_id, subject, sender_name, sender_email,
+                received_datetime, sent_datetime, body_preview, web_link,
+                from_data, to_recipients, cc_recipients, has_attachments, is_read,
+                importance, raw_message, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id, message_id) DO UPDATE
+            SET conversation_id = EXCLUDED.conversation_id,
+                subject = EXCLUDED.subject,
+                sender_name = EXCLUDED.sender_name,
+                sender_email = EXCLUDED.sender_email,
+                received_datetime = EXCLUDED.received_datetime,
+                sent_datetime = EXCLUDED.sent_datetime,
+                body_preview = EXCLUDED.body_preview,
+                web_link = EXCLUDED.web_link,
+                from_data = EXCLUDED.from_data,
+                to_recipients = EXCLUDED.to_recipients,
+                cc_recipients = EXCLUDED.cc_recipients,
+                has_attachments = EXCLUDED.has_attachments,
+                is_read = EXCLUDED.is_read,
+                importance = EXCLUDED.importance,
+                raw_message = EXCLUDED.raw_message,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                user_id,
+                message_id,
+                msg.get('conversationId'),
+                msg.get('subject'),
+                sender_addr.get('name') if isinstance(sender_addr, dict) else None,
+                sender_addr.get('address') if isinstance(sender_addr, dict) else None,
+                msg.get('receivedDateTime'),
+                msg.get('sentDateTime'),
+                msg.get('bodyPreview'),
+                msg.get('webLink'),
+                json.dumps(from_data) if from_data else None,
+                json.dumps(msg.get('toRecipients', [])),
+                json.dumps(msg.get('ccRecipients', [])),
+                True if msg.get('hasAttachments') else False,
+                True if msg.get('isRead') else False,
+                msg.get('importance'),
+                json.dumps(msg),
+            ),
+            commit=True,
+        )
+
+
+def _get_cached_emails(user_id, limit=25, offset=0):
+    """Retrieve cached emails from database"""
+    if not user_id:
+        return []
+
+    rows = db_execute(
+        """
+        SELECT raw_message, id, message_id
+        FROM graph_email_cache
+        WHERE user_id = ?
+        ORDER BY received_datetime DESC
+        LIMIT ? OFFSET ?
+        """,
+        (user_id, limit, offset),
+        fetch="all",
+    )
+
+    if not rows:
+        return []
+
+    messages = []
+    for row in rows:
+        raw_msg = row.get('raw_message') if isinstance(row, dict) else row[0]
+        if raw_msg:
+            try:
+                messages.append(json.loads(raw_msg))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    return messages
+
+
+def _update_sync_status(user_id, success=True, error=None, delta_link=None):
+    """Update the sync status for a user"""
+    if not user_id:
+        return
+
+    # Count total cached messages
+    count_row = db_execute(
+        "SELECT COUNT(*) as count FROM graph_email_cache WHERE user_id = ?",
+        (user_id,),
+        fetch="one",
+    )
+    total = count_row.get('count', 0) if isinstance(count_row, dict) else (count_row[0] if count_row else 0)
+
+    db_execute(
+        """
+        INSERT INTO graph_email_sync_status (
+            user_id, last_sync_at, last_sync_success, last_sync_error,
+            delta_link, total_cached_messages, updated_at
+        ) VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE
+        SET last_sync_at = CURRENT_TIMESTAMP,
+            last_sync_success = EXCLUDED.last_sync_success,
+            last_sync_error = EXCLUDED.last_sync_error,
+            delta_link = COALESCE(EXCLUDED.delta_link, delta_link),
+            total_cached_messages = EXCLUDED.total_cached_messages,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (user_id, True if success else False, error, delta_link, total),
         commit=True,
     )
 
@@ -1288,6 +1505,82 @@ def graph_test():
     })
 
 
+@emails_bp.route('/emails/graph/sync-cache', methods=['POST'])
+def graph_sync_cache():
+    """Manual endpoint to trigger email cache refresh"""
+    user_id = _current_graph_user_id()
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "error": "User not authenticated",
+        }), 401
+
+    try:
+        # Run sync for just this user
+        settings = _get_graph_settings(include_secret=True)
+        cache = _load_graph_cache()
+        app = _build_msal_app(settings, cache=cache)
+        accounts = app.get_accounts()
+
+        if not accounts:
+            return jsonify({
+                "success": False,
+                "error": "No Graph account connected",
+            }), 400
+
+        token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+        _save_graph_cache(cache)
+
+        if not token or "access_token" not in token:
+            return jsonify({
+                "success": False,
+                "error": "Failed to get access token",
+            }), 400
+
+        headers = {"Authorization": f"Bearer {token['access_token']}"}
+        params = {
+            "$top": "50",
+            "$select": (
+                "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
+                "bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
+            ),
+            "$orderby": "receivedDateTime desc",
+        }
+
+        resp = requests.get(
+            "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages",
+            headers=headers,
+            params=params,
+            timeout=20,
+        )
+
+        if resp.status_code >= 400:
+            return jsonify({
+                "success": False,
+                "error": f"Graph API error: {resp.status_code}",
+            }), 400
+
+        body = resp.json() if resp.content else {}
+        messages = body.get("value", []) if isinstance(body, dict) else []
+
+        if messages:
+            _cache_email_messages(user_id, messages)
+            _update_sync_status(user_id, success=True)
+
+        return jsonify({
+            "success": True,
+            "messages_synced": len(messages),
+        })
+
+    except Exception as exc:
+        current_app.logger.error(f"Manual sync failed: {exc}")
+        _update_sync_status(user_id, success=False, error=str(exc))
+        return jsonify({
+            "success": False,
+            "error": str(exc),
+        }), 500
+
+
 @emails_bp.route('/emails/graph/messages', methods=['GET'])
 def graph_messages():
     settings = _get_graph_settings(include_secret=True)
@@ -1324,6 +1617,47 @@ def graph_messages():
     page_size = max(1, min(page_size, 50))
 
     page_token = request.args.get("page_token")
+    user_id = _current_graph_user_id()
+    use_cache_only = request.args.get("use_cache", "").lower() == "true"
+
+    # If no page_token and not explicitly forcing cache, try to serve from cache first
+    if not page_token and not use_cache_only and user_id:
+        cached_messages = _get_cached_emails(user_id, limit=page_size)
+        if cached_messages:
+            # We have cached data, enrich it and return
+            message_ids = [m.get("id") for m in cached_messages if isinstance(m, dict) and m.get("id")]
+            conversation_ids = [m.get("conversationId") for m in cached_messages if isinstance(m, dict) and m.get("conversationId")]
+            ticket_by_message, ticket_by_conversation = _fetch_email_associations(message_ids, conversation_ids, "tickets")
+            parts_list_by_message, parts_list_by_conversation = _fetch_email_associations(message_ids, conversation_ids, "parts_lists")
+
+            for message in cached_messages:
+                from_data = message.get("from", {}).get("emailAddress", {}) if isinstance(message, dict) else {}
+                from_email = from_data.get("address")
+                message["from_email"] = from_email
+                message["from_name"] = from_data.get("name")
+                message["lookup"] = _lookup_contact_company(from_email)
+                message_id = message.get("id")
+                conversation_id = message.get("conversationId")
+                message["ticket_id"] = ticket_by_message.get(message_id) or ticket_by_conversation.get(conversation_id)
+                message["parts_list_id"] = parts_list_by_message.get(message_id) or parts_list_by_conversation.get(conversation_id)
+
+            # Check if there are more cached messages
+            count_row = db_execute(
+                "SELECT COUNT(*) as count FROM graph_email_cache WHERE user_id = ?",
+                (user_id,),
+                fetch="one",
+            )
+            total_cached = count_row.get('count', 0) if isinstance(count_row, dict) else (count_row[0] if count_row else 0)
+            has_more = total_cached > page_size
+
+            return jsonify({
+                "success": True,
+                "messages": cached_messages,
+                "next_token": "cached_page_2" if has_more else None,
+                "from_cache": True,
+            })
+
+    # If we're here, fetch from API
     next_link = _decode_graph_next_link(page_token) if page_token else None
     if page_token and not next_link:
         return jsonify({
@@ -1338,7 +1672,7 @@ def graph_messages():
             parsed_next.scheme != "https"
             or parsed_next.netloc != "graph.microsoft.com"
             or not (
-                parsed_next.path.startswith("/v1.0/me/mailFolders/")
+                parsed_next.path.startswith("/v1.0/me/mailFolders")
                 or parsed_next.path.startswith("/v1.0/me/messages")
             )
         ):
@@ -1425,6 +1759,15 @@ def graph_messages():
         _record_graph_contact_communications(messages, mailbox_email, salesperson_id)
     except Exception as exc:
         current_app.logger.warning("Graph contact sync failed: %s", exc)
+
+    # Cache the fetched messages for faster loading next time
+    if user_id and messages and not page_token:
+        try:
+            _cache_email_messages(user_id, messages)
+            _update_sync_status(user_id, success=True)
+        except Exception as exc:
+            current_app.logger.warning("Failed to cache emails: %s", exc)
+
     return jsonify({
         "success": True,
         "messages": messages,
@@ -3573,6 +3916,197 @@ def get_suppliers_by_domain(domain):
         fetch='all',
     )
     return jsonify([dict(row) for row in suppliers])
+
+
+@emails_bp.route('/create_excess_list_from_email/<email_id>', methods=['POST'])
+def create_excess_list_from_email(email_id):
+    print(f"Starting excess list creation for email {email_id}")
+
+    # Connect to email server and get the email
+    email_host = os.getenv('EMAIL_HOST')
+    email_port = int(os.getenv('EMAIL_PORT', 993))
+    email_user = os.getenv('EMAIL_USER')
+    email_password = os.getenv('EMAIL_PASSWORD')
+
+    try:
+        print("Connecting to email server")
+        # Connect to email server
+        mail = imaplib.IMAP4_SSL(email_host, email_port)
+        mail.login(email_user, email_password)
+        mail.select("inbox")
+
+        # Fetch the specific email
+        print(f"Fetching email {email_id}")
+        res, msg = mail.fetch(email_id.encode(), "(RFC822)")
+        email_message = None
+        for response_part in msg:
+            if isinstance(response_part, tuple):
+                email_message = email.message_from_bytes(response_part[1])
+                break
+
+        if not email_message:
+            print("No email found")
+            flash('Email not found', 'error')
+            return redirect(url_for('emails.list_emails'))
+
+        # Get email details
+        subject = decode_header(email_message["Subject"])[0][0]
+        if isinstance(subject, bytes):
+            subject = subject.decode()
+        sender = email_message.get("From")
+        sender_email = sender.split('<')[-1].replace('>', '').strip()
+
+        print(f"Processing email from {sender_email}")
+
+        # Get the customer information
+        result = get_company_name_by_email(sender_email)
+        customer_contact = result['customer_contact']
+
+        if not customer_contact:
+            print(f"No customer contact found for {sender_email}")
+            flash('No customer contact found for this email address', 'error')
+            return redirect(url_for('emails.list_emails'))
+
+        print(f"Found customer contact: {customer_contact}")
+
+        try:
+            with db_cursor(commit=True) as cursor:
+                customer = _execute_with_cursor(
+                    cursor,
+                    'SELECT * FROM customers WHERE id = ?',
+                    (customer_contact['customer_id'],),
+                    fetch='one',
+                )
+
+                if not customer:
+                    print(f"No customer found for contact {customer_contact['id']}")
+                    flash('Customer not found', 'error')
+                    return redirect(url_for('emails.list_emails'))
+
+                print(f"Found customer: {customer['name']}")
+
+                # Extract email content
+                email_content = None
+                if email_message.is_multipart():
+                    html_content = None
+                    plain_content = None
+
+                    for part in email_message.walk():
+                        if part.get_content_type() == "text/html":
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                try:
+                                    html_content = payload.decode('utf-8')
+                                except UnicodeDecodeError:
+                                    try:
+                                        html_content = payload.decode('iso-8859-1')
+                                    except UnicodeDecodeError:
+                                        html_content = payload.decode('windows-1252')
+                        elif part.get_content_type() == "text/plain":
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                try:
+                                    plain_content = payload.decode('utf-8')
+                                except UnicodeDecodeError:
+                                    try:
+                                        plain_content = payload.decode('iso-8859-1')
+                                    except UnicodeDecodeError:
+                                        plain_content = payload.decode('windows-1252')
+
+                    email_content = html_content if html_content else plain_content
+                else:
+                    payload = email_message.get_payload(decode=True)
+                    if payload:
+                        try:
+                            email_content = payload.decode('utf-8')
+                        except UnicodeDecodeError:
+                            try:
+                                email_content = payload.decode('iso-8859-1')
+                            except UnicodeDecodeError:
+                                email_content = payload.decode('windows-1252')
+
+                print("Creating excess stock list record")
+                entered_date = date.today().isoformat()
+
+                inserted_list = _execute_with_cursor(
+                    cursor,
+                    '''
+                    INSERT INTO excess_stock_lists (
+                        name, customer_id, contact_id, entered_date, status, upload_date
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    RETURNING id
+                    ''',
+                    (
+                        subject or 'Email Import',
+                        customer['id'],
+                        customer_contact['id'],
+                        entered_date,
+                        'new',
+                        datetime.now()
+                    ),
+                    fetch='one',
+                )
+
+                list_id = inserted_list['id'] if inserted_list else None
+                print(f"Created excess list with ID: {list_id}")
+
+                attachment_count = 0
+                for part in email_message.walk():
+                    if part.get_content_maintype() == 'multipart':
+                        continue
+                    if part.get('Content-Disposition') is None:
+                        continue
+
+                    filename = part.get_filename()
+                    if filename:
+                        filename = secure_filename(filename)
+                        filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+
+                        with open(filepath, 'wb') as f:
+                            f.write(part.get_payload(decode=True))
+
+                        file_row = _execute_with_cursor(
+                            cursor,
+                            '''
+                            INSERT INTO files (filename, filepath, upload_date)
+                            VALUES (?, ?, ?)
+                            RETURNING id
+                            ''',
+                            (filename, filepath, datetime.now()),
+                            fetch='one',
+                        )
+                        file_id = file_row['id']
+
+                        _execute_with_cursor(
+                            cursor,
+                            '''
+                            INSERT INTO excess_stock_files (excess_stock_list_id, file_id)
+                            VALUES (?, ?)
+                            ''',
+                            (list_id, file_id),
+                        )
+
+                        attachment_count += 1
+
+                print(f"Processed {attachment_count} attachments")
+
+            flash('Excess list created successfully from email', 'success')
+            print(f"Redirecting to excess list edit page for list {list_id}")
+            return redirect(url_for('excess.edit_excess_list', list_id=list_id))
+
+        except Exception as e:
+            print(f"Database error: {str(e)}")
+            flash(f'Error creating excess list from email: {str(e)}', 'error')
+            return redirect(url_for('emails.list_emails'))
+
+    except Exception as e:
+        print(f"Error creating excess list: {str(e)}")
+        flash(f'Error creating excess list from email: {str(e)}', 'error')
+        return redirect(url_for('emails.list_emails'))
+
+    finally:
+        if 'mail' in locals():
+            mail.logout()
 
 
 @emails_bp.route('/create_offer_from_email/<email_id>', methods=['POST'])

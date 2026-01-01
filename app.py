@@ -433,6 +433,24 @@ def scheduled_graph_mailbox_sync():
         except Exception as exc:
             current_app.logger.exception("Scheduled Graph Mail Sync failed: %s", exc)
 
+
+@scheduler.task('interval', id='graph_email_cache_sync', minutes=10)
+def scheduled_graph_email_cache_sync():
+    """Background task to refresh email cache every 10 minutes for fast mailbox loading"""
+    with app.app_context():
+        try:
+            from routes.emails import sync_graph_mailbox_emails
+            result = sync_graph_mailbox_emails()
+            current_app.logger.info(
+                "Graph email cache sync completed. Users=%s, Messages synced=%s, Errors=%s",
+                result.get("users", 0),
+                result.get("messages_synced", 0),
+                result.get("errors", 0)
+            )
+        except Exception as exc:
+            current_app.logger.exception("Scheduled Graph Email Cache Sync failed: %s", exc)
+
+
 scheduler.init_app(app)
 scheduler.start()
 

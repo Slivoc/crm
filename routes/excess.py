@@ -270,6 +270,8 @@ def edit_excess_list(list_id):
                                line_search_query=search_query)
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         flash(f'Error loading excess list: {str(e)}', 'error')
         return redirect(url_for('excess.view_excess_lists'))
 
@@ -289,7 +291,7 @@ def upload_email(list_id):
     excess_list = get_excess_stock_list_by_id(list_id)
     if not excess_list:
         flash('Excess list not found!', 'error')
-        return redirect(url_for('excess.view_excess_lists'))
+        return redirect(url_for('excess.edit_excess_list', list_id=list_id))
 
     if 'email_file' not in request.files:
         flash('No file part', 'error')
@@ -342,61 +344,72 @@ def upload_email(list_id):
     return redirect(url_for('excess.edit_excess_list', list_id=list_id))
 
 
-@excess_bp.route('/excess_lists/<int:list_id>/view_email_frame', methods=['GET'])
-def view_email_frame(list_id):
-    email_row = db_execute('SELECT email FROM excess_stock_lists WHERE id = ?', (list_id,), fetch='one')
-    if not email_row or not email_row.get('email'):
-        return "No email content available.", 200
-    return email_row['email']
+@excess_bp.route('/excess_lists/<int:list_id>/upload_excel', methods=['POST'])
+def upload_excel(list_id):
+    excess_list = get_excess_stock_list_by_id(list_id)
+    if not excess_list:
+        flash('Excess list not found!', 'error')
+        return redirect(url_for('excess.edit_excess_list', list_id=list_id))
 
+    if 'excel_file' not in request.files:
+        flash('No file part', 'error')
+        return redirect(url_for('excess.edit_excess_list', list_id=list_id))
 
-@excess_bp.route('/excess_list_lines/<int:line_id>', methods=['GET'])
-def get_excess_list_line(line_id):
-    excess_list_line = get_excess_list_line_by_id(line_id)
-    if not excess_list_line:
-        flash(f'Excess list line with ID {line_id} not found!', 'error')
-        return redirect(url_for('excess.view_excess_lists'))
-    return render_template('excess_list_line.html', excess_list_line=excess_list_line)
+    file = request.files['excel_file']
+    if not file or file.filename == '':
+        flash('No selected file', 'error')
+        return redirect(url_for('excess.edit_excess_list', list_id=list_id))
 
+    # Check for Excel files
+    if not (file.filename.endswith('.xls') or file.filename.endswith('.xlsx')):
+        flash('Invalid file type. Only .xls and .xlsx files are allowed.', 'error')
+        return redirect(url_for('excess.edit_excess_list', list_id=list_id))
 
-@excess_bp.route('/match_excess/<int:excess_stock_list_id>', methods=['GET'])
-def match_excess(excess_stock_list_id):
-    excess_stock_lines = get_excess_stock_lines(excess_stock_list_id)
-    rfq_matches = match_rfq_lines(excess_stock_list_id)
-    sales_order_matches = match_sales_order_lines(excess_stock_list_id)
-    return render_template('match_excess.html',
-                           excess_stock_lines=excess_stock_lines,
-                           rfq_matches=rfq_matches,
-                           sales_order_matches=sales_order_matches)
+    filename = secure_filename(file.filename)
+    file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+    wipe_existing = str(request.form.get('wipe_existing', '')).lower() in ('1', 'true', 'on', 'yes')
 
-
-@excess_bp.route('/excess_lists/<int:list_id>/update_email', methods=['POST'])
-def update_excess_list_email(list_id):
-    email_body = request.form.get('email')
     try:
-        db_execute(
-            'UPDATE excess_stock_lists SET email = ? WHERE id = ?',
-            (email_body, list_id),
-            commit=True
-        )
-        return str(list_id)
-    except Exception as e:
-        return f'Error updating email content: {str(e)}', 400
+        file.save(file_path)
 
-
-@excess_bp.route('/excess_lists/<int:list_id>/delete', methods=['POST'])
-def delete_excess_list(list_id):
-    try:
-        exists = db_execute('SELECT 1 FROM excess_stock_lists WHERE id = ?', (list_id,), fetch='one')
-        if not exists:
-            return jsonify(success=False, message='Excess list not found'), 404
-
+        # Create file record
         with db_cursor(commit=True) as cur:
-            _execute_with_cursor(cur, 'DELETE FROM excess_stock_lines WHERE excess_stock_list_id = ?', (list_id,))
-            _execute_with_cursor(cur, 'DELETE FROM excess_stock_files WHERE excess_stock_list_id = ?', (list_id,))
-            _execute_with_cursor(cur, 'DELETE FROM excess_stock_lists WHERE id = ?', (list_id,))
+            _execute_with_cursor(
+                cur,
+                '''
+                INSERT INTO files (filepath, filename, upload_date)
+                VALUES (?, ?, ?)
+                RETURNING id
+                ''',
+                (file_path, filename, datetime.now())
+            )
+            file_row = cur.fetchone()
+            file_id = file_row['id'] if file_row else None
 
-        return jsonify(success=True)
+            if file_id:
+                # Link file to excess list
+                _execute_with_cursor(
+                    cur,
+                    '''
+                    INSERT INTO excess_stock_files (excess_stock_list_id, file_id)
+                    VALUES (?, ?)
+                    ''',
+                    (list_id, file_id)
+                )
+
+                if wipe_existing:
+                    _execute_with_cursor(
+                        cur,
+                        'DELETE FROM excess_stock_lines WHERE excess_stock_list_id = ?',
+                        (list_id,),
+                    )
+                    _execute_with_cursor(
+                        cur,
+                        'UPDATE excess_stock_lists SET email = NULL WHERE id = ?',
+                        (list_id,),
+                    )
+
+        flash('Excel file uploaded successfully! Please map the columns to continue.', 'success')
+        return redirect(url_for('handson.excess_list_mapping', file_id=file_id))
     except Exception as e:
-        current_app.logger.exception("Error deleting excess list")
-        return jsonify(success=False, message=str(e)), 500
+        flash(f'Error uploading Excel file: {str(e)}', 'error')

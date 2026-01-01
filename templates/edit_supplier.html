@@ -1,68 +1,199 @@
 {% extends "base.html" %}
 
-{% block breadcrumbs %}{{ super() }}{% endblock %}
-
 {% block content %}
-<div>
-    <h1 class="section-header">Edit Supplier #{{ supplier.id }}</h1>
- </div>
-  <div class="section">
-    <h2>Supplier Details</h2>
-    <form action="{{ url_for('suppliers.update_supplier_route', supplier_id=supplier.id) }}" method="post" class="horizontal-form">
-      <div class="form-row">
-        <div class="form-group">
-          <label for="name">Name:</label>
-          <input type="text" id="name" name="name" value="{{ supplier.name }}" required>
-        </div>
-        <div class="form-group">
-          <label for="contact_name">Contact Name:</label>
-          <input type="text" id="contact_name" name="contact_name" value="{{ supplier.contact_name }}" required>
-        </div>
-        <div class="form-group">
-          <label for="contact_email">Contact Email:</label>
-          <input type="email" id="contact_email" name="contact_email" value="{{ supplier.contact_email }}" required>
-        </div>
-        <div class="form-group">
-          <label for="contact_phone">Contact Phone:</label>
-          <input type="text" id="contact_phone" name="contact_phone" value="{{ supplier.contact_phone }}">
-        </div>
-        <div class="form-group">
-          <label for="buffer">Buffer (weeks):</label>
-          <input type="number" id="buffer" name="buffer" value="{{ supplier.buffer }}">
-        </div>
-            <div class="form-group">
-                <label for="currency">Currency:</label>
-                <select id="currency" name="currency" required>
-                    {% for currency in currencies %}
-                        <option value="{{ currency.id }}" {% if currency.id == supplier.currency %}selected{% endif %}>
-                            {{ currency.currency_code }}
-                        </option>
-                    {% endfor %}
-                </select>
-            </div>
+<style>
+  .edit-supplier-container {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
 
-        <div class="form-group">
-          <label for="fornitore">Fornitore:</label>
-          <input type="text" id="fornitore" name="fornitore" value="{{ supplier.fornitore }}">
-        </div>
-        <div class="form-group">
-          <label for="standard_condition">Standard Condition:</label>
-          <input type="text" id="standard_condition" name="standard_condition" value="{{ supplier.standard_condition or '' }}">
-        </div>
-        <div class="form-group">
-          <label for="standard_certs">Standard Certs:</label>
-          <input type="text" id="standard_certs" name="standard_certs" value="{{ supplier.standard_certs or '' }}">
-        </div>
-      </div>
-      <div class="button-container">
-        <button type="submit" class="button">Update Supplier</button>
-      </div>
-    </form>
+  .supplier-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1rem;
+  }
+
+  .form-section {
+    margin-bottom: 2rem;
+  }
+
+  .form-section-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid #dee2e6;
+  }
+
+  .toggle-group {
+    display: flex;
+    gap: 2rem;
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 0.375rem;
+  }
+
+  .toggle-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .form-switch .form-check-input {
+    width: 3rem;
+    height: 1.5rem;
+    cursor: pointer;
+  }
+
+  .btn-group-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+</style>
+
+<div class="edit-supplier-container">
+  <div class="supplier-header">
+    <div>
+      <h2 class="mb-1">Edit Supplier #{{ supplier.id }}</h2>
+      <p class="text-muted mb-0">{{ supplier.name }}</p>
+    </div>
+    <div class="btn-group-actions">
+      <a href="{{ url_for('suppliers.suppliers') }}" class="btn btn-outline-secondary">
+        Back to Suppliers
+      </a>
+    </div>
   </div>
+
+  <div class="card">
+    <div class="card-body">
+      <form action="{{ url_for('suppliers.update_supplier_route', supplier_id=supplier.id) }}" method="post">
+
+        <!-- Basic Information -->
+        <div class="form-section">
+          <h3 class="form-section-title">Basic Information</h3>
+          <div class="form-grid">
+            <div class="mb-3">
+              <label for="name" class="form-label">Supplier Name</label>
+              <input type="text" class="form-control" id="name" name="name" value="{{ supplier.name }}" required>
+            </div>
+            <div class="mb-3">
+              <label for="fornitore" class="form-label">System ID</label>
+              <input type="text" class="form-control" id="fornitore" name="fornitore" value="{{ supplier.fornitore or '' }}">
+            </div>
+          </div>
+        </div>
+
+        <!-- Contact Information -->
+        <div class="form-section">
+          <h3 class="form-section-title">Contact Information</h3>
+          <div class="form-grid">
+            <div class="mb-3">
+              <label for="contact_name" class="form-label">Contact Name</label>
+              <input type="text" class="form-control" id="contact_name" name="contact_name" value="{{ supplier.contact_name or '' }}" required>
+            </div>
+            <div class="mb-3">
+              <label for="contact_email" class="form-label">Contact Email</label>
+              <input type="email" class="form-control" id="contact_email" name="contact_email" value="{{ supplier.contact_email or '' }}" required>
+            </div>
+            <div class="mb-3">
+              <label for="contact_phone" class="form-label">Contact Phone</label>
+              <input type="text" class="form-control" id="contact_phone" name="contact_phone" value="{{ supplier.contact_phone or '' }}">
+            </div>
+          </div>
+        </div>
+
+        <!-- Operational Details -->
+        <div class="form-section">
+          <h3 class="form-section-title">Operational Details</h3>
+          <div class="form-grid">
+            <div class="mb-3">
+              <label for="buffer" class="form-label">Buffer (weeks)</label>
+              <input type="number" class="form-control" id="buffer" name="buffer" value="{{ supplier.buffer or '' }}">
+              <small class="form-text text-muted">Lead time buffer in weeks</small>
+            </div>
+            <div class="mb-3">
+              <label for="currency" class="form-label">Currency</label>
+              <select class="form-select" id="currency" name="currency" required>
+                {% for currency in currencies %}
+                <option value="{{ currency.id }}" {% if currency.id == supplier.currency %}selected{% endif %}>
+                  {{ currency.currency_code }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="delivery_cost" class="form-label">Delivery Cost</label>
+              <input type="number" step="0.01" class="form-control" id="delivery_cost" name="delivery_cost" value="{{ supplier.delivery_cost or '' }}">
+            </div>
+          </div>
+        </div>
+
+        <!-- Standards & Certifications -->
+        <div class="form-section">
+          <h3 class="form-section-title">Standards & Certifications</h3>
+          <div class="form-grid">
+            <div class="mb-3">
+              <label for="standard_condition" class="form-label">Standard Condition</label>
+              <input type="text" class="form-control" id="standard_condition" name="standard_condition" value="{{ supplier.standard_condition or '' }}">
+              <small class="form-text text-muted">e.g., NE, FN, NS</small>
+            </div>
+            <div class="mb-3">
+              <label for="standard_certs" class="form-label">Standard Certifications</label>
+              <input type="text" class="form-control" id="standard_certs" name="standard_certs" value="{{ supplier.standard_certs or '' }}">
+              <small class="form-text text-muted">e.g., manufacturer certs, 8310-3</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preferences -->
+        <div class="form-section">
+          <h3 class="form-section-title">Preferences</h3>
+          <div class="toggle-group">
+            <div class="toggle-item">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="auto_email" name="auto_email" {% if supplier.auto_email %}checked{% endif %}>
+                <label class="form-check-label" for="auto_email">
+                  <strong>Auto Email</strong>
+                  <br>
+                  <small class="text-muted">Automatically send emails to this supplier</small>
+                </label>
+              </div>
+            </div>
+            <div class="toggle-item">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="preferred" name="preferred" {% if supplier.preferred %}checked{% endif %}>
+                <label class="form-check-label" for="preferred">
+                  <strong>Preferred Supplier</strong>
+                  <br>
+                  <small class="text-muted">Mark as preferred supplier</small>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="d-flex justify-content-between align-items-center">
+          <a href="{{ url_for('suppliers.suppliers') }}" class="btn btn-secondary">Cancel</a>
+          <button type="submit" class="btn btn-primary btn-lg">Update Supplier</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 
 <script>
 document.querySelector('form').addEventListener('submit', function(event) {
-    alert('Form is being submitted!');
+  const submitButton = this.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  submitButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Updating...';
 });
 </script>
 {% endblock %}

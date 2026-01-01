@@ -3,6 +3,9 @@
 {% block title %}Tickets{% endblock %}
 
 {% block content %}
+<!-- Include SortableJS for drag and drop -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+
 <div class="tickets-container">
     <!-- Header -->
     <div class="tickets-header">
@@ -210,6 +213,7 @@
                                     {% if ticket.is_private %}
                                         <span class="private-badge"><i class="bi bi-lock"></i></span>
                                     {% endif %}
+                                    <div class="priority-indicator priority-{{ (ticket.priority or 'Medium')|lower }}" title="Priority: {{ ticket.priority or 'Medium' }}"></div>
                                 </div>
                             </div>
                         {% else %}
@@ -253,6 +257,14 @@
                             </select>
                         </div>
                         <div class="col-md-4">
+                            <label class="form-label" for="ticketPriority">Priority</label>
+                            <select class="form-select" id="ticketPriority" name="priority" required>
+                                <option value="Low">Low</option>
+                                <option value="Medium" selected>Medium</option>
+                                <option value="High">High</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
                             <label class="form-label" for="ticketAssignee">Assign to</label>
                             <select class="form-select" id="ticketAssignee" name="assigned_user_id">
                                 <option value="">Unassigned</option>
@@ -293,7 +305,7 @@
                                     <div class="list-group shadow"></div>
                                 </div>
                             </div>
-                            <div id="ticketSupplierSelected" class="selected-chips"></div>
+                            <div id="ticketCustomerSelected" class="selected-chips"></div>
                             <div class="form-text">Select one or more suppliers linked to this ticket.</div>
                         </div>
                         <div class="col-md-6">
@@ -781,6 +793,30 @@
     font-size: 0.75rem;
 }
 
+.priority-indicator {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0 20px 20px 0;
+    border-color: transparent #adb5bd transparent transparent;
+    border-top-right-radius: 9px;
+}
+
+.priority-high {
+    border-color: transparent #dc3545 transparent transparent;
+}
+
+.priority-medium {
+    border-color: transparent #ffc107 transparent transparent;
+}
+
+.priority-low {
+    border-color: transparent #1a73e8 transparent transparent;
+}
+
 /* Modal Styles */
 #newTicketModal .modal-content {
     border: none;
@@ -956,6 +992,24 @@
 /* Need a bit of left margin to show the dot */
 .ticket-wrapper[data-depth="0"] {
     margin-left: 8px;
+}
+
+.sortable-ghost {
+    opacity: 0.4;
+    background-color: #e8f0fe !important;
+}
+
+.sortable-drag {
+    cursor: grabbing !important;
+    transform: rotate(2deg);
+}
+
+.column-body.sortable-chosen {
+    background-color: rgba(26, 115, 232, 0.05);
+}
+
+.ticket-wrapper.sortable-ghost {
+    background: transparent;
 }
 
 /* Responsive */
@@ -1196,5 +1250,110 @@ initMultiLookupSearch({
     endpoint: "{{ url_for('suppliers.supplier_search') }}",
     fieldName: 'supplier_ids'
 });
+
+// Initialize Sortable for each column
+document.querySelectorAll('.column-body').forEach(column => {
+    new Sortable(column, {
+        group: 'tickets',
+        animation: 150,
+        draggable: '.ticket-wrapper',
+        ghostClass: 'sortable-ghost',
+        dragClass: 'sortable-drag',
+        onEnd: function (evt) {
+            const ticketWrapper = evt.item;
+            const ticketCard = ticketWrapper.querySelector('.ticket-card');
+            const ticketId = ticketCard.dataset.ticketId;
+            const newStatusId = evt.to.closest('.ticket-column').dataset.statusId;
+            const oldStatusId = evt.from.closest('.ticket-column').dataset.statusId;
+
+            if (newStatusId !== oldStatusId) {
+                // Update on server
+                fetch(`/tickets/${ticketId}/move`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: JSON.stringify({ status_id: newStatusId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateColumnCounts();
+                        
+                        // Show a brief toast
+                        showToast(data.message, 'success');
+                        
+                        // If it was closed, we might want to hide it if filters are set
+                        const showClosed = document.querySelector('input[name="show_closed"]').checked;
+                        if (data.is_closed && !showClosed) {
+                            ticketWrapper.remove();
+                            updateColumnCounts();
+                        }
+                    } else {
+                        // Move back if failed
+                        if (evt.oldIndex !== undefined) {
+                            const siblings = Array.from(evt.from.children);
+                            if (evt.oldIndex >= siblings.length) {
+                                evt.from.appendChild(ticketWrapper);
+                            } else {
+                                evt.from.insertBefore(ticketWrapper, siblings[evt.oldIndex]);
+                            }
+                        } else {
+                            evt.from.appendChild(ticketWrapper);
+                        }
+                        showToast('Failed to move ticket: ' + (data.error || 'Unknown error'), 'danger');
+                    }
+                })
+                .catch(err => {
+                    console.error('Error moving ticket:', err);
+                    evt.from.appendChild(ticketWrapper);
+                    showToast('Error moving ticket. Please try again.', 'danger');
+                });
+            }
+        }
+    });
+});
+
+function showToast(message, type = 'success') {
+    const toastContainer = document.getElementById('toast-container') || createToastContainer();
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white bg-${type} border-0 show m-2`;
+    toast.role = 'alert';
+    toast.ariaLive = 'assertive';
+    toast.ariaAtomic = 'true';
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+    `;
+    toastContainer.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 500);
+    }, 3000);
+}
+
+function createToastContainer() {
+    const container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+    container.style.zIndex = '1060';
+    document.body.appendChild(container);
+    return container;
+}
+
+function updateColumnCounts() {
+    document.querySelectorAll('.ticket-column').forEach(column => {
+        const count = column.querySelectorAll('.ticket-wrapper .ticket-card:not(.context-only)').length;
+        const countBadge = column.querySelector('.column-count');
+        if (countBadge) {
+            countBadge.textContent = count;
+        }
+    });
+}
 </script>
 {% endblock %}

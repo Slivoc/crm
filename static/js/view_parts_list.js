@@ -1497,10 +1497,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
         let avgStockCost = '-';
         if (part.stock_details && part.stock_details.length > 0) {
-            const costs = part.stock_details.map(s => parseFloat(s.cost_per_unit)).filter(c => !isNaN(c) && c > 0);
-            if (costs.length > 0) {
-                const totalCost = costs.reduce((sum, cost) => sum + cost, 0);
-                avgStockCost = formatCurrency(totalCost / costs.length);
+            const validStock = part.stock_details.filter(s => {
+                const cost = parseFloat(s.cost_per_unit);
+                const qty = parseFloat(s.available_quantity);
+                return !isNaN(cost) && cost > 0 && !isNaN(qty) && qty > 0;
+            });
+            if (validStock.length > 0) {
+                const totalCost = validStock.reduce((sum, s) => sum + (parseFloat(s.cost_per_unit) * parseFloat(s.available_quantity)), 0);
+                const totalQty = validStock.reduce((sum, s) => sum + parseFloat(s.available_quantity), 0);
+                avgStockCost = formatCurrency(totalCost / totalQty);
             }
         }
 

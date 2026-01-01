@@ -62,6 +62,9 @@
                             <button type="button" class="btn btn-sm btn-primary" id="createPartsListBtn" disabled title="Create Parts List">
                                 <i class="bi bi-list-ul me-1"></i>Parts List
                             </button>
+                            <button type="button" class="btn btn-sm btn-info" id="createExcessListBtn" disabled title="Create Excess List">
+                                <i class="bi bi-boxes me-1"></i>Excess List
+                            </button>
                             <button type="button" class="btn btn-sm btn-success" id="createSupplierQuoteBtn" disabled title="Quick Supplier Quote">
                                 <i class="bi bi-lightning-charge me-1"></i>Supplier Quote
                             </button>
@@ -203,6 +206,7 @@ const readingReceived = document.getElementById('readingReceived');
 const readingFrame = document.getElementById('readingFrame');
 const senderAvatar = document.getElementById('senderAvatar');
 const createPartsListBtn = document.getElementById('createPartsListBtn');
+const createExcessListBtn = document.getElementById('createExcessListBtn');
 const createSupplierQuoteBtn = document.getElementById('createSupplierQuoteBtn');
 const createTicketBtn = document.getElementById('createTicketBtn');
 const openOutlookBtn = document.getElementById('openOutlookBtn');
@@ -766,6 +770,7 @@ async function selectMessage(messageId) {
             openOutlookBtn.classList.add('disabled');
         }
         createPartsListBtn.disabled = false;
+        createExcessListBtn.disabled = false;
         createTicketBtn.disabled = false;
 
     } catch (error) {
@@ -1103,6 +1108,44 @@ createSupplierQuoteBtn.addEventListener('click', () => {
     }
 
     window.location.href = url;
+});
+
+createExcessListBtn.addEventListener('click', async () => {
+    if (!selectedMessage) {
+        console.log('No selected message');
+        return;
+    }
+
+    console.log('Creating excess list from email:', selectedMessage);
+    createExcessListBtn.disabled = true;
+    createExcessListBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creating...';
+
+    try {
+        const response = await fetch(`/emails/create_excess_list_from_email/${encodeURIComponent(selectedMessage.id)}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+
+        console.log('Response status:', response.status);
+        const data = await response.json();
+        console.log('Response data:', data);
+
+        if (data.success || response.status === 302) {
+            showToast('Excess list created successfully from email', 'success');
+            // Redirect to the excess list
+            setTimeout(() => {
+                window.location.href = data.redirect || `/excess/edit/${data.list_id || ''}`;
+            }, 500);
+        } else {
+            showToast(data.error || 'Failed to create excess list', 'error');
+        }
+    } catch (error) {
+        console.error('Error creating excess list:', error);
+        showToast('Error creating excess list: ' + error.message, 'error');
+    } finally {
+        createExcessListBtn.disabled = false;
+        createExcessListBtn.innerHTML = '<i class="bi bi-boxes me-1"></i>Excess List';
+    }
 });
 
 createTicketBtn.addEventListener('click', async () => {

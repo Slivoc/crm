@@ -195,6 +195,8 @@ def update_supplier_route(supplier_id):
         fornitore = request.form['fornitore']
         standard_condition = request.form.get('standard_condition')
         standard_certs = request.form.get('standard_certs')
+        auto_email = 'auto_email' in request.form
+        preferred = 'preferred' in request.form
 
         logging.info(f"Received form data: {request.form}")
 
@@ -214,6 +216,11 @@ def update_supplier_route(supplier_id):
             standard_condition,
             standard_certs
         )
+
+        # Update the new boolean fields separately
+        update_supplier_field(supplier_id, 'auto_email', auto_email)
+        update_supplier_field(supplier_id, 'preferred', preferred)
+
         logging.info(f"Supplier {supplier_id} updated successfully.")
         return redirect(url_for('suppliers.suppliers'))
 
@@ -252,7 +259,7 @@ def update_field(supplier_id):
 
     valid_fields = [
         'name', 'contact_name', 'contact_email', 'contact_phone', 'buffer', 'currency',
-        'delivery_cost', 'fornitore', 'standard_condition', 'standard_certs'
+        'delivery_cost', 'fornitore', 'standard_condition', 'standard_certs', 'auto_email', 'preferred'
     ]
 
     if field_name not in valid_fields:

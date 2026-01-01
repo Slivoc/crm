@@ -59,78 +59,80 @@
                 </div>
             </div>
         </div>
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title mb-2">My notifications</h5>
-                <p class="text-muted small mb-3">Choose which workspace assignments send you an email.</p>
-                {% if notification_prefs %}
-                    <div class="notification-pref-list">
-                        {% for pref in notification_prefs %}
-                            <form class="notification-pref-form" data-workspace-id="{{ pref.workspace_id }}">
-                                <div class="d-flex justify-content-between align-items-start mb-2">
-                                    <div>
-                                        <div class="fw-semibold">{{ pref.workspace_name }}</div>
-                                        <div class="text-muted small">You are a member.</div>
-                                    </div>
-                                    <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
-                                </div>
-                                <div class="form-check mb-1">
-                                    <input class="form-check-input" type="checkbox" id="notify-tickets-{{ pref.workspace_id }}" name="notify_ticket_assignments" value="1" {% if pref.notify_ticket_assignments %}checked{% endif %}>
-                                    <label class="form-check-label" for="notify-tickets-{{ pref.workspace_id }}">
-                                        Email me for new tickets assigned to me
-                                    </label>
-                                </div>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="notify-tasks-{{ pref.workspace_id }}" name="notify_task_assignments" value="1" {% if pref.notify_task_assignments %}checked{% endif %}>
-                                    <label class="form-check-label" for="notify-tasks-{{ pref.workspace_id }}">
-                                        Email me for tasks/subtasks assigned to me
-                                    </label>
-                                </div>
-                                <div class="notification-status text-success small d-none" data-pref-status="success">Saved</div>
-                                <div class="notification-status text-danger small d-none" data-pref-status="error"></div>
-                            </form>
-                        {% endfor %}
-                    </div>
-                {% else %}
-                    <p class="text-muted small mb-0">Join a workspace to manage notification preferences.</p>
-                {% endif %}
-            </div>
-        </div>
+    </div>
 
+    <div class="workspace-section mt-4">
+        <h2 class="section-title mb-3">Active Workspaces</h2>
         <div class="workspace-list">
             {% for workspace in workspaces %}
                 <div class="card workspace-card">
                     <div class="card-body">
-                        <form method="post" action="{{ url_for('tickets.update_workspace', workspace_id=workspace.id) }}" class="workspace-update-form">
-                            <div class="d-flex justify-content-between align-items-start mb-3">
-                                <div class="flex-grow-1">
-                                    <label class="form-label">Workspace name</label>
-                                    <input type="text" class="form-control" name="name" value="{{ workspace.name }}" required>
-                                </div>
-                                <button type="submit" class="btn btn-outline-primary ms-3">
-                                    <i class="bi bi-save me-1"></i>Save
-                                </button>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label" for="workspace-default-{{ workspace.id }}">Default assignee (optional)</label>
-                                <select class="form-select" id="workspace-default-{{ workspace.id }}" name="default_assignee_id">
-                                    <option value="">No default</option>
-                                    {% for user in users %}
-                                        <option value="{{ user.id }}" {% if workspace.default_assignee_id == user.id %}selected{% endif %}>{{ user.username }}</option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-text">Auto-populates new tickets created in this workspace.</div>
-                            </div>
-                            <label class="form-label">Members</label>
-                            <div class="member-grid">
-                                {% for user in users %}
-                                    <div class="member-pill">
-                                        <input class="member-input" type="checkbox" id="member-{{ workspace.id }}-{{ user.id }}" name="member_ids" value="{{ user.id }}" {% if user.id in workspace.member_ids %}checked{% endif %}>
-                                        <label class="member-label" for="member-{{ workspace.id }}-{{ user.id }}">{{ user.username }}</label>
+                        <div class="workspace-card-layout">
+                            <div class="workspace-main-settings">
+                                <form method="post" action="{{ url_for('tickets.update_workspace', workspace_id=workspace.id) }}" class="workspace-update-form">
+                                    <div class="d-flex justify-content-between align-items-start mb-3">
+                                        <div class="flex-grow-1">
+                                            <label class="form-label">Workspace name</label>
+                                            <input type="text" class="form-control" name="name" value="{{ workspace.name }}" required>
+                                        </div>
+                                        <button type="submit" class="btn btn-outline-primary ms-3">
+                                            <i class="bi bi-save me-1"></i>Save
+                                        </button>
                                     </div>
-                                {% endfor %}
+                                    <div class="mb-3">
+                                        <label class="form-label" for="workspace-default-{{ workspace.id }}">Default assignee (optional)</label>
+                                        <select class="form-select" id="workspace-default-{{ workspace.id }}" name="default_assignee_id">
+                                            <option value="">No default</option>
+                                            {% for user in users %}
+                                                <option value="{{ user.id }}" {% if workspace.default_assignee_id == user.id %}selected{% endif %}>{{ user.username }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <div class="form-text">Auto-populates new tickets created in this workspace.</div>
+                                    </div>
+                                    <label class="form-label">Members</label>
+                                    <div class="member-grid">
+                                        {% for user in users %}
+                                            <div class="member-pill">
+                                                <input class="member-input" type="checkbox" id="member-{{ workspace.id }}-{{ user.id }}" name="member_ids" value="{{ user.id }}" {% if user.id in workspace.member_ids %}checked{% endif %}>
+                                                <label class="member-label" for="member-{{ workspace.id }}-{{ user.id }}">{{ user.username }}</label>
+                                            </div>
+                                        {% endfor %}
+                                    </div>
+                                </form>
                             </div>
-                        </form>
+
+                            <div class="workspace-notifications">
+                                {% if current_user.id in workspace.member_ids %}
+                                    {% set pref = None %}
+                                    {% for p in notification_prefs %}
+                                        {% if p.workspace_id == workspace.id %}
+                                            {% set pref = p %}
+                                        {% endif %}
+                                    {% endfor %}
+                                    
+                                    <h6 class="mb-3">My Notifications</h6>
+                                    <form class="notification-pref-form" data-workspace-id="{{ workspace.id }}">
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="notify-tickets-{{ workspace.id }}" name="notify_ticket_assignments" value="1" {% if pref and pref.notify_ticket_assignments %}checked{% endif %}>
+                                            <label class="form-check-label small" for="notify-tickets-{{ workspace.id }}">
+                                                Notify for new tickets
+                                            </label>
+                                        </div>
+                                        <div class="form-check mb-3">
+                                            <input class="form-check-input" type="checkbox" id="notify-tasks-{{ workspace.id }}" name="notify_task_assignments" value="1" {% if pref and pref.notify_task_assignments %}checked{% endif %}>
+                                            <label class="form-check-label small" for="notify-tasks-{{ workspace.id }}">
+                                                Notify for tasks/subtasks
+                                            </label>
+                                        </div>
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary w-100">Save notification preferences</button>
+                                        <div class="notification-status text-success small d-none" data-pref-status="success">Saved</div>
+                                        <div class="notification-status text-danger small d-none" data-pref-status="error"></div>
+                                    </form>
+                                {% else %}
+                                    <div class="text-muted small mt-4 pt-2">Join this workspace to manage notification preferences.</div>
+                                {% endif %}
+                            </div>
+                        </div>
                     </div>
                 </div>
             {% else %}
@@ -157,14 +159,31 @@
 
 .workspace-grid {
     display: grid;
-    grid-template-columns: 340px 1fr;
-    gap: 24px;
+    grid-template-columns: 1fr;
+    max-width: 600px;
+    margin-bottom: 32px;
+}
+
+.section-title {
+    font-size: 1.25rem;
+    font-weight: 600;
 }
 
 .workspace-list {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 20px;
+}
+
+.workspace-card-layout {
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    gap: 32px;
+}
+
+.workspace-notifications {
+    padding-left: 32px;
+    border-left: 1px solid #eee;
 }
 
 .member-grid {

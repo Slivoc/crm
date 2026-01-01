@@ -3,11 +3,28 @@ from models import get_db_connection, get_base_currency
 import logging
 from openai import OpenAI
 import json
+import re
+import time
+import threading
+from decimal import Decimal
+import os
 
 # Initialize OpenAI client
 client = OpenAI()
 
+# Try to import playwright for Monroe scraping
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+
 parts_list_ai_bp = Blueprint('parts_list_ai', __name__, url_prefix='/parts-list-ai')
+
+
+def _using_postgres():
+    """Check if we're using PostgreSQL based on DATABASE_URL."""
+    return bool(os.getenv('DATABASE_URL', '').startswith(('postgres://', 'postgresql://')))
 
 
 def get_db_type():
@@ -256,7 +273,18 @@ def analyze_parts_list(list_id):
             WHERE pll.parts_list_id = ?
             ORDER BY pll.line_number
         """, (list_id,))
-        lines = cur.fetchall()
+        lines = [dict(row) for row in cur.fetchall()]
+
+        # For each line, get suggested suppliers with their names
+        for line in lines:
+            cur.execute("""
+                SELECT s.id, s.name, ss.source_type, ss.date_added
+                FROM parts_list_line_suggested_suppliers ss
+                JOIN suppliers s ON s.id = ss.supplier_id
+                WHERE ss.parts_list_line_id = ?
+                ORDER BY ss.date_added ASC
+            """, (line['id'],))
+            line['suggested_supplier_list'] = [dict(row) for row in cur.fetchall()]
 
         conn.close()
 
@@ -540,11 +568,12 @@ def _get_base_currency_id(cur):
 
 
 def _rank_suppliers_for_part(cur, base_part_number):
+    # 1. Past VQs
     cur.execute("""
         SELECT DISTINCT
             s.id,
             s.name,
-            COUNT(*) as quote_count,
+            COUNT(*) as vq_count,
             AVG(vl.vendor_price) as avg_price,
             AVG(vl.lead_days) as avg_lead_days
         FROM vq_lines vl
@@ -553,12 +582,13 @@ def _rank_suppliers_for_part(cur, base_part_number):
         WHERE vl.base_part_number = ?
           AND s.id IS NOT NULL
           AND vl.vendor_price > 0
-        GROUP BY s.id
+        GROUP BY s.id, s.name
         ORDER BY avg_price ASC
         LIMIT 5
     """, (base_part_number,))
     vq_suppliers = cur.fetchall()
 
+    # 2. ILS Results
     cur.execute("""
         SELECT DISTINCT
             s.id,
@@ -567,43 +597,90 @@ def _rank_suppliers_for_part(cur, base_part_number):
         FROM ils_search_results ils
         JOIN suppliers s ON ils.supplier_id = s.id
         WHERE ils.base_part_number = ?
-        GROUP BY s.id
+          AND s.id IS NOT NULL
+        GROUP BY s.id, s.name
         ORDER BY ils_results DESC
         LIMIT 5
     """, (base_part_number,))
     ils_suppliers = cur.fetchall()
 
+    # 3. Supplier Quotes (historical from other parts lists)
+    cur.execute("""
+        SELECT DISTINCT
+            s.id,
+            s.name,
+            COUNT(*) as quote_count,
+            AVG(sql.unit_price) as avg_price
+        FROM parts_list_supplier_quote_lines sql
+        JOIN parts_list_supplier_quotes sq ON sql.supplier_quote_id = sq.id
+        JOIN suppliers s ON sq.supplier_id = s.id
+        JOIN parts_list_lines pll ON sql.parts_list_line_id = pll.id
+        WHERE pll.base_part_number = ?
+          AND s.id IS NOT NULL
+          AND sql.is_no_bid = FALSE
+          AND sql.unit_price > 0
+        GROUP BY s.id, s.name
+        ORDER BY avg_price ASC
+        LIMIT 5
+    """, (base_part_number,))
+    sq_suppliers = cur.fetchall()
+
+    # 4. Purchase Orders
+    cur.execute("""
+        SELECT DISTINCT
+            s.id,
+            s.name,
+            COUNT(*) as po_count,
+            AVG(pol.price) as avg_price
+        FROM purchase_order_lines pol
+        JOIN purchase_orders po ON pol.purchase_order_id = po.id
+        JOIN suppliers s ON po.supplier_id = s.id
+        WHERE pol.base_part_number = ?
+          AND s.id IS NOT NULL
+          AND pol.price > 0
+        GROUP BY s.id, s.name
+        ORDER BY avg_price ASC
+        LIMIT 5
+    """, (base_part_number,))
+    po_suppliers = cur.fetchall()
+
     supplier_scores = {}
 
+    def _get_entry(supplier_id, supplier_name):
+        if supplier_id not in supplier_scores:
+            supplier_scores[supplier_id] = {
+                'supplier_id': supplier_id,
+                'supplier_name': supplier_name,
+                'score': 0,
+                'reasons': []
+            }
+        return supplier_scores[supplier_id]
+
+    # POs are highest signal (we actually bought from them)
+    for idx, po in enumerate(po_suppliers):
+        entry = _get_entry(po['id'], po['name'])
+        entry['score'] += 15 - idx
+        entry['reasons'].append(f"{po['po_count']} past orders, avg ${po['avg_price']:.2f}")
+
+    # Supplier quotes are next best
+    for idx, sq in enumerate(sq_suppliers):
+        entry = _get_entry(sq['id'], sq['name'])
+        entry['score'] += 12 - idx
+        entry['reasons'].append(f"{sq['quote_count']} past quotes (PL), avg ${sq['avg_price']:.2f}")
+
+    # VQs
     for idx, vq in enumerate(vq_suppliers):
-        score = 10 - idx
-        if vq['id'] not in supplier_scores:
-            supplier_scores[vq['id']] = {
-                'supplier_id': vq['id'],
-                'supplier_name': vq['name'],
-                'score': 0,
-                'reasons': []
-            }
-        supplier_scores[vq['id']]['score'] += score
-        supplier_scores[vq['id']]['reasons'].append(
-            f"{vq['quote_count']} past quotes, avg ${vq['avg_price']:.2f}"
-        )
+        entry = _get_entry(vq['id'], vq['name'])
+        entry['score'] += 10 - idx
+        entry['reasons'].append(f"{vq['vq_count']} past VQs, avg ${vq['avg_price']:.2f}")
 
+    # ILS is good for breadth
     for idx, ils in enumerate(ils_suppliers):
-        score = 5 - idx
-        if ils['id'] not in supplier_scores:
-            supplier_scores[ils['id']] = {
-                'supplier_id': ils['id'],
-                'supplier_name': ils['name'],
-                'score': 0,
-                'reasons': []
-            }
-        supplier_scores[ils['id']]['score'] += score
-        supplier_scores[ils['id']]['reasons'].append(
-            f"{ils['ils_results']} ILS results"
-        )
+        entry = _get_entry(ils['id'], ils['name'])
+        entry['score'] += 5 - idx
+        entry['reasons'].append(f"{ils['ils_results']} ILS results")
 
-    return sorted(supplier_scores.values(), key=lambda x: x['score'], reverse=True)[:3]
+    return sorted(supplier_scores.values(), key=lambda x: x['score'], reverse=True)[:5]
 
 
 @parts_list_ai_bp.route('/api/assign-stock/<int:list_id>', methods=['POST'])
@@ -841,76 +918,11 @@ def suggest_suppliers(list_id):
             """, (line_id, list_id))
             line = cur.fetchone()
 
-            if not line:
+            if not line or not line['base_part_number']:
                 continue
 
-            # Get historical data
-            cur.execute("""
-                SELECT DISTINCT
-                    s.id,
-                    s.name,
-                    COUNT(*) as quote_count,
-                    AVG(vl.vendor_price) as avg_price,
-                    AVG(vl.lead_days) as avg_lead_days
-                FROM vq_lines vl
-                JOIN vqs v ON vl.vq_id = v.id
-                LEFT JOIN suppliers s ON v.supplier_id = s.id
-                WHERE vl.base_part_number = ?
-                  AND s.id IS NOT NULL
-                  AND vl.vendor_price > 0
-                GROUP BY s.id
-                ORDER BY avg_price ASC
-                LIMIT 5
-            """, (line['base_part_number'],))
-            vq_suppliers = cur.fetchall()
-
-            cur.execute("""
-                SELECT DISTINCT
-                    s.id,
-                    s.name,
-                    COUNT(*) as ils_results
-                FROM ils_search_results ils
-                JOIN suppliers s ON ils.supplier_id = s.id
-                WHERE ils.base_part_number = ?
-                GROUP BY s.id
-                ORDER BY ils_results DESC
-                LIMIT 5
-            """, (line['base_part_number'],))
-            ils_suppliers = cur.fetchall()
-
-            # Combine and rank
-            supplier_scores = {}
-
-            for idx, vq in enumerate(vq_suppliers):
-                score = 10 - idx  # Lower index = better score
-                if vq['id'] not in supplier_scores:
-                    supplier_scores[vq['id']] = {
-                        'supplier_id': vq['id'],
-                        'supplier_name': vq['name'],
-                        'score': 0,
-                        'reasons': []
-                    }
-                supplier_scores[vq['id']]['score'] += score
-                supplier_scores[vq['id']]['reasons'].append(
-                    f"{vq['quote_count']} past quotes, avg ${vq['avg_price']:.2f}"
-                )
-
-            for idx, ils in enumerate(ils_suppliers):
-                score = 5 - idx
-                if ils['id'] not in supplier_scores:
-                    supplier_scores[ils['id']] = {
-                        'supplier_id': ils['id'],
-                        'supplier_name': ils['name'],
-                        'score': 0,
-                        'reasons': []
-                    }
-                supplier_scores[ils['id']]['score'] += score
-                supplier_scores[ils['id']]['reasons'].append(
-                    f"{ils['ils_results']} ILS results"
-                )
-
-            # Sort by score
-            ranked = sorted(supplier_scores.values(), key=lambda x: x['score'], reverse=True)[:3]
+            # Use the shared ranking function
+            ranked = _rank_suppliers_for_part(cur, line['base_part_number'])
 
             suggestions.append({
                 'line_id': line_id,
@@ -921,6 +933,733 @@ def suggest_suppliers(list_id):
         conn.close()
 
         return jsonify(success=True, suggestions=suggestions)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+# =============================================================================
+# Monroe Aerospace Integration
+# =============================================================================
+
+def _ensure_monroe_tables(cur):
+    """Ensure Monroe-related tables exist."""
+    # Use SERIAL for PostgreSQL (auto-detected by the DB wrapper)
+    # This syntax works for both PostgreSQL and SQLite
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS monroe_search_results (
+            id SERIAL PRIMARY KEY,
+            parts_list_id INTEGER REFERENCES parts_lists(id),
+            parts_list_line_id INTEGER REFERENCES parts_list_lines(id),
+            base_part_number TEXT NOT NULL,
+            searched_part_number TEXT,
+            monroe_part_number TEXT,
+            unit_price DECIMAL(12,4),
+            inventory INTEGER,
+            minimum_order INTEGER,
+            currency_code TEXT DEFAULT 'USD',
+            search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            error_message TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_monroe_results_line
+        ON monroe_search_results(parts_list_line_id)
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_monroe_results_part
+        ON monroe_search_results(base_part_number)
+    """)
+
+
+def _get_monroe_supplier_id(cur):
+    """Get the Monroe supplier ID from app_settings."""
+    cur.execute("SELECT value FROM app_settings WHERE key = 'monroe_supplier_id'")
+    row = cur.fetchone()
+    if row:
+        try:
+            return int(row['value'])
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _set_monroe_supplier_id(cur, supplier_id):
+    """Set the Monroe supplier ID in app_settings."""
+    # Check if setting exists
+    cur.execute("SELECT 1 FROM app_settings WHERE key = 'monroe_supplier_id'")
+    exists = cur.fetchone()
+
+    if exists:
+        cur.execute(
+            "UPDATE app_settings SET value = ? WHERE key = 'monroe_supplier_id'",
+            (str(supplier_id),)
+        )
+    else:
+        cur.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('monroe_supplier_id', ?)",
+            (str(supplier_id),)
+        )
+
+
+def _get_monroe_auto_check(cur):
+    """Get the Monroe auto-check setting from app_settings."""
+    cur.execute("SELECT value FROM app_settings WHERE key = 'monroe_auto_check'")
+    row = cur.fetchone()
+    if row:
+        return row['value'].lower() in ('true', '1', 'yes', 'on')
+    return False
+
+
+def _set_monroe_auto_check(cur, enabled):
+    """Set the Monroe auto-check setting in app_settings."""
+    value = 'true' if enabled else 'false'
+    cur.execute("SELECT 1 FROM app_settings WHERE key = 'monroe_auto_check'")
+    exists = cur.fetchone()
+
+    if exists:
+        cur.execute(
+            "UPDATE app_settings SET value = ? WHERE key = 'monroe_auto_check'",
+            (value,)
+        )
+    else:
+        cur.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('monroe_auto_check', ?)",
+            (value,)
+        )
+
+
+def _run_monroe_check_background(list_id, line_ids):
+    """
+    Run Monroe check in background thread for specified line IDs.
+    Called when auto-check is enabled and new lines are added.
+    """
+    if not PLAYWRIGHT_AVAILABLE:
+        logging.warning("Monroe auto-check skipped: Playwright not available")
+        return
+
+    if not line_ids:
+        return
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Ensure tables exist
+        _ensure_monroe_tables(cur)
+        conn.commit()
+
+        # Get line details
+        placeholders = ",".join("?" for _ in line_ids)
+        cur.execute(f"""
+            SELECT id, customer_part_number, base_part_number, quantity
+            FROM parts_list_lines
+            WHERE parts_list_id = ? AND id IN ({placeholders})
+        """, (list_id, *line_ids))
+        lines = [dict(row) for row in cur.fetchall()]
+
+        for line in lines:
+            part_number = line['customer_part_number'] or line['base_part_number']
+            if not part_number:
+                continue
+
+            # Check if we already have a recent result for this part (within 24 hours)
+            # Use database-agnostic date comparison
+            if _using_postgres():
+                recent_query = """
+                    SELECT id FROM monroe_search_results
+                    WHERE base_part_number = ?
+                      AND search_date > CURRENT_TIMESTAMP - INTERVAL '24 hours'
+                      AND unit_price IS NOT NULL
+                    LIMIT 1
+                """
+            else:
+                recent_query = """
+                    SELECT id FROM monroe_search_results
+                    WHERE base_part_number = ?
+                      AND search_date > datetime('now', '-24 hours')
+                      AND unit_price IS NOT NULL
+                    LIMIT 1
+                """
+            cur.execute(recent_query, (line['base_part_number'],))
+            existing = cur.fetchone()
+            if existing:
+                logging.debug(f"Monroe auto-check: Skipping {part_number}, recent result exists")
+                continue
+
+            logging.info(f"Monroe auto-check: Checking {part_number}")
+
+            # Scrape Monroe
+            scrape_result = _scrape_monroe(part_number, headless=True)
+
+            # Only store inventory/MOQ if we got a valid price
+            # (avoids storing bogus numbers like phone numbers)
+            has_price = scrape_result.get('unit_price') is not None
+            inventory = scrape_result.get('inventory') if has_price else None
+            minimum_order = scrape_result.get('minimum_order') if has_price else None
+
+            # Store result
+            cur.execute("""
+                INSERT INTO monroe_search_results
+                (parts_list_id, parts_list_line_id, base_part_number, searched_part_number,
+                 unit_price, inventory, minimum_order, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                list_id,
+                line['id'],
+                line['base_part_number'],
+                part_number,
+                scrape_result.get('unit_price'),
+                inventory,
+                minimum_order,
+                scrape_result.get('error')
+            ))
+            conn.commit()
+
+            # Small delay between requests to be respectful to Monroe's servers
+            time.sleep(1)
+
+        conn.close()
+        logging.info(f"Monroe auto-check completed for list {list_id}, {len(lines)} lines")
+
+    except Exception as e:
+        logging.exception(f"Monroe auto-check failed: {e}")
+
+
+def trigger_monroe_auto_check(list_id, line_ids):
+    """
+    Trigger Monroe auto-check in a background thread if enabled.
+    Called from add_lines endpoint.
+    """
+    if not PLAYWRIGHT_AVAILABLE:
+        return
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Check if auto-check is enabled
+        if not _get_monroe_auto_check(cur):
+            conn.close()
+            return
+
+        # Check if Monroe supplier is configured
+        if not _get_monroe_supplier_id(cur):
+            conn.close()
+            return
+
+        conn.close()
+
+        # Run in background thread
+        thread = threading.Thread(
+            target=_run_monroe_check_background,
+            args=(list_id, line_ids),
+            daemon=True
+        )
+        thread.start()
+        logging.info(f"Monroe auto-check started in background for list {list_id}")
+
+    except Exception as e:
+        logging.exception(f"Failed to trigger Monroe auto-check: {e}")
+
+
+def _scrape_monroe(product_name, headless=True):
+    """
+    Scrape Monroe Aerospace website for product information.
+    Returns dict with unit_price, inventory, minimum_order, or error.
+    """
+    if not PLAYWRIGHT_AVAILABLE:
+        return {
+            "product_name": product_name,
+            "unit_price": None,
+            "inventory": None,
+            "minimum_order": None,
+            "error": "Playwright is not installed. Run: pip install playwright && playwright install chromium"
+        }
+
+    result = {
+        "product_name": product_name,
+        "unit_price": None,
+        "inventory": None,
+        "minimum_order": None,
+        "error": None
+    }
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            page = browser.new_page()
+
+            page.goto("https://catalog.monroeaerospace.com/express",
+                     wait_until="domcontentloaded", timeout=60000)
+            time.sleep(2)
+
+            # Find and fill the Express Ordering search input
+            search_input = page.wait_for_selector('#plp-express-search-text', timeout=10000)
+            search_input.click()
+            search_input.fill(product_name)
+
+            # Click the SEARCH button
+            search_button = page.wait_for_selector(
+                'button:has-text("SEARCH"), .plp-cadpart-search-button, button[class*="search"]',
+                timeout=10000
+            )
+            search_button.click()
+
+            # Wait for results
+            time.sleep(3)
+
+            # Try to find the product in results
+            product_link = page.query_selector(f'a:has-text("{product_name}")')
+
+            if product_link:
+                # Extract price from the page
+                body = page.query_selector('body')
+                if body:
+                    all_text = body.text_content()
+                    prices = re.findall(r'\$(\d+\.?\d*)', all_text)
+                    if prices:
+                        try:
+                            result["unit_price"] = float(prices[0])
+                        except ValueError:
+                            pass
+
+                # Click product for detailed info
+                try:
+                    with page.context.expect_page() as new_page_info:
+                        product_link.click()
+                    new_page = new_page_info.value
+                    page = new_page
+                    page.wait_for_load_state("domcontentloaded")
+                    time.sleep(2)
+                except:
+                    page.wait_for_load_state("domcontentloaded")
+                    time.sleep(2)
+
+                # Scroll to see specifications
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                time.sleep(1)
+
+                # Extract from specifications table
+                spec_rows = page.query_selector_all('.plp-table tbody tr')
+                for row in spec_rows:
+                    cells = row.query_selector_all('td')
+                    if len(cells) >= 2:
+                        label = cells[0].text_content().strip().lower()
+                        value = cells[1].text_content().strip()
+
+                        if 'inventory' in label and not result["inventory"]:
+                            inv_match = re.search(r'\d+', value)
+                            if inv_match:
+                                result["inventory"] = int(inv_match.group())
+
+                        if 'minimum order' in label:
+                            moq_match = re.search(r'\d+', value)
+                            if moq_match:
+                                result["minimum_order"] = int(moq_match.group())
+            else:
+                result["error"] = f"Product '{product_name}' not found in Monroe catalog"
+
+            browser.close()
+
+    except Exception as e:
+        result["error"] = f"Error scraping Monroe: {str(e)}"
+
+    return result
+
+
+def _get_lines_with_monroe_history(cur, list_id):
+    """
+    Get parts list lines that have historical purchases/quotes from Monroe.
+    Returns list of line IDs that should be checked on Monroe.
+    """
+    monroe_supplier_id = _get_monroe_supplier_id(cur)
+    if not monroe_supplier_id:
+        return []
+
+    # Check VQ history with Monroe
+    cur.execute("""
+        SELECT DISTINCT pll.id, pll.base_part_number
+        FROM parts_list_lines pll
+        JOIN vq_lines vl ON vl.base_part_number = pll.base_part_number
+        JOIN vqs v ON v.id = vl.vq_id
+        WHERE pll.parts_list_id = ?
+          AND v.supplier_id = ?
+          AND pll.chosen_cost IS NULL
+    """, (list_id, monroe_supplier_id))
+    vq_lines = {row['id'] for row in cur.fetchall()}
+
+    # Check ILS history with Monroe
+    cur.execute("""
+        SELECT DISTINCT pll.id
+        FROM parts_list_lines pll
+        JOIN ils_search_results ils ON ils.base_part_number = pll.base_part_number
+        WHERE pll.parts_list_id = ?
+          AND ils.supplier_id = ?
+          AND pll.chosen_cost IS NULL
+    """, (list_id, monroe_supplier_id))
+    ils_lines = {row['id'] for row in cur.fetchall()}
+
+    # Check previous Monroe search results
+    cur.execute("""
+        SELECT DISTINCT pll.id
+        FROM parts_list_lines pll
+        JOIN monroe_search_results msr ON msr.base_part_number = pll.base_part_number
+        WHERE pll.parts_list_id = ?
+          AND msr.unit_price IS NOT NULL
+          AND pll.chosen_cost IS NULL
+    """, (list_id,))
+    monroe_lines = {row['id'] for row in cur.fetchall()}
+
+    return list(vq_lines | ils_lines | monroe_lines)
+
+
+@parts_list_ai_bp.route('/api/monroe-settings', methods=['GET', 'POST'])
+def monroe_settings():
+    """Get or set Monroe supplier ID and auto-check setting."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            supplier_id = data.get('supplier_id')
+            auto_check = data.get('auto_check')
+
+            if supplier_id:
+                _set_monroe_supplier_id(cur, supplier_id)
+
+            if auto_check is not None:
+                _set_monroe_auto_check(cur, bool(auto_check))
+
+            conn.commit()
+            conn.close()
+
+            if supplier_id or auto_check is not None:
+                return jsonify(success=True, supplier_id=supplier_id, auto_check=auto_check)
+
+            conn.close()
+            return jsonify(success=False, message="No settings provided"), 400
+
+        # GET - return current settings and list of suppliers for selection
+        monroe_id = _get_monroe_supplier_id(cur)
+        auto_check = _get_monroe_auto_check(cur)
+        cur.execute("SELECT id, name FROM suppliers ORDER BY name")
+        suppliers = [dict(row) for row in cur.fetchall()]
+        conn.close()
+
+        return jsonify(
+            success=True,
+            monroe_supplier_id=monroe_id,
+            auto_check=auto_check,
+            suppliers=suppliers
+        )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_ai_bp.route('/api/monroe-suggest/<int:list_id>', methods=['GET'])
+def monroe_suggest_lines(list_id):
+    """
+    Suggest which lines should be checked on Monroe based on history.
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Ensure tables exist
+        _ensure_monroe_tables(cur)
+        conn.commit()
+
+        monroe_supplier_id = _get_monroe_supplier_id(cur)
+
+        # Get all uncosted lines
+        cur.execute("""
+            SELECT
+                pll.id,
+                pll.line_number,
+                pll.customer_part_number,
+                pll.base_part_number,
+                pll.quantity
+            FROM parts_list_lines pll
+            WHERE pll.parts_list_id = ?
+              AND pll.chosen_cost IS NULL
+        """, (list_id,))
+        uncosted_lines = [dict(row) for row in cur.fetchall()]
+
+        suggested_lines = []
+        other_lines = []
+
+        if monroe_supplier_id:
+            # Get lines with Monroe history
+            history_line_ids = set(_get_lines_with_monroe_history(cur, list_id))
+
+            for line in uncosted_lines:
+                line_info = {
+                    'id': line['id'],
+                    'line_number': line['line_number'],
+                    'part_number': line['customer_part_number'] or line['base_part_number'],
+                    'base_part_number': line['base_part_number'],
+                    'quantity': line['quantity'],
+                    'has_monroe_history': line['id'] in history_line_ids
+                }
+                if line['id'] in history_line_ids:
+                    suggested_lines.append(line_info)
+                else:
+                    other_lines.append(line_info)
+        else:
+            # No Monroe supplier configured - show all uncosted lines
+            for line in uncosted_lines:
+                other_lines.append({
+                    'id': line['id'],
+                    'line_number': line['line_number'],
+                    'part_number': line['customer_part_number'] or line['base_part_number'],
+                    'base_part_number': line['base_part_number'],
+                    'quantity': line['quantity'],
+                    'has_monroe_history': False
+                })
+
+        conn.close()
+
+        return jsonify(
+            success=True,
+            monroe_supplier_id=monroe_supplier_id,
+            suggested_lines=suggested_lines,
+            other_lines=other_lines,
+            playwright_available=PLAYWRIGHT_AVAILABLE
+        )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_ai_bp.route('/api/monroe-check/<int:list_id>', methods=['POST'])
+def monroe_check(list_id):
+    """
+    Check Monroe for specified lines. Scrapes the Monroe website.
+    """
+    if not PLAYWRIGHT_AVAILABLE:
+        return jsonify(
+            success=False,
+            message="Playwright is not installed. Run: pip install playwright && playwright install chromium"
+        ), 400
+
+    try:
+        data = request.get_json() or {}
+        line_ids = data.get('line_ids', [])
+        headless = data.get('headless', True)
+
+        if not line_ids:
+            return jsonify(success=False, message="No lines specified"), 400
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Ensure tables exist
+        _ensure_monroe_tables(cur)
+
+        # Get line details
+        placeholders = ",".join("?" for _ in line_ids)
+        cur.execute(f"""
+            SELECT id, customer_part_number, base_part_number, quantity
+            FROM parts_list_lines
+            WHERE parts_list_id = ? AND id IN ({placeholders})
+        """, (list_id, *line_ids))
+        lines = [dict(row) for row in cur.fetchall()]
+
+        results = []
+        for line in lines:
+            part_number = line['customer_part_number'] or line['base_part_number']
+            if not part_number:
+                continue
+
+            # Scrape Monroe
+            scrape_result = _scrape_monroe(part_number, headless=headless)
+
+            # Only store inventory/MOQ if we got a valid price
+            # (avoids storing bogus numbers like phone numbers)
+            has_price = scrape_result.get('unit_price') is not None
+            inventory = scrape_result.get('inventory') if has_price else None
+            minimum_order = scrape_result.get('minimum_order') if has_price else None
+
+            # Store result
+            cur.execute("""
+                INSERT INTO monroe_search_results
+                (parts_list_id, parts_list_line_id, base_part_number, searched_part_number,
+                 unit_price, inventory, minimum_order, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                list_id,
+                line['id'],
+                line['base_part_number'],
+                part_number,
+                scrape_result.get('unit_price'),
+                inventory,
+                minimum_order,
+                scrape_result.get('error')
+            ))
+
+            results.append({
+                'line_id': line['id'],
+                'part_number': part_number,
+                'quantity': line['quantity'],
+                'unit_price': scrape_result.get('unit_price'),
+                'inventory': inventory,
+                'minimum_order': minimum_order,
+                'error': scrape_result.get('error')
+            })
+
+        conn.commit()
+        conn.close()
+
+        return jsonify(success=True, results=results)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_ai_bp.route('/api/monroe-results/<int:list_id>', methods=['GET'])
+def monroe_results(list_id):
+    """
+    Get recent Monroe search results for a parts list.
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Ensure tables exist
+        _ensure_monroe_tables(cur)
+        conn.commit()
+
+        cur.execute("""
+            SELECT
+                msr.id,
+                msr.parts_list_line_id,
+                pll.line_number,
+                pll.customer_part_number,
+                pll.quantity,
+                msr.searched_part_number,
+                msr.unit_price,
+                msr.inventory,
+                msr.minimum_order,
+                msr.currency_code,
+                msr.search_date,
+                msr.error_message
+            FROM monroe_search_results msr
+            JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
+            WHERE msr.parts_list_id = ?
+            ORDER BY msr.search_date DESC
+        """, (list_id,))
+        results = [dict(row) for row in cur.fetchall()]
+
+        conn.close()
+
+        return jsonify(success=True, results=results)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_ai_bp.route('/api/monroe-load-as-offer/<int:list_id>', methods=['POST'])
+def monroe_load_as_offer(list_id):
+    """
+    Load Monroe results as a supplier quote/offer.
+    Creates a supplier quote with the Monroe results.
+    """
+    try:
+        data = request.get_json() or {}
+        result_ids = data.get('result_ids', [])
+
+        if not result_ids:
+            return jsonify(success=False, message="No results specified"), 400
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Get Monroe supplier ID
+        monroe_supplier_id = _get_monroe_supplier_id(cur)
+        if not monroe_supplier_id:
+            conn.close()
+            return jsonify(
+                success=False,
+                message="Monroe supplier not configured. Please set the Monroe supplier in settings."
+            ), 400
+
+        # Get USD currency ID
+        cur.execute("SELECT id FROM currencies WHERE currency_code = 'USD'")
+        currency_row = cur.fetchone()
+        if not currency_row:
+            # Try to create USD currency
+            cur.execute("INSERT INTO currencies (currency_code) VALUES ('USD') RETURNING id")
+            currency_row = cur.fetchone()
+        usd_currency_id = currency_row['id'] if currency_row else 1
+
+        # Get user ID from session
+        user_id = session.get('user_id', 1)
+
+        # Create supplier quote header
+        if _using_postgres():
+            cur.execute("""
+                INSERT INTO parts_list_supplier_quotes
+                (parts_list_id, supplier_id, quote_reference, quote_date, currency_id, notes, created_by_user_id)
+                VALUES (?, ?, ?, CURRENT_DATE, ?, ?, ?)
+                RETURNING id
+            """, (list_id, monroe_supplier_id, 'Monroe Web Scrape', usd_currency_id,
+                  'Auto-imported from Monroe Aerospace website', user_id))
+            quote_row = cur.fetchone()
+            quote_id = quote_row['id']
+        else:
+            cur.execute("""
+                INSERT INTO parts_list_supplier_quotes
+                (parts_list_id, supplier_id, quote_reference, quote_date, currency_id, notes, created_by_user_id)
+                VALUES (?, ?, ?, DATE('now'), ?, ?, ?)
+            """, (list_id, monroe_supplier_id, 'Monroe Web Scrape', usd_currency_id,
+                  'Auto-imported from Monroe Aerospace website', user_id))
+            quote_id = cur.lastrowid
+
+        # Get Monroe results
+        placeholders = ",".join("?" for _ in result_ids)
+        cur.execute(f"""
+            SELECT msr.*, pll.line_number
+            FROM monroe_search_results msr
+            JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
+            WHERE msr.id IN ({placeholders})
+              AND msr.unit_price IS NOT NULL
+        """, result_ids)
+        results = [dict(row) for row in cur.fetchall()]
+
+        # Create quote lines
+        lines_created = 0
+        for result in results:
+            cur.execute("""
+                INSERT INTO parts_list_supplier_quote_lines
+                (supplier_quote_id, parts_list_line_id, quoted_part_number,
+                 quantity_quoted, unit_price, condition_code, is_no_bid)
+                VALUES (?, ?, ?, ?, ?, 'NE', FALSE)
+            """, (
+                quote_id,
+                result['parts_list_line_id'],
+                result['searched_part_number'],
+                result.get('inventory') or result.get('minimum_order') or 1,
+                result['unit_price']
+            ))
+            lines_created += 1
+
+        conn.commit()
+        conn.close()
+
+        return jsonify(
+            success=True,
+            quote_id=quote_id,
+            lines_created=lines_created,
+            message=f"Created supplier quote with {lines_created} lines"
+        )
 
     except Exception as e:
         logging.exception(e)

@@ -54,6 +54,104 @@ def _ticket_visibility_clause(user_id, is_admin):
     return "AND (t.is_private = FALSE OR t.created_by_user_id = ? OR t.assigned_user_id = ?)", [user_id, user_id]
 
 
+def _fetch_related_emails(ticket):
+    """Fetch emails related to a ticket via Graph API"""
+    conversation_id = ticket.get('email_conversation_id')
+    message_id = ticket.get('email_message_id')
+
+    if not conversation_id and not message_id:
+        return []
+
+    try:
+        # Import graph functions from emails module
+        from routes.emails import _get_graph_settings, _load_graph_cache_for_user, _build_msal_app
+
+        settings = _get_graph_settings(include_secret=True)
+        if not settings.get("client_id") or not settings.get("client_secret"):
+            return []
+
+        user_id = ticket.get('created_by_user_id')
+        cache = _load_graph_cache_for_user(user_id) if user_id else None
+        app = _build_msal_app(settings, cache=cache)
+        accounts = app.get_accounts()
+
+        if not accounts:
+            return []
+
+        token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+        if user_id:
+            from routes.emails import _save_graph_cache_for_user
+            _save_graph_cache_for_user(user_id, cache)
+
+        if not token or "access_token" not in token:
+            return []
+
+        import requests
+        headers = {"Authorization": f"Bearer {token['access_token']}"}
+
+        # Try to get conversation emails first
+        emails = []
+        if conversation_id:
+            # Fetch emails in the conversation
+            params = {
+                "$filter": f"conversationId eq '{conversation_id}'",
+                "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,webLink,hasAttachments,isRead",
+                "$orderby": "receivedDateTime desc",
+                "$top": "50"
+            }
+
+            resp = requests.get(
+                "https://graph.microsoft.com/v1.0/me/messages",
+                headers=headers,
+                params=params,
+                timeout=10,
+            )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                emails = data.get("value", [])
+
+        # If no conversation emails or specific message_id, try to get the original message
+        if not emails and message_id:
+            params = {
+                "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,webLink,hasAttachments,isRead"
+            }
+
+            resp = requests.get(
+                f"https://graph.microsoft.com/v1.0/me/messages/{message_id}",
+                headers=headers,
+                params=params,
+                timeout=10,
+            )
+
+            if resp.status_code == 200:
+                message = resp.json()
+                emails = [message]
+
+        # Format emails for display
+        formatted_emails = []
+        for email in emails:
+            formatted_email = {
+                'id': email.get('id'),
+                'subject': email.get('subject', '(No subject)'),
+                'from': email.get('from', {}).get('emailAddress', {}).get('address', 'Unknown'),
+                'from_name': email.get('from', {}).get('emailAddress', {}).get('name', ''),
+                'received_datetime': email.get('receivedDateTime'),
+                'sent_datetime': email.get('sentDateTime'),
+                'body_preview': email.get('bodyPreview', ''),
+                'web_link': email.get('webLink'),
+                'has_attachments': email.get('hasAttachments', False),
+                'is_read': email.get('isRead', False),
+            }
+            formatted_emails.append(formatted_email)
+
+        return formatted_emails
+
+    except Exception as e:
+        current_app.logger.warning(f"Failed to fetch related emails for ticket {ticket.get('id')}: {e}")
+        return []
+
+
 def _fetch_ticket(ticket_id, user_id, is_admin):
     visibility_clause, params = _ticket_visibility_clause(user_id, is_admin)
     row = db_execute(
@@ -86,6 +184,11 @@ def _fetch_ticket(ticket_id, user_id, is_admin):
     ticket = dict(row)
     linked = _fetch_ticket_objects([ticket_id])
     ticket["linked_objects"] = linked.get(ticket_id, [])
+    # Fetch related emails if ticket was created from email
+    if ticket.get('email_message_id') or ticket.get('email_conversation_id'):
+        ticket["related_emails"] = _fetch_related_emails(ticket)
+    else:
+        ticket["related_emails"] = []
     if ticket.get('parent_ticket_id') and ticket.get('parent_is_private') and not is_admin:
         if user_id not in (ticket.get('parent_created_by_user_id'), ticket.get('parent_assigned_user_id')):
             return None
@@ -638,6 +741,7 @@ def list_tickets():
         description = request.form.get('description', '').strip()
         assigned_user_id = request.form.get('assigned_user_id') or None
         workspace_id = request.form.get('workspace_id') or None
+        priority = request.form.get('priority', 'Medium')
         if not workspace_id:
             workspace_filter = request.args.get('workspace_id', '')
             if str(workspace_filter).isdigit():
@@ -673,10 +777,11 @@ def list_tickets():
                 created_by_user_id,
                 due_date,
                 is_private,
+                priority,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             RETURNING id
             """,
             (
@@ -688,6 +793,7 @@ def list_tickets():
                 user_id,
                 due_date,
                 is_private,
+                priority,
             ),
             fetch="one",
             commit=True,
@@ -1271,6 +1377,7 @@ def update_ticket(ticket_id):
     description = request.form.get('description', '').strip()
     assigned_user_id = request.form.get('assigned_user_id') or None
     workspace_id = request.form.get('workspace_id') or None
+    priority = request.form.get('priority', 'Medium')
     status_id = request.form.get('status_id')
     due_date = request.form.get('due_date') or None
     is_private = bool(request.form.get('is_private'))
@@ -1307,6 +1414,7 @@ def update_ticket(ticket_id):
             workspace_id = ?,
             due_date = ?,
             is_private = ?,
+            priority = ?,
             closed_at = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -1319,6 +1427,7 @@ def update_ticket(ticket_id):
             int(workspace_id) if workspace_id else None,
             due_date,
             is_private,
+            priority,
             closed_at,
             ticket_id,
         ),
@@ -1341,6 +1450,8 @@ def update_ticket(ticket_id):
         existing_due = existing_due.isoformat()
     if (due_date or None) != (existing_due or None):
         changes.append(f"Due date set to {due_date or 'not set'}")
+    if priority != ticket.get('priority'):
+        changes.append(f"Priority set to {priority}")
     if bool(is_private) != bool(ticket.get('is_private')):
         changes.append("Privacy updated")
     if (int(workspace_id) if workspace_id else None) != ticket.get('workspace_id'):
@@ -1395,6 +1506,7 @@ def add_subjob(ticket_id):
     description = request.form.get('description', '').strip()
     assigned_user_id = request.form.get('assigned_user_id') or None
     status_id = request.form.get('status_id')
+    priority = request.form.get('priority', 'Medium')
     due_date = request.form.get('due_date') or None
     is_private = bool(request.form.get('is_private')) or bool(parent.get('is_private'))
     workspace_id = parent.get('workspace_id')
@@ -1419,10 +1531,11 @@ def add_subjob(ticket_id):
             due_date,
             is_private,
             parent_ticket_id,
+            priority,
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING id
         """,
         (
@@ -1435,6 +1548,7 @@ def add_subjob(ticket_id):
             due_date,
             is_private,
             ticket_id,
+            priority,
         ),
         fetch="one",
         commit=True,
@@ -1663,3 +1777,78 @@ def update_workspace_notifications(workspace_id):
         commit=True,
     )
     return jsonify({'success': True, 'message': 'Notification preferences saved.'})
+
+
+@tickets_bp.route('/<int:ticket_id>/move', methods=['POST'])
+@login_required
+def move_ticket(ticket_id):
+    """Update ticket status when dragged between columns."""
+    user_id = current_user.id
+    is_admin = _is_admin()
+
+    ticket = _fetch_ticket(ticket_id, user_id, is_admin)
+    if not ticket:
+        return jsonify({'success': False, 'error': 'Ticket not found or access denied'}), 404
+
+    data = request.get_json(silent=True) or {}
+    status_id = data.get('status_id')
+    if not status_id:
+        return jsonify({'success': False, 'error': 'Status ID is required'}), 400
+
+    status_row = db_execute(
+        "SELECT name, is_closed FROM ticket_statuses WHERE id = ?",
+        (status_id,),
+        fetch="one",
+    )
+    if not status_row:
+        return jsonify({'success': False, 'error': 'Invalid status'}), 400
+
+    status_name = status_row.get('name') or ''
+    is_closed = bool(status_row.get('is_closed'))
+    closed_at = datetime.now() if is_closed else None
+    
+    # Optional logic: If moving to "Returned", reassign to creator
+    assigned_user_id = ticket.get('assigned_user_id')
+    if status_name.lower() == 'returned':
+        assigned_user_id = ticket.get('created_by_user_id')
+
+    db_execute(
+        """
+        UPDATE tickets
+        SET status_id = ?,
+            assigned_user_id = ?,
+            closed_at = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            int(status_id),
+            int(assigned_user_id) if assigned_user_id else None,
+            closed_at,
+            ticket_id,
+        ),
+        commit=True,
+    )
+
+    changes = [f"Status changed to {status_name}"]
+    if status_name.lower() == 'returned' and assigned_user_id != ticket.get('assigned_user_id'):
+        changes.append("Returned to creator")
+    
+    _add_ticket_update(ticket_id, user_id, "; ".join(changes))
+    
+    if assigned_user_id and assigned_user_id != ticket.get('assigned_user_id'):
+        _notify_assignment(
+            ticket_id,
+            assigned_user_id,
+            ticket.get("workspace_id"),
+            ticket.get("title") or "Ticket",
+            bool(ticket.get("parent_ticket_id")),
+            None,
+        )
+
+    return jsonify({
+        'success': True, 
+        'message': f"Ticket moved to {status_name}",
+        'is_closed': is_closed,
+        'assigned_user_id': assigned_user_id
+    })

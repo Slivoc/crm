@@ -66,7 +66,7 @@
                     {% if excess_list.email %}
                     <iframe id="email-iframe" src="{{ url_for('emails.view_email_frame', entity='excess_list', entity_id=excess_list.id) }}" style="width: 100%; height: 400px; border: 1px solid #ddd;" sandbox="allow-scripts allow-same-origin"></iframe>
                     {% else %}
-                    <p>Drag and drop an email file here or click to select</p>
+                    <p>Drag and drop an email (.eml/.msg) or Excel (.xls/.xlsx) file here or click to select</p>
                     {% endif %}
                 </div>
 
@@ -81,6 +81,12 @@
                     <input type="hidden" id="wipe_existing" name="wipe_existing" value="0">
                     <input type="file" id="email_file" name="email_file" accept=".eml, .msg">
                     <button type="submit" class="btn btn-primary">Upload Email</button>
+                </form>
+
+                <form id="excel-upload-form" action="{{ url_for('excess.upload_excel', list_id=excess_list.id) }}" method="post" enctype="multipart/form-data" style="display: none;">
+                    <input type="hidden" id="wipe_existing_excel" name="wipe_existing" value="0">
+                    <input type="file" id="excel_file" name="excel_file" accept=".xls, .xlsx">
+                    <button type="submit" class="btn btn-primary">Upload Excel</button>
                 </form>
 
                 <br>
@@ -128,11 +134,12 @@
                     <strong>Actions</strong>
                 </div>
                 <div class="card-body">
-                    <!-- Match Excess Stock Button -->
-                    <a href="{{ url_for('excess.match_excess', excess_stock_list_id=excess_list.id) }}" class="btn btn-success">
+                    <!-- Match Excess Stock Button - TODO: Implement this route -->
+                    <button type="button" class="btn btn-success" disabled title="Feature not yet implemented">
                         Match Excess Stock
-                    </a>
-                    <button type="button" class="btn btn-outline-danger ms-2" id="delete-excess-list-btn">
+                    </button>
+                    <!-- Delete functionality disabled until route is implemented -->
+                    <button type="button" class="btn btn-outline-danger ms-2" disabled title="Feature not yet implemented">
                         Delete List
                     </button>
                 </div>
@@ -204,6 +211,13 @@
     </div>
 </div>
 
+<style>
+#drop-zone.highlight {
+    border-color: #007bff !important;
+    background-color: #f8f9ff !important;
+}
+</style>
+
 <script>
 // JavaScript for handling drag-and-drop and email upload
 document.addEventListener('DOMContentLoaded', (event) => {
@@ -269,25 +283,29 @@ document.addEventListener('DOMContentLoaded', (event) => {
         });
     }
 
-    initLookupSearch({
-        inputId: 'customer_search',
-        hiddenId: 'customer_id',
-        resultsId: 'customer_search_results',
-        endpoint: "{{ url_for('customers.customer_search') }}"
-    });
+    // Search functionality disabled - routes not implemented yet
+    // initLookupSearch({
+    //     inputId: 'customer_search',
+    //     hiddenId: 'customer_id',
+    //     resultsId: 'customer_search_results',
+    //     endpoint: "{{ url_for('customers.customer_search') }}"
+    // });
 
-    initLookupSearch({
-        inputId: 'supplier_search',
-        hiddenId: 'supplier_id',
-        resultsId: 'supplier_search_results',
-        endpoint: "{{ url_for('suppliers.supplier_search') }}"
-    });
+    // initLookupSearch({
+    //     inputId: 'supplier_search',
+    //     hiddenId: 'supplier_id',
+    //     resultsId: 'supplier_search_results',
+    //     endpoint: "{{ url_for('suppliers.supplier_search') }}"
+    // });
 
     const dropZone = document.getElementById('drop-zone');
-    const fileInput = document.getElementById('email_file');
-    const form = document.getElementById('email-upload-form');
+    const emailFileInput = document.getElementById('email_file');
+    const excelFileInput = document.getElementById('excel_file');
+    const emailForm = document.getElementById('email-upload-form');
+    const excelForm = document.getElementById('excel-upload-form');
     const wipeToggle = document.getElementById('wipe_existing_toggle');
     const wipeInput = document.getElementById('wipe_existing');
+    const wipeExcelInput = document.getElementById('wipe_existing_excel');
 
     // Prevent default drag behaviors
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -308,11 +326,26 @@ document.addEventListener('DOMContentLoaded', (event) => {
     // Handle dropped files
     dropZone.addEventListener('drop', handleDrop, false);
 
-    // Handle click to select file
-    dropZone.addEventListener('click', () => fileInput.click());
+    // Handle click to select file - for now, default to email file input
+    dropZone.addEventListener('click', () => {
+        // Create a hidden file input that accepts both types
+        const tempInput = document.createElement('input');
+        tempInput.type = 'file';
+        tempInput.accept = '.eml,.msg,.xls,.xlsx';
+        tempInput.style.display = 'none';
+        tempInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFiles(e.target.files);
+            }
+        });
+        document.body.appendChild(tempInput);
+        tempInput.click();
+        document.body.removeChild(tempInput);
+    });
 
-    // Handle file selection
-    fileInput.addEventListener('change', handleFiles);
+    // Handle file selection for individual inputs (fallback)
+    emailFileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+    excelFileInput.addEventListener('change', (e) => handleFiles(e.target.files));
 
     function preventDefaults(e) {
         e.preventDefault();
@@ -334,15 +367,29 @@ document.addEventListener('DOMContentLoaded', (event) => {
     }
 
     function handleFiles(files) {
-        if (wipeInput && wipeToggle) {
-            wipeInput.value = wipeToggle.checked ? '1' : '0';
+        if (!files || files.length === 0) return;
+
+        const file = files[0]; // Handle only the first file
+        const fileName = file.name.toLowerCase();
+
+        // Update wipe settings
+        const wipeChecked = wipeToggle.checked;
+        if (wipeInput) wipeInput.value = wipeChecked ? '1' : '0';
+        if (wipeExcelInput) wipeExcelInput.value = wipeChecked ? '1' : '0';
+
+        // Route to the appropriate form based on file extension
+        if (fileName.endsWith('.xls') || fileName.endsWith('.xlsx')) {
+            excelFileInput.files = files;
+            excelForm.submit();
+        } else if (fileName.endsWith('.eml') || fileName.endsWith('.msg')) {
+            emailFileInput.files = files;
+            emailForm.submit();
+        } else {
+            alert('Invalid file type. Please upload .eml, .msg, .xls, or .xlsx files.');
         }
-        if (files instanceof FileList) {
-            fileInput.files = files; // Populate the file input with the dropped files
-        }
-        form.submit();  // Automatically submit the form with the uploaded file
     }
 
+    {# Delete functionality disabled until route is implemented
     const deleteBtn = document.getElementById('delete-excess-list-btn');
     if (deleteBtn) {
         deleteBtn.addEventListener('click', function() {
@@ -366,6 +413,7 @@ document.addEventListener('DOMContentLoaded', (event) => {
             });
         });
     }
+    #}
 });
 </script>
 {% endblock %}

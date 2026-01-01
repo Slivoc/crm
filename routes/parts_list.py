@@ -20,6 +20,7 @@ import os
 import html
 from routes.emails import send_graph_email, build_graph_inline_attachments
 from routes.email_signatures import get_user_default_signature
+from routes.parts_list_ai import trigger_monroe_auto_check
 
 # Optional rich RTF→text converter; falls back to a lightweight stripper if missing
 try:
@@ -1065,6 +1066,7 @@ def extract_supplier_quote_data(quote_text, context_parts=""):
                 {
                     "role": "system",
                     "content": """You are an assistant that extracts supplier quote information from emails or text responses.
+We are in the aerospace hardware industry.
 
 Output ONLY a valid JSON array of objects with DOUBLE QUOTES for all keys and string values.
 Do NOT use markdown formatting like ```json or any wrappers. Output raw JSON only.
@@ -1077,6 +1079,7 @@ Each object should have:
 - condition: Condition code like "NE", "OH", "SV", "AR" (use null if not specified)
 - certifications: Keep this concise. Prefer "OEM certs" if there is full trace to OEM/manufacturer. Use "EASA Form 1" or "8130-3" when those certificates are mentioned. Use "Dual release (8130/EASA)" if both are present. If there is no trace or only distributor C of C, set to "no trace". Omit DFARS/ITAR/testing notes from this field.
 - is_no_bid: true if supplier declined to quote this part, false otherwise
+- manufacturer: Extract the manufacturer name if mentioned. Look for common aerospace hardware brands like "Cherry", "Alcoa", "Arconic", "Allfast", "SPS", "Monogram", "Fairchild", "Kaynar", "Huck", "Shur-Lok".
 - notes: Any additional relevant notes about this line. If DFARS/ITAR compliance, test reports, or other paperwork details are mentioned, put them here instead of certifications.
 
 Look for common patterns:
@@ -1267,6 +1270,7 @@ def extract_part_numbers_and_quantities(request_data):
     Use OpenAI to extract part numbers and quantities from text
     """
     print("Starting extract_part_numbers_and_quantities function")
+    # Using aerospace context
     print(f"Input request_data:\n{request_data}")
 
     try:
@@ -1284,7 +1288,8 @@ def extract_part_numbers_and_quantities(request_data):
             model="gpt-4o",
             messages=[
                 {"role": "system",
-                 "content": "You are an assistant tasked with extracting part numbers and quantities from text. "
+                 "content": "You are an assistant tasked with extracting part numbers and quantities from text in the aerospace hardware industry. "
+                            "Look for common aerospace hardware like Cherry rivets, Alcoa fasteners, nuts, bolts, and electronic components. "
                             "Output ONLY a valid JSON array of objects, using DOUBLE QUOTES for all keys and string values, like: "
                             "[{\"part_number\": \"ABC-123\", \"quantity\": 2}, {\"part_number\": \"XYZ-456\", \"quantity\": 1}]. "
                             "Do NOT use markdown formatting like ```json or any wrappers. Output raw JSON only. "
@@ -3521,6 +3526,8 @@ def add_lines(list_id):
         if not lines:
             return jsonify(success=False, message="lines is required"), 400
 
+        created_line_ids = []
+
         with db_cursor(commit=True) as cur:
             # Confirm list exists
             exists = _execute_with_cursor(cur, "SELECT 1 FROM parts_lists WHERE id = ?", (list_id,)).fetchone()
@@ -3579,12 +3586,20 @@ def add_lines(list_id):
                     """, (list_id,)).fetchone()['max_ln']
                     next_line_number = int(last) + 1
 
-                _execute_with_cursor(cur, """
+                row = _execute_with_cursor(cur, """
                     INSERT INTO parts_list_lines
                     (parts_list_id, line_number, customer_part_number, base_part_number, quantity,
                      parent_line_id, line_type)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (list_id, next_line_number, cpn, bpn, qty, parent_line_id, line_type))
+                    RETURNING id
+                """, (list_id, next_line_number, cpn, bpn, qty, parent_line_id, line_type)).fetchone()
+
+                if row:
+                    created_line_ids.append(row['id'] if isinstance(row, dict) else row[0])
+
+        # Trigger Monroe auto-check in background if enabled
+        if created_line_ids:
+            trigger_monroe_auto_check(list_id, created_line_ids)
 
         return jsonify(success=True)
     except Exception as e:
@@ -3828,8 +3843,8 @@ def save_parts_list():
         with db_cursor(commit=True) as cur:
             # Insert header with contact_id
             header_row = _execute_with_cursor(cur, """
-                INSERT INTO parts_lists 
-                    (name, customer_id, contact_id, salesperson_id, status_id, notes, 
+                INSERT INTO parts_lists
+                    (name, customer_id, contact_id, salesperson_id, status_id, notes,
                     date_created, date_modified)
                 VALUES (?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 RETURNING id
@@ -3837,7 +3852,8 @@ def save_parts_list():
 
             parts_list_id = header_row['id'] if header_row else getattr(cur, 'lastrowid', None)
 
-            # Insert lines
+            # Insert lines and capture IDs for Monroe auto-check
+            created_line_ids = []
             insert_sql = """
                 INSERT INTO parts_list_lines (
                     parts_list_id, line_number, customer_part_number, base_part_number, quantity,
@@ -3845,6 +3861,7 @@ def save_parts_list():
                     customer_notes, internal_notes, date_created, date_modified
                 )
                 VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id
             """
             for line in lines:
                 line_number = int(line.get('line_number') or 0) or 1
@@ -3864,9 +3881,16 @@ def save_parts_list():
                 if chosen_qty is None or chosen_qty == '':
                     chosen_qty = quantity
 
-                _execute_with_cursor(cur, insert_sql, (
+                row = _execute_with_cursor(cur, insert_sql, (
                     parts_list_id, line_number, customer_part_number, base_part_number, quantity, chosen_qty
-                ))
+                )).fetchone()
+
+                if row:
+                    created_line_ids.append(row['id'] if isinstance(row, dict) else row[0])
+
+            # Trigger Monroe auto-check if enabled
+            if created_line_ids:
+                trigger_monroe_auto_check(parts_list_id, created_line_ids)
 
         _log_parts_list_creation_communication(
             parts_list_id,
@@ -6595,4 +6619,4 @@ def debug_routes():
     for rule in current_app.url_map.iter_rules():
         if 'parts_list' in rule.rule:
             routes.append(f"{rule.rule} -> {rule.endpoint} [{', '.join(rule.methods - {'HEAD', 'OPTIONS'})}]")
-    return "<br>".join(sorted(routes))    
+    return "<br>".join(sorted(routes))

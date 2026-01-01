@@ -167,3 +167,6 @@ yarn-error.log*
 # Miscellaneous
 *.tmp
 *.temp
+
+NUL
+nul

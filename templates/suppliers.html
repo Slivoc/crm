@@ -1,19 +1,113 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="card">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <h5 class="card-title mb-0">Suppliers</h5>
-    <div class="d-flex gap-2">
-      <a href="{{ url_for('parts_list.view_no_response_suppliers') }}" class="btn btn-outline-secondary btn-sm">
-        Chase no responses
-      </a>
-      <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createSupplierModal">Create Supplier</button>
+<style>
+  .suppliers-container {
+    position: relative;
+    height: calc(100vh - 120px);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sticky-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background-color: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+
+  .search-filter-bar {
+    padding: 1rem;
+    border-bottom: 1px solid #dee2e6;
+    background-color: #f8f9fa;
+  }
+
+  .table-wrapper {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: auto;
+  }
+
+  .table thead th {
+    position: sticky;
+    top: 0;
+    background-color: white;
+    z-index: 10;
+    box-shadow: 0 2px 2px -1px rgba(0,0,0,0.1);
+  }
+
+  .suppliers-table tbody tr.hidden {
+    display: none;
+  }
+
+  .filter-badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .form-switch {
+    padding-left: 2.5rem;
+  }
+
+  .form-switch .form-check-input {
+    width: 2.5rem;
+    height: 1.25rem;
+    cursor: pointer;
+  }
+
+  .toggle-cell {
+    text-align: center;
+    vertical-align: middle;
+  }
+</style>
+
+<div class="card suppliers-container">
+  <div class="sticky-header">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="card-title mb-0">
+        Suppliers
+        <span class="filter-badge badge bg-secondary" id="filterCount" style="display: none;"></span>
+      </h5>
+      <div class="d-flex gap-2">
+        <a href="{{ url_for('parts_list.view_no_response_suppliers') }}" class="btn btn-outline-secondary btn-sm">
+          Chase no responses
+        </a>
+        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createSupplierModal">Create Supplier</button>
+      </div>
+    </div>
+
+    <div class="search-filter-bar">
+      <div class="row g-2">
+        <div class="col-md-4">
+          <input type="text" id="searchInput" class="form-control form-control-sm" placeholder="Search suppliers...">
+        </div>
+        <div class="col-md-2">
+          <select id="currencyFilter" class="form-select form-select-sm">
+            <option value="">All Currencies</option>
+            {% for currency in currencies %}
+            <option value="{{ currency.currency_code }}">{{ currency.currency_code }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <select id="bufferFilter" class="form-select form-select-sm">
+            <option value="">All Buffers</option>
+            <option value="0-2">0-2 weeks</option>
+            <option value="3-4">3-4 weeks</option>
+            <option value="5+">5+ weeks</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button id="clearFilters" class="btn btn-outline-secondary btn-sm w-100">Clear Filters</button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="card-body table-container p-0">
-    <table class="table table-hover">
+  <div class="card-body table-wrapper p-0">
+    <table class="table table-hover table-sm suppliers-table mb-0">
       <thead>
         <tr>
           <th>Name</th>
@@ -23,15 +117,21 @@
           <th>Buffer</th>
           <th>Currency</th>
           <th>Delivery Cost</th>
-          <th>Fornitore</th>
+          <th>System ID</th>
           <th>Standard Condition</th>
           <th>Standard Certs</th>
+          <th>Auto Email</th>
+          <th>Preferred</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         {% for supplier in suppliers %}
-        <tr>
+        <tr data-supplier-name="{{ supplier.name|lower }}"
+            data-contact-name="{{ supplier.contact_name|lower }}"
+            data-contact-email="{{ supplier.contact_email|lower }}"
+            data-currency="{{ supplier.currency_code }}"
+            data-buffer="{{ supplier.buffer or 0 }}">
           <td><input type="text" value="{{ supplier.name }}" data-supplier-id="{{ supplier.id }}" data-field="name" class="form-control form-control-sm editable-field"></td>
           <td><input type="text" value="{{ supplier.contact_name }}" data-supplier-id="{{ supplier.id }}" data-field="contact_name" class="form-control form-control-sm editable-field"></td>
           <td><input type="email" value="{{ supplier.contact_email }}" data-supplier-id="{{ supplier.id }}" data-field="contact_email" class="form-control form-control-sm editable-field"></td>
@@ -50,6 +150,16 @@
           <td><input type="text" value="{{ supplier.fornitore }}" data-supplier-id="{{ supplier.id }}" data-field="fornitore" class="form-control form-control-sm editable-field"></td>
           <td><input type="text" value="{{ supplier.standard_condition or '' }}" data-supplier-id="{{ supplier.id }}" data-field="standard_condition" class="form-control form-control-sm editable-field"></td>
           <td><input type="text" value="{{ supplier.standard_certs or '' }}" data-supplier-id="{{ supplier.id }}" data-field="standard_certs" class="form-control form-control-sm editable-field"></td>
+          <td class="toggle-cell">
+            <div class="form-check form-switch">
+              <input class="form-check-input toggle-field" type="checkbox" data-supplier-id="{{ supplier.id }}" data-field="auto_email" {% if supplier.auto_email %}checked{% endif %}>
+            </div>
+          </td>
+          <td class="toggle-cell">
+            <div class="form-check form-switch">
+              <input class="form-check-input toggle-field" type="checkbox" data-supplier-id="{{ supplier.id }}" data-field="preferred" {% if supplier.preferred %}checked{% endif %}>
+            </div>
+          </td>
           <td>
             <a href="{{ url_for('suppliers.edit_supplier', supplier_id=supplier.id) }}" class="btn btn-sm btn-primary">Edit</a>
           </td>
@@ -104,7 +214,7 @@
             <input type="number" step="0.01" id="delivery_cost" name="delivery_cost" class="form-control">
           </div>
           <div class="mb-3">
-            <label for="fornitore" class="form-label">Fornitore</label>
+            <label for="fornitore" class="form-label">System ID</label>
             <input type="text" id="fornitore" name="fornitore" class="form-control">
           </div>
           <div class="mb-3">
@@ -172,8 +282,64 @@ function safeInitModal(modalId) {
   return modalInstances[modalId];
 }
 
+// Search and filter functionality
+function applyFilters() {
+  const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+  const currencyFilter = document.getElementById('currencyFilter').value;
+  const bufferFilter = document.getElementById('bufferFilter').value;
+
+  const rows = document.querySelectorAll('.suppliers-table tbody tr');
+  let visibleCount = 0;
+
+  rows.forEach(row => {
+    const supplierName = row.dataset.supplierName || '';
+    const contactName = row.dataset.contactName || '';
+    const contactEmail = row.dataset.contactEmail || '';
+    const currency = row.dataset.currency || '';
+    const buffer = parseInt(row.dataset.buffer) || 0;
+
+    // Search filter
+    const matchesSearch = !searchTerm ||
+      supplierName.includes(searchTerm) ||
+      contactName.includes(searchTerm) ||
+      contactEmail.includes(searchTerm);
+
+    // Currency filter
+    const matchesCurrency = !currencyFilter || currency === currencyFilter;
+
+    // Buffer filter
+    let matchesBuffer = true;
+    if (bufferFilter === '0-2') {
+      matchesBuffer = buffer >= 0 && buffer <= 2;
+    } else if (bufferFilter === '3-4') {
+      matchesBuffer = buffer >= 3 && buffer <= 4;
+    } else if (bufferFilter === '5+') {
+      matchesBuffer = buffer >= 5;
+    }
+
+    // Show/hide row
+    if (matchesSearch && matchesCurrency && matchesBuffer) {
+      row.classList.remove('hidden');
+      visibleCount++;
+    } else {
+      row.classList.add('hidden');
+    }
+  });
+
+  // Update filter count badge
+  const totalCount = rows.length;
+  const filterBadge = document.getElementById('filterCount');
+  if (visibleCount < totalCount) {
+    filterBadge.textContent = `${visibleCount} of ${totalCount}`;
+    filterBadge.style.display = 'inline-block';
+  } else {
+    filterBadge.style.display = 'none';
+  }
+}
+
 // Initialize all modals safely
 document.addEventListener('DOMContentLoaded', function() {
+  // Modal initialization
   document.querySelectorAll('.modal').forEach(modal => {
     const modalId = modal.id;
     if (modalId) {
@@ -193,6 +359,18 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       });
     }
+  });
+
+  // Search and filter event listeners
+  document.getElementById('searchInput').addEventListener('input', applyFilters);
+  document.getElementById('currencyFilter').addEventListener('change', applyFilters);
+  document.getElementById('bufferFilter').addEventListener('change', applyFilters);
+
+  document.getElementById('clearFilters').addEventListener('click', function() {
+    document.getElementById('searchInput').value = '';
+    document.getElementById('currencyFilter').value = '';
+    document.getElementById('bufferFilter').value = '';
+    applyFilters();
   });
 });
 
@@ -220,6 +398,39 @@ document.querySelectorAll('.editable-field').forEach(field => {
       }
     })
     .catch(error => console.error(`Error updating ${fieldName}:`, error));
+  });
+});
+
+// Handle toggle field updates (boolean fields)
+document.querySelectorAll('.toggle-field').forEach(field => {
+  field.addEventListener('change', function() {
+    const supplierId = this.dataset.supplierId;
+    const fieldName = this.dataset.field;
+    const newValue = this.checked;
+
+    // Send an AJAX request to update the supplier's boolean field
+    fetch(`/suppliers/update_field/${supplierId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ field: fieldName, value: newValue }),
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        console.log(`${fieldName} updated successfully`);
+      } else {
+        console.error(`Failed to update ${fieldName}`);
+        // Revert the toggle if update failed
+        this.checked = !newValue;
+      }
+    })
+    .catch(error => {
+      console.error(`Error updating ${fieldName}:`, error);
+      // Revert the toggle if update failed
+      this.checked = !newValue;
+    });
   });
 });
 

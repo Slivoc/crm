@@ -86,12 +86,16 @@
                     <button id="addSuggestedSuppliers" class="btn btn-outline-primary" style="display: none;">
                         <i class="fas fa-star"></i> Add suggested suppliers
                     </button>
+                    <button id="checkMonroe" class="btn btn-outline-warning" style="display: none;">
+                        <i class="fas fa-plane"></i> Check Monroe
+                    </button>
                 </div>
             </div>
             <div class="mt-3">
                 <div id="queueIlsPreview" class="text-muted small" style="display: none;"></div>
                 <div id="assignStockPreview" class="text-muted small" style="display: none;"></div>
                 <div id="suggestedSuppliersPreview" class="text-muted small mt-2" style="display: none;"></div>
+                <div id="monroePreview" class="text-muted small mt-2" style="display: none;"></div>
             </div>
             <div id="actionFeedback" class="mt-3 text-muted small" style="display: none;"></div>
         </div>
@@ -126,6 +130,112 @@
         </div>
     </div>
 
+    <!-- Monroe Results Section -->
+    <div id="monroeResultsCard" class="card mb-4" style="display: none;">
+        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="fas fa-plane"></i> Monroe Search Results</h5>
+            <button id="loadMonroeAsOffer" class="btn btn-sm btn-success" style="display: none;">
+                <i class="fas fa-file-import"></i> Load Selected as Supplier Offer
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th><input type="checkbox" id="selectAllMonroe"></th>
+                            <th>Line</th>
+                            <th>Part Number</th>
+                            <th>Qty Needed</th>
+                            <th>Unit Price</th>
+                            <th>Inventory</th>
+                            <th>MOQ</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="monroeResultsBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Monroe Settings Modal -->
+    <div class="modal fade" id="monroeSettingsModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-cog"></i> Monroe Settings</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted">Select the supplier record that represents Monroe Aerospace in your database. This is used to identify historical purchases and quotes from Monroe.</p>
+                    <div class="mb-3">
+                        <label for="monroeSupplierSelect" class="form-label">Monroe Supplier</label>
+                        <select id="monroeSupplierSelect" class="form-select">
+                            <option value="">-- Select Supplier --</option>
+                        </select>
+                    </div>
+                    <hr>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="monroeAutoCheck">
+                        <label class="form-check-label" for="monroeAutoCheck">
+                            <strong>Auto-check Monroe when lines are added</strong>
+                        </label>
+                        <p class="text-muted small mt-1 mb-0">
+                            When enabled, Monroe will be automatically checked in the background whenever new parts list lines are added. Results will appear when you view the AI Analysis page.
+                        </p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="saveMonroeSettings">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Monroe Check Modal -->
+    <div class="modal fade" id="monroeCheckModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-plane"></i> Check Monroe Aerospace</h5>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary me-2" onclick="showMonroeSettings()" title="Monroe Settings">
+                            <i class="fas fa-cog"></i>
+                        </button>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                </div>
+                <div class="modal-body">
+                    <div id="monroeNotConfigured" class="alert alert-warning" style="display: none;">
+                        <i class="fas fa-exclamation-triangle"></i> Monroe supplier not configured.
+                        <button class="btn btn-sm btn-warning ms-2" onclick="showMonroeSettings()">Configure Now</button>
+                    </div>
+                    <div id="monroeSuggestedSection">
+                        <h6>Suggested Lines (with Monroe history)</h6>
+                        <div id="monroeSuggestedList" class="mb-3"></div>
+                    </div>
+                    <div id="monroeOtherSection">
+                        <h6>Other Uncosted Lines</h6>
+                        <div id="monroeOtherList" class="mb-3"></div>
+                    </div>
+                    <div id="monroeProgress" class="progress mt-3" style="display: none;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%"></div>
+                    </div>
+                    <div id="monroeStatus" class="text-muted small mt-2"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-warning" id="runMonroeCheck">
+                        <i class="fas fa-search"></i> Check Selected Parts
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Loading Spinner -->
     <div id="loadingSpinner" style="display: none;" class="text-center my-5">
         <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
@@ -153,6 +263,7 @@
                             <th>Quotes</th>
                             <th>Contacted</th>
                             <th>ILS</th>
+                            <th>Suggestions</th>
                             <th>Status</th>
                         </tr>
                     </thead>
@@ -229,6 +340,21 @@
                                 {% endif %}
                             </td>
                             <td>
+                                {% if line.suggested_supplier_list %}
+                                    <div class="small">
+                                    {% for sugg in line.suggested_supplier_list %}
+                                        <div class="mb-1">
+                                            <i class="fas fa-star text-warning"></i> 
+                                            <a href="{{ url_for('suppliers.edit_supplier', supplier_id=sugg.id) }}">{{ sugg.name }}</a>
+                                            <small class="text-muted">({{ sugg.source_type }})</small>
+                                        </div>
+                                    {% endfor %}
+                                    </div>
+                                {% else %}
+                                    <span class="text-muted small">None</span>
+                                {% endif %}
+                            </td>
+                            <td>
                                 {% if line.chosen_cost %}
                                 <span class="badge bg-success">Costed</span>
                                 {% elif line.stock_available and line.stock_available >= line.quantity %}
@@ -251,296 +377,419 @@
 </div>
 
 <script>
+var js_list_id = "{{ list_id }}";
+</script>
+<script>
 document.addEventListener('DOMContentLoaded', function() {
-    const generateBtn = document.getElementById('generateAnalysis');
-    const regenerateBtn = document.getElementById('regenerateAnalysis');
-    const resultsDiv = document.getElementById('analysisResults');
-    const contentDiv = document.getElementById('analysisContent');
-    const spinner = document.getElementById('loadingSpinner');
-    const quickActionsCard = document.getElementById('quickActionsCard');
-    const assignStockBtn = document.getElementById('assignStock');
-    const addSuggestedBtn = document.getElementById('addSuggestedSuppliers');
-    const queueIlsBtn = document.getElementById('queueIlsParts');
-    const assignStockPreview = document.getElementById('assignStockPreview');
-    const suggestedSuppliersPreview = document.getElementById('suggestedSuppliersPreview');
-    const queueIlsPreview = document.getElementById('queueIlsPreview');
-    const actionFeedback = document.getElementById('actionFeedback');
-    const partsListName = {{ header.name | tojson }};
+    
+    // Page Elements
+    var generateBtn = document.getElementById('generateAnalysis');
+    var regenerateBtn = document.getElementById('regenerateAnalysis');
+    var resultsDiv = document.getElementById('analysisResults');
+    var contentDiv = document.getElementById('analysisContent');
+    var spinner = document.getElementById('loadingSpinner');
+    var quickActionsCard = document.getElementById('quickActionsCard');
+    var assignStockBtn = document.getElementById('assignStock');
+    var addSuggestedBtn = document.getElementById('addSuggestedSuppliers');
+    var queueIlsBtn = document.getElementById('queueIlsParts');
+    var checkMonroeBtn = document.getElementById('checkMonroe');
+    var assignStockPreview = document.getElementById('assignStockPreview');
+    var suggestedSuppliersPreview = document.getElementById('suggestedSuppliersPreview');
+    var queueIlsPreview = document.getElementById('queueIlsPreview');
+    var monroePreview = document.getElementById('monroePreview');
+    var actionFeedback = document.getElementById('actionFeedback');
+    var loadMonroeAsOfferBtn = document.getElementById('loadMonroeAsOffer');
+    var selectAllMonroeCheckbox = document.getElementById('selectAllMonroe');
 
     function setActionFeedback(message, isError) {
+        if (!actionFeedback) return;
         actionFeedback.textContent = message;
-        actionFeedback.classList.toggle('text-danger', Boolean(isError));
-        actionFeedback.classList.toggle('text-muted', !isError);
+        actionFeedback.className = 'mt-3 small ' + (isError ? 'text-danger' : 'text-muted');
         actionFeedback.style.display = 'block';
     }
 
-    function formatLinePreview(lines) {
-        const previewLines = lines.slice(0, 6).map(line => `L${line.lineNumber} ${line.partNumber}`);
-        const extra = lines.length > 6 ? ` +${lines.length - 6} more` : '';
-        return `${previewLines.join(', ')}${extra}`;
-    }
+    var lineRows = Array.from(document.querySelectorAll('tr[data-line-id]'));
+    var lines_data = lineRows.map(function(row) {
+        return {
+            lineId: parseInt(row.dataset.lineId, 10),
+            lineNumber: row.dataset.lineNumber,
+            partNumber: row.dataset.partNumber,
+            quantity: parseFloat(row.dataset.quantity || '0'),
+            hasChosenCost: !!row.dataset.chosenCost,
+            stockAvailable: parseFloat(row.dataset.stockAvailable || '0'),
+            quoteCount: parseInt(row.dataset.quoteCount || '0', 10),
+            suggestedCount: parseInt(row.dataset.suggestedCount || '0', 10)
+        };
+    });
 
-    const lineRows = Array.from(document.querySelectorAll('tr[data-line-id]'));
-    const lines = lineRows.map(row => ({
-        lineId: parseInt(row.dataset.lineId, 10),
-        lineNumber: row.dataset.lineNumber,
-        partNumber: row.dataset.partNumber,
-        basePartNumber: row.dataset.basePartNumber,
-        quantity: parseFloat(row.dataset.quantity || '0'),
-        hasChosenCost: row.dataset.chosenCost !== '' && row.dataset.chosenCost !== 'None',
-        stockAvailable: parseFloat(row.dataset.stockAvailable || '0'),
-        quoteCount: parseInt(row.dataset.quoteCount || '0', 10),
-        suggestedCount: parseInt(row.dataset.suggestedCount || '0', 10)
-    }));
-
-    const assignableLines = lines.filter(line => !line.hasChosenCost && line.stockAvailable >= line.quantity && line.stockAvailable > 0);
-    const suggestableLines = lines.filter(line =>
-        !line.hasChosenCost &&
-        line.stockAvailable < line.quantity &&
-        line.quoteCount === 0 &&
-        line.suggestedCount === 0
-    );
-    const ilsQueueLines = lines.filter(line =>
-        !line.hasChosenCost &&
-        line.quoteCount === 0 &&
-        line.stockAvailable < line.quantity &&
-        (line.partNumber || line.basePartNumber)
-    );
+    var assignableLines = lines_data.filter(function(l) { return !l.hasChosenCost && l.stockAvailable >= l.quantity; });
+    var suggestableLines = lines_data.filter(function(l) { return !l.hasChosenCost && l.quoteCount === 0 && l.suggestedCount === 0; });
+    var ilsQueueLines = lines_data.filter(function(l) { return !l.hasChosenCost && l.quoteCount === 0 && l.partNumber; });
 
     if (assignableLines.length || suggestableLines.length || ilsQueueLines.length) {
-        quickActionsCard.style.display = 'block';
+        if (quickActionsCard) quickActionsCard.style.display = 'block';
     }
 
-    if (assignableLines.length) {
-        assignStockBtn.style.display = 'inline-block';
-        assignStockPreview.style.display = 'block';
-        assignStockPreview.textContent = `Will assign stock for ${assignableLines.length} lines: ${formatLinePreview(assignableLines)}`;
-    }
+    if (assignableLines.length && assignStockBtn) assignStockBtn.style.display = 'inline-block';
+    if (ilsQueueLines.length && queueIlsBtn) queueIlsBtn.style.display = 'inline-block';
 
-    if (suggestableLines.length) {
+    if (suggestableLines.length && addSuggestedBtn) {
         addSuggestedBtn.style.display = 'inline-block';
-        suggestedSuppliersPreview.style.display = 'block';
-        suggestedSuppliersPreview.textContent = `Will add suggested suppliers for ${suggestableLines.length} lines: ${formatLinePreview(suggestableLines)}`;
+        if (suggestedSuppliersPreview) {
+            suggestedSuppliersPreview.style.display = 'block';
+            suggestedSuppliersPreview.textContent = 'Checking for AI supplier suggestions...';
+            
+            fetch('/parts-list-ai/api/suggest-suppliers/' + js_list_id, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ line_ids: suggestableLines.map(function(l) { return l.lineId; }) })
+            })
+            .then(function(resp) { return resp.json(); })
+            .then(function(data) {
+                if (data.success && data.suggestions) {
+                    var totalS = 0;
+                    var srces = [];
+                    data.suggestions.forEach(function(s) {
+                        if (s.suggested_suppliers) {
+                            totalS += s.suggested_suppliers.length;
+                            s.suggested_suppliers.forEach(function(ss) {
+                                if (ss.reasons) {
+                                    ss.reasons.forEach(function(r) {
+                                        var p = r.split(' ');
+                                        if (p.length > 1 && srces.indexOf(p[1]) === -1) srces.push(p[1]);
+                                    });
+                                }
+                            });
+                        }
+                    });
+                    if (totalS > 0) {
+                        suggestedSuppliersPreview.innerHTML = '<div class="alert alert-info py-2 px-3 mb-0">AI found <strong>' + totalS + '</strong> suggestions.</div>';
+                    } else {
+                        suggestedSuppliersPreview.textContent = 'Ready to add suggestions.';
+                    }
+                }
+            });
+        }
+
+        addSuggestedBtn.onclick = function() {
+            var self = this;
+            self.disabled = true;
+            fetch('/parts-list-ai/api/add-suggested-suppliers/' + js_list_id, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ line_ids: suggestableLines.map(function(l) { return l.lineId; }) })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) {
+                    setActionFeedback('Added ' + d.added_count + ' suppliers. Refreshing...', false);
+                    setTimeout(function() { window.location.reload(); }, 1500);
+                } else self.disabled = false;
+            });
+        };
     }
 
-    if (ilsQueueLines.length) {
-        queueIlsBtn.style.display = 'inline-block';
-        queueIlsPreview.style.display = 'block';
-        const uniqueIlsParts = Array.from(new Set(ilsQueueLines
-            .map(line => line.partNumber || line.basePartNumber)
-            .filter(Boolean)
-        ));
-        const previewLines = ilsQueueLines.slice(0, 6).map(line => `L${line.lineNumber} ${line.partNumber || line.basePartNumber}`);
-        const extraCount = ilsQueueLines.length > 6 ? ` +${ilsQueueLines.length - 6} more` : '';
-        const chunkCount = Math.ceil(uniqueIlsParts.length / 24);
-        queueIlsPreview.textContent = `Will queue ${uniqueIlsParts.length} unique parts (${chunkCount} ILS chunk${chunkCount > 1 ? 's' : ''}): ${previewLines.join(', ')}${extraCount}`;
+    if (generateBtn) {
+        generateBtn.onclick = function() {
+            if (resultsDiv) resultsDiv.style.display = 'none';
+            if (spinner) spinner.style.display = 'block';
+            this.disabled = true;
+            fetch('/parts-list-ai/api/generate-analysis/' + js_list_id, { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (spinner) spinner.style.display = 'none';
+                generateBtn.disabled = false;
+                if (d.success) {
+                    contentDiv.innerHTML = d.analysis;
+                    resultsDiv.style.display = 'block';
+                }
+            });
+        };
     }
 
-    function generateAnalysis() {
-        // Hide results and show spinner
-        resultsDiv.style.display = 'none';
-        spinner.style.display = 'block';
-        generateBtn.disabled = true;
-
-        fetch('/parts-list-ai/api/generate-analysis/{{ list_id }}', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            spinner.style.display = 'none';
-            generateBtn.disabled = false;
-
-            if (data.success) {
-                // Format the analysis with proper HTML
-                const formattedAnalysis = formatAnalysis(data.analysis);
-                contentDiv.innerHTML = formattedAnalysis;
-                resultsDiv.style.display = 'block';
-
-                // Scroll to results
-                resultsDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            } else {
-                alert('Error generating analysis: ' + data.message);
-            }
-        })
-        .catch(error => {
-            spinner.style.display = 'none';
-            generateBtn.disabled = false;
-            alert('Error: ' + error);
-        });
+    if (queueIlsBtn) {
+        queueIlsBtn.onclick = function() {
+            var self = this;
+            self.disabled = true;
+            fetch('/parts-list/ils-copy-queue', { 
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ parts_list_id: js_list_id, parts: ilsQueueLines.map(function(l) { return l.partNumber; }) })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) setActionFeedback('Queued parts for ILS.', false);
+                else setActionFeedback('Failed to queue.', true);
+                self.disabled = false;
+            });
+        };
     }
 
-    function formatAnalysis(text) {
-        // Convert markdown-style formatting to HTML
-        let html = text;
-
-        // Headers
-        html = html.replace(/^### (.+)$/gm, '<h5 class="mt-4 mb-3 text-primary">$1</h5>');
-        html = html.replace(/^## (.+)$/gm, '<h4 class="mt-4 mb-3 text-primary"><strong>$1</strong></h4>');
-        html = html.replace(/^# (.+)$/gm, '<h3 class="mt-4 mb-3 text-primary"><strong>$1</strong></h3>');
-
-        // Bold
-        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-        // Bullet points
-        html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
-        html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
-        html = html.replace(/(<li>.*<\/li>)/s, '<ul class="mb-3">$1</ul>');
-
-        // Line breaks
-        html = html.replace(/\n\n/g, '</p><p>');
-        html = '<p>' + html + '</p>';
-
-        return html;
-    }
-
-    generateBtn.addEventListener('click', generateAnalysis);
-    regenerateBtn.addEventListener('click', generateAnalysis);
-
-    assignStockBtn.addEventListener('click', function() {
-        if (!assignableLines.length) {
-            return;
-        }
-        const preview = formatLinePreview(assignableLines);
-        if (!confirm(`Assign stock costs to ${assignableLines.length} lines?\n${preview}`)) {
-            return;
-        }
-
-        assignStockBtn.disabled = true;
-        fetch('/parts-list-ai/api/assign-stock/{{ list_id }}', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ line_ids: assignableLines.map(line => line.lineId) })
-        })
-        .then(response => response.json())
-        .then(data => {
-            assignStockBtn.disabled = false;
-            if (data.success) {
-                setActionFeedback(`Assigned stock to ${data.updated_count} lines. (${preview})`, false);
-            } else {
-                setActionFeedback(data.message || 'Failed to assign stock.', true);
-            }
-        })
-        .catch(error => {
-            assignStockBtn.disabled = false;
-            setActionFeedback(`Error: ${error}`, true);
-        });
-    });
-
-    addSuggestedBtn.addEventListener('click', function() {
-        if (!suggestableLines.length) {
-            return;
-        }
-        const preview = formatLinePreview(suggestableLines);
-        if (!confirm(`Add suggested suppliers to ${suggestableLines.length} lines?\n${preview}`)) {
-            return;
-        }
-
-        addSuggestedBtn.disabled = true;
-        fetch('/parts-list-ai/api/add-suggested-suppliers/{{ list_id }}', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ line_ids: suggestableLines.map(line => line.lineId) })
-        })
-        .then(response => response.json())
-        .then(data => {
-            addSuggestedBtn.disabled = false;
-            if (data.success) {
-                setActionFeedback(`Added ${data.added_count} suppliers across ${data.updated_lines} lines. (${preview})`, false);
-            } else {
-                setActionFeedback(data.message || 'Failed to add suggested suppliers.', true);
-            }
-        })
-        .catch(error => {
-            addSuggestedBtn.disabled = false;
-            setActionFeedback(`Error: ${error}`, true);
-        });
-    });
-
-    queueIlsBtn.addEventListener('click', async function() {
-        if (!ilsQueueLines.length) {
-            return;
-        }
-        const preview = formatLinePreview(ilsQueueLines);
-        if (!confirm(`Queue ${ilsQueueLines.length} parts for ILS (24 per chunk)?\n${preview}`)) {
-            return;
-        }
-
-        const allParts = Array.from(new Set(ilsQueueLines
-            .map(line => line.partNumber || line.basePartNumber)
-            .filter(Boolean)
-        ));
-
-        if (!allParts.length) {
-            setActionFeedback('No part numbers available to queue.', true);
-            return;
-        }
-
-        const chunks = [];
-        for (let i = 0; i < allParts.length; i += 24) {
-            chunks.push(allParts.slice(i, i + 24));
-        }
-
-        queueIlsBtn.disabled = true;
+    // Initialize remaining components
+    async function loadMonroeSuggestions() {
         try {
-            let queuedCount = 0;
-            for (let idx = 0; idx < chunks.length; idx++) {
-                const payload = {
-                    parts_list_id: {{ list_id }},
-                    chunk_type: 'uncosted',
-                    parts: chunks[idx],
-                    note: `AI analysis · ${partsListName} · chunk ${idx + 1}/${chunks.length}`
-                };
-                const resp = await fetch('/parts_list/ils-copy-queue', {
+            const resp = await fetch('/parts-list-ai/api/monroe-suggest/' + js_list_id);
+            const d = await resp.json();
+            if (d.success) {
+                monroeSupplierConfigured = !!d.monroe_supplier_id;
+                monroeSuggestedLines = d.suggested_lines || [];
+                monroeOtherLines = d.other_lines || [];
+
+                if (d.suggested_lines && d.suggested_lines.length > 0) {
+                   if (monroePreview) {
+                       monroePreview.style.display = 'block';
+                       monroePreview.innerHTML = '<i class="fas fa-star text-warning"></i> ' + d.suggested_lines.length + ' lines with Monroe history.';
+                   }
+                   if (checkMonroeBtn) checkMonroeBtn.style.display = 'inline-block';
+                } else if (d.other_lines && d.other_lines.length > 0) {
+                   if (checkMonroeBtn) checkMonroeBtn.style.display = 'inline-block';
+                }
+            }
+        } catch (error) { console.error(error); }
+    }
+    loadMonroeSuggestions();
+
+    // Function to populate Monroe modal lists
+    function populateMonroeModal() {
+        const notConfiguredDiv = document.getElementById('monroeNotConfigured');
+        const suggestedSection = document.getElementById('monroeSuggestedSection');
+        const otherSection = document.getElementById('monroeOtherSection');
+        const suggestedList = document.getElementById('monroeSuggestedList');
+        const otherList = document.getElementById('monroeOtherList');
+
+        if (!monroeSupplierConfigured) {
+            notConfiguredDiv.style.display = 'block';
+            suggestedSection.style.display = 'none';
+            otherSection.style.display = 'none';
+            return;
+        }
+
+        notConfiguredDiv.style.display = 'none';
+
+        // Populate suggested lines
+        if (monroeSuggestedLines.length > 0) {
+            suggestedSection.style.display = 'block';
+            suggestedList.innerHTML = monroeSuggestedLines.map(function(line) {
+                return '<div class="form-check">' +
+                       '<input class="form-check-input monroe-line-check" type="checkbox" value="' + line.id + '" id="check-sugg-' + line.id + '">' +
+                       '<label class="form-check-label" for="check-sugg-' + line.id + '">' +
+                       'Line ' + line.line_number + ': ' + line.part_number + ' (qty ' + line.quantity + ')' +
+                       '</label>' +
+                       '</div>';
+            }).join('');
+        } else {
+            suggestedSection.style.display = 'none';
+        }
+
+        // Populate other lines
+        if (monroeOtherLines.length > 0) {
+            otherSection.style.display = 'block';
+            otherList.innerHTML = monroeOtherLines.map(function(line) {
+                return '<div class="form-check">' +
+                       '<input class="form-check-input monroe-line-check" type="checkbox" value="' + line.id + '" id="check-other-' + line.id + '">' +
+                       '<label class="form-check-label" for="check-other-' + line.id + '">' +
+                       'Line ' + line.line_number + ': ' + line.part_number + ' (qty ' + line.quantity + ')' +
+                       '</label>' +
+                       '</div>';
+            }).join('');
+        } else {
+            otherSection.style.display = 'none';
+        }
+    }
+
+    // Reattach listeners for Monroe if they exist
+    if (checkMonroeBtn) {
+        checkMonroeBtn.addEventListener('click', function() {
+            populateMonroeModal();
+            var modal = new bootstrap.Modal(document.getElementById('monroeCheckModal'));
+            modal.show();
+        });
+    }
+
+    // Load results if any
+    async function loadMonroeResults() {
+        try {
+            const resp = await fetch('/parts-list-ai/api/monroe-results/' + js_list_id);
+            const d = await resp.json();
+            if (d.success && d.results.length > 0) {
+                document.getElementById('monroeResultsCard').style.display = 'block';
+                const body = document.getElementById('monroeResultsBody');
+                body.innerHTML = '';
+                d.results.forEach(function(result) {
+                    var hasPrice = result.unit_price !== null;
+                    var row = document.createElement('tr');
+                    row.innerHTML = '<td><input type="checkbox" class="monroe-result-checkbox" data-id="' + result.id + '" ' + (hasPrice ? '' : 'disabled') + '></td>' +
+                                    '<td>' + result.line_number + '</td>' +
+                                    '<td>' + (result.customer_part_number || result.searched_part_number) + '</td>' +
+                                    '<td>' + result.quantity + '</td>' +
+                                    '<td>' + (hasPrice ? '$' + parseFloat(result.unit_price).toFixed(2) : '-') + '</td>' +
+                                    '<td>' + (result.inventory || '-') + '</td>' +
+                                    '<td>' + (result.minimum_order || '-') + '</td>' +
+                                    '<td>' + (hasPrice ? '<span class="badge bg-success">Found</span>' : '<span class="badge bg-secondary">No result</span>') + '</td>';
+                    body.appendChild(row);
+                });
+                updateLoadAsOfferButton();
+            }
+        } catch (error) { console.error(error); }
+    }
+    loadMonroeResults();
+
+    function updateLoadAsOfferButton() {
+        if (!loadMonroeAsOfferBtn) return;
+        const checked = document.querySelectorAll('.monroe-result-checkbox:checked').length;
+        loadMonroeAsOfferBtn.style.display = checked > 0 ? 'inline-block' : 'none';
+    }
+
+    if (selectAllMonroeCheckbox) {
+        selectAllMonroeCheckbox.addEventListener('change', function() {
+            document.querySelectorAll('.monroe-result-checkbox:not(:disabled)').forEach(function(cb) {
+                cb.checked = selectAllMonroeCheckbox.checked;
+            });
+            updateLoadAsOfferButton();
+        });
+    }
+
+    document.addEventListener('change', function(e) {
+        if (e.target.classList.contains('monroe-result-checkbox')) {
+            updateLoadAsOfferButton();
+        }
+    });
+
+    if (loadMonroeAsOfferBtn) {
+        loadMonroeAsOfferBtn.addEventListener('click', async function() {
+            var selectedIds = Array.from(document.querySelectorAll('.monroe-result-checkbox:checked'))
+                .map(function(cb) { return parseInt(cb.dataset.id); });
+
+            if (selectedIds.length === 0) return;
+
+            if (!confirm('Load Monroe results as offer?')) return;
+
+            this.disabled = true;
+
+            try {
+                var resp = await fetch('/parts-list-ai/api/monroe-load-as-offer/' + js_list_id, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify({ result_ids: selectedIds })
+                });
+                var data = await resp.json();
+
+                if (data.success) {
+                    setActionFeedback('Created supplier quote #' + data.quote_id, false);
+                    document.querySelectorAll('.monroe-result-checkbox:checked').forEach(function(cb) { cb.checked = false; });
+                    this.style.display = 'none';
+                } else {
+                    setActionFeedback(data.message || 'Failed', true);
+                }
+            } catch (error) {
+                setActionFeedback('Error: ' + error, true);
+            } finally {
+                this.disabled = false;
+            }
+        });
+    }
+
+    // Monroe settings function
+    window.showMonroeSettings = async function() {
+        try {
+            const resp = await fetch('/parts-list-ai/api/monroe-settings');
+            const data = await resp.json();
+            if (data.success) {
+                const select = document.getElementById('monroeSupplierSelect');
+                select.innerHTML = '<option value="">-- Select Supplier --</option>';
+                data.suppliers.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.id;
+                    opt.textContent = s.name;
+                    if (s.id === data.monroe_supplier_id) opt.selected = true;
+                    select.appendChild(opt);
+                });
+                document.getElementById('monroeAutoCheck').checked = !!data.auto_check;
+                var myModal = new bootstrap.Modal(document.getElementById('monroeSettingsModal'));
+                myModal.show();
+            }
+        } catch (error) { alert(error); }
+    };
+
+    document.getElementById('saveMonroeSettings').addEventListener('click', async function() {
+        const supplierId = document.getElementById('monroeSupplierSelect').value;
+        const autoCheck = document.getElementById('monroeAutoCheck').checked;
+
+        if (!supplierId) return;
+
+        try {
+            const resp = await fetch('/parts-list-ai/api/monroe-settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    supplier_id: parseInt(supplierId),
+                    auto_check: autoCheck
+                })
+            });
+            const data = await resp.json();
+            if (data.success) {
+                const modalEl = document.getElementById('monroeSettingsModal');
+                const modal = bootstrap.Modal.getInstance(modalEl);
+                if (modal) modal.hide();
+                document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+                monroeSupplierConfigured = true;
+                loadMonroeSuggestions();
+            }
+        } catch (error) { alert(error); }
+    });
+
+    var runMonroeCheckBtn = document.getElementById('runMonroeCheck');
+    if (runMonroeCheckBtn) {
+        runMonroeCheckBtn.addEventListener('click', async function() {
+            const selectedIds = Array.from(document.querySelectorAll('.monroe-line-check:checked'))
+                .map(function(cb) { return parseInt(cb.value); });
+
+            if (selectedIds.length === 0) return;
+
+            const progressBar = document.getElementById('monroeProgress');
+            const progressFill = progressBar.querySelector('.progress-bar');
+            const statusDiv = document.getElementById('monroeStatus');
+            const runBtn = document.getElementById('runMonroeCheck');
+
+            progressBar.style.display = 'block';
+            runBtn.disabled = true;
+            statusDiv.textContent = 'Checking...';
+
+            try {
+                const resp = await fetch('/parts-list-ai/api/monroe-check/' + js_list_id, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ line_ids: selectedIds })
                 });
                 const data = await resp.json();
-                if (!resp.ok || !data.success) {
-                    throw new Error(data.error || 'Failed to queue chunk for ILS');
+
+                if (data.success) {
+                    progressFill.style.width = '100%';
+                    statusDiv.innerHTML = '<span class="text-success">Completed!</span>';
+                    setTimeout(function() {
+                        const modalEl = document.getElementById('monroeCheckModal');
+                        const modal = bootstrap.Modal.getInstance(modalEl);
+                        if (modal) modal.hide();
+                        // Remove any lingering backdrop
+                        document.querySelectorAll('.modal-backdrop').forEach(function(el) { el.remove(); });
+                        loadMonroeResults();
+                    }, 1500);
+                } else {
+                    statusDiv.innerHTML = '<span class="text-danger">' + data.message + '</span>';
                 }
-                queuedCount += chunks[idx].length;
+            } catch (error) {
+                statusDiv.innerHTML = '<span class="text-danger">Error: ' + error + '</span>';
+            } finally {
+                runBtn.disabled = false;
             }
-            setActionFeedback(`Queued ${queuedCount} parts to the shared ILS queue (${chunks.length} chunk${chunks.length > 1 ? 's' : ''}).`, false);
-        } catch (error) {
-            setActionFeedback(`Failed to queue parts for ILS: ${error.message || error}`, true);
-        } finally {
-            queueIlsBtn.disabled = false;
-        }
-    });
+        });
+    }
 });
 </script>
 
 <style>
-.analysis-content {
-    font-size: 1.05rem;
-    line-height: 1.7;
-}
-
-.analysis-content h3,
-.analysis-content h4,
-.analysis-content h5 {
-    border-bottom: 2px solid #e9ecef;
-    padding-bottom: 0.5rem;
-}
-
-.analysis-content ul {
-    padding-left: 1.5rem;
-}
-
-.analysis-content li {
-    margin-bottom: 0.5rem;
-}
-
-.card {
-    box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
-}
-
-.table-hover tbody tr:hover {
-    background-color: rgba(0,0,0,0.02);
-}
+.analysis-content { font-size: 1.05rem; line-height: 1.7; }
+.card { box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.075); }
+.table-hover tbody tr:hover { background-color: rgba(0,0,0,0.02); }
 </style>
 {% endblock %}

@@ -25,6 +25,9 @@
             {% if ticket.workspace_name %}
                 <span class="workspace-badge"><i class="bi bi-collection me-1"></i>{{ ticket.workspace_name }}</span>
             {% endif %}
+            <span class="badge priority-badge priority-{{ (ticket.priority or 'Medium')|lower }}">
+                {{ ticket.priority or 'Medium' }} Priority
+            </span>
             {% if ticket.is_private %}
                 <span class="private-badge"><i class="bi bi-lock me-1"></i>Private</span>
             {% endif %}
@@ -83,7 +86,7 @@
                     {% endif %}
 
                     <div class="row g-3 mb-3">
-                        <div class="col-12">
+                        <div class="col-md-6">
                             <label class="form-label">Status</label>
                             <div class="status-picker" role="radiogroup" aria-label="Ticket status">
                                 {% for status in statuses %}
@@ -92,6 +95,16 @@
                                         <span>{{ status.name }}</span>
                                     </label>
                                 {% endfor %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Priority</label>
+                            <div class="priority-picker">
+                                <select class="form-select" name="priority" required>
+                                    <option value="Low" {% if ticket.priority == 'Low' %}selected{% endif %}>Low Priority</option>
+                                    <option value="Medium" {% if ticket.priority == 'Medium' or not ticket.priority %}selected{% endif %}>Medium Priority</option>
+                                    <option value="High" {% if ticket.priority == 'High' %}selected{% endif %}>High Priority</option>
+                                </select>
                             </div>
                         </div>
                     </div>
@@ -294,6 +307,15 @@
                                 </select>
                             </div>
                             <div class="col-6">
+                                <select class="form-select form-select-sm" name="priority" required>
+                                    <option value="Low">Low</option>
+                                    <option value="Medium" selected>Medium</option>
+                                    <option value="High">High</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-12">
                                 <select class="form-select form-select-sm" name="assigned_user_id">
                                     <option value="">Unassigned</option>
                                     {% for user in users %}
@@ -320,6 +342,66 @@
                     </form>
                 </div>
             </div>
+
+            {% if ticket.related_emails %}
+                <!-- Related Emails -->
+                <div class="sidebar-card">
+                    <div class="sidebar-header">
+                        <button class="btn btn-link p-0 text-decoration-none w-100 text-start" type="button" data-bs-toggle="collapse" data-bs-target="#relatedEmailsContent" aria-expanded="false">
+                            <h6 class="sidebar-title mb-0">
+                                <i class="bi bi-envelope-paper me-1"></i>
+                                Related Emails
+                                <span class="badge bg-secondary ms-1">{{ ticket.related_emails|length }}</span>
+                                <i class="bi bi-chevron-down float-end mt-1" id="relatedEmailsChevron"></i>
+                            </h6>
+                        </button>
+                    </div>
+
+                    <div class="collapse" id="relatedEmailsContent">
+                        <div class="related-emails-compact">
+                            {% for email in ticket.related_emails %}
+                                <div class="email-compact-item" data-email-id="{{ email.id }}">
+                                    <div class="email-compact-header">
+                                        <div class="email-compact-meta">
+                                            <span class="email-compact-from">{{ email.from_name or email.from }}</span>
+                                            {% if email.received_datetime %}
+                                                <span class="email-compact-date">{{ email.received_datetime[:10] }}</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="email-compact-actions">
+                                            {% if email.web_link %}
+                                                <a href="{{ email.web_link }}" target="_blank" class="btn btn-sm btn-outline-primary btn-compact">
+                                                    <i class="bi bi-box-arrow-up-right"></i>
+                                                </a>
+                                            {% endif %}
+                                            {% if not email.is_read %}
+                                                <span class="unread-indicator-small" title="Unread"></span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <button class="btn btn-link btn-sm p-0 text-start email-expand-btn" type="button">
+                                        <small class="email-compact-subject">{{ email.subject | truncate(40) }}</small>
+                                        <i class="bi bi-chevron-right ms-1"></i>
+                                    </button>
+                                    <div class="email-expanded-content d-none">
+                                        {% if email.body_preview %}
+                                            <div class="email-preview mt-2">
+                                                {{ email.body_preview }}
+                                            </div>
+                                        {% endif %}
+                                        {% if email.has_attachments %}
+                                            <div class="mt-1">
+                                                <i class="bi bi-paperclip text-muted me-1"></i>
+                                                <small class="text-muted">Has attachments</small>
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -427,6 +509,21 @@
 .status-badge.closed {
     background: #d1e7dd;
     color: #198754;
+}
+
+.priority-badge.priority-high {
+    background: #f8d7da;
+    color: #842029;
+}
+
+.priority-badge.priority-medium {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.priority-badge.priority-low {
+    background: #cfe2ff;
+    color: #084298;
 }
 
 .workspace-badge {
@@ -724,6 +821,197 @@
     text-decoration: underline;
 }
 
+/* Related Emails */
+.related-emails-section {
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 16px;
+    background: #f8f9fa;
+}
+
+.section-subtitle {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #495057;
+    margin: 0;
+}
+
+.related-emails-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.related-email-item {
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 12px;
+    transition: box-shadow 0.15s ease;
+}
+
+.related-email-item:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.email-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.email-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 0.8rem;
+}
+
+.email-from {
+    font-weight: 600;
+    color: #212529;
+}
+
+.email-date {
+    color: #6c757d;
+}
+
+.email-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.email-subject {
+    font-weight: 500;
+    color: #212529;
+    margin-bottom: 4px;
+    font-size: 0.9rem;
+}
+
+.email-preview {
+    color: #6c757d;
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+.unread-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #1a73e8;
+    display: inline-block;
+}
+
+/* Related Emails Compact */
+.related-emails-compact {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.email-compact-item {
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    padding: 8px;
+    background: #fff;
+    transition: background 0.15s ease;
+}
+
+.email-compact-item:hover {
+    background: #f8f9fa;
+}
+
+.email-compact-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.email-compact-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.75rem;
+}
+
+.email-compact-from {
+    font-weight: 600;
+    color: #212529;
+}
+
+.email-compact-date {
+    color: #6c757d;
+}
+
+.email-compact-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.btn-compact {
+    padding: 2px 6px;
+    font-size: 0.7rem;
+    line-height: 1;
+}
+
+.email-expand-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: transparent;
+    color: #495057;
+    font-size: 0.8rem;
+    padding: 0;
+}
+
+
+
+.email-expand-btn .bi-chevron-right {
+    transition: transform 0.15s ease;
+}
+
+.email-expand-btn.expanded .bi-chevron-right {
+    transform: rotate(90deg);
+}
+
+.email-expanded-content {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #e9ecef;
+}
+
+.unread-indicator-small {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #1a73e8;
+    display: inline-block;
+}
+
+/* Override Bootstrap btn-link hover for email elements */
+.sidebar-header .btn-link:hover,
+.email-expand-btn:hover {
+    color: inherit !important;
+    text-decoration: none !important;
+}
+
+/* Sidebar collapse chevron animation */
+#relatedEmailsContent.collapsing .bi-chevron-down {
+    transition: transform 0.15s ease;
+}
+
+#relatedEmailsContent.show .bi-chevron-down {
+    transform: rotate(180deg);
+}
+
 /* Update form */
 .update-form .input-group {
     border: 1px solid #e9ecef;
@@ -876,6 +1164,39 @@ initMultiLookupSearch({
     selectedId: 'ticketSupplierSelected',
     endpoint: "{{ url_for('suppliers.supplier_search') }}",
     fieldName: 'supplier_ids'
+});
+
+// Email expand/collapse functionality
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle individual email expansion
+    document.querySelectorAll('.email-expand-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const expandedContent = this.nextElementSibling;
+            const chevron = this.querySelector('.bi-chevron-right');
+
+            if (expandedContent.classList.contains('d-none')) {
+                expandedContent.classList.remove('d-none');
+                this.classList.add('expanded');
+            } else {
+                expandedContent.classList.add('d-none');
+                this.classList.remove('expanded');
+            }
+        });
+    });
+
+    // Handle sidebar collapse chevron animation
+    const relatedEmailsCollapse = document.getElementById('relatedEmailsContent');
+    const chevron = document.getElementById('relatedEmailsChevron');
+
+    if (relatedEmailsCollapse && chevron) {
+        relatedEmailsCollapse.addEventListener('show.bs.collapse', function() {
+            chevron.style.transform = 'rotate(180deg)';
+        });
+
+        relatedEmailsCollapse.addEventListener('hide.bs.collapse', function() {
+            chevron.style.transform = 'rotate(0deg)';
+        });
+    }
 });
 </script>
 {% endblock %}
