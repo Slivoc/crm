@@ -105,6 +105,38 @@
                             </button>
                         </div>
                     </div>
+                    <div class="supplier-match-tools" id="supplierMatchTools" style="display: none;">
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            <div class="supplier-match-label">
+                                <i class="bi bi-truck"></i>
+                                <span id="supplierMatchLabel">Match to supplier</span>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-success" id="mailboxAddSupplierBtn" data-bs-toggle="modal" data-bs-target="#mailboxAddSupplierModal" disabled>
+                                <i class="bi bi-person-plus-fill me-1"></i>Add to supplier
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-dark" id="mailboxScanPartsBtn" disabled>
+                                <i class="bi bi-magic me-1"></i>Scan parts (AI)
+                            </button>
+                            <div class="text-muted small" id="mailboxSupplierStatus"></div>
+                        </div>
+                        <div class="supplier-match-results" id="supplierMatchResults" style="display: none;">
+                            <div class="supplier-chip" id="mailboxSupplierChip"></div>
+                            <div class="supplier-panel">
+                                <div class="supplier-panel-header">
+                                    <div class="fw-semibold">Unanswered quote requests</div>
+                                    <div class="small text-muted" id="mailboxSupplierRequestsMeta"></div>
+                                </div>
+                                <div class="supplier-panel-body" id="mailboxSupplierRequestsList"></div>
+                            </div>
+                            <div class="supplier-panel mt-3">
+                                <div class="supplier-panel-header">
+                                    <div class="fw-semibold">Part scan suggestions</div>
+                                    <div class="small text-muted" id="mailboxPartsScanMeta"></div>
+                                </div>
+                                <div class="supplier-panel-body" id="mailboxPartsScanResults"></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div class="reading-body">
                     <iframe id="readingFrame" class="reading-frame" title="Email body"></iframe>
@@ -186,6 +218,39 @@
     </div>
 </div>
 
+<!-- Add Supplier Modal -->
+<div class="modal fade" id="mailboxAddSupplierModal" tabindex="-1" aria-labelledby="mailboxAddSupplierLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="mailboxAddSupplierLabel">
+                    <i class="bi bi-truck me-2"></i>Add to existing supplier
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="mailboxSupplierSearchInput" class="form-label">Supplier search</label>
+                    <input type="text" class="form-control" id="mailboxSupplierSearchInput" placeholder="Type a supplier name..." autocomplete="off">
+                    <div class="form-text">Matches internal suppliers. Minimum 2 characters.</div>
+                </div>
+                <div class="list-group" id="mailboxSupplierSearchResults"></div>
+                <div class="alert alert-light border mt-3 d-none" id="mailboxSelectedSupplier">
+                    <div class="fw-semibold" id="mailboxSelectedSupplierName"></div>
+                    <div class="text-muted small" id="mailboxSelectedSupplierMeta"></div>
+                </div>
+                <div class="alert alert-danger mt-3 d-none" id="mailboxAddSupplierFeedback"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="mailboxAddSupplierSaveBtn" disabled>
+                    <i class="bi bi-check2-circle me-1"></i>Use Supplier
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 const graphSeed = {{ graph | tojson }};
 const graphStatusEl = document.getElementById('graphStatus');
@@ -222,6 +287,24 @@ const mailboxSelectedCustomerMeta = document.getElementById('mailboxSelectedCust
 const mailboxAddContactSaveBtn = document.getElementById('mailboxAddContactSaveBtn');
 const mailboxAddContactFeedback = document.getElementById('mailboxAddContactFeedback');
 const mailboxAddContactModal = document.getElementById('mailboxAddContactModal');
+const mailboxAddSupplierModal = document.getElementById('mailboxAddSupplierModal');
+const mailboxAddSupplierBtn = document.getElementById('mailboxAddSupplierBtn');
+const mailboxAddSupplierSaveBtn = document.getElementById('mailboxAddSupplierSaveBtn');
+const mailboxSupplierSearchInput = document.getElementById('mailboxSupplierSearchInput');
+const mailboxSupplierSearchResults = document.getElementById('mailboxSupplierSearchResults');
+const mailboxSelectedSupplier = document.getElementById('mailboxSelectedSupplier');
+const mailboxSelectedSupplierName = document.getElementById('mailboxSelectedSupplierName');
+const mailboxSelectedSupplierMeta = document.getElementById('mailboxSelectedSupplierMeta');
+const mailboxAddSupplierFeedback = document.getElementById('mailboxAddSupplierFeedback');
+const mailboxScanPartsBtn = document.getElementById('mailboxScanPartsBtn');
+const supplierMatchTools = document.getElementById('supplierMatchTools');
+const supplierMatchResults = document.getElementById('supplierMatchResults');
+const mailboxSupplierChip = document.getElementById('mailboxSupplierChip');
+const mailboxSupplierRequestsList = document.getElementById('mailboxSupplierRequestsList');
+const mailboxSupplierRequestsMeta = document.getElementById('mailboxSupplierRequestsMeta');
+const mailboxSupplierStatus = document.getElementById('mailboxSupplierStatus');
+const mailboxPartsScanResults = document.getElementById('mailboxPartsScanResults');
+const mailboxPartsScanMeta = document.getElementById('mailboxPartsScanMeta');
 const mailboxLoadMoreBtn = document.getElementById('mailboxLoadMoreBtn');
 const mailboxLoadMoreStatus = document.getElementById('mailboxLoadMoreStatus');
 
@@ -232,6 +315,11 @@ let selectedPartsListId = null;
 let selectedSupplierId = null;
 let mailboxSelectedCustomerData = null;
 let mailboxContactSeed = null;
+let mailboxSelectedSupplierData = null;
+let mailboxSupplierRequests = [];
+let mailboxPartsScanData = null;
+let mailboxPartsScanInFlight = false;
+let mailboxModalSupplierSelection = null;
 let selectedMessageHtml = null;
 let selectedMessageText = null;
 let selectedMessageResolvedHtml = null;
@@ -259,6 +347,9 @@ function updateSupplierQuoteButton(subject) {
     const parsed = parsePartsAvailabilitySubject(subject);
     selectedPartsListId = parsed ? parsed.listId : null;
     selectedSupplierId = parsed ? parsed.supplierId : null;
+    if (!selectedSupplierId && mailboxSelectedSupplierData?.id) {
+        selectedSupplierId = mailboxSelectedSupplierData.id;
+    }
 
     if (parsed) {
         const label = parsed.listId ? `Supplier Quote (PL ${parsed.listId})` : 'Supplier Quote';
@@ -366,6 +457,171 @@ function setContactActionsVisible(isVisible) {
     readingContactActions.style.display = isVisible ? 'flex' : 'none';
 }
 
+function buildEmailQueryParams() {
+    const params = new URLSearchParams();
+    if (selectedMessage?.id) {
+        params.set('email_message_id', selectedMessage.id);
+    }
+    if (selectedMessage?.conversationId) {
+        params.set('email_conversation_id', selectedMessage.conversationId);
+    }
+    return params.toString();
+}
+
+function renderSupplierRequests() {
+    if (!mailboxSupplierRequestsList || !mailboxSupplierRequestsMeta) return;
+    if (!mailboxSelectedSupplierData) {
+        mailboxSupplierRequestsList.innerHTML = `
+            <div class="text-muted small">Select a supplier to load unanswered quote requests.</div>
+        `;
+        mailboxSupplierRequestsMeta.textContent = '';
+        return;
+    }
+
+    if (mailboxSupplierRequests === null) {
+        mailboxSupplierRequestsList.innerHTML = `
+            <div class="text-muted small"><span class="spinner-border spinner-border-sm me-2"></span>Loading requests...</div>
+        `;
+        mailboxSupplierRequestsMeta.textContent = '';
+        return;
+    }
+
+    if (!mailboxSupplierRequests.length) {
+        mailboxSupplierRequestsList.innerHTML = `
+            <div class="alert alert-light border mb-0">
+                No unanswered quote requests found for this supplier.
+            </div>
+        `;
+        mailboxSupplierRequestsMeta.textContent = 'Nothing awaiting response right now';
+        return;
+    }
+
+    mailboxSupplierRequestsMeta.textContent = `${mailboxSupplierRequests.length} list(s) awaiting response`;
+    const queryParams = buildEmailQueryParams();
+    mailboxSupplierRequestsList.innerHTML = mailboxSupplierRequests.map(request => {
+        const quickUrl = (() => {
+            let url = request.quick_quote_url || `/parts_list/parts-lists/${request.parts_list_id}/quick-quote/${mailboxSelectedSupplierData.id}`;
+            if (queryParams) {
+                url += url.includes('?') ? `&${queryParams}` : `?${queryParams}`;
+            }
+            return url;
+        })();
+        const lastSent = request.last_sent ? formatFullDate(request.last_sent) : '—';
+        return `
+            <div class="supplier-request-card">
+                <div class="supplier-request-header">
+                    <div>
+                        <div class="fw-semibold">PL #${request.parts_list_id} &middot; ${request.parts_list_name || 'Parts list'}</div>
+                        <div class="text-muted small">${request.customer_name || 'Customer unknown'}</div>
+                    </div>
+                    <div class="supplier-request-metrics">
+                        <span class="badge bg-warning text-dark">${request.awaiting_lines} awaiting</span>
+                        <span class="badge bg-success">${request.quoted_lines} quoted</span>
+                        <span class="badge bg-secondary">${request.no_bid_lines} no-bid</span>
+                    </div>
+                </div>
+                <div class="supplier-request-footer">
+                    <div class="text-muted small">Last request: ${lastSent}</div>
+                    <div class="supplier-request-actions">
+                        <a class="btn btn-sm btn-outline-primary" href="${quickUrl}">Open quick quote</a>
+                        <a class="btn btn-sm btn-outline-secondary" href="/parts_list/view/${request.parts_list_id}" target="_blank" rel="noopener">View list</a>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderPartScanResults() {
+    if (!mailboxPartsScanResults || !mailboxPartsScanMeta) return;
+
+    if (!mailboxPartsScanData) {
+        mailboxPartsScanResults.innerHTML = `
+            <div class="text-muted small">Run an AI scan to find matching parts lists.</div>
+        `;
+        mailboxPartsScanMeta.textContent = '';
+        return;
+    }
+
+    const { parts = [], suggestions = [], truncated } = mailboxPartsScanData;
+    if (!parts.length) {
+        mailboxPartsScanResults.innerHTML = `
+            <div class="alert alert-light border mb-0">
+                No part numbers were detected in this email.
+            </div>
+        `;
+        mailboxPartsScanMeta.textContent = '';
+        return;
+    }
+
+    const queryParams = buildEmailQueryParams();
+    const partsHtml = parts.map(p => `
+        <span class="badge rounded-pill bg-light text-dark me-1 mb-1">
+            ${p.part_number}${p.quantity ? ` &times; ${p.quantity}` : ''}
+        </span>
+    `).join('');
+
+    const suggestionsHtml = suggestions.length
+        ? suggestions.map(item => {
+            let quickUrl = item.quick_quote_url || (mailboxSelectedSupplierData ? `/parts_list/parts-lists/${item.parts_list_id}/quick-quote/${mailboxSelectedSupplierData.id}` : '');
+            if (quickUrl && queryParams) {
+                quickUrl += quickUrl.includes('?') ? `&${queryParams}` : `?${queryParams}`;
+            }
+            return `
+                <div class="supplier-request-card">
+                    <div class="supplier-request-header">
+                        <div>
+                            <div class="fw-semibold">PL #${item.parts_list_id} &middot; ${item.parts_list_name || 'Parts list'}</div>
+                            <div class="text-muted small">${item.customer_name || 'Customer unknown'}</div>
+                        </div>
+                        <div class="supplier-request-metrics">
+                            <span class="badge bg-primary">${item.match_count} part match${item.match_count === 1 ? '' : 'es'}</span>
+                            ${item.supplier_request_count ? `<span class="badge bg-warning text-dark">${item.supplier_request_count} requested</span>` : ''}
+                        </div>
+                    </div>
+                    <div class="supplier-request-footer">
+                        <div class="text-muted small">Suggested by AI scan</div>
+                        <div class="supplier-request-actions">
+                            ${quickUrl ? `<a class="btn btn-sm btn-outline-primary" href="${quickUrl}">Open quick quote</a>` : ''}
+                            <a class="btn btn-sm btn-outline-secondary" href="/parts_list/view/${item.parts_list_id}" target="_blank" rel="noopener">View list</a>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('')
+        : `<div class="alert alert-light border mb-0">No parts lists matched the detected part numbers.</div>`;
+
+    mailboxPartsScanResults.innerHTML = `
+        <div class="mb-2">${partsHtml}</div>
+        ${suggestionsHtml}
+    `;
+    mailboxPartsScanMeta.textContent = `${parts.length} part(s) detected${truncated ? ' (truncated message)' : ''}`;
+}
+
+function renderSupplierMatchState() {
+    if (!supplierMatchTools) return;
+    const hasMessage = Boolean(selectedMessage);
+    supplierMatchTools.style.display = hasMessage ? 'block' : 'none';
+    if (mailboxAddSupplierBtn) {
+        mailboxAddSupplierBtn.disabled = !hasMessage;
+    }
+    if (mailboxScanPartsBtn) {
+        mailboxScanPartsBtn.disabled = !hasMessage;
+    }
+
+    supplierMatchResults.style.display = hasMessage ? 'block' : 'none';
+    const hasSupplier = Boolean(mailboxSelectedSupplierData);
+
+    if (mailboxSupplierChip) {
+        mailboxSupplierChip.textContent = hasSupplier ? mailboxSelectedSupplierData.name : '';
+    }
+    mailboxSupplierStatus.textContent = hasMessage
+        ? (hasSupplier ? '' : 'Select a supplier to see outstanding requests and enable supplier-specific links.')
+        : '';
+
+    renderSupplierRequests();
+    renderPartScanResults();
+}
 function updateLoadImagesButton() {
     if (!loadImagesToggle) return;
     loadImagesToggle.checked = mailboxLoadImages;
@@ -504,6 +760,105 @@ function resetMailboxAddContactModal() {
     mailboxSelectedCustomer.classList.add('d-none');
     mailboxAddContactFeedback.classList.add('d-none');
     mailboxAddContactFeedback.textContent = '';
+}
+
+function resetMailboxAddSupplierModal(seed = '') {
+    mailboxModalSupplierSelection = null;
+    mailboxAddSupplierSaveBtn.disabled = true;
+    mailboxSupplierSearchResults.innerHTML = '';
+    mailboxSelectedSupplier.classList.add('d-none');
+    mailboxAddSupplierFeedback.classList.add('d-none');
+    mailboxAddSupplierFeedback.textContent = '';
+    if (mailboxSupplierSearchInput) {
+        mailboxSupplierSearchInput.value = seed;
+    }
+}
+
+async function searchMailboxSuppliers(query) {
+    if (!query || query.length < 2) {
+        mailboxSupplierSearchResults.innerHTML = '';
+        return;
+    }
+
+    mailboxSupplierSearchResults.innerHTML = `
+        <div class="list-group-item text-muted">
+            <span class="spinner-border spinner-border-sm me-2"></span>Searching...
+        </div>
+    `;
+
+    try {
+        const response = await fetch(`/ils/suppliers/search?q=${encodeURIComponent(query)}&limit=10`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Search failed');
+        }
+
+        const suppliers = data.suppliers || [];
+        if (!suppliers.length) {
+            mailboxSupplierSearchResults.innerHTML = `
+                <div class="list-group-item text-muted">No suppliers found</div>
+            `;
+            return;
+        }
+
+        mailboxSupplierSearchResults.innerHTML = suppliers.map(supplier => `
+            <button type="button" class="list-group-item list-group-item-action mailbox-supplier-result" data-id="${supplier.id}">
+                <div class="fw-semibold">${supplier.name}</div>
+                <div class="text-muted small">${supplier.currency_code ? `Currency: ${supplier.currency_code}` : ''}</div>
+            </button>
+        `).join('');
+
+        mailboxSupplierSearchResults.querySelectorAll('.mailbox-supplier-result').forEach(item => {
+            item.addEventListener('click', () => {
+                const supplierId = item.getAttribute('data-id');
+                const supplier = suppliers.find(entry => String(entry.id) === String(supplierId));
+                if (!supplier) return;
+                mailboxModalSupplierSelection = supplier;
+                mailboxSelectedSupplierName.textContent = supplier.name || 'Selected supplier';
+                mailboxSelectedSupplierMeta.textContent = supplier.currency_code ? `Currency: ${supplier.currency_code}` : '';
+                mailboxSelectedSupplier.classList.remove('d-none');
+                mailboxAddSupplierSaveBtn.disabled = false;
+            });
+        });
+    } catch (error) {
+        mailboxSupplierSearchResults.innerHTML = `
+            <div class="list-group-item text-danger">Search failed</div>
+        `;
+    }
+}
+
+async function fetchSupplierOutstandingRequests(supplierId) {
+    if (!supplierId) return;
+    mailboxSupplierRequests = null;
+    renderSupplierMatchState();
+    try {
+        const response = await fetch(`/emails/suppliers/${encodeURIComponent(supplierId)}/outstanding-requests`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to load outstanding requests');
+        }
+        mailboxSupplierRequests = data.requests || [];
+    } catch (error) {
+        mailboxSupplierRequests = [];
+        showToast(error.message || 'Failed to load outstanding requests', 'error');
+    }
+    renderSupplierMatchState();
+}
+
+function setSelectedSupplier(supplier) {
+    mailboxSelectedSupplierData = supplier ? { ...supplier } : null;
+    mailboxPartsScanData = null; // clear previous scan when switching supplier
+    renderSupplierMatchState();
+    if (mailboxSelectedSupplierData?.id) {
+        fetchSupplierOutstandingRequests(mailboxSelectedSupplierData.id);
+        if (readingCompanyBadge && mailboxSelectedSupplierData.name) {
+            readingCompany.textContent = mailboxSelectedSupplierData.name;
+            readingCompanyBadge.style.display = 'inline-flex';
+        }
+        if (selectedMessage) {
+            updateSupplierQuoteButton(selectedMessage.subject || '');
+        }
+    }
 }
 
 function updateLoadMoreState({ hasMore = false, loading = false, error = '' } = {}) {
@@ -697,6 +1052,10 @@ async function selectMessage(messageId) {
         item.classList.toggle('selected', item.getAttribute('data-id') === messageId);
     });
     selectedMessageId = messageId;
+    mailboxSelectedSupplierData = null;
+    mailboxSupplierRequests = [];
+    mailboxPartsScanData = null;
+    renderSupplierMatchState();
     
     // Show loading state
     emptyReadingState.style.display = 'none';
@@ -772,6 +1131,7 @@ async function selectMessage(messageId) {
         createPartsListBtn.disabled = false;
         createExcessListBtn.disabled = false;
         createTicketBtn.disabled = false;
+        renderSupplierMatchState();
 
     } catch (error) {
         showToast('Error loading message', 'error');
@@ -844,6 +1204,14 @@ mailboxCustomerSearchInput?.addEventListener('input', (e) => {
     }, 250);
 });
 
+mailboxSupplierSearchInput?.addEventListener('input', (e) => {
+    const query = e.target.value.trim();
+    clearTimeout(mailboxSupplierSearchInput._timer);
+    mailboxSupplierSearchInput._timer = setTimeout(() => {
+        searchMailboxSuppliers(query);
+    }, 250);
+});
+
 addCustomerFromDomainBtn?.addEventListener('click', () => {
     if (!mailboxContactSeed) return;
     const domain = mailboxContactSeed.domain || '';
@@ -900,6 +1268,21 @@ mailboxAddContactSaveBtn?.addEventListener('click', async () => {
         mailboxAddContactSaveBtn.disabled = false;
         mailboxAddContactSaveBtn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Add Contact';
     }
+});
+
+mailboxAddSupplierModal?.addEventListener('show.bs.modal', () => {
+    const seed = mailboxContactSeed?.domain || mailboxContactSeed?.email || mailboxContactSeed?.name || '';
+    resetMailboxAddSupplierModal(seed);
+    if (seed) {
+        searchMailboxSuppliers(seed);
+    }
+});
+
+mailboxAddSupplierSaveBtn?.addEventListener('click', () => {
+    if (!mailboxModalSupplierSelection) return;
+    const modal = bootstrap.Modal.getInstance(mailboxAddSupplierModal);
+    modal?.hide();
+    setSelectedSupplier(mailboxModalSupplierSelection);
 });
 
 function extractTextFromBody(message) {
@@ -1043,6 +1426,40 @@ loadImagesToggle?.addEventListener('change', async () => {
     if (selectedMessage) {
         readingFrame.srcdoc = '<div style="display:flex;justify-content:center;align-items:center;height:100%;color:#6c757d;"><div class="spinner-border spinner-border-sm" role="status"></div></div>';
         await renderMessageBody();
+    }
+});
+
+mailboxScanPartsBtn?.addEventListener('click', async () => {
+    if (!selectedMessage || mailboxPartsScanInFlight) return;
+    mailboxPartsScanInFlight = true;
+    const original = mailboxScanPartsBtn.innerHTML;
+    mailboxScanPartsBtn.disabled = true;
+    mailboxScanPartsBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning...';
+
+    try {
+        const bodyText = extractTextFromBody(selectedMessage) || selectedMessage.bodyPreview || '';
+        const payload = {
+            text: bodyText,
+            supplier_id: mailboxSelectedSupplierData?.id || null
+        };
+        const response = await fetch('/emails/mailbox/scan-parts', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'AI scan failed');
+        }
+        mailboxPartsScanData = data;
+        renderSupplierMatchState();
+        showToast('AI scan complete', 'success');
+    } catch (error) {
+        showToast(error.message || 'AI scan failed', 'error');
+    } finally {
+        mailboxPartsScanInFlight = false;
+        mailboxScanPartsBtn.disabled = !selectedMessage;
+        mailboxScanPartsBtn.innerHTML = original;
     }
 });
 
@@ -1236,6 +1653,7 @@ function createToastContainer() {
 // Initialize
 console.log('Mailbox initialized');
 console.log('createTicketBtn element:', createTicketBtn);
+renderSupplierMatchState();
 setGraphStatus(graphSeed);
 loadMailboxMessages({ reset: true });
 </script>
@@ -1669,6 +2087,95 @@ loadMailboxMessages({ reset: true });
     min-height: 300px;
     border: none;
     background: #fff;
+}
+
+.supplier-match-tools {
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid #e9ecef;
+    border-radius: 10px;
+    background: #fdfdff;
+}
+
+.supplier-match-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    color: #495057;
+}
+
+.supplier-match-results {
+    margin-top: 8px;
+}
+
+.supplier-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: #e8f0fe;
+    color: #0d6efd;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.supplier-panel {
+    border: 1px solid #e9ecef;
+    border-radius: 10px;
+    background: #fff;
+}
+
+.supplier-panel-header {
+    padding: 10px 12px;
+    border-bottom: 1px solid #e9ecef;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.supplier-panel-body {
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.supplier-request-card {
+    border: 1px solid #f1f3f4;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #fdfdff;
+}
+
+.supplier-request-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.supplier-request-metrics {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.supplier-request-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+
+.supplier-request-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
 }
 
 /* Connection Status */
