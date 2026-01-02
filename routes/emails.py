@@ -78,6 +78,7 @@ from models import (
     get_supplier_contact_by_email,
     get_contact_by_email
 )
+from models import create_base_part_number
 from routes.email_signatures import get_user_default_signature
 from hubspot_helpers import (
     get_or_create_hubspot_contact,
@@ -85,6 +86,7 @@ from hubspot_helpers import (
     log_email_to_hubspot
 )
 from domains import populate_domains
+from ai_helper import extract_part_numbers_and_quantities
 
 emails_bp = Blueprint('emails', __name__)
 
@@ -1101,6 +1103,83 @@ def _fetch_email_associations(message_ids, conversation_ids, table_name):
         if conversation_id:
             by_conversation[conversation_id] = row_data.get("id")
     return by_message, by_conversation
+
+
+def _find_parts_lists_for_parts(part_numbers, supplier_id=None, limit=15):
+    """
+    Return candidate parts lists that contain any of the provided part numbers.
+    Uses both the raw customer part number and the normalized base part number.
+    """
+    if not part_numbers:
+        return []
+
+    clean_numbers = []
+    base_numbers = []
+    for pn in part_numbers:
+        if not pn:
+            continue
+        pn_str = str(pn).strip()
+        if not pn_str:
+            continue
+        clean_numbers.append(pn_str.upper())
+        try:
+            base_numbers.append(create_base_part_number(pn_str))
+        except Exception:
+            base_numbers.append(pn_str.upper())
+
+    if not clean_numbers and not base_numbers:
+        return []
+
+    conditions = []
+    params = []
+    if clean_numbers:
+        placeholders = ",".join(["?"] * len(clean_numbers))
+        conditions.append(f"UPPER(pll.customer_part_number) IN ({placeholders})")
+        params.extend(clean_numbers)
+    if base_numbers:
+        placeholders = ",".join(["?"] * len(base_numbers))
+        conditions.append(f"pll.base_part_number IN ({placeholders})")
+        params.extend(base_numbers)
+
+    if not conditions:
+        return []
+
+    supplier_param = supplier_id if supplier_id is not None else -1
+    params_with_supplier = [supplier_param] + params + [supplier_param, limit]
+
+    rows = db_execute(
+        f"""
+        SELECT 
+            pl.id AS parts_list_id,
+            pl.name AS parts_list_name,
+            COALESCE(c.name, '') AS customer_name,
+            COUNT(DISTINCT pll.id) AS match_count,
+            COUNT(DISTINCT CASE WHEN se.supplier_id = ? THEN pll.id END) AS supplier_request_count,
+            MAX(pl.date_modified) AS last_modified
+        FROM parts_list_lines pll
+        JOIN parts_lists pl ON pl.id = pll.parts_list_id
+        LEFT JOIN customers c ON c.id = pl.customer_id
+        LEFT JOIN parts_list_line_supplier_emails se ON se.parts_list_line_id = pll.id
+        WHERE ({' OR '.join(conditions)})
+        GROUP BY pl.id, pl.name, customer_name
+        ORDER BY supplier_request_count DESC, match_count DESC, last_modified DESC
+        LIMIT ?
+        """,
+        params_with_supplier,
+        fetch="all",
+    )
+
+    results = []
+    for row in rows or []:
+        record = dict(row)
+        if supplier_id:
+            record["quick_quote_url"] = url_for(
+                "parts_list.quick_supplier_quote",
+                list_id=record["parts_list_id"],
+                supplier_id=supplier_id,
+            )
+        results.append(record)
+    return results
 
 
 # Helper function to get company name by the sender's email
@@ -2609,6 +2688,74 @@ def check_email():
     return jsonify({"error": "Email not found"}), 404
 
 
+@emails_bp.route('/emails/suppliers/<int:supplier_id>/outstanding-requests', methods=['GET'])
+def get_supplier_outstanding_requests(supplier_id):
+    """
+    Return parts lists where this supplier has been emailed but has not yet provided a price or no-bid.
+    """
+    try:
+        rows = db_execute(
+            """
+            WITH sent AS (
+                SELECT 
+                    pll.parts_list_id,
+                    COALESCE(pll.parent_line_id, pll.id) AS quote_line_id,
+                    MAX(se.date_sent) AS last_sent
+                FROM parts_list_line_supplier_emails se
+                JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
+                WHERE se.supplier_id = ?
+                GROUP BY pll.parts_list_id, quote_line_id
+            ),
+            responses AS (
+                SELECT 
+                    sql.parts_list_line_id,
+                    COALESCE(sql.is_no_bid, FALSE) AS is_no_bid,
+                    sql.unit_price
+                FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                WHERE sq.supplier_id = ?
+            )
+            SELECT 
+                s.parts_list_id,
+                pl.name AS parts_list_name,
+                COALESCE(c.name, '') AS customer_name,
+                COUNT(*) AS request_lines,
+                COUNT(CASE WHEN r.unit_price IS NOT NULL AND COALESCE(r.is_no_bid, FALSE) = FALSE THEN 1 END) AS quoted_lines,
+                COUNT(CASE WHEN COALESCE(r.is_no_bid, FALSE) = TRUE THEN 1 END) AS no_bid_lines,
+                COUNT(CASE WHEN r.unit_price IS NULL AND COALESCE(r.is_no_bid, FALSE) = FALSE THEN 1 END) AS awaiting_lines,
+                MAX(s.last_sent) AS last_sent
+            FROM sent s
+            LEFT JOIN responses r ON r.parts_list_line_id = s.quote_line_id
+            JOIN parts_lists pl ON pl.id = s.parts_list_id
+            LEFT JOIN customers c ON c.id = pl.customer_id
+            GROUP BY s.parts_list_id, pl.name, customer_name
+            HAVING COUNT(CASE WHEN r.unit_price IS NULL AND COALESCE(r.is_no_bid, FALSE) = FALSE THEN 1 END) > 0
+            ORDER BY awaiting_lines DESC, last_sent DESC
+            """,
+            (supplier_id, supplier_id),
+            fetch="all",
+        )
+
+        requests_data = []
+        for row in rows or []:
+            record = dict(row)
+            record["quick_quote_url"] = url_for(
+                "parts_list.quick_supplier_quote",
+                list_id=record["parts_list_id"],
+                supplier_id=supplier_id,
+            )
+            requests_data.append(record)
+
+        return jsonify(
+            success=True,
+            supplier_id=supplier_id,
+            requests=requests_data,
+        )
+    except Exception as exc:
+        current_app.logger.error("Failed to load supplier outstanding requests: %s", exc)
+        return jsonify(success=False, error=str(exc)), 500
+
+
 @emails_bp.route('/macro_upload_email/<int:excess_list_id>', methods=['GET', 'POST'])
 def macro_upload_email(excess_list_id):
     # Check if the list exists
@@ -2647,6 +2794,69 @@ def send_test_email():
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+
+@emails_bp.route('/emails/mailbox/scan-parts', methods=['POST'])
+def mailbox_scan_parts():
+    """
+    On-demand AI extraction of part numbers/quantities from mailbox emails.
+    Returns candidate parts lists that include those parts to help narrow the match.
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        raw_text = (data.get("text") or "").strip()
+        supplier_id = data.get("supplier_id")
+
+        try:
+            supplier_id = int(supplier_id) if supplier_id is not None else None
+        except (TypeError, ValueError):
+            supplier_id = None
+
+        if not raw_text:
+            return jsonify(success=False, error="Email text is required"), 400
+
+        # Keep the payload tight for the AI call
+        max_chars = 8000
+        text = raw_text[:max_chars]
+
+        extracted = extract_part_numbers_and_quantities(text) or []
+
+        parts = []
+        seen = set()
+        for part_number, qty in extracted:
+            if not part_number:
+                continue
+            normalized = str(part_number).strip()
+            if not normalized:
+                continue
+            if normalized.upper() in seen:
+                continue
+            seen.add(normalized.upper())
+            quantity_val = None
+            try:
+                quantity_val = int(qty)
+            except Exception:
+                quantity_val = qty
+            parts.append({
+                "part_number": normalized,
+                "quantity": quantity_val,
+            })
+
+        suggestions = _find_parts_lists_for_parts(
+            [p["part_number"] for p in parts],
+            supplier_id=supplier_id,
+            limit=20,
+        ) if parts else []
+
+        return jsonify(
+            success=True,
+            parts=parts,
+            suggestions=suggestions,
+            truncated=len(raw_text) > max_chars,
+        )
+    except Exception as exc:
+        current_app.logger.error("Mailbox part scan failed: %s", exc)
+        return jsonify(success=False, error=str(exc)), 500
 
 import os
 from flask import send_from_directory
@@ -3091,11 +3301,12 @@ def scan_contacts():
                                         }
                                     }
 
-                                yield f"data: {json.dumps({
-                                    'status': 'processing',
-                                    'email': sender_email,
-                                    'folder': 'INBOX'
-                                })}\n\n"
+                                progress_payload = json.dumps({
+                                    "status": "processing",
+                                    "email": sender_email,
+                                    "folder": "INBOX",
+                                })
+                                yield f"data: {progress_payload}\n\n"
 
                             except Exception as e:
                                 app.logger.error(f"Error parsing email headers for ID {email_id_str}: {str(e)}")
