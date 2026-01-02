@@ -1642,16 +1642,22 @@ def get_customer_leads(customer_id):
         # Get search type from query params, default to procurement
         search_type = request.args.get('type', 'procurement')
 
-        # Base query parameters
-        query_params = {
-            'organization_ids[]': customer['apollo_id'],
-            'page': request.args.get('page', 1),
-            'per_page': 10,  # Increased from 5 for better overview
+        # Base request payload
+        try:
+            page = int(request.args.get('page', 1))
+        except (TypeError, ValueError):
+            page = 1
+        per_page = 10  # Increased from 5 for better overview
+
+        payload = {
+            'organization_ids': [customer['apollo_id']],
+            'page': page,
+            'per_page': per_page,
         }
 
         # Add filters based on search type
         if search_type == 'procurement':
-            query_params['person_titles[]'] = [
+            payload['person_titles'] = [
                 'buyer',
                 'purchasing',
                 'procurement',
@@ -1692,10 +1698,10 @@ def get_customer_leads(customer_id):
             ]
         elif search_type == 'general':
             # For general search, filter by seniority
-            query_params['person_seniorities[]'] = ['director', 'executive', 'vp', 'owner']
+            payload['person_seniorities'] = ['director', 'executive', 'vp', 'owner']
         # If search_type == 'all', we don't add any filters - just organization_ids
 
-        url = f"{current_app.config['APOLLO_BASE_URL']}/mixed_people/search"
+        url = f"{current_app.config['APOLLO_BASE_URL']}/mixed_people/api_search"
 
         response = requests.post(
             url,
@@ -1704,11 +1710,17 @@ def get_customer_leads(customer_id):
                 'Cache-Control': 'no-cache',
                 'Content-Type': 'application/json'
             },
-            params=query_params
+            json=payload
         )
 
         if response.status_code == 200:
             data = response.json()
+
+            pagination = data.get('pagination') or {
+                'page': data.get('page', page),
+                'per_page': data.get('per_page', per_page),
+                'total_entries': data.get('total_entries')
+            }
 
             leads = [{
                 'id': person.get('id'),
@@ -1725,7 +1737,7 @@ def get_customer_leads(customer_id):
 
             return jsonify({
                 'leads': leads,
-                'pagination': data.get('pagination'),
+                'pagination': pagination,
                 'search_type': search_type,
                 'has_results': bool(leads)
             })
