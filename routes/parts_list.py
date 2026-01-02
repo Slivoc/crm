@@ -2164,6 +2164,14 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
     ils_total_quantity = sum(int(qty) for qty in [row['quantity'] for row in ils_data] if qty and qty.isdigit())
     ils_latest_search_date = ils_data[0]['search_date'] if ils_data else None
 
+    qpl_row = _execute_with_cursor(cursor, '''
+        SELECT COUNT(*) as count
+        FROM manufacturer_approvals
+        WHERE manufacturer_part_number = ?
+           OR airbus_material = ?
+    ''', (base_part_number, base_part_number)).fetchone()
+    qpl_count = qpl_row['count'] if qpl_row else 0
+
     # Chosen cost & email/suggested supplier counts
     chosen_cost, chosen_supplier_name, chosen_currency_code, chosen_currency_symbol, suggested_suppliers_count, emails_sent_count, quoted_price, quoted_supplier_name, quoted_currency_code, quoted_currency_symbol, contacted_suppliers, contacted_suppliers_count, supplier_quote_count = _get_line_specific(line_id)
 
@@ -2252,6 +2260,9 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         'ils_total_quantity': ils_total_quantity,
         'ils_latest_search_date': ils_latest_search_date,
         'ils_details': [dict(row) for row in ils_data],
+
+        # QPL
+        'qpl_count': qpl_count,
 
         # Chosen cost & actions
         'chosen_cost': chosen_cost,
@@ -2505,6 +2516,33 @@ def parts_list_costing(list_id):
     except Exception as e:
         logging.exception(e)
         return str(e), 500
+
+@parts_list_bp.route('/parts-lists/qpl', methods=['GET'])
+def get_qpl_matches():
+    """
+    Return QPL manufacturer approvals for a base part number.
+    """
+    try:
+        base_part_number = (request.args.get('part') or '').strip()
+        if not base_part_number:
+            return jsonify(success=False, message="part parameter is required"), 400
+
+        rows = db_execute(
+            """
+            SELECT manufacturer_name, cage_code, location
+            FROM manufacturer_approvals
+            WHERE manufacturer_part_number = ?
+               OR airbus_material = ?
+            ORDER BY manufacturer_name, cage_code, location
+            """,
+            (base_part_number, base_part_number),
+            fetch='all',
+        ) or []
+
+        return jsonify(success=True, results=[dict(row) for row in rows])
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
 
 @parts_list_bp.route('/email-suppliers', methods=['GET', 'POST'])
 def email_suppliers():
@@ -3375,14 +3413,23 @@ def view_parts_lists():
                  pls.name AS status_name,
                  (SELECT COUNT(*) FROM parts_list_lines pll WHERE pll.parts_list_id = pl.id) AS line_count,
                  (SELECT COUNT(*)
-                  FROM parts_list_lines pll
-                  WHERE pll.parts_list_id = pl.id
-                    AND pll.chosen_cost IS NOT NULL) AS costed_line_count,
+                 FROM parts_list_lines pll
+                 WHERE pll.parts_list_id = pl.id
+                   AND pll.chosen_cost IS NOT NULL) AS costed_line_count,
                  (SELECT COUNT(DISTINCT pll.id)
                   FROM parts_list_lines pll
                   LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
                   WHERE pll.parts_list_id = pl.id
                     AND cql.quoted_status = 'quoted') AS quoted_line_count
+                ,(SELECT COUNT(DISTINCT pll.id)
+                  FROM parts_list_lines pll
+                  WHERE pll.parts_list_id = pl.id
+                    AND EXISTS (
+                        SELECT 1
+                        FROM manufacturer_approvals ma
+                        WHERE ma.manufacturer_part_number = pll.base_part_number
+                           OR ma.airbus_material = pll.base_part_number
+                    )) AS qpl_line_count
             FROM parts_lists pl
             LEFT JOIN customers c ON c.id = pl.customer_id
             LEFT JOIN contacts ct ON ct.id = pl.contact_id

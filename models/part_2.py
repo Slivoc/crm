@@ -1071,6 +1071,136 @@ def get_po_lines_by_part_number(base_part_number):
     return [dict(line) for line in rows]
 
 
+# Fetch parts list lines that contain this part number
+def get_parts_list_lines_by_part_number(base_part_number):
+    rows = db_execute('''
+        SELECT
+            pll.id as line_id,
+            pll.line_number,
+            pll.quantity,
+            pll.chosen_cost,
+            pll.chosen_price,
+            pl.id as parts_list_id,
+            pl.name as parts_list_name,
+            pl.date_created,
+            c.name as customer_name,
+            c.id as customer_id,
+            pls.name as status_name
+        FROM parts_list_lines pll
+        JOIN parts_lists pl ON pll.parts_list_id = pl.id
+        LEFT JOIN customers c ON pl.customer_id = c.id
+        LEFT JOIN parts_list_statuses pls ON pl.status_id = pls.id
+        WHERE pll.base_part_number = ?
+        ORDER BY pl.date_created DESC
+    ''', (base_part_number,), fetch='all') or []
+    return [dict(row) for row in rows]
+
+
+# Fetch supplier quotes for this part number
+def get_supplier_quotes_by_part_number(base_part_number):
+    rows = db_execute('''
+        SELECT
+            psql.id as quote_line_id,
+            psql.quoted_part_number,
+            psql.manufacturer,
+            psql.quantity_quoted,
+            psql.unit_price,
+            psql.lead_time_days,
+            psql.condition_code,
+            psql.is_no_bid,
+            psq.id as quote_id,
+            psq.quote_reference,
+            psq.quote_date,
+            s.name as supplier_name,
+            s.id as supplier_id,
+            pl.id as parts_list_id,
+            pl.name as parts_list_name,
+            c.name as customer_name
+        FROM parts_list_supplier_quote_lines psql
+        JOIN parts_list_supplier_quotes psq ON psql.supplier_quote_id = psq.id
+        JOIN suppliers s ON psq.supplier_id = s.id
+        JOIN parts_list_lines pll ON psql.parts_list_line_id = pll.id
+        JOIN parts_lists pl ON pll.parts_list_id = pl.id
+        LEFT JOIN customers c ON pl.customer_id = c.id
+        WHERE pll.base_part_number = ?
+        ORDER BY psq.quote_date DESC
+    ''', (base_part_number,), fetch='all') or []
+    return [dict(row) for row in rows]
+
+
+# Fetch BOM lines that contain this part number
+def get_bom_lines_by_part_number(base_part_number):
+    rows = db_execute('''
+        SELECT
+            bl.id as bom_line_id,
+            bl.quantity,
+            bl.reference_designator,
+            bl.notes as line_notes,
+            bh.id as bom_id,
+            bh.name as bom_name,
+            bh.description as bom_description,
+            bh.type as bom_type,
+            bh.base_part_number as assembly_part_number
+        FROM bom_lines bl
+        JOIN bom_headers bh ON bl.bom_header_id = bh.id
+        WHERE bl.base_part_number = ?
+        ORDER BY bh.name
+    ''', (base_part_number,), fetch='all') or []
+    return [dict(row) for row in rows]
+
+
+# Fetch excess stock lines for this part number
+def get_excess_lines_by_part_number(base_part_number):
+    rows = db_execute('''
+        SELECT
+            esl.id as line_id,
+            esl.quantity,
+            esl.date_code,
+            esl.manufacturer,
+            el.id as excess_list_id,
+            el.entered_date,
+            el.status,
+            COALESCE(c.name, s.name) as source_name,
+            CASE
+                WHEN el.customer_id IS NOT NULL THEN 'customer'
+                WHEN el.supplier_id IS NOT NULL THEN 'supplier'
+                ELSE 'unknown'
+            END as source_type
+        FROM excess_stock_lines esl
+        JOIN excess_stock_lists el ON esl.excess_stock_list_id = el.id
+        LEFT JOIN customers c ON el.customer_id = c.id
+        LEFT JOIN suppliers s ON el.supplier_id = s.id
+        WHERE esl.base_part_number = ?
+        ORDER BY el.entered_date DESC
+    ''', (base_part_number,), fetch='all') or []
+    return [dict(row) for row in rows]
+
+
+# Fetch manufacturer approvals for this part number
+def get_manufacturer_approvals_by_part_number(base_part_number):
+    # Clean the base_part_number to match airbus_material format
+    rows = db_execute('''
+        SELECT
+            id,
+            manufacturer_name,
+            manufacturer_code,
+            cage_code,
+            location,
+            country,
+            approval_status,
+            standard,
+            airbus_material,
+            manufacturer_part_number,
+            data_type,
+            p_status,
+            p_status_text
+        FROM manufacturer_approvals
+        WHERE airbus_material = ? OR manufacturer_part_number = ?
+        ORDER BY manufacturer_name
+    ''', (base_part_number, base_part_number), fetch='all') or []
+    return [dict(row) for row in rows]
+
+
 def save_email_file_and_create_entries(file, rfq_id=None):
     """
     Handles saving the email file, parsing it, and creating appropriate entries in the database.

@@ -239,6 +239,7 @@ def _lookup_contact_company(email_address):
             "contact_type": "supplier",
             "company_name": supplier_contact.get("supplier_name"),
             "company_type": "Supplier",
+            "supplier_id": supplier_contact.get("supplier_id"),
         }
 
     return {
@@ -1145,7 +1146,7 @@ def _find_parts_lists_for_parts(part_numbers, supplier_id=None, limit=15):
         return []
 
     supplier_param = supplier_id if supplier_id is not None else -1
-    params_with_supplier = [supplier_param] + params + [supplier_param, limit]
+    params_with_supplier = [supplier_param] + params + [limit]
 
     rows = db_execute(
         f"""
@@ -2164,6 +2165,204 @@ def graph_message_attachment_content(message_id, attachment_id):
             "content_bytes": content_bytes,
         },
     })
+
+
+@emails_bp.route('/emails/mailbox/save-supplier-contact', methods=['POST'])
+def mailbox_save_supplier_contact():
+    """
+    Save a supplier contact when matching an email sender to a supplier.
+    This ensures the contact is recognized in future emails.
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        supplier_id = data.get("supplier_id")
+        email_address = (data.get("email") or "").strip().lower()
+        name = (data.get("name") or "").strip()
+
+        if not supplier_id or not email_address:
+            return jsonify(success=False, error="supplier_id and email are required"), 400
+
+        try:
+            supplier_id = int(supplier_id)
+        except (TypeError, ValueError):
+            return jsonify(success=False, error="Invalid supplier_id"), 400
+
+        # Check if contact already exists for this supplier
+        existing = db_execute(
+            """
+            SELECT id FROM supplier_contacts
+            WHERE email_address = ? AND supplier_id = ?
+            """,
+            (email_address, supplier_id),
+            fetch="one",
+        )
+        if existing:
+            return jsonify(
+                success=True,
+                contact_id=existing["id"] if isinstance(existing, dict) else existing[0],
+                message="Contact already exists",
+                created=False,
+            )
+
+        # Parse name into first and second name
+        name_parts = name.split(None, 1) if name else ["", ""]
+        first_name = name_parts[0] if name_parts else ""
+        second_name = name_parts[1] if len(name_parts) > 1 else ""
+
+        # Insert the new supplier contact
+        db_execute(
+            """
+            INSERT INTO supplier_contacts (supplier_id, first_name, second_name, email_address)
+            VALUES (?, ?, ?, ?)
+            """,
+            (supplier_id, first_name, second_name, email_address),
+            commit=True,
+        )
+
+        # Get the inserted ID
+        new_contact = db_execute(
+            """
+            SELECT id FROM supplier_contacts
+            WHERE email_address = ? AND supplier_id = ?
+            """,
+            (email_address, supplier_id),
+            fetch="one",
+        )
+
+        contact_id = new_contact["id"] if isinstance(new_contact, dict) else new_contact[0] if new_contact else None
+
+        return jsonify(
+            success=True,
+            contact_id=contact_id,
+            message="Supplier contact created",
+            created=True,
+        )
+    except Exception as exc:
+        current_app.logger.error("Failed to save supplier contact: %s", exc)
+        return jsonify(success=False, error=str(exc)), 500
+
+
+@emails_bp.route('/emails/mailbox/scan-pdf-attachment', methods=['POST'])
+def mailbox_scan_pdf_attachment():
+    """
+    Fetch a PDF attachment from Graph, extract text, and run AI part extraction.
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        message_id = data.get("message_id")
+        attachment_id = data.get("attachment_id")
+        supplier_id = data.get("supplier_id")
+
+        if not message_id or not attachment_id:
+            return jsonify(success=False, error="message_id and attachment_id are required"), 400
+
+        try:
+            supplier_id = int(supplier_id) if supplier_id is not None else None
+        except (TypeError, ValueError):
+            supplier_id = None
+
+        # Get the attachment content from Graph
+        settings = _get_graph_settings(include_secret=True)
+        cache = _load_graph_cache()
+        app = _build_msal_app(settings, cache=cache)
+        accounts = app.get_accounts()
+
+        if not accounts:
+            return jsonify(success=False, error="No Graph account connected"), 400
+
+        token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+        _save_graph_cache(cache)
+
+        if not token or "access_token" not in token:
+            return jsonify(success=False, error="Failed to refresh access token"), 400
+
+        headers = {"Authorization": f"Bearer {token['access_token']}"}
+        safe_message_id = quote(message_id, safe="")
+        safe_attachment_id = quote(attachment_id, safe="")
+        resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments/{safe_attachment_id}",
+            headers=headers,
+            timeout=30,
+        )
+
+        if resp.status_code >= 400:
+            return jsonify(success=False, error="Failed to fetch attachment from Graph"), 400
+
+        try:
+            body = resp.json() if resp.content else None
+        except ValueError:
+            return jsonify(success=False, error="Invalid attachment response"), 400
+
+        content_bytes_b64 = body.get("contentBytes") if isinstance(body, dict) else None
+        if not content_bytes_b64:
+            return jsonify(success=False, error="Attachment has no content"), 400
+
+        # Decode base64 and extract text from PDF
+        import pdfplumber
+        import io
+
+        pdf_bytes = base64.b64decode(content_bytes_b64)
+        text_parts = []
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                if page_text:
+                    text_parts.append(page_text)
+
+        raw_text = "\n".join(text_parts).strip()
+        if not raw_text:
+            return jsonify(
+                success=True,
+                parts=[],
+                suggestions=[],
+                truncated=False,
+                message="No text could be extracted from PDF",
+            )
+
+        # Keep the payload tight for the AI call
+        max_chars = 8000
+        text = raw_text[:max_chars]
+
+        extracted = extract_part_numbers_and_quantities(text) or []
+
+        parts = []
+        seen = set()
+        for part_number, qty in extracted:
+            if not part_number:
+                continue
+            normalized = str(part_number).strip()
+            if not normalized:
+                continue
+            if normalized.upper() in seen:
+                continue
+            seen.add(normalized.upper())
+            quantity_val = None
+            try:
+                quantity_val = int(qty)
+            except Exception:
+                quantity_val = qty
+            parts.append({
+                "part_number": normalized,
+                "quantity": quantity_val,
+            })
+
+        suggestions = _find_parts_lists_for_parts(
+            [p["part_number"] for p in parts],
+            supplier_id=supplier_id,
+            limit=20,
+        ) if parts else []
+
+        return jsonify(
+            success=True,
+            parts=parts,
+            suggestions=suggestions,
+            truncated=len(raw_text) > max_chars,
+            pdf_name=body.get("name", "attachment.pdf"),
+        )
+    except Exception as exc:
+        current_app.logger.error("Mailbox PDF scan failed: %s", exc)
+        return jsonify(success=False, error=str(exc)), 500
+
 
 from bs4 import BeautifulSoup
 

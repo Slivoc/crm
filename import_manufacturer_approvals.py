@@ -5,7 +5,7 @@ This script keeps only the fields we care about (part numbers, manufacturer,
 location, and CAGE) while still preserving status metadata for troubleshooting.
 
 Usage:
-    python import_manufacturer_approvals.py /path/to/file.xlsx
+    python import_manufacturer_approvals.py Airbus_QPL.xlsx
 """
 import argparse
 import logging

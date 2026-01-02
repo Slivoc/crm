@@ -183,6 +183,7 @@
         <th>Contact</th>
         <th>Status</th>
         <th class="text-center" style="width: 18%;">Lines / Costed / Quoted</th>
+        <th class="text-center">QPL</th>
         <th style="width: 25%;">Preview</th>
         <th>Created</th>
         <th>Modified</th>
@@ -239,6 +240,10 @@
                                          aria-valuemax="{{ line_count }}">
                                     </div>
                                 </div>
+                            </td>
+                            <td class="text-center">
+                                <span class="fw-semibold">{{ list.qpl_line_count or 0 }}</span>
+                                <small class="text-muted">/ {{ line_count }}</small>
                             </td>
                             <td>
                                 <small class="text-muted font-monospace" style="line-height: 1.4;">
@@ -642,8 +647,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     if (typeof $.fn.DataTable !== 'undefined') {
-        partsListDataTable = $('#partsListsTable').DataTable({
-            order: [[6, 'desc']],
+            partsListDataTable = $('#partsListsTable').DataTable({
+            order: [[7, 'desc']],
             pageLength: 25,
             language: {
                 search: "Search lists:"

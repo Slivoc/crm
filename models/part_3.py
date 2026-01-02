@@ -1173,13 +1173,15 @@ def get_contact_by_email(email):
 
 def get_supplier_contact_by_email(email: str) -> Optional[Dict[str, Any]]:
     """Look up a supplier contact by email address."""
+    if not email:
+        return None
     with get_db() as db:
         cursor = db.cursor()
         cursor.execute("""
-            SELECT sc.*, s.name as supplier_name 
+            SELECT sc.*, s.name as supplier_name
             FROM supplier_contacts sc
             LEFT JOIN suppliers s ON s.id = sc.supplier_id
-            WHERE sc.email_address = ?
+            WHERE LOWER(sc.email_address) = LOWER(?)
         """, (email,))
         result = cursor.fetchone()
         return dict(result) if result else None

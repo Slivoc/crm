@@ -9,7 +9,9 @@ from models import (
     delete_part_number, get_part_numbers, insert_part_number, create_base_part_number,
     get_associated_manufacturers, get_po_lines_by_part_number, get_part_number_by_id,
     get_rfq_lines_by_part_number, get_requisitions_by_part_number, get_sales_order_lines_by_part_number,
-    get_global_alternatives, add_global_alternative   # ?Y'^ add these
+    get_global_alternatives, add_global_alternative,
+    get_parts_list_lines_by_part_number, get_supplier_quotes_by_part_number,
+    get_bom_lines_by_part_number, get_excess_lines_by_part_number, get_manufacturer_approvals_by_part_number
 )
 
 parts_bp = Blueprint('parts', __name__)
@@ -394,6 +396,13 @@ def view_part_number(base_part_number):
     requisitions = get_requisitions_by_part_number(base_part_number)
     sales_order_lines = get_sales_order_lines_by_part_number(base_part_number)
 
+    # Fetch new data sources
+    parts_list_lines = get_parts_list_lines_by_part_number(base_part_number)
+    supplier_quotes = get_supplier_quotes_by_part_number(base_part_number)
+    bom_lines = get_bom_lines_by_part_number(base_part_number)
+    excess_lines = get_excess_lines_by_part_number(base_part_number)
+    manufacturer_approvals = get_manufacturer_approvals_by_part_number(base_part_number)
+
     industry_query = """
         SELECT it.tag, COUNT(DISTINCT c.id) AS frequency
         FROM sales_order_lines sol
@@ -470,7 +479,12 @@ def view_part_number(base_part_number):
                            chart_data=chart_data,
                            top_customers=top_customers,
                            sales_metrics=sales_metrics,
-                           global_alternatives=global_alternatives)
+                           global_alternatives=global_alternatives,
+                           parts_list_lines=parts_list_lines,
+                           supplier_quotes=supplier_quotes,
+                           bom_lines=bom_lines,
+                           excess_lines=excess_lines,
+                           manufacturer_approvals=manufacturer_approvals)
 
 @parts_bp.route('/api/part_number_search', methods=['GET'])
 def part_number_search():

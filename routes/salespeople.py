@@ -10,7 +10,7 @@ from ai_helper import get_cached_news, get_top_customers_for_news, get_watched_c
 from routes.news_email import get_news_email_addresses, send_news_email
 from models import (get_salespeople, get_all_salespeople_with_contact_counts, get_call_list_contact_ids, add_to_call_list, remove_from_call_list,
     snooze_call_list_entry, get_call_list_with_communication_status, update_call_list_priority, update_call_list_notes, bulk_add_to_call_list, get_salesperson_recent_communications, get_communication_types_for_salesperson, delete_customer_tag, insert_customer_tags, get_all_tags, insert_customer_tag, get_engagement_settings, get_all_salespeople_with_customer_counts, get_priorities, save_engagement_settings, insert_salesperson, get_active_salespeople, get_engagement_metrics, toggle_salesperson_active, get_customer_contacts_with_communications, update_customer_field_value, get_all_contact_statuses, get_status_counts_for_salesperson, get_tags_by_customer_id, get_salesperson_customers_with_spend, get_salesperson_by_id, get_salesperson_contacts, get_contact_communications, get_salesperson_sales_by_date_range, get_salesperson_monthly_sales, get_accounts_monthly_sales,
-                    update_salesperson, delete_salesperson,
+                    update_salesperson, delete_salesperson, get_template_by_id,
                     get_customers_with_status_and_updates, get_customer_status_options, get_consolidated_customer_orders, get_consolidated_customer_ids,
                     add_customer_status_update, get_customer_updates, get_customer_rfqs, get_customer_rfqs_by_date_range, get_customer_orders_by_date_range, get_customer_active_rfqs_count, get_customer_active_orders_count,
                     get_customer_orders, Permission, get_salespeople_with_stats, get_total_customers, get_total_orders, get_total_active_orders, get_total_active_rfqs, get_salesperson_recent_activities, get_salesperson_active_rfqs, get_salesperson_customers, get_salesperson_pending_orders, get_customer_by_id)
@@ -106,10 +106,14 @@ def _get_customer_communication_snapshots(customer_groups, salesperson_id):
     """
 
     rows = db_execute(query, all_customer_ids + [salesperson_id], fetch='all') or []
+    rows = [dict(row) for row in rows if row]
     snapshots = {}
 
     for row in rows:
-        main_id = child_to_main.get(row['customer_id'], row['customer_id'])
+        customer_id = row.get('customer_id')
+        if not customer_id:
+            continue
+        main_id = child_to_main.get(customer_id, customer_id)
         snapshots.setdefault(main_id, {'last_contact': None, 'last_email': None})
 
         parsed_date = _parse_datetime_value(row.get('date'))
@@ -176,6 +180,137 @@ def _get_email_preview_from_cache(message_id, graph_user_id):
     }
 
 
+def _extract_graph_emails(value):
+    """Extract email addresses from Graph cache JSON fields."""
+    if not value:
+        return []
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode('utf-8', errors='ignore')
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return [value] if '@' in value else []
+    if isinstance(value, dict):
+        value = value.get('emailAddress', value)
+        if isinstance(value, dict):
+            addr = value.get('address') or value.get('email')
+            return [addr] if addr else []
+        return []
+    if isinstance(value, list):
+        emails = []
+        for item in value:
+            emails.extend(_extract_graph_emails(item))
+        return emails
+    return []
+
+
+def _get_latest_graph_emails_for_customers(customer_groups, graph_user_id, limit=200):
+    """Return the latest Graph email per main customer based on contact emails."""
+    if not graph_user_id or not customer_groups:
+        return {}
+
+    child_to_main = {}
+    all_customer_ids = []
+    for main_id, related_ids in customer_groups.items():
+        for cid in related_ids:
+            child_to_main[cid] = main_id
+            all_customer_ids.append(cid)
+
+    if not all_customer_ids:
+        return {}
+
+    placeholders = ','.join('?' for _ in all_customer_ids)
+    contacts = db_execute(
+        f"""
+        SELECT customer_id, email
+        FROM contacts
+        WHERE email IS NOT NULL AND email != ''
+          AND customer_id IN ({placeholders})
+        """,
+        all_customer_ids,
+        fetch='all'
+    ) or []
+
+    email_to_main = {}
+    for row in (dict(r) for r in contacts if r):
+        email = (row.get('email') or '').strip().lower()
+        if not email:
+            continue
+        main_id = child_to_main.get(row.get('customer_id'))
+        if main_id:
+            email_to_main[email] = main_id
+
+    if not email_to_main:
+        return {}
+
+    rows = db_execute(
+        """
+        SELECT message_id, subject, body_preview, sender_name, sender_email,
+               received_datetime, sent_datetime, to_recipients, cc_recipients, raw_message
+        FROM graph_email_cache
+        WHERE user_id = ?
+        ORDER BY COALESCE(received_datetime, sent_datetime) DESC
+        LIMIT ?
+        """,
+        (graph_user_id, limit),
+        fetch='all'
+    ) or []
+
+    latest_by_main = {}
+    for row in (dict(r) for r in rows if r):
+        sender_email = (row.get('sender_email') or '').strip().lower()
+        recipient_emails = []
+        recipient_emails.extend(_extract_graph_emails(row.get('to_recipients')))
+        recipient_emails.extend(_extract_graph_emails(row.get('cc_recipients')))
+        recipient_emails = [e.strip().lower() for e in recipient_emails if e]
+
+        possible_emails = []
+        if sender_email:
+            possible_emails.append(sender_email)
+        possible_emails.extend(recipient_emails)
+
+        match_main = None
+        for email in possible_emails:
+            match_main = email_to_main.get(email)
+            if match_main:
+                break
+
+        if not match_main or match_main in latest_by_main:
+            continue
+
+        raw_message = row.get('raw_message')
+        if isinstance(raw_message, (bytes, bytearray)):
+            raw_message = raw_message.decode('utf-8', errors='ignore')
+        if isinstance(raw_message, str):
+            try:
+                raw_message = json.loads(raw_message)
+            except json.JSONDecodeError:
+                raw_message = None
+
+        body_content = None
+        if isinstance(raw_message, dict):
+            body_data = raw_message.get('body') or raw_message.get('Body') or {}
+            body_content = body_data.get('content') if isinstance(body_data, dict) else None
+            if not body_content:
+                body_content = raw_message.get('bodyPreview') or raw_message.get('BodyPreview')
+
+        preview = body_content or row.get('body_preview') or ''
+        subject = row.get('subject') or ''
+        sent_at = row.get('received_datetime') or row.get('sent_datetime')
+        sent_dt = _parse_datetime_value(sent_at)
+
+        latest_by_main[match_main] = {
+            'subject': subject.strip(),
+            'preview': _strip_html(preview).strip()[:800],
+            'sender_email': row.get('sender_email'),
+            'sender_name': row.get('sender_name'),
+            'date': sent_dt.isoformat() if sent_dt else None
+        }
+
+    return latest_by_main
+
+
 def _build_news_lookup_for_customers(salesperson_id):
     """Return cached news indexed by lowercase customer name."""
     cached = get_cached_news(get_cache_key(salesperson_id)) or {}
@@ -210,7 +345,7 @@ def _hydrate_news_for_customers(customers, news_map, max_fetch=3):
 
 
 def _compute_suggestion_score(customer, comm_info):
-    """Weighted score to prioritize high-value, stale target customers."""
+    """Weighted score to prioritize high-value, stale zero-spend customers."""
     est_revenue = float(customer.get('estimated_revenue') or 0)
     fleet_size = float(customer.get('fleet_size') or 0)
 
@@ -224,13 +359,10 @@ def _compute_suggestion_score(customer, comm_info):
     revenue_component = min(log1p(est_revenue) / log1p(500000 + 1), 1.0)
     fleet_component = min(log1p(fleet_size) / log1p(400 + 1), 1.0)
     recency_component = 1.0 if days_since_contact is None else min(days_since_contact, 180) / 180
-    target_bonus = 0.15 if 'target' in (customer.get('customer_status') or '').lower() else 0
-
     raw_score = (
         revenue_component * 0.45 +
         fleet_component * 0.2 +
-        recency_component * 0.35 +
-        target_bonus
+        recency_component * 0.35
     )
 
     score = round(min(raw_score, 1.3) * 100, 1)
@@ -238,12 +370,11 @@ def _compute_suggestion_score(customer, comm_info):
         'revenue_component': round(revenue_component, 3),
         'fleet_component': round(fleet_component, 3),
         'recency_component': round(recency_component, 3),
-        'target_bonus': target_bonus,
         'days_since_contact': days_since_contact
     }
 
 
-def _generate_email_suggestion(customer, comm_info, news_items, last_email_preview):
+def _generate_email_suggestion(customer, comm_info, news_items, last_email_preview, seed_template=None):
     """Use OpenAI to draft the next outreach email with contextual cues."""
     client = _get_openai_email_client()
 
@@ -268,15 +399,17 @@ def _generate_email_suggestion(customer, comm_info, news_items, last_email_previ
         'latest_update': customer.get('latest_update'),
         'last_contact': comm_info.get('last_contact') if comm_info else None,
         'news_snippets': news_snippets,
-        'last_email': last_email_summary
+        'last_email': last_email_summary,
+        'seed_template': seed_template or ''
     }
 
     system_prompt = (
         "You are a concise B2B sales assistant. "
-        "Suggest the next email for a target customer who has not spent yet. "
+        "Suggest the next email for a zero-spend customer. "
         "Return ONLY valid JSON with keys 'subject' and 'body'. "
         "Keep the body under 150 words, personalize with any news snippets, "
-        "and propose a clear next step."
+        "and propose a clear next step. "
+        "If a seed_template is provided, use it as the base structure and tone."
     )
 
     try:
@@ -327,37 +460,161 @@ def _serialize_contact_payload(payload):
     return serialized
 
 
+def _build_seed_template(template_id):
+    """Return a combined subject/body seed string for AI generation."""
+    if not template_id:
+        return ''
+    try:
+        template = get_template_by_id(template_id)
+    except Exception:
+        template = None
+    if not template:
+        return ''
+    subject = (template.get('subject') or '').strip()
+    body = (template.get('body') or '').strip()
+    if subject and body:
+        return f"Subject: {subject}\n\n{body}"
+    return subject or body
+
+
+def _get_zero_spend_customers(salesperson_id):
+    """Fetch zero-spend parent customers with light aggregates in one query."""
+    try:
+        query = """
+            WITH child_map AS (
+                SELECT main_customer_id, associated_customer_id
+                FROM customer_associations
+            ),
+            main_customers AS (
+                SELECT 
+                    c.id,
+                    c.name,
+                    c.country,
+                    c.estimated_revenue,
+                    c.fleet_size,
+                    cs.status AS customer_status
+                FROM customers c
+                LEFT JOIN customer_status cs ON c.status_id = cs.id
+                WHERE c.salesperson_id = ?
+                  AND c.id NOT IN (SELECT associated_customer_id FROM child_map)
+            ),
+            related AS (
+                SELECT m.id AS main_id, m.id AS related_id
+                FROM main_customers m
+                UNION ALL
+                SELECT cm.main_customer_id AS main_id, cm.associated_customer_id AS related_id
+                FROM child_map cm
+                JOIN main_customers m ON m.id = cm.main_customer_id
+            ),
+            spend AS (
+                SELECT 
+                    r.main_id,
+                    COALESCE(SUM(CASE
+                        WHEN so.total_value IS NULL OR CAST(so.total_value AS TEXT) = '' THEN 0
+                        ELSE CAST(so.total_value AS REAL)
+                    END), 0) AS historical_spend
+                FROM related r
+                LEFT JOIN sales_orders so ON so.customer_id = r.related_id
+                GROUP BY r.main_id
+            ),
+            latest_update AS (
+                SELECT 
+                    r.main_id,
+                    cu.update_text,
+                    cu.date,
+                    ROW_NUMBER() OVER (PARTITION BY r.main_id ORDER BY cu.date DESC) AS rn
+                FROM related r
+                JOIN customer_updates cu ON cu.customer_id = r.related_id
+            )
+            SELECT 
+                m.id,
+                m.name,
+                m.country,
+                m.estimated_revenue,
+                m.fleet_size,
+                m.customer_status,
+                s.historical_spend,
+                lu.update_text AS latest_update,
+                lu.date AS latest_update_date
+            FROM main_customers m
+            JOIN spend s ON s.main_id = m.id
+            LEFT JOIN latest_update lu ON lu.main_id = m.id AND lu.rn = 1
+            WHERE s.historical_spend <= 0
+        """
+
+        rows = db_execute(query, (salesperson_id,), fetch='all') or []
+        rows = [dict(row) for row in rows if row]
+        main_ids = [row.get('id') for row in rows if row.get('id')]
+        related_map = {main_id: [main_id] for main_id in main_ids}
+
+        if main_ids:
+            placeholders = ','.join('?' for _ in main_ids)
+            assoc_rows = db_execute(
+                f"""
+                SELECT main_customer_id, associated_customer_id
+                FROM customer_associations
+                WHERE main_customer_id IN ({placeholders})
+                """,
+                main_ids,
+                fetch='all'
+            ) or []
+
+            for assoc in (dict(row) for row in assoc_rows if row):
+                main_id = assoc.get('main_customer_id')
+                assoc_id = assoc.get('associated_customer_id')
+                if main_id in related_map and assoc_id:
+                    related_map[main_id].append(assoc_id)
+
+        customers = []
+        for row in rows:
+            if not row:
+                continue
+            customer = dict(row)
+            customer['related_customer_ids'] = related_map.get(customer.get('id'), [customer.get('id')])
+            customer['has_associated_companies'] = len(customer['related_customer_ids']) > 1
+            customers.append(customer)
+
+        customers.sort(key=lambda x: float(x.get('estimated_revenue') or 0), reverse=True)
+        return customers
+    except Exception as exc:
+        print(f"Zero-spend customer lookup failed: {exc}")
+        fallback = get_salesperson_customers_with_spend(
+            salesperson_id,
+            sort_by='estimated_revenue',
+            sort_order='desc'
+        ) or []
+        filtered = [
+            customer for customer in fallback
+            if customer and float(customer.get('historical_spend') or 0) <= 0
+        ]
+        return filtered
+
+
 def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8):
-    """Aggregate data and AI outputs for the contact suggestions page."""
-    customers = get_salesperson_customers_with_spend(
-        salesperson_id,
-        sort_by='estimated_revenue',
-        sort_order='desc'
-    ) or []
+    """Aggregate data for the contact suggestions page."""
+    customers = _get_zero_spend_customers(salesperson_id)
+    customers = [customer for customer in customers if customer]
 
-    target_customers = []
-    for customer in customers:
-        spend = float(customer.get('historical_spend') or 0)
-        status_text = (customer.get('customer_status') or '').lower()
-        if spend > 0:
-            continue
-        if 'target' not in status_text:
-            continue
-        target_customers.append(customer)
-
-    if not target_customers:
+    if not customers:
         return [], False
 
     customer_groups = {
         customer['id']: customer.get('related_customer_ids') or [customer['id']]
-        for customer in target_customers
+        for customer in customers
+        if customer.get('id')
     }
     comm_snapshots = _get_customer_communication_snapshots(customer_groups, salesperson_id)
+    graph_email_map = _get_latest_graph_emails_for_customers(customer_groups, graph_user_id)
 
     scored = []
-    for customer in target_customers:
-        comm_info = comm_snapshots.get(customer['id'], {})
-        score, breakdown = _compute_suggestion_score(customer, comm_info)
+    for customer in customers:
+        customer_id = customer.get('id')
+        if not customer_id:
+            continue
+        comm_info = comm_snapshots.get(customer_id, {})
+        if not isinstance(comm_info, dict):
+            comm_info = {}
+        score, breakdown = _compute_suggestion_score(customer, comm_info or {})
         scored.append({
             'customer': customer,
             'comm_info': comm_info,
@@ -368,22 +625,23 @@ def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8):
     scored.sort(key=lambda x: x['score'], reverse=True)
     top_candidates = scored[:limit]
 
-    news_map, cached_news_used = _build_news_lookup_for_customers(salesperson_id)
-    _hydrate_news_for_customers([entry['customer'] for entry in top_candidates], news_map)
-
     suggestions = []
     for entry in top_candidates:
-        customer = entry['customer']
-        comm_info = entry['comm_info']
+        customer = (entry or {}).get('customer') or {}
+        comm_info = (entry or {}).get('comm_info')
+        if not isinstance(comm_info, dict):
+            comm_info = {}
+        if not customer.get('id'):
+            continue
         last_email_preview = None
-        if comm_info.get('last_email', {}).get('message_id'):
+        last_email = comm_info.get('last_email') or {}
+        if not isinstance(last_email, dict):
+            last_email = {}
+        if last_email.get('message_id'):
             last_email_preview = _get_email_preview_from_cache(
-                comm_info['last_email']['message_id'],
+                last_email.get('message_id'),
                 graph_user_id
             )
-
-        news_items = news_map.get(customer['name'].lower(), [])
-        email_suggestion = _generate_email_suggestion(customer, comm_info, news_items, last_email_preview)
 
         last_contact_serialized = _serialize_contact_payload(comm_info.get('last_contact'))
         last_email_serialized = _serialize_contact_payload(comm_info.get('last_email'))
@@ -394,6 +652,7 @@ def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8):
             'customer_id': customer['id'],
             'customer_name': customer.get('name'),
             'status': customer.get('customer_status'),
+            'country': customer.get('country'),
             'historical_spend': customer.get('historical_spend', 0),
             'estimated_revenue': customer.get('estimated_revenue', 0),
             'fleet_size': customer.get('fleet_size', 0),
@@ -403,14 +662,15 @@ def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8):
             'score_breakdown': entry['breakdown'],
             'last_contact': last_contact_serialized,
             'last_email': last_email_serialized,
-            'news_items': news_items,
-            'suggested_email': email_suggestion,
+            'last_graph_email': graph_email_map.get(customer['id']),
+            'news_items': [],
+            'suggested_email': None,
             'related_customers': customer.get('related_customer_ids', []),
             'has_associated_companies': customer.get('has_associated_companies', False),
             'priority_name': customer.get('priority_name')
         })
 
-    return suggestions, cached_news_used
+    return suggestions, False
 
 @salespeople_bp.route('/')
 @login_required
@@ -756,7 +1016,7 @@ def customers(salesperson_id):
 @salespeople_bp.route('/<int:salesperson_id>/contact-suggestions')
 @login_required
 def contact_suggestions_page(salesperson_id):
-    """Render the next-contact suggestions page for target customers."""
+    """Render the next-contact suggestions page for zero-spend customers."""
     salesperson = get_salesperson_by_id(salesperson_id)
     if not salesperson:
         flash('Salesperson not found!', 'error')
@@ -780,7 +1040,7 @@ def contact_suggestions_page(salesperson_id):
 @salespeople_bp.route('/<int:salesperson_id>/contact-suggestions/data')
 @login_required
 def contact_suggestions_data(salesperson_id):
-    """API endpoint that assembles target-customer outreach suggestions."""
+    """API endpoint that assembles zero-spend customer outreach suggestions."""
     salesperson = get_salesperson_by_id(salesperson_id)
     if not salesperson:
         return jsonify({'success': False, 'error': 'Salesperson not found'}), 404
@@ -797,8 +1057,78 @@ def contact_suggestions_data(salesperson_id):
         })
     except Exception as exc:
         print(f"Error generating contact suggestions: {exc}")
+        import traceback
+        print(traceback.format_exc())
         return jsonify({'success': False, 'error': str(exc)}), 500
 
+
+@salespeople_bp.route('/<int:salesperson_id>/contact-suggestions/ai', methods=['POST'])
+@login_required
+def contact_suggestions_ai(salesperson_id):
+    """Generate AI-backed email + news for a single customer suggestion."""
+    salesperson = get_salesperson_by_id(salesperson_id)
+    if not salesperson:
+        return jsonify({'success': False, 'error': 'Salesperson not found'}), 404
+
+    payload = request.get_json(silent=True) or {}
+    customer_id = payload.get('customer_id')
+    if not customer_id:
+        return jsonify({'success': False, 'error': 'Customer ID is required'}), 400
+    try:
+        customer_id = int(customer_id)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Customer ID is invalid'}), 400
+
+    template_id = payload.get('template_id')
+    try:
+        template_id = int(template_id) if template_id else None
+    except (TypeError, ValueError):
+        template_id = None
+    seed_template = _build_seed_template(template_id)
+
+    customers = _get_zero_spend_customers(salesperson_id)
+    customer = next((c for c in customers if c and c.get('id') == customer_id), None)
+    if not customer:
+        return jsonify({'success': False, 'error': 'Customer not found'}), 404
+
+    customer_groups = {
+        customer['id']: customer.get('related_customer_ids') or [customer['id']]
+    }
+    comm_snapshots = _get_customer_communication_snapshots(customer_groups, salesperson_id)
+    comm_info = comm_snapshots.get(customer['id'], {}) or {}
+    if not isinstance(comm_info, dict):
+        comm_info = {}
+
+    last_email_preview = None
+    last_email = comm_info.get('last_email') or {}
+    if not isinstance(last_email, dict):
+        last_email = {}
+    if last_email.get('message_id'):
+        graph_user_id = getattr(current_user, 'id', None)
+        last_email_preview = _get_email_preview_from_cache(
+            last_email.get('message_id'),
+            graph_user_id
+        )
+
+    news_map, cached_news_used = _build_news_lookup_for_customers(salesperson_id)
+    _hydrate_news_for_customers([customer], news_map)
+    news_items = news_map.get((customer.get('name') or '').lower(), [])
+
+    suggested_email = _generate_email_suggestion(
+        customer,
+        comm_info,
+        news_items,
+        last_email_preview,
+        seed_template=seed_template
+    )
+
+    return jsonify({
+        'success': True,
+        'customer_id': customer['id'],
+        'suggested_email': suggested_email,
+        'news_items': news_items,
+        'cached_news_used': cached_news_used
+    })
 @salespeople_bp.route('/<int:salesperson_id>/add_customer_update', methods=['POST'])
 @login_required
 def add_customer_update(salesperson_id):

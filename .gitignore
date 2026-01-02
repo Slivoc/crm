@@ -60,6 +60,11 @@ db.sqlite3
 # Tom added
 wsgi.py
 start_with_ngrok.bat
+copy_manufacturer_approvals_to_part_numbers.py
+dump_part_numbers_from_dev.py
+import_part_numbers_to_prod.py
+part_numbers_dump.json
+README_part_numbers_migration.md
 
 # Flask stuff:
 instance/
@@ -120,6 +125,8 @@ dmypy.json
 *.swp
 *.swo
 *~
+
+Airbus_QPL.xlsx
 
 # OS
 .DS_Store

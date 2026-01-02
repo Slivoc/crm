@@ -22,6 +22,7 @@
                 <th style="width: 100px; min-width: 100px; background: #e7f1ff;">POs</th>
                 <th style="width: 170px; min-width: 170px; background: #e7f1ff;">Excess</th>
                 <th style="width: 150px; min-width: 150px; background: #e7f1ff;">PL Quotes</th>
+                <th style="width: 90px; min-width: 90px; background: #e7f1ff;">QPL</th>
                 <th style="width: 120px; min-width: 120px; background: #e7f1ff;">ILS</th>
                 <th style="width: 100px; min-width: 100px; background: #e7f1ff;">BOMs</th>
                 <th style="width: 150px; min-width: 150px; background: #e7f1ff; border-right: 3px solid #0d6efd;">Guide Price</th>
@@ -36,5 +37,35 @@
             <!-- Will be populated by JavaScript -->
         </tbody>
     </table>
+</div>
+
+<!-- QPL Details Modal -->
+<div class="modal fade" id="qplDetailsModal" tabindex="-1" aria-labelledby="qplDetailsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="qplDetailsModalLabel">
+                    <i class="bi bi-shield-check me-2 text-primary"></i>QPL Approvals
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="qplDetailsSummary" class="text-muted small mb-3"></div>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Manufacturer</th>
+                                <th>CAGE</th>
+                                <th>Location</th>
+                            </tr>
+                        </thead>
+                        <tbody id="qplDetailsBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 

@@ -380,7 +380,13 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
             ${plQuotesDisplay}
         </td>
 
-
+        <td style="width: 90px; min-width: 90px; text-align: center; cursor: ${part.qpl_count > 0 ? 'pointer' : 'default'};"
+            class="purchasing-col ${part.qpl_count > 0 ? 'clickable-cell' : ''}"
+            ${part.qpl_count > 0 ? `onclick="showQplDetailsModal(${actualIndex})"` : ''}>
+            <span class="badge-count ${part.qpl_count > 0 ? 'badge-success' : 'badge-muted'}">
+                ${part.qpl_count > 0 ? part.qpl_count : '-'}
+            </span>
+        </td>
 
         <td style="width: 120px; min-width: 120px; ${part.ils_total_suppliers > 0 ? 'cursor: pointer;' : ''}"
             class="purchasing-col ${ilsClickable}"
@@ -492,6 +498,80 @@ function handleIlsClick(partIndex) {
     if (allResults && allResults[partIndex]) {
         showIlsDetailsModal(allResults[partIndex]);
     }
+}
+
+function showQplDetailsModal(partIndex) {
+    const part = window.allResults && window.allResults[partIndex];
+    if (!part) return;
+
+    const basePart = part.base_part_number || part.input_part_number || '';
+    const modalEl = document.getElementById('qplDetailsModal');
+    const summaryEl = document.getElementById('qplDetailsSummary');
+    const bodyEl = document.getElementById('qplDetailsBody');
+
+    if (!modalEl || !summaryEl || !bodyEl) return;
+
+    summaryEl.textContent = basePart ? `Results for ${basePart}` : 'Results';
+    bodyEl.innerHTML = `
+        <tr>
+            <td colspan="3" class="text-center text-muted">
+                <span class="spinner-border spinner-border-sm me-2"></span>Loading...
+            </td>
+        </tr>
+    `;
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+
+    if (!basePart) {
+        bodyEl.innerHTML = `
+            <tr>
+                <td colspan="3" class="text-center text-muted">No part number available.</td>
+            </tr>
+        `;
+        return;
+    }
+
+    fetch(`/parts_list/parts-lists/qpl?part=${encodeURIComponent(basePart)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                bodyEl.innerHTML = `
+                    <tr>
+                        <td colspan="3" class="text-center text-danger">${escapeHtml(data.message || 'Error loading QPL data.')}</td>
+                    </tr>
+                `;
+                return;
+            }
+
+            if (!data.results || data.results.length === 0) {
+                bodyEl.innerHTML = `
+                    <tr>
+                        <td colspan="3" class="text-center text-muted">No QPL approvals found.</td>
+                    </tr>
+                `;
+                return;
+            }
+
+            bodyEl.innerHTML = '';
+            data.results.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${escapeHtml(row.manufacturer_name || '-')}</td>
+                    <td>${escapeHtml(row.cage_code || '-')}</td>
+                    <td>${escapeHtml(row.location || '-')}</td>
+                `;
+                bodyEl.appendChild(tr);
+            });
+        })
+        .catch(error => {
+            console.error('Error loading QPL data:', error);
+            bodyEl.innerHTML = `
+                <tr>
+                    <td colspan="3" class="text-center text-danger">Error loading QPL data.</td>
+                </tr>
+            `;
+        });
 }
 
 function openQuickAddSupplier(companyName = '', email = '') {

@@ -1,278 +1,911 @@
 {% extends "base.html" %}
 
+{% block title %}{{ part_number.part_number }} - Part Details{% endblock %}
+
+{% block extra_css %}
+<style>
+/* Hero Section */
+.part-hero {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 16px;
+    padding: 2rem;
+    color: white;
+    margin-bottom: 1.5rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.part-hero::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    right: -50%;
+    width: 100%;
+    height: 200%;
+    background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 60%);
+    pointer-events: none;
+}
+
+.part-hero h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    font-family: 'Outfit', sans-serif;
+}
+
+.part-hero .part-meta {
+    opacity: 0.9;
+    font-size: 0.95rem;
+}
+
+.hero-actions .btn {
+    background: rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: white;
+    backdrop-filter: blur(10px);
+    transition: all 0.2s ease;
+}
+
+.hero-actions .btn:hover {
+    background: rgba(255,255,255,0.3);
+    color: white;
+    transform: translateY(-2px);
+}
+
+/* Stats Cards */
+.stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.stat-card {
+    background: white;
+    border-radius: 12px;
+    padding: 1.25rem;
+    border: 1px solid #e9ecef;
+    transition: all 0.2s ease;
+}
+
+.stat-card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    transform: translateY(-2px);
+}
+
+.stat-card .stat-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    margin-bottom: 0.75rem;
+}
+
+.stat-card .stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #212529;
+    font-family: 'Outfit', sans-serif;
+}
+
+.stat-card .stat-label {
+    font-size: 0.8rem;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Color variants for stat cards */
+.stat-card.blue .stat-icon { background: #e7f1ff; color: #0d6efd; }
+.stat-card.green .stat-icon { background: #d1e7dd; color: #198754; }
+.stat-card.purple .stat-icon { background: #e2d9f3; color: #6f42c1; }
+.stat-card.orange .stat-icon { background: #fff3cd; color: #fd7e14; }
+.stat-card.teal .stat-icon { background: #d2f4ea; color: #20c997; }
+.stat-card.pink .stat-icon { background: #f8d7da; color: #dc3545; }
+
+/* Section Cards */
+.section-card {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #e9ecef;
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+}
+
+.section-card .section-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #e9ecef;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fafbfc;
+}
+
+.section-card .section-header h5 {
+    margin: 0;
+    font-weight: 600;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.section-card .section-header .badge {
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.section-card .section-body {
+    padding: 0;
+}
+
+.section-card .section-body.has-padding {
+    padding: 1.25rem;
+}
+
+/* Empty State */
+.empty-state {
+    padding: 2rem;
+    text-align: center;
+    color: #6c757d;
+}
+
+.empty-state i {
+    font-size: 2.5rem;
+    opacity: 0.3;
+    margin-bottom: 0.75rem;
+}
+
+.empty-state p {
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+/* Modern Tables */
+.modern-table {
+    width: 100%;
+    font-size: 0.875rem;
+    margin: 0;
+}
+
+.modern-table thead th {
+    background: #f8f9fa;
+    font-weight: 600;
+    color: #6c757d;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #e9ecef;
+    white-space: nowrap;
+}
+
+.modern-table tbody td {
+    padding: 0.75rem 1rem;
+    vertical-align: middle;
+    border-bottom: 1px solid #f1f3f5;
+    color: #495057;
+}
+
+.modern-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.modern-table tbody tr:hover {
+    background: #f8f9fa;
+}
+
+/* Badges */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.status-badge.approved { background: #d1e7dd; color: #0f5132; }
+.status-badge.pending { background: #fff3cd; color: #856404; }
+.status-badge.quoted { background: #cfe2ff; color: #084298; }
+.status-badge.won { background: #d1e7dd; color: #0f5132; }
+.status-badge.lost { background: #f8d7da; color: #721c24; }
+.status-badge.new { background: #e2d9f3; color: #6f42c1; }
+
+/* Global Equivalents */
+.equiv-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.equiv-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.375rem 0.75rem;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    color: #495057;
+    text-decoration: none;
+    transition: all 0.15s ease;
+}
+
+.equiv-badge:hover {
+    background: #e7f1ff;
+    border-color: #0d6efd;
+    color: #0d6efd;
+}
+
+/* Grid Layout */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 1.5rem;
+}
+
+.col-span-4 { grid-column: span 4; }
+.col-span-6 { grid-column: span 6; }
+.col-span-8 { grid-column: span 8; }
+.col-span-12 { grid-column: span 12; }
+
+@media (max-width: 1200px) {
+    .col-span-4, .col-span-6, .col-span-8 { grid-column: span 6; }
+}
+
+@media (max-width: 768px) {
+    .col-span-4, .col-span-6, .col-span-8 { grid-column: span 12; }
+    .dashboard-grid { gap: 1rem; }
+}
+
+/* Price formatting */
+.price { font-family: 'SF Mono', 'Monaco', monospace; }
+.price-good { color: #198754; }
+.price-high { color: #dc3545; }
+
+/* Quick links in tables */
+.quick-link {
+    color: #0d6efd;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.quick-link:hover {
+    text-decoration: underline;
+}
+
+/* Tabs Navigation */
+.nav-tabs-modern {
+    border-bottom: 2px solid #e9ecef;
+    gap: 0.25rem;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+}
+
+.nav-tabs-modern .nav-link {
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    padding: 0.75rem 1.25rem;
+    color: #6c757d;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+}
+
+.nav-tabs-modern .nav-link:hover {
+    color: #495057;
+    border-color: #dee2e6;
+}
+
+.nav-tabs-modern .nav-link.active {
+    color: #0d6efd;
+    border-color: #0d6efd;
+    background: transparent;
+}
+
+.nav-tabs-modern .nav-link .badge {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.45rem;
+    margin-left: 0.5rem;
+}
+
+/* Manufacturer approval cards */
+.approval-card {
+    background: #fafbfc;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.approval-card:last-child {
+    margin-bottom: 0;
+}
+
+.approval-card .manufacturer-name {
+    font-weight: 600;
+    color: #212529;
+    margin-bottom: 0.5rem;
+}
+
+.approval-card .approval-details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    font-size: 0.85rem;
+    color: #6c757d;
+}
+
+.approval-card .approval-details span {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+/* Chart container */
+.chart-container {
+    height: 200px;
+    position: relative;
+}
+
+/* Scrollable table container */
+.table-scroll {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* Add new equiv input area */
+.add-equiv-area {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid mt-4">
-
-
-    <!-- Header with Action Buttons -->
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <div class="btn-group">
-            <a href="{{ url_for('parts.part_timeline', base_part_number=part_number.base_part_number) }}" class="btn btn-primary">
-                <i class="fas fa-chart-line"></i> View Timeline
-            </a>
-            <!-- Add Octopart Search Button -->
-            <button type="button" class="btn btn-info ms-2" onclick="openNexarModal('{{ part_number.part_number }}')">
-                <i class="bi bi-search"></i> Search Octopart
-            </button>
-        </div>
-    </div>
-
-    <div class="card shadow mb-4 border-0">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <strong>Part Number: {{ part_number.part_number }}</strong>
-            <button class="btn btn-link p-0" type="button" data-bs-toggle="collapse" data-bs-target="#partInfoContent" aria-expanded="true" aria-controls="partInfoContent">
-                <i class="bi bi-chevron-up"></i>
-            </button>
-        </div>
-        <div class="collapse show" id="partInfoContent">
-            <div class="card-body p-0">
-                <div class="row g-0">
-                    <!-- Part Info Section -->
-                    <div class="col-4 border-end">
-                        <div class="p-3">
-                            <p><strong>Base Part Number:</strong> {{ part_number.base_part_number }}</p>
-                            <p><strong>System Part Number:</strong> {{ part_number.system_part_number }}</p>
-                            <p><strong>Stock:</strong> {{ part_number.stock|default('Not available') }}</p>
-                        </div>
-                    </div>
-
-                                        <!-- Global Equivalents Section -->
-                    <div class="col-12 border-top">
-                        <div class="p-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <span class="text-muted">Global Equivalents</span>
-                            </div>
-
-                            {% if global_alternatives %}
-                                <div id="global-alts-list" class="mb-3">
-                                    {% for alt in global_alternatives %}
-                                        <a href="{{ url_for('parts.view_part_number', base_part_number=alt) }}"
-                                           class="badge rounded-pill text-bg-light border me-1 mb-1">
-                                            {{ alt }}
-                                        </a>
-                                    {% endfor %}
-                                </div>
-                            {% else %}
-                                <p id="global-alts-empty" class="text-muted mb-3">
-                                    No global equivalents defined yet.
-                                </p>
-                                <div id="global-alts-list" class="mb-3 d-none"></div>
-                            {% endif %}
-
-                            <div class="mb-2">
-                                <label for="global-alts-input" class="form-label mb-1">
-                                    Add global equivalents
-                                </label>
-                                <small class="text-muted d-block mb-1">
-                                    Paste or type multiple part numbers (comma, space or new line separated).
-                                </small>
-                                <textarea id="global-alts-input"
-                                          class="form-control form-control-sm"
-                                          rows="2"
-                                          placeholder="CR3212-2-2, NAS1097AD3-3, ASNA0083..., AF3212-2-2"></textarea>
-                            </div>
-                            <div class="d-flex justify-content-between align-items-center">
-                                <button type="button"
-                                        class="btn btn-sm btn-outline-primary"
-                                        onclick="saveGlobalAlternatives('{{ part_number.base_part_number }}')">
-                                    Save Global Equivalents
-                                </button>
-                                <small id="global-alts-status" class="text-muted"></small>
-                            </div>
-                        </div>
-                    </div>
-
-
-                    <!-- Industry Distribution Section -->
-                    <div class="col-4 border-end">
-                        <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
-                            <span class="text-muted">Industry Distribution</span>
-                        </div>
-                        <div class="p-3">
-                            <canvas id="industryChart"></canvas>
-                        </div>
-                    </div>
-
-                    <!-- Top Customers Section -->
-                    <div class="col-4">
-                        <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
-                            <span class="text-muted">Top Customers</span>
-                        </div>
-                        <div class="p-3">
-                            <div class="table-responsive">
-                                <table class="table table-sm">
-                                    <thead>
-                                        <tr>
-                                            <th>Customer</th>
-                                            <th>Orders</th>
-                                            <th>Qty</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {% for customer in top_customers %}
-                                        <tr>
-                                            <td>{{ customer.name }}</td>
-                                            <td>{{ customer.order_count }}</td>
-                                            <td>{{ customer.total_quantity }}</td>
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
+    <!-- Hero Section -->
+    <div class="part-hero">
+        <div class="row align-items-center">
+            <div class="col-lg-8">
+                <h1><i class="bi bi-cpu me-2"></i>{{ part_number.part_number }}</h1>
+                <div class="part-meta">
+                    <span class="me-3"><i class="bi bi-hash me-1"></i>Base: {{ part_number.base_part_number }}</span>
+                    {% if part_number.system_part_number %}
+                    <span class="me-3"><i class="bi bi-upc me-1"></i>System: {{ part_number.system_part_number }}</span>
+                    {% endif %}
+                    <span><i class="bi bi-box-seam me-1"></i>Stock: {{ part_number.stock|default('N/A') }}</span>
+                </div>
+            </div>
+            <div class="col-lg-4 text-lg-end mt-3 mt-lg-0">
+                <div class="hero-actions">
+                    <a href="{{ url_for('parts.part_timeline', base_part_number=part_number.base_part_number) }}" class="btn btn-sm me-2">
+                        <i class="bi bi-graph-up me-1"></i>Timeline
+                    </a>
+                    <button type="button" class="btn btn-sm" onclick="openNexarModal('{{ part_number.part_number }}')">
+                        <i class="bi bi-search me-1"></i>Octopart
+                    </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- RFQ Lines Section -->
-    <div class="card mb-4 shadow p-3 border-0">
-        <div class="card-header">
-            <strong>RFQ Lines</strong>
+    <!-- Stats Row -->
+    <div class="stats-row">
+        <div class="stat-card blue">
+            <div class="stat-icon"><i class="bi bi-list-check"></i></div>
+            <div class="stat-value">{{ parts_list_lines|length }}</div>
+            <div class="stat-label">Parts Lists</div>
         </div>
-        <div class="card-body">
-            {% if rfq_lines %}
-            <div class="table-responsive">
-                <table class="table table-striped table-bordered">
-                    <thead>
-                        <tr>
-                            <th>RFQ ID</th>
-                            <th>Entered Date</th>
-                            <th>Line Number</th>
-                            <th>Quantity</th>
-                            <th>Customer</th>
-                            <th>Price</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for rfq_line in rfq_lines %}
-                        <tr>
-                            <td><a href="{{ url_for('rfqs.edit_rfq', rfq_id=rfq_line.id) }}">{{ rfq_line.id }}</a></td>
-                            <td>{{ rfq_line.entered_date }}</td>
-                            <td>{{ rfq_line.line_number }}</td>
-                            <td>{{ rfq_line.quantity }}</td>
-                            <td>{{ rfq_line.customer }}</td>
-                            <td>{{ rfq_line.price }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <p>No RFQ lines associated with this part number.</p>
-            {% endif %}
+        <div class="stat-card green">
+            <div class="stat-icon"><i class="bi bi-receipt"></i></div>
+            <div class="stat-value">{{ supplier_quotes|length }}</div>
+            <div class="stat-label">Supplier Quotes</div>
+        </div>
+        <div class="stat-card purple">
+            <div class="stat-icon"><i class="bi bi-cart-check"></i></div>
+            <div class="stat-value">{{ sales_order_lines|length }}</div>
+            <div class="stat-label">Sales Orders</div>
+        </div>
+        <div class="stat-card orange">
+            <div class="stat-icon"><i class="bi bi-truck"></i></div>
+            <div class="stat-value">{{ po_lines|length }}</div>
+            <div class="stat-label">Purchase Orders</div>
+        </div>
+        <div class="stat-card teal">
+            <div class="stat-icon"><i class="bi bi-diagram-3"></i></div>
+            <div class="stat-value">{{ bom_lines|length }}</div>
+            <div class="stat-label">BOMs</div>
+        </div>
+        <div class="stat-card pink">
+            <div class="stat-icon"><i class="bi bi-patch-check"></i></div>
+            <div class="stat-value">{{ manufacturer_approvals|length }}</div>
+            <div class="stat-label">Approvals</div>
         </div>
     </div>
 
-    <!-- PO Lines Section -->
-    <div class="card mb-4 shadow p-3 border-0">
-        <div class="card-header">
-            <strong>PO Lines</strong>
-        </div>
-        <div class="card-body">
-            {% if po_lines %}
-            <div class="table-responsive">
-                <table class="table table-striped table-bordered">
-                    <thead>
-                        <tr>
-                            <th>PO ID</th>
-                            <th>PO Reference</th>
-                            <th>Line Number</th>
-                            <th>Quantity</th>
-                            <th>Price</th>
-                            <th>Supplier</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for po_line in po_lines %}
-                        <tr>
-                            <td>{{ po_line.id }}</td>
-                            <td>{{ po_line.purchase_order_ref }}</td>
-                            <td>{{ po_line.line_number }}</td>
-                            <td>{{ po_line.quantity }}</td>
-                            <td>{{ po_line.price }}</td>
-                            <td>{{ po_line.supplier }}</td>
-                        </tr>
+    <!-- Main Dashboard Grid -->
+    <div class="dashboard-grid">
+        <!-- Left Column - Charts & Equivalents -->
+        <div class="col-span-4">
+            <!-- Global Equivalents -->
+            <div class="section-card">
+                <div class="section-header">
+                    <h5><i class="bi bi-link-45deg text-primary"></i>Global Equivalents</h5>
+                    <span class="badge bg-secondary">{{ global_alternatives|length }}</span>
+                </div>
+                <div class="section-body has-padding">
+                    {% if global_alternatives %}
+                    <div class="equiv-badges" id="global-alts-list">
+                        {% for alt in global_alternatives %}
+                        <a href="{{ url_for('parts.view_part_number', base_part_number=alt) }}" class="equiv-badge">
+                            {{ alt }}
+                        </a>
                         {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <p>No PO lines associated with this part number.</p>
-            {% endif %}
-        </div>
-    </div>
+                    </div>
+                    {% else %}
+                    <p id="global-alts-empty" class="text-muted mb-0 small">No global equivalents defined yet.</p>
+                    <div class="equiv-badges d-none" id="global-alts-list"></div>
+                    {% endif %}
 
-    <!-- Requisitions Section -->
-    <div class="card mb-4 shadow p-3 border-0">
-        <div class="card-header">
-            <strong>Requisitions</strong>
-        </div>
-        <div class="card-body">
-            {% if requisitions %}
-            <div class="table-responsive">
-                <table class="table table-striped table-bordered">
-                    <thead>
-                        <tr>
-                            <th>Requisition ID</th>
-                            <th>Date</th>
-                            <th>Quantity</th>
-                            <th>Supplier</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for req in requisitions %}
-                        <tr>
-                            <td>{{ req.id }}</td>
-                            <td>{{ req.date }}</td>
-                            <td>{{ req.quantity }}</td>
-                            <td>{{ req.supplier }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+                    <div class="add-equiv-area mt-3">
+                        <label class="form-label small text-muted mb-1">Add equivalents (comma/space/newline separated)</label>
+                        <textarea id="global-alts-input" class="form-control form-control-sm mb-2" rows="2" placeholder="e.g. CR3212-2-2, NAS1097AD3-3"></textarea>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <button type="button" class="btn btn-sm btn-primary" onclick="saveGlobalAlternatives('{{ part_number.base_part_number }}')">
+                                <i class="bi bi-plus-lg me-1"></i>Add
+                            </button>
+                            <small id="global-alts-status" class="text-muted"></small>
+                        </div>
+                    </div>
+                </div>
             </div>
-            {% else %}
-            <p>No requisitions associated with this part number.</p>
-            {% endif %}
-        </div>
-    </div>
 
-    <!-- Sales Order Lines Section -->
-    <div class="card mb-4 shadow p-3 border-0">
-        <div class="card-header">
-            <strong>Sales Order Lines</strong>
-        </div>
-        <div class="card-body">
-            {% if sales_order_lines %}
-            <div class="table-responsive">
-                <table class="table table-striped table-bordered">
-                    <thead>
-                        <tr>
-                            <th>Sales Order Line ID</th>
-                            <th>Line Number</th>
-                            <th>Quantity</th>
-                            <th>Price</th>
-                            <th>Customer</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for sol in sales_order_lines %}
-                        <tr>
-                            <td>{{ sol.id }}</td>
-                            <td>{{ sol.line_number }}</td>
-                            <td>{{ sol.quantity }}</td>
-                            <td>{{ sol.price }}</td>
-                            <td>{{ sol.customer }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <!-- Industry Distribution -->
+            <div class="section-card">
+                <div class="section-header">
+                    <h5><i class="bi bi-pie-chart text-info"></i>Industry Distribution</h5>
+                </div>
+                <div class="section-body has-padding">
+                    {% if chart_data.labels %}
+                    <div class="chart-container">
+                        <canvas id="industryChart"></canvas>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-pie-chart"></i>
+                        <p>No industry data available</p>
+                    </div>
+                    {% endif %}
+                </div>
             </div>
-            {% else %}
-            <p>No sales order lines associated with this part number.</p>
-            {% endif %}
+
+            <!-- Top Customers -->
+            <div class="section-card">
+                <div class="section-header">
+                    <h5><i class="bi bi-people text-success"></i>Top Customers</h5>
+                </div>
+                <div class="section-body">
+                    {% if top_customers %}
+                    <table class="modern-table">
+                        <thead>
+                            <tr>
+                                <th>Customer</th>
+                                <th class="text-center">Orders</th>
+                                <th class="text-end">Qty</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for customer in top_customers %}
+                            <tr>
+                                <td>{{ customer.name }}</td>
+                                <td class="text-center">{{ customer.order_count }}</td>
+                                <td class="text-end">{{ "{:,}".format(customer.total_quantity|int) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-people"></i>
+                        <p>No customer data yet</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column - Tabbed Data -->
+        <div class="col-span-8">
+            <div class="section-card">
+                <div class="section-body">
+                    <!-- Tab Navigation -->
+                    <ul class="nav nav-tabs-modern nav-tabs px-3 pt-3" id="dataTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="parts-lists-tab" data-bs-toggle="tab" data-bs-target="#parts-lists" type="button">
+                                <i class="bi bi-list-check me-1"></i>Parts Lists
+                                <span class="badge bg-primary">{{ parts_list_lines|length }}</span>
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="supplier-quotes-tab" data-bs-toggle="tab" data-bs-target="#supplier-quotes" type="button">
+                                <i class="bi bi-receipt me-1"></i>Supplier Quotes
+                                <span class="badge bg-success">{{ supplier_quotes|length }}</span>
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="sales-orders-tab" data-bs-toggle="tab" data-bs-target="#sales-orders" type="button">
+                                <i class="bi bi-cart-check me-1"></i>Sales Orders
+                                <span class="badge bg-purple" style="background:#6f42c1;">{{ sales_order_lines|length }}</span>
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="purchase-orders-tab" data-bs-toggle="tab" data-bs-target="#purchase-orders" type="button">
+                                <i class="bi bi-truck me-1"></i>Purchase Orders
+                                <span class="badge bg-warning text-dark">{{ po_lines|length }}</span>
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="boms-tab" data-bs-toggle="tab" data-bs-target="#boms" type="button">
+                                <i class="bi bi-diagram-3 me-1"></i>BOMs
+                                <span class="badge bg-info">{{ bom_lines|length }}</span>
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="approvals-tab" data-bs-toggle="tab" data-bs-target="#approvals" type="button">
+                                <i class="bi bi-patch-check me-1"></i>Approvals
+                                <span class="badge bg-danger">{{ manufacturer_approvals|length }}</span>
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="excess-tab" data-bs-toggle="tab" data-bs-target="#excess" type="button">
+                                <i class="bi bi-box-seam me-1"></i>Excess
+                                <span class="badge bg-secondary">{{ excess_lines|length }}</span>
+                            </button>
+                        </li>
+                    </ul>
+
+                    <!-- Tab Content -->
+                    <div class="tab-content" id="dataTabsContent">
+                        <!-- Parts Lists Tab -->
+                        <div class="tab-pane fade show active" id="parts-lists" role="tabpanel">
+                            {% if parts_list_lines %}
+                            <div class="table-scroll">
+                                <table class="modern-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Parts List</th>
+                                            <th>Customer</th>
+                                            <th>Status</th>
+                                            <th class="text-center">Qty</th>
+                                            <th class="text-end">Cost</th>
+                                            <th class="text-end">Price</th>
+                                            <th>Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for line in parts_list_lines %}
+                                        <tr>
+                                            <td>
+                                                <a href="{{ url_for('parts_list.view_parts_list', list_id=line.parts_list_id) }}" class="quick-link">
+                                                    {{ line.parts_list_name }}
+                                                </a>
+                                            </td>
+                                            <td>{{ line.customer_name or '-' }}</td>
+                                            <td>
+                                                <span class="status-badge {% if line.status_name == 'Won' %}won{% elif line.status_name == 'Quoted' %}quoted{% elif line.status_name == 'New' %}new{% else %}pending{% endif %}">
+                                                    {{ line.status_name or 'Unknown' }}
+                                                </span>
+                                            </td>
+                                            <td class="text-center">{{ line.quantity }}</td>
+                                            <td class="text-end price">{{ "%.2f"|format(line.chosen_cost) if line.chosen_cost else '-' }}</td>
+                                            <td class="text-end price">{{ "%.2f"|format(line.chosen_price) if line.chosen_price else '-' }}</td>
+                                            <td>{{ line.date_created.strftime('%d %b %Y') if line.date_created else '-' }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <div class="empty-state">
+                                <i class="bi bi-list-check"></i>
+                                <p>No parts list entries found</p>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Supplier Quotes Tab -->
+                        <div class="tab-pane fade" id="supplier-quotes" role="tabpanel">
+                            {% if supplier_quotes %}
+                            <div class="table-scroll">
+                                <table class="modern-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Supplier</th>
+                                            <th>Parts List</th>
+                                            <th>Manufacturer</th>
+                                            <th class="text-center">Qty</th>
+                                            <th class="text-end">Unit Price</th>
+                                            <th class="text-center">Lead (days)</th>
+                                            <th>Condition</th>
+                                            <th>Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for quote in supplier_quotes %}
+                                        <tr>
+                                            <td>
+                                                <a href="{{ url_for('suppliers.view_supplier', supplier_id=quote.supplier_id) }}" class="quick-link">
+                                                    {{ quote.supplier_name }}
+                                                </a>
+                                            </td>
+                                            <td>
+                                                <a href="{{ url_for('parts_list.view_parts_list', list_id=quote.parts_list_id) }}" class="quick-link">
+                                                    {{ quote.parts_list_name }}
+                                                </a>
+                                            </td>
+                                            <td>{{ quote.manufacturer or '-' }}</td>
+                                            <td class="text-center">{{ quote.quantity_quoted or '-' }}</td>
+                                            <td class="text-end price {% if quote.unit_price %}price-good{% endif %}">
+                                                {% if quote.is_no_bid %}
+                                                <span class="text-danger">No Bid</span>
+                                                {% elif quote.unit_price %}
+                                                {{ "%.4f"|format(quote.unit_price) }}
+                                                {% else %}
+                                                -
+                                                {% endif %}
+                                            </td>
+                                            <td class="text-center">{{ quote.lead_time_days or '-' }}</td>
+                                            <td>{{ quote.condition_code or '-' }}</td>
+                                            <td>{{ quote.quote_date.strftime('%d %b %Y') if quote.quote_date else '-' }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <div class="empty-state">
+                                <i class="bi bi-receipt"></i>
+                                <p>No supplier quotes found</p>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Sales Orders Tab -->
+                        <div class="tab-pane fade" id="sales-orders" role="tabpanel">
+                            {% if sales_order_lines %}
+                            <div class="table-scroll">
+                                <table class="modern-table">
+                                    <thead>
+                                        <tr>
+                                            <th>SO Line ID</th>
+                                            <th>Customer</th>
+                                            <th class="text-center">Line #</th>
+                                            <th class="text-center">Qty</th>
+                                            <th class="text-end">Price</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for sol in sales_order_lines %}
+                                        <tr>
+                                            <td>
+                                                <a href="{{ url_for('sales_orders.edit_sales_order', sales_order_id=sol.id) }}" class="quick-link">
+                                                    #{{ sol.id }}
+                                                </a>
+                                            </td>
+                                            <td>{{ sol.customer }}</td>
+                                            <td class="text-center">{{ sol.line_number }}</td>
+                                            <td class="text-center">{{ sol.quantity }}</td>
+                                            <td class="text-end price">{{ "%.2f"|format(sol.price) if sol.price else '-' }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <div class="empty-state">
+                                <i class="bi bi-cart-check"></i>
+                                <p>No sales orders found</p>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Purchase Orders Tab -->
+                        <div class="tab-pane fade" id="purchase-orders" role="tabpanel">
+                            {% if po_lines %}
+                            <div class="table-scroll">
+                                <table class="modern-table">
+                                    <thead>
+                                        <tr>
+                                            <th>PO Ref</th>
+                                            <th>Supplier</th>
+                                            <th class="text-center">Line #</th>
+                                            <th class="text-center">Qty</th>
+                                            <th class="text-end">Price</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for po in po_lines %}
+                                        <tr>
+                                            <td>
+                                                <a href="{{ url_for('purchase_orders.edit_purchase_order', purchase_order_id=po.id) }}" class="quick-link">
+                                                    {{ po.purchase_order_ref }}
+                                                </a>
+                                            </td>
+                                            <td>{{ po.supplier }}</td>
+                                            <td class="text-center">{{ po.line_number }}</td>
+                                            <td class="text-center">{{ po.quantity }}</td>
+                                            <td class="text-end price">{{ "%.2f"|format(po.price) if po.price else '-' }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <div class="empty-state">
+                                <i class="bi bi-truck"></i>
+                                <p>No purchase orders found</p>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- BOMs Tab -->
+                        <div class="tab-pane fade" id="boms" role="tabpanel">
+                            {% if bom_lines %}
+                            <div class="table-scroll">
+                                <table class="modern-table">
+                                    <thead>
+                                        <tr>
+                                            <th>BOM Name</th>
+                                            <th>Assembly P/N</th>
+                                            <th>Type</th>
+                                            <th class="text-center">Qty</th>
+                                            <th>Ref Designator</th>
+                                            <th>Notes</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for bom in bom_lines %}
+                                        <tr>
+                                            <td>
+                                                <a href="{{ url_for('bom.view_bom', bom_id=bom.bom_id) }}" class="quick-link">
+                                                    {{ bom.bom_name }}
+                                                </a>
+                                            </td>
+                                            <td>
+                                                {% if bom.assembly_part_number %}
+                                                <a href="{{ url_for('parts.view_part_number', base_part_number=bom.assembly_part_number) }}" class="quick-link">
+                                                    {{ bom.assembly_part_number }}
+                                                </a>
+                                                {% else %}
+                                                -
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                <span class="status-badge {% if bom.bom_type == 'assembly' %}approved{% else %}pending{% endif %}">
+                                                    {{ bom.bom_type }}
+                                                </span>
+                                            </td>
+                                            <td class="text-center">{{ bom.quantity }}</td>
+                                            <td>{{ bom.reference_designator or '-' }}</td>
+                                            <td>{{ bom.line_notes[:50] + '...' if bom.line_notes and bom.line_notes|length > 50 else bom.line_notes or '-' }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <div class="empty-state">
+                                <i class="bi bi-diagram-3"></i>
+                                <p>Not found in any BOMs</p>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Manufacturer Approvals Tab -->
+                        <div class="tab-pane fade" id="approvals" role="tabpanel">
+                            {% if manufacturer_approvals %}
+                            <div class="p-3">
+                                {% for approval in manufacturer_approvals %}
+                                <div class="approval-card">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div class="manufacturer-name">
+                                            <i class="bi bi-building me-1"></i>{{ approval.manufacturer_name }}
+                                        </div>
+                                        <span class="status-badge {% if approval.approval_status == 'Approved' %}approved{% elif approval.approval_status == 'Pending' %}pending{% else %}new{% endif %}">
+                                            {{ approval.approval_status or 'Unknown' }}
+                                        </span>
+                                    </div>
+                                    <div class="approval-details">
+                                        {% if approval.cage_code %}
+                                        <span><i class="bi bi-qr-code"></i> CAGE: {{ approval.cage_code }}</span>
+                                        {% endif %}
+                                        {% if approval.country %}
+                                        <span><i class="bi bi-geo-alt"></i> {{ approval.country }}</span>
+                                        {% endif %}
+                                        {% if approval.standard %}
+                                        <span><i class="bi bi-award"></i> {{ approval.standard }}</span>
+                                        {% endif %}
+                                        {% if approval.manufacturer_part_number %}
+                                        <span><i class="bi bi-hash"></i> MPN: {{ approval.manufacturer_part_number }}</span>
+                                        {% endif %}
+                                        {% if approval.p_status_text %}
+                                        <span><i class="bi bi-info-circle"></i> {{ approval.p_status_text }}</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% else %}
+                            <div class="empty-state">
+                                <i class="bi bi-patch-check"></i>
+                                <p>No manufacturer approvals found</p>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Excess Lists Tab -->
+                        <div class="tab-pane fade" id="excess" role="tabpanel">
+                            {% if excess_lines %}
+                            <div class="table-scroll">
+                                <table class="modern-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Source</th>
+                                            <th>Type</th>
+                                            <th class="text-center">Qty</th>
+                                            <th>Manufacturer</th>
+                                            <th>Date Code</th>
+                                            <th>Status</th>
+                                            <th>Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for excess in excess_lines %}
+                                        <tr>
+                                            <td>
+                                                <a href="{{ url_for('excess.edit_excess_list', list_id=excess.excess_list_id) }}" class="quick-link">
+                                                    {{ excess.source_name or 'Unknown' }}
+                                                </a>
+                                            </td>
+                                            <td>
+                                                <span class="status-badge {% if excess.source_type == 'customer' %}approved{% else %}pending{% endif %}">
+                                                    {{ excess.source_type|capitalize }}
+                                                </span>
+                                            </td>
+                                            <td class="text-center">{{ excess.quantity or '-' }}</td>
+                                            <td>{{ excess.manufacturer or '-' }}</td>
+                                            <td>{{ excess.date_code or '-' }}</td>
+                                            <td>
+                                                <span class="status-badge {% if excess.status == 'new' %}new{% else %}pending{% endif %}">
+                                                    {{ excess.status|capitalize if excess.status else 'Unknown' }}
+                                                </span>
+                                            </td>
+                                            <td>{{ excess.entered_date or '-' }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <div class="empty-state">
+                                <i class="bi bi-box-seam"></i>
+                                <p>No excess inventory found</p>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -305,32 +938,39 @@
         const canvas = document.getElementById('industryChart');
         const chartData = {{ chart_data|tojson }};
 
-        ChartUtils.createChart(canvas, {
-            type: 'pie',
-            data: chartData
-        });
+        if (canvas && chartData.labels && chartData.labels.length > 0) {
+            ChartUtils.createChart(canvas, {
+                type: 'doughnut',
+                data: chartData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                boxWidth: 12,
+                                padding: 15,
+                                font: { size: 11 }
+                            }
+                        }
+                    }
+                }
+            });
+        }
     });
 </script>
 
 <script>
 // Function to open the Nexar/Octopart modal
 function openNexarModal(partNumber) {
-    console.log('Opening Nexar modal for part number:', partNumber);
-
-    // Get the modal elements
     const nexarModal = document.getElementById('nexarModal');
     const modalTitle = document.getElementById('nexarModalTitle');
     const modalBody = document.getElementById('nexarModalBody');
 
-    if (!nexarModal) {
-        console.error('Nexar modal element not found!');
-        return;
-    }
+    if (!nexarModal) return;
 
-    // Update the modal title with the part number
     modalTitle.textContent = `Octopart Data: ${partNumber}`;
-
-    // Show loading state in the modal
     modalBody.innerHTML = `
         <div class="text-center py-4">
             <div class="spinner-border text-primary" role="status">
@@ -340,34 +980,21 @@ function openNexarModal(partNumber) {
         </div>
     `;
 
-    // Create a bootstrap modal instance if it doesn't exist
     if (!window.nexarModalInstance) {
         window.nexarModalInstance = new bootstrap.Modal(nexarModal);
     }
-
-    // Show the modal
     window.nexarModalInstance.show();
 
-    // Fetch data from your backend API that will query Octopart
     fetch(`/parts/octopart_search/${encodeURIComponent(partNumber)}`)
         .then(response => {
-            console.log('Response status:', response.status);
-            if (!response.ok) {
-                throw new Error(`HTTP error! Status: ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
             return response.json();
         })
         .then(data => {
-            console.log('Received data from Octopart:', data);
-            if (data.error) {
-                throw new Error(data.error);
-            }
-            // Render the data in the modal
+            if (data.error) throw new Error(data.error);
             renderOctopartData(data, modalBody);
         })
         .catch(error => {
-            console.error('Error fetching Octopart data:', error);
-            // Handle errors
             modalBody.innerHTML = `
                 <div class="alert alert-danger">
                     <i class="bi bi-exclamation-triangle-fill me-2"></i>
@@ -382,9 +1009,7 @@ function openNexarModal(partNumber) {
         });
 }
 
-// Function to render Octopart data in the modal
 function renderOctopartData(data, container) {
-    // Check if we have results
     if (!data.results || data.results.length === 0) {
         container.innerHTML = `
             <div class="alert alert-warning">
@@ -398,12 +1023,9 @@ function renderOctopartData(data, container) {
     const result = data.results[0];
     const part = result.part;
 
-    // Create HTML for the part info
     let html = `
-        <div class="card mb-4 border-0 shadow-sm">
-            <div class="card-header bg-light">
-                <h5 class="mb-0">Part Information</h5>
-            </div>
+        <div class="card mb-3 border-0 shadow-sm">
+            <div class="card-header bg-light"><h6 class="mb-0">Part Information</h6></div>
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-6">
@@ -418,118 +1040,48 @@ function renderOctopartData(data, container) {
         </div>
     `;
 
-    // Add specs if available
     if (part.specs && part.specs.length > 0) {
-        html += `
-            <div class="card mb-4 border-0 shadow-sm">
-                <div class="card-header bg-light">
-                    <h5 class="mb-0">Specifications</h5>
-                </div>
-                <div class="card-body">
-                    <div class="row">
-        `;
-
-        // Group specs into columns
+        html += `<div class="card mb-3 border-0 shadow-sm">
+            <div class="card-header bg-light"><h6 class="mb-0">Specifications</h6></div>
+            <div class="card-body"><div class="row">`;
         const specsPerColumn = Math.ceil(part.specs.length / 2);
-        let leftColumnSpecs = '';
-        let rightColumnSpecs = '';
-
-        part.specs.forEach((spec, index) => {
-            const specHtml = `<p><strong>${spec.name}:</strong> ${spec.value}</p>`;
-            if (index < specsPerColumn) {
-                leftColumnSpecs += specHtml;
-            } else {
-                rightColumnSpecs += specHtml;
-            }
+        let leftCol = '', rightCol = '';
+        part.specs.forEach((spec, i) => {
+            const specHtml = `<p class="mb-1"><strong>${spec.name}:</strong> ${spec.value}</p>`;
+            if (i < specsPerColumn) leftCol += specHtml;
+            else rightCol += specHtml;
         });
-
-        html += `
-                        <div class="col-md-6">
-                            ${leftColumnSpecs}
-                        </div>
-                        <div class="col-md-6">
-                            ${rightColumnSpecs}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
+        html += `<div class="col-md-6">${leftCol}</div><div class="col-md-6">${rightCol}</div></div></div></div>`;
     }
 
-    // Add seller offers if available
     if (part.sellers && part.sellers.length > 0) {
-        html += `
-            <div class="card mb-4 border-0 shadow-sm">
-                <div class="card-header bg-light">
-                    <h5 class="mb-0">Availability</h5>
-                </div>
-                <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="table table-hover mb-0">
-                            <thead>
-                                <tr>
-                                    <th>Supplier</th>
-                                    <th>Stock</th>
-                                    <th>MOQ</th>
-                                    <th>SKU</th>
-                                    <th>1+</th>
-                                    <th>10+</th>
-                                    <th>100+</th>
-                                    <th>1000+</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-        `;
-
+        html += `<div class="card mb-3 border-0 shadow-sm">
+            <div class="card-header bg-light"><h6 class="mb-0">Availability</h6></div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead><tr><th>Supplier</th><th>Stock</th><th>MOQ</th><th>1+</th><th>10+</th><th>100+</th></tr></thead>
+                        <tbody>`;
         part.sellers.forEach(seller => {
             if (seller.offers && seller.offers.length > 0) {
                 const offer = seller.offers[0];
                 const prices = offer.prices || [];
-
-                // Find prices for different quantities
-                const priceMap = {
-                    1: 'N/A',
-                    10: 'N/A',
-                    100: 'N/A',
-                    1000: 'N/A'
-                };
-
-                prices.forEach(price => {
-                    const qty = price.quantity;
-                    if (qty in priceMap) {
-                        priceMap[qty] = `${price.price} ${price.currency}`;
-                    }
-                });
-
-                html += `
-                    <tr>
-                        <td>${seller.company ? seller.company.name : 'N/A'}</td>
-                        <td>${offer.inventoryLevel || 'N/A'}</td>
-                        <td>${offer.moq || 'N/A'}</td>
-                        <td>${offer.sku || 'N/A'}</td>
-                        <td>${priceMap[1]}</td>
-                        <td>${priceMap[10]}</td>
-                        <td>${priceMap[100]}</td>
-                        <td>${priceMap[1000]}</td>
-                    </tr>
-                `;
+                const priceMap = {1: '-', 10: '-', 100: '-'};
+                prices.forEach(p => { if (p.quantity in priceMap) priceMap[p.quantity] = `${p.price} ${p.currency}`; });
+                html += `<tr>
+                    <td>${seller.company ? seller.company.name : 'N/A'}</td>
+                    <td>${offer.inventoryLevel || '-'}</td>
+                    <td>${offer.moq || '-'}</td>
+                    <td>${priceMap[1]}</td><td>${priceMap[10]}</td><td>${priceMap[100]}</td>
+                </tr>`;
             }
         });
-
-        html += `
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        `;
+        html += `</tbody></table></div></div></div>`;
     }
 
-    // Update the container with our HTML
     container.innerHTML = html;
 }
-</script>
-<script>
+
 function saveGlobalAlternatives(basePartNumber) {
     const textarea = document.getElementById('global-alts-input');
     const statusEl = document.getElementById('global-alts-status');
@@ -538,15 +1090,11 @@ function saveGlobalAlternatives(basePartNumber) {
 
     if (!textarea) return;
 
-    const raw = textarea.value || '';
-
-    // Split by commas, whitespace, newlines
-    let tokens = raw
+    const tokens = (textarea.value || '')
         .split(/[\s,]+/)
         .map(t => t.trim())
         .filter(t => t.length > 0);
 
-    // If nothing entered, do nothing
     if (tokens.length === 0) {
         statusEl.textContent = 'Nothing to add.';
         return;
@@ -556,47 +1104,28 @@ function saveGlobalAlternatives(basePartNumber) {
 
     fetch(`/parts/${encodeURIComponent(basePartNumber)}/global_alts`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest'
-        },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({ alternatives: tokens })
     })
     .then(resp => resp.json())
     .then(data => {
-        if (!data.success) {
-            throw new Error(data.message || 'Unknown error');
-        }
+        if (!data.success) throw new Error(data.message || 'Unknown error');
 
-        // Clear textarea
         textarea.value = '';
+        statusEl.textContent = 'Saved!';
+        setTimeout(() => { statusEl.textContent = ''; }, 2000);
 
-        // Update status
-        statusEl.textContent = 'Saved.';
-
-        // Update the list display
         if (data.alternatives && data.alternatives.length > 0) {
-            if (emptyMsg) {
-                emptyMsg.classList.add('d-none');
-            }
+            if (emptyMsg) emptyMsg.classList.add('d-none');
             listEl.classList.remove('d-none');
-
-            // Rebuild pills
             listEl.innerHTML = '';
             data.alternatives.forEach(alt => {
                 const a = document.createElement('a');
-                a.href = `{{ url_for('parts.view_part_number', base_part_number='__ALT__') }}`.replace('__ALT__', alt);
-                a.className = 'badge rounded-pill text-bg-light border me-1 mb-1';
+                a.href = `/parts/${alt}`;
+                a.className = 'equiv-badge';
                 a.textContent = alt;
                 listEl.appendChild(a);
             });
-        } else {
-            // No alts
-            listEl.innerHTML = '';
-            listEl.classList.add('d-none');
-            if (emptyMsg) {
-                emptyMsg.classList.remove('d-none');
-            }
         }
     })
     .catch(err => {
@@ -605,5 +1134,4 @@ function saveGlobalAlternatives(basePartNumber) {
     });
 }
 </script>
-
 {% endblock %}
