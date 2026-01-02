@@ -975,11 +975,38 @@ def _standardize_certifications(raw_value, existing_notes=None):
 
     if normalized:
         lower_value = normalized.lower()
+    else:
+        lower_value = ""
 
-        if any(term in lower_value for term in (
-            'no trace', 'no cert', 'no certs', 'no certification', 'trace not',
-            'trace unavailable', 'trace unknown', 'no paperwork'
-        )):
+    def has_oem_trace_signal(text):
+        if not text:
+            return False
+
+        oem_terms = (
+            'oem c of c', 'oem coc', 'oem cert', 'oem certificate',
+            'mfg c of c', 'mfr c of c', 'manufacturer c of c',
+            'factory c of c', 'factory cert', 'factory trace',
+            'manufacturer cert', 'full trace to oem', 'full trace',
+            'oem trace', 'mfr trace', 'mfg trace', 'factory traceability'
+        )
+        if not any(term in text for term in oem_terms):
+            return False
+
+        negation_terms = ('no oem', 'no mfg', 'no manufacturer', 'without oem', 'without mfg', 'no factory')
+        if any(term in text for term in negation_terms):
+            return False
+
+        return True
+
+    no_trace_terms = (
+        'no trace', 'no cert', 'no certs', 'no certification', 'trace not',
+        'trace unavailable', 'trace unknown', 'no paperwork'
+    )
+
+    notes_lower = ' '.join(note.lower() for note in notes_parts if note)
+
+    if lower_value:
+        if any(term in lower_value for term in no_trace_terms):
             normalized = "no trace"
         elif 'easa' in lower_value and 'form' in lower_value:
             normalized = "EASA Form 1"
@@ -995,7 +1022,15 @@ def _standardize_certifications(raw_value, existing_notes=None):
             'manufacturer c of c', 'mfr c of c', 'mfg c of c', 'c of c', 'coc'
         )):
             normalized = "OEM certs"
-    else:
+
+    oem_context = notes_lower or lower_value
+    no_trace_context = notes_lower or lower_value
+
+    if (normalized is None or normalized == "no trace") and oem_context:
+        if not any(term in no_trace_context for term in no_trace_terms) and has_oem_trace_signal(oem_context):
+            normalized = "OEM certs"
+
+    if normalized is None:
         normalized = "no trace"
 
     combined_notes = '; '.join([note for note in notes_parts if note]) or None
