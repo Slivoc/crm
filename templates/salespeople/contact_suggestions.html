@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}{{ salesperson.name }} - Next Contact Suggestions{% endblock %}
+
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/salespeople.css') }}">
+<style>
+  .suggestion-card {
+    height: 100%;
+  }
+  .suggestion-score {
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+  .suggestion-body {
+    white-space: pre-wrap;
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 0.75rem;
+    border: 1px solid #e9ecef;
+  }
+  .news-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 14px;
+    background: #eef4ff;
+    color: #0b5ed7;
+    font-size: 0.85rem;
+  }
+  .metric-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 14px;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    font-weight: 600;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <input type="hidden" id="salesPersonId" value="{{ salesperson.id }}">
+
+  <div class="d-flex flex-wrap justify-content-between align-items-start mb-3 gap-2">
+    <div>
+      <h2 class="fw-bold mb-1">Next Contact Suggestions</h2>
+      <p class="text-muted mb-0">
+        Target customers with no spend, prioritized by revenue potential, fleet size, and contact staleness.
+      </p>
+    </div>
+    <div class="btn-group">
+      <a href="{{ url_for('salespeople.customers', salesperson_id=salesperson.id) }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Customers
+      </a>
+      <button class="btn btn-primary" id="refreshSuggestions">
+        <i class="bi bi-stars"></i> Refresh Suggestions
+      </button>
+    </div>
+  </div>
+
+  <div class="alert alert-info d-flex align-items-start gap-2">
+    <i class="bi bi-lightbulb-fill text-warning fs-5"></i>
+    <div>
+      <div class="fw-semibold mb-1">How we rank suggestions</div>
+      <ul class="mb-0 ps-3">
+        <li>Only customers with zero historical spend and Target status are included.</li>
+        <li>Higher estimated revenue and larger fleets increase the score.</li>
+        <li>More stale communications rise to the top; recent news is blended into the AI email draft.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div id="suggestionsSummary" class="mb-3"></div>
+
+  <div id="suggestionsContainer" class="row g-3">
+    <div class="col-12 text-center py-5" id="suggestionsLoading">
+      <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">Loading...</span>
+      </div>
+      <p class="mt-2 mb-0">Generating AI-backed suggestions…</p>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/contact_suggestions.js') }}"></script>
+{% endblock %}
