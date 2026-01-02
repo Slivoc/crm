@@ -12,7 +12,17 @@
                     <span class="text-muted" style="font-size:.9rem;">| {{ customer_name }}</span>
                 {% endif %}
                 {% if status_name %}
-                    <span class="badge bg-light text-dark border ms-2" style="font-size:.7rem;">Status: {{ status_name }}</span>
+                    <span id="partsListStatusBadge"
+                          class="badge bg-light text-dark border ms-2 d-inline-flex align-items-center gap-1"
+                          style="font-size:.7rem; cursor: pointer;"
+                          data-list-id="{{ list_id }}"
+                          data-status-id="{{ status_id|default('') }}"
+                          role="button"
+                          tabindex="0"
+                          title="Click to change status">
+                        <span class="text-muted" data-role="status-label">Status:</span>
+                        <span data-role="status-name">{{ status_name }}</span>
+                    </span>
                 {% endif %}
             </h5>
             <div class="d-flex flex-wrap gap-2">
@@ -64,6 +74,86 @@
 
 <script>
 (function() {
+    const statusBadge = document.getElementById('partsListStatusBadge');
+    const listId = {{ list_id|tojson }};
+
+    if (statusBadge && listId) {
+        const renderStatus = (name) => {
+            const label = document.createElement('span');
+            label.className = 'text-muted';
+            label.dataset.role = 'status-label';
+            label.textContent = 'Status:';
+
+            const nameEl = document.createElement('span');
+            nameEl.dataset.role = 'status-name';
+            nameEl.textContent = name;
+
+            statusBadge.replaceChildren(label, nameEl);
+        };
+
+        const updateStatus = () => {
+            if (statusBadge.dataset.loading === '1') return;
+
+            const currentNameEl = statusBadge.querySelector('[data-role="status-name"]');
+            const currentName = currentNameEl ? currentNameEl.textContent : statusBadge.textContent.trim();
+
+            const label = document.createElement('span');
+            label.className = 'text-muted';
+            label.dataset.role = 'status-label';
+            label.textContent = 'Status:';
+
+            const spinner = document.createElement('span');
+            spinner.className = 'spinner-border spinner-border-sm text-secondary';
+            spinner.setAttribute('role', 'status');
+            spinner.setAttribute('aria-hidden', 'true');
+
+            const updatingText = document.createElement('span');
+            updatingText.textContent = 'Updating...';
+
+            statusBadge.dataset.loading = '1';
+            statusBadge.setAttribute('aria-busy', 'true');
+            statusBadge.replaceChildren(label, spinner, updatingText);
+
+            fetch("{{ url_for('parts_list.update_parts_list_status', list_id=0) }}".replace(/0$/, listId), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    renderStatus(data.new_status_name);
+                    statusBadge.setAttribute('data-status-id', data.new_status_id);
+                    statusBadge.classList.add('bg-success', 'text-white');
+                    statusBadge.classList.remove('bg-light', 'text-dark');
+                    setTimeout(() => {
+                        statusBadge.classList.add('bg-light', 'text-dark');
+                        statusBadge.classList.remove('bg-success', 'text-white');
+                    }, 600);
+                } else {
+                    alert('Error: ' + (data.message || 'Unknown error'));
+                    renderStatus(currentName);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error updating status');
+                renderStatus(currentName);
+            })
+            .finally(() => {
+                statusBadge.dataset.loading = '0';
+                statusBadge.removeAttribute('aria-busy');
+            });
+        };
+
+        statusBadge.addEventListener('click', updateStatus);
+        statusBadge.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                updateStatus();
+            }
+        });
+    }
+
     const deleteBtn = document.getElementById('delete-parts-list-btn');
     if (!deleteBtn) return;
     deleteBtn.addEventListener('click', function() {

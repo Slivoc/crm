@@ -571,6 +571,7 @@ def manage_supplier_quotes(list_id):
         SELECT 
             pl.id,
             pl.name,
+            pl.status_id,
             c.name AS customer_name,
             s.name AS status_name
         FROM parts_lists pl
@@ -591,6 +592,7 @@ def manage_supplier_quotes(list_id):
         list_id=list_id,
         list_name=header['name'],
         customer_name=header.get('customer_name'),
+        status_id=header.get('status_id'),
         status_name=header.get('status_name'),
         cache_bust=cache_bust,
     )
@@ -2487,6 +2489,7 @@ def parts_list_costing(list_id):
                                list_id=list_id,
                                list_name=header['name'],
                                customer_name=header.get('customer_name'),
+                               status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
                                lines=[dict(l) for l in lines],
                                suppliers=[dict(s) for s in suppliers],
@@ -2553,6 +2556,7 @@ def email_suppliers():
             list_header = _execute_with_cursor(cursor, """
                 SELECT
                     pl.name,
+                    pl.status_id,
                     c.name AS customer_name,
                     s.name AS status_name
                 FROM parts_lists pl
@@ -2611,6 +2615,7 @@ def email_suppliers():
                            list_id=list_id,
                            list_name=list_header['name'] if list_header else None,
                            customer_name=list_header['customer_name'] if list_header else None,
+                           status_id=list_header['status_id'] if list_header else None,
                            status_name=list_header['status_name'] if list_header else None)
 
 
@@ -3099,6 +3104,7 @@ def table_view(list_id):
                            list_id=list_id,
                            list_name=header['name'],
                            customer_name=header['customer_name'],
+                           status_id=header.get('status_id'),
                            status_name=header.get('status_name'),
                            lines=[dict(line) for line in lines])
 
@@ -4643,6 +4649,7 @@ def parts_list_sourcing(list_id):
                                list_id=list_id,
                                list_name=header['name'],
                                customer_name=header['customer_name'],
+                               status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
                                lines=lines_with_data,
                                total_lines=total_lines,
@@ -5206,6 +5213,7 @@ def view_parts_list(list_id):
                            list_id=list_id,
                            list_name=header['name'],
                            customer_name=header['customer_name'],
+                           status_id=header.get('status_id'),
                            status_name=header.get('status_name'))
 
 
