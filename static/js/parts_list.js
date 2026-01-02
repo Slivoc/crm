@@ -160,10 +160,18 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
 
     let avgStockCost = '-';
     if (part.stock_details && part.stock_details.length > 0) {
-        const costs = part.stock_details.map(s => parseFloat(s.cost_per_unit)).filter(c => !isNaN(c) && c > 0);
-        if (costs.length > 0) {
-            const totalCost = costs.reduce((sum, cost) => sum + cost, 0);
-            avgStockCost = formatCurrency(totalCost / costs.length);
+        const validStock = part.stock_details.map(s => ({
+            cost: parseFloat(s.cost_per_unit),
+            qty: parseFloat(s.available_quantity)
+        })).filter(item => !isNaN(item.cost) && item.cost > 0 && !isNaN(item.qty) && item.qty > 0);
+
+        if (validStock.length > 0) {
+            const totalCost = validStock.reduce((sum, s) => sum + (s.cost * s.qty), 0);
+            const totalQty = validStock.reduce((sum, s) => sum + s.qty, 0);
+
+            if (totalQty > 0) {
+                avgStockCost = formatCurrency(totalCost / totalQty);
+            }
         }
     }
 
