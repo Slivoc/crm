@@ -41,6 +41,20 @@ def _execute_with_cursor(cur, query, params=None):
     return cur
 
 
+def _safe_row_get(row, key, default=None):
+    """
+    Return a key from a DB row that could be a dict (psycopg RealDictRow) or sqlite3.Row.
+    """
+    if row is None:
+        return default
+    try:
+        return row.get(key, default)
+    except AttributeError:
+        if hasattr(row, 'keys') and key in row.keys():
+            return row[key]
+        return default
+
+
 def _log_parts_list_creation_communication(list_id, list_name, customer_id, contact_id, salesperson_id):
     if not (list_id and customer_id and contact_id and salesperson_id):
         return
@@ -191,7 +205,12 @@ def create_supplier_quote(list_id):
             commit=True,
         )
 
-        quote_id = row.get('id', list(row.values())[0]) if row else None
+        quote_id = _safe_row_get(row, 'id')
+        if quote_id is None and row:
+            try:
+                quote_id = list(row.values())[0]
+            except Exception:
+                quote_id = None
 
         return jsonify(success=True, quote_id=quote_id)
 
@@ -2600,22 +2619,26 @@ def get_ils_copy_queue():
     """
     Return the shared ILS copy queue for anyone to consume.
     """
-    with db_cursor() as cursor:
-        rows = _execute_with_cursor(cursor, """
-            SELECT
-                q.id,
-                q.parts_list_id,
-                q.chunk_type,
-                q.parts_json,
-                q.note,
-                q.created_at,
-                u.username,
-                pl.name AS parts_list_name
-            FROM parts_list_ils_copy_queue q
-            LEFT JOIN users u ON u.id = q.created_by_user_id
-            LEFT JOIN parts_lists pl ON pl.id = q.parts_list_id
-            ORDER BY q.created_at DESC
-        """).fetchall()
+    try:
+        with db_cursor() as cursor:
+            rows = _execute_with_cursor(cursor, """
+                SELECT
+                    q.id,
+                    q.parts_list_id,
+                    q.chunk_type,
+                    q.parts_json,
+                    q.note,
+                    q.created_at,
+                    u.username,
+                    pl.name AS parts_list_name
+                FROM parts_list_ils_copy_queue q
+                LEFT JOIN users u ON u.id = q.created_by_user_id
+                LEFT JOIN parts_lists pl ON pl.id = q.parts_list_id
+                ORDER BY q.created_at DESC
+            """).fetchall()
+    except Exception:
+        logging.exception('Failed to load ILS copy queue')
+        return jsonify(queue=[], error='Unable to load queue'), 500
 
     queue = []
     for row in rows or []:
@@ -2631,12 +2654,12 @@ def get_ils_copy_queue():
         queue.append({
             'id': row['id'],
             'parts_list_id': row['parts_list_id'],
-            'parts_list_name': row.get('parts_list_name'),
+            'parts_list_name': _safe_row_get(row, 'parts_list_name'),
             'chunk_type': row['chunk_type'],
             'note': row['note'],
             'parts': parts,
             'created_at': created_at,
-            'created_by_username': row.get('username')
+            'created_by_username': _safe_row_get(row, 'username')
         })
 
     return jsonify(queue=queue)
@@ -2647,7 +2670,9 @@ def add_to_ils_copy_queue():
     """
     Persist a chunk of part numbers into the shared ILS queue.
     """
-    data = request.get_json(force=True) or {}
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify(success=False, error='Invalid request payload'), 400
     parts = data.get('parts')
     if not parts:
         return jsonify(success=False, error='parts array is required'), 400
@@ -2674,13 +2699,17 @@ def add_to_ils_copy_queue():
         current_user.id if current_user.is_authenticated else session.get('user_id')
     )
 
-    with db_cursor(commit=True) as cursor:
-        inserted = _execute_with_cursor(cursor, """
-            INSERT INTO parts_list_ils_copy_queue
-            (parts_list_id, chunk_type, parts_json, note, created_by_user_id)
-            VALUES (?, ?, ?, ?, ?)
-            RETURNING id
-        """, payload).fetchone()
+    try:
+        with db_cursor(commit=True) as cursor:
+            inserted = _execute_with_cursor(cursor, """
+                INSERT INTO parts_list_ils_copy_queue
+                (parts_list_id, chunk_type, parts_json, note, created_by_user_id)
+                VALUES (?, ?, ?, ?, ?)
+                RETURNING id
+            """, payload).fetchone()
+    except Exception:
+        logging.exception('Failed to add ILS chunk to queue')
+        return jsonify(success=False, error='Unable to add chunk to queue'), 500
 
     entry_id = inserted['id'] if inserted else None
     return jsonify(success=True, entry_id=entry_id)
@@ -2691,13 +2720,17 @@ def clear_ils_copy_queue(entry_id):
     """
     Remove a queued chunk once it has been dispatched or is no longer needed.
     """
-    with db_cursor(commit=True) as cursor:
-        result_cursor = _execute_with_cursor(cursor, """
-            DELETE FROM parts_list_ils_copy_queue
-            WHERE id = ?
-        """, (entry_id,))
-        if result_cursor.rowcount == 0:
-            return jsonify(success=False, error='Queue entry not found'), 404
+    try:
+        with db_cursor(commit=True) as cursor:
+            result_cursor = _execute_with_cursor(cursor, """
+                DELETE FROM parts_list_ils_copy_queue
+                WHERE id = ?
+            """, (entry_id,))
+            if result_cursor.rowcount == 0:
+                return jsonify(success=False, error='Queue entry not found'), 404
+    except Exception:
+        logging.exception('Failed to clear ILS queue entry')
+        return jsonify(success=False, error='Unable to clear queue entry'), 500
 
     return jsonify(success=True)
 
