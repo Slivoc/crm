@@ -84,6 +84,7 @@ numpy==1.26.4
 olefile==0.47
 oletools==0.60.2
 openai==0.28.0
+openpyxl==3.1.5
 opencv-contrib-python==4.10.0.84
 opencv-python==4.10.0.84
 optimum==1.17.1
