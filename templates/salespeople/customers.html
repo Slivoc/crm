@@ -798,6 +798,9 @@ window.ChartUtils = ChartUtils;
             </div>
 
             <!-- Existing Navigation Buttons -->
+            <a href="{{ url_for('salespeople.contact_suggestions_page', salesperson_id=salesperson.id) }}" class="btn btn-outline-success">
+                <i class="bi bi-stars"></i> Next Contact Suggestions
+            </a>
             <a href="{{ url_for('salespeople.contacts', salesperson_id=salesperson.id) }}" class="btn btn-outline-primary">
                 <i class="bi bi-people"></i> Contacts
             </a>

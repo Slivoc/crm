@@ -2,6 +2,8 @@
 import json
 from collections import defaultdict
 from datetime import datetime, date, timedelta
+from math import log1p
+import re
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app, Response, stream_with_context
 from routes.auth import login_required, current_user
 from ai_helper import get_cached_news, get_top_customers_for_news, get_watched_customers_for_news, get_cache_key, cleanup_old_cache_files, fetch_customer_news_perplexity, process_customer_news_chatgpt, cache_news, filter_duplicate_news, store_sent_news_items
@@ -16,6 +18,7 @@ from db import get_db_connection, execute as db_execute, db_cursor, _using_postg
 
 from dateutil.relativedelta import relativedelta
 import calendar
+from openai import OpenAI
 
 salespeople_bp = Blueprint('salespeople', __name__)
 
@@ -32,6 +35,382 @@ def is_mobile():
     user_agent = request.headers.get('User-Agent', '').lower()
     mobile_keywords = ['mobile', 'android', 'iphone', 'ipad']
     return any(keyword in user_agent for keyword in mobile_keywords)
+
+_openai_email_client = None
+
+
+def _get_openai_email_client():
+    """Lazily instantiate the OpenAI client for outreach suggestions."""
+    global _openai_email_client
+    if _openai_email_client is None:
+        _openai_email_client = OpenAI()
+    return _openai_email_client
+
+
+def _parse_datetime_value(value):
+    """Normalize datetime values from the database into datetime objects."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    if isinstance(value, bytes):
+        value = value.decode('utf-8', errors='ignore')
+    if isinstance(value, str):
+        cleaned = value.replace('Z', '+00:00')
+        try:
+            return datetime.fromisoformat(cleaned)
+        except ValueError:
+            for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M'):
+                try:
+                    return datetime.strptime(cleaned, fmt)
+                except ValueError:
+                    continue
+    return None
+
+
+def _strip_html(value: str) -> str:
+    if not value:
+        return ''
+    return re.sub(r'<[^>]+>', '', value)
+
+
+def _get_customer_communication_snapshots(customer_groups, salesperson_id):
+    """Fetch latest communications (any + email) for consolidated customer groups."""
+    if not customer_groups:
+        return {}
+
+    child_to_main = {}
+    for main_id, related_ids in customer_groups.items():
+        for cid in related_ids:
+            child_to_main[cid] = main_id
+
+    all_customer_ids = list(child_to_main.keys())
+    placeholders = ','.join('?' for _ in all_customer_ids)
+
+    query = f"""
+        SELECT 
+            cc.customer_id,
+            cc.contact_id,
+            cc.communication_type,
+            cc.date,
+            cc.notes,
+            cc.email_message_id,
+            cc.email_direction,
+            c.name as contact_name,
+            c.email as contact_email
+        FROM contact_communications cc
+        LEFT JOIN contacts c ON cc.contact_id = c.id
+        WHERE cc.customer_id IN ({placeholders})
+          AND cc.salesperson_id = ?
+        ORDER BY cc.date DESC
+    """
+
+    rows = db_execute(query, all_customer_ids + [salesperson_id], fetch='all') or []
+    snapshots = {}
+
+    for row in rows:
+        main_id = child_to_main.get(row['customer_id'], row['customer_id'])
+        snapshots.setdefault(main_id, {'last_contact': None, 'last_email': None})
+
+        parsed_date = _parse_datetime_value(row.get('date'))
+        contact_payload = {
+            'contact_name': row.get('contact_name'),
+            'contact_email': row.get('contact_email'),
+            'notes': row.get('notes'),
+            'type': row.get('communication_type'),
+            'direction': row.get('email_direction'),
+            'message_id': row.get('email_message_id'),
+            'datetime': parsed_date,
+            'date': parsed_date.isoformat() if parsed_date else None
+        }
+
+        if snapshots[main_id]['last_contact'] is None:
+            snapshots[main_id]['last_contact'] = contact_payload
+
+        if row.get('communication_type') == 'email' and snapshots[main_id]['last_email'] is None:
+            snapshots[main_id]['last_email'] = contact_payload
+
+    return snapshots
+
+
+def _get_email_preview_from_cache(message_id, graph_user_id):
+    """Retrieve the subject/body preview for a cached Graph email."""
+    if not (message_id and graph_user_id):
+        return None
+
+    row = db_execute(
+        """
+        SELECT raw_message, body_preview, subject 
+        FROM graph_email_cache 
+        WHERE user_id = ? AND message_id = ? 
+        LIMIT 1
+        """,
+        (graph_user_id, message_id),
+        fetch="one"
+    )
+
+    if not row:
+        return None
+
+    raw_message = row.get('raw_message')
+    if isinstance(raw_message, (bytes, bytearray)):
+        raw_message = raw_message.decode('utf-8', errors='ignore')
+    if isinstance(raw_message, str):
+        try:
+            raw_message = json.loads(raw_message)
+        except json.JSONDecodeError:
+            raw_message = None
+
+    body_content = None
+    if isinstance(raw_message, dict):
+        body_data = raw_message.get('body') or raw_message.get('Body') or {}
+        body_content = body_data.get('content') if isinstance(body_data, dict) else None
+        if not body_content:
+            body_content = raw_message.get('bodyPreview') or raw_message.get('BodyPreview')
+
+    preview = body_content or row.get('body_preview') or ''
+    subject = row.get('subject') or ''
+    return {
+        'subject': subject.strip(),
+        'preview': _strip_html(preview).strip()[:800]
+    }
+
+
+def _build_news_lookup_for_customers(salesperson_id):
+    """Return cached news indexed by lowercase customer name."""
+    cached = get_cached_news(get_cache_key(salesperson_id)) or {}
+    news_map = {}
+    for item in cached.get('news_items', []) or []:
+        key = (item.get('customer_name') or '').lower().strip()
+        if not key:
+            continue
+        news_map.setdefault(key, []).append(item)
+    return news_map, bool(cached.get('news_items'))
+
+
+def _hydrate_news_for_customers(customers, news_map, max_fetch=3):
+    """Fetch fresh news for customers missing cached items (limited for performance)."""
+    fetched = 0
+    for customer in customers:
+        key = customer['name'].lower()
+        if key in news_map or fetched >= max_fetch:
+            continue
+        try:
+            raw_news = fetch_customer_news_perplexity(customer)
+            if not raw_news:
+                continue
+            processed = process_customer_news_chatgpt(customer, raw_news)
+            if processed and processed.get('news_items'):
+                news_map[key] = processed['news_items']
+                fetched += 1
+        except Exception as exc:
+            print(f"News fetch failed for {customer['name']}: {exc}")
+            continue
+    return fetched
+
+
+def _compute_suggestion_score(customer, comm_info):
+    """Weighted score to prioritize high-value, stale target customers."""
+    est_revenue = float(customer.get('estimated_revenue') or 0)
+    fleet_size = float(customer.get('fleet_size') or 0)
+
+    last_contact_dt = None
+    if comm_info and comm_info.get('last_contact', {}).get('datetime'):
+        last_contact_dt = comm_info['last_contact']['datetime']
+    days_since_contact = None
+    if last_contact_dt:
+        days_since_contact = max((datetime.utcnow() - last_contact_dt).days, 0)
+
+    revenue_component = min(log1p(est_revenue) / log1p(500000 + 1), 1.0)
+    fleet_component = min(log1p(fleet_size) / log1p(400 + 1), 1.0)
+    recency_component = 1.0 if days_since_contact is None else min(days_since_contact, 180) / 180
+    target_bonus = 0.15 if 'target' in (customer.get('customer_status') or '').lower() else 0
+
+    raw_score = (
+        revenue_component * 0.45 +
+        fleet_component * 0.2 +
+        recency_component * 0.35 +
+        target_bonus
+    )
+
+    score = round(min(raw_score, 1.3) * 100, 1)
+    return score, {
+        'revenue_component': round(revenue_component, 3),
+        'fleet_component': round(fleet_component, 3),
+        'recency_component': round(recency_component, 3),
+        'target_bonus': target_bonus,
+        'days_since_contact': days_since_contact
+    }
+
+
+def _generate_email_suggestion(customer, comm_info, news_items, last_email_preview):
+    """Use OpenAI to draft the next outreach email with contextual cues."""
+    client = _get_openai_email_client()
+
+    last_email_summary = None
+    if last_email_preview:
+        last_email_summary = {
+            'subject': last_email_preview.get('subject'),
+            'preview': last_email_preview.get('preview')
+        }
+
+    news_snippets = []
+    for item in news_items[:2]:
+        headline = item.get('headline') or ''
+        summary = item.get('summary') or ''
+        news_snippets.append(f"{headline}: {summary}")
+
+    payload = {
+        'customer_name': customer.get('name'),
+        'estimated_revenue': customer.get('estimated_revenue') or 0,
+        'fleet_size': customer.get('fleet_size') or 0,
+        'customer_status': customer.get('customer_status'),
+        'latest_update': customer.get('latest_update'),
+        'last_contact': comm_info.get('last_contact') if comm_info else None,
+        'news_snippets': news_snippets,
+        'last_email': last_email_summary
+    }
+
+    system_prompt = (
+        "You are a concise B2B sales assistant. "
+        "Suggest the next email for a target customer who has not spent yet. "
+        "Return ONLY valid JSON with keys 'subject' and 'body'. "
+        "Keep the body under 150 words, personalize with any news snippets, "
+        "and propose a clear next step."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload, default=str)}
+            ],
+            temperature=0.4,
+            max_tokens=320
+        )
+        content = response.choices[0].message.content.strip()
+        if content.startswith('```'):
+            parts = content.split('```')
+            content = parts[1] if len(parts) > 1 else content
+            if content.startswith('json'):
+                content = content[4:]
+        suggestion = json.loads(content)
+        return {
+            'subject': suggestion.get('subject', '').strip(),
+            'body': suggestion.get('body', '').strip(),
+            'source': 'openai'
+        }
+    except Exception as exc:
+        print(f"Email suggestion failed for {customer.get('name')}: {exc}")
+        fallback_subject = f"Exploring opportunities with {customer.get('name')}"
+        news_hook = f" I noticed {news_snippets[0]}" if news_snippets else ""
+        fallback_body = (
+            f"Hi team,\n\n"
+            f"We haven't worked together yet, and I'd love to understand your upcoming needs."
+            f"{news_hook}\n\n"
+            "Could we schedule a quick call this week to map out where we can help?"
+        )
+        return {
+            'subject': fallback_subject,
+            'body': fallback_body,
+            'source': 'fallback'
+        }
+
+
+def _serialize_contact_payload(payload):
+    """Make contact payloads JSON serializable."""
+    if not payload:
+        return None
+    serialized = dict(payload)
+    serialized.pop('datetime', None)
+    return serialized
+
+
+def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8):
+    """Aggregate data and AI outputs for the contact suggestions page."""
+    customers = get_salesperson_customers_with_spend(
+        salesperson_id,
+        sort_by='estimated_revenue',
+        sort_order='desc'
+    ) or []
+
+    target_customers = []
+    for customer in customers:
+        spend = float(customer.get('historical_spend') or 0)
+        status_text = (customer.get('customer_status') or '').lower()
+        if spend > 0:
+            continue
+        if 'target' not in status_text:
+            continue
+        target_customers.append(customer)
+
+    if not target_customers:
+        return [], False
+
+    customer_groups = {
+        customer['id']: customer.get('related_customer_ids') or [customer['id']]
+        for customer in target_customers
+    }
+    comm_snapshots = _get_customer_communication_snapshots(customer_groups, salesperson_id)
+
+    scored = []
+    for customer in target_customers:
+        comm_info = comm_snapshots.get(customer['id'], {})
+        score, breakdown = _compute_suggestion_score(customer, comm_info)
+        scored.append({
+            'customer': customer,
+            'comm_info': comm_info,
+            'score': score,
+            'breakdown': breakdown
+        })
+
+    scored.sort(key=lambda x: x['score'], reverse=True)
+    top_candidates = scored[:limit]
+
+    news_map, cached_news_used = _build_news_lookup_for_customers(salesperson_id)
+    _hydrate_news_for_customers([entry['customer'] for entry in top_candidates], news_map)
+
+    suggestions = []
+    for entry in top_candidates:
+        customer = entry['customer']
+        comm_info = entry['comm_info']
+        last_email_preview = None
+        if comm_info.get('last_email', {}).get('message_id'):
+            last_email_preview = _get_email_preview_from_cache(
+                comm_info['last_email']['message_id'],
+                graph_user_id
+            )
+
+        news_items = news_map.get(customer['name'].lower(), [])
+        email_suggestion = _generate_email_suggestion(customer, comm_info, news_items, last_email_preview)
+
+        last_contact_serialized = _serialize_contact_payload(comm_info.get('last_contact'))
+        last_email_serialized = _serialize_contact_payload(comm_info.get('last_email'))
+        if last_email_serialized and last_email_preview:
+            last_email_serialized.update(last_email_preview)
+
+        suggestions.append({
+            'customer_id': customer['id'],
+            'customer_name': customer.get('name'),
+            'status': customer.get('customer_status'),
+            'historical_spend': customer.get('historical_spend', 0),
+            'estimated_revenue': customer.get('estimated_revenue', 0),
+            'fleet_size': customer.get('fleet_size', 0),
+            'latest_update': customer.get('latest_update'),
+            'most_recent_order': customer.get('most_recent_order_date'),
+            'score': entry['score'],
+            'score_breakdown': entry['breakdown'],
+            'last_contact': last_contact_serialized,
+            'last_email': last_email_serialized,
+            'news_items': news_items,
+            'suggested_email': email_suggestion,
+            'related_customers': customer.get('related_customer_ids', []),
+            'has_associated_companies': customer.get('has_associated_companies', False),
+            'priority_name': customer.get('priority_name')
+        })
+
+    return suggestions, cached_news_used
 
 @salespeople_bp.route('/')
 @login_required
@@ -373,6 +752,52 @@ def customers(salesperson_id):
 
         flash(f"An error occurred: {str(e)}", 'error')
         return redirect(url_for('salespeople.dashboard'))
+
+@salespeople_bp.route('/<int:salesperson_id>/contact-suggestions')
+@login_required
+def contact_suggestions_page(salesperson_id):
+    """Render the next-contact suggestions page for target customers."""
+    salesperson = get_salesperson_by_id(salesperson_id)
+    if not salesperson:
+        flash('Salesperson not found!', 'error')
+        return redirect(url_for('salespeople.dashboard'))
+
+    breadcrumbs = generate_breadcrumbs(
+        ('Home', url_for('index')),
+        ('Salespeople', url_for('salespeople.dashboard')),
+        (salesperson['name'], url_for('salespeople.activity', salesperson_id=salesperson_id)),
+        ('Customers', url_for('salespeople.customers', salesperson_id=salesperson_id)),
+        ('Next Contact Suggestions', url_for('salespeople.contact_suggestions_page', salesperson_id=salesperson_id))
+    )
+
+    return render_template(
+        'salespeople/contact_suggestions.html',
+        salesperson=salesperson,
+        breadcrumbs=breadcrumbs
+    )
+
+
+@salespeople_bp.route('/<int:salesperson_id>/contact-suggestions/data')
+@login_required
+def contact_suggestions_data(salesperson_id):
+    """API endpoint that assembles target-customer outreach suggestions."""
+    salesperson = get_salesperson_by_id(salesperson_id)
+    if not salesperson:
+        return jsonify({'success': False, 'error': 'Salesperson not found'}), 404
+
+    limit = request.args.get('limit', 8, type=int) or 8
+    try:
+        graph_user_id = getattr(current_user, 'id', None)
+        suggestions, cached_news_used = _build_contact_suggestions(salesperson_id, graph_user_id, limit=limit)
+        return jsonify({
+            'success': True,
+            'suggestions': suggestions,
+            'generated_at': datetime.utcnow().isoformat() + 'Z',
+            'cached_news_used': cached_news_used
+        })
+    except Exception as exc:
+        print(f"Error generating contact suggestions: {exc}")
+        return jsonify({'success': False, 'error': str(exc)}), 500
 
 @salespeople_bp.route('/<int:salesperson_id>/add_customer_update', methods=['POST'])
 @login_required

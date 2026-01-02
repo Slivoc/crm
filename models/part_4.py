@@ -991,6 +991,7 @@ def get_salesperson_customers_with_spend(salesperson_id, search_term='', status_
             # Add child company information for frontend
             customer_dict['child_companies'] = child_companies
             customer_dict['has_associated_companies'] = len(child_companies) > 0
+            customer_dict['related_customer_ids'] = related_customer_ids
 
             enhanced_customers.append(customer_dict)
 
