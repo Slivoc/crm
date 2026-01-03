@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, abort, flash, jsonify
 from db import execute as db_execute
@@ -561,6 +562,73 @@ def _status_name(status_id):
         fetch="one",
     )
     return row.get('name') if row else None
+
+
+def _parse_mentions(update_text):
+    """Extract usernames from @[username] mentions in text."""
+    if not update_text:
+        return []
+    # Match @[username] pattern
+    pattern = r'@\[([^\]]+)\]'
+    matches = re.findall(pattern, update_text)
+    return list(set(matches))  # Return unique usernames
+
+
+def _get_users_by_usernames(usernames):
+    """Fetch user details by usernames."""
+    if not usernames:
+        return []
+    placeholders = ", ".join(["?"] * len(usernames))
+    rows = db_execute(
+        f"SELECT id, username, email FROM users WHERE username IN ({placeholders})",
+        usernames,
+        fetch="all",
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _notify_mentioned_users(ticket_id, ticket_title, update_text, mentioned_users, author_user_id):
+    """Send email notifications to mentioned users."""
+    if not mentioned_users:
+        return
+
+    # Get author info
+    author = _get_user_contact(author_user_id)
+    author_name = author.get('username', 'Someone') if author else 'Someone'
+
+    ticket_url = url_for('tickets.view_ticket', ticket_id=ticket_id, _external=True)
+
+    for user in mentioned_users:
+        # Don't notify the author if they mention themselves
+        if user.get('id') == author_user_id:
+            continue
+
+        email = (user.get('email') or '').strip()
+        if not email:
+            continue
+
+        username = user.get('username', 'there')
+        subject = f"You were mentioned in ticket #{ticket_id}"
+
+        # Convert @[username] to @username for display
+        display_text = re.sub(r'@\[([^\]]+)\]', r'@\1', update_text)
+
+        html_body = (
+            f"<p>Hi {username},</p>"
+            f"<p><strong>{author_name}</strong> mentioned you in a comment on ticket "
+            f"<strong>#{ticket_id} {ticket_title}</strong>:</p>"
+            f"<blockquote style=\"border-left: 3px solid #1a73e8; padding-left: 12px; margin: 16px 0; color: #495057;\">"
+            f"{display_text}</blockquote>"
+            f'<p><a href="{ticket_url}" style="color: #1a73e8;">View ticket</a></p>'
+        )
+        text_body = (
+            f"Hi {username},\n\n"
+            f"{author_name} mentioned you in a comment on ticket #{ticket_id} {ticket_title}:\n\n"
+            f"\"{display_text}\"\n\n"
+            f"View ticket: {ticket_url}"
+        )
+
+        send_email(email, subject, html_body, text_body)
 
 
 @tickets_bp.route('/from-email', methods=['POST'])
@@ -1569,6 +1637,45 @@ def add_subjob(ticket_id):
     return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
 
+@tickets_bp.route('/users/search', methods=['GET'])
+@login_required
+def search_users_for_mention():
+    """Search users for @mention autocomplete."""
+    query = request.args.get('q', '').strip().lower()
+    limit = min(int(request.args.get('limit', 8)), 20)
+
+    if not query:
+        # Return all users if no query (up to limit)
+        rows = db_execute(
+            "SELECT id, username, email FROM users ORDER BY username LIMIT ?",
+            (limit,),
+            fetch="all",
+        ) or []
+    else:
+        # Search by username or email
+        search_pattern = f"%{query}%"
+        rows = db_execute(
+            """
+            SELECT id, username, email
+            FROM users
+            WHERE LOWER(username) LIKE ? OR LOWER(email) LIKE ?
+            ORDER BY
+                CASE WHEN LOWER(username) LIKE ? THEN 0 ELSE 1 END,
+                username
+            LIMIT ?
+            """,
+            (search_pattern, search_pattern, f"{query}%", limit),
+            fetch="all",
+        ) or []
+
+    users = [
+        {'id': row['id'], 'username': row['username'], 'email': row.get('email')}
+        for row in rows
+    ]
+
+    return jsonify({'success': True, 'users': users})
+
+
 @tickets_bp.route('/<int:ticket_id>/updates', methods=['POST'])
 @login_required
 def add_ticket_update(ticket_id):
@@ -1585,6 +1692,18 @@ def add_ticket_update(ticket_id):
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
     _add_ticket_update(ticket_id, user_id, update_text)
+
+    # Parse mentions and send notification emails
+    mentioned_usernames = _parse_mentions(update_text)
+    if mentioned_usernames:
+        mentioned_users = _get_users_by_usernames(mentioned_usernames)
+        _notify_mentioned_users(
+            ticket_id,
+            ticket.get('title', 'Ticket'),
+            update_text,
+            mentioned_users,
+            user_id
+        )
 
     return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 

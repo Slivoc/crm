@@ -1740,6 +1740,10 @@ CREATE TABLE parts_list_supplier_quotes (
 
     created_by_user_id INTEGER,
 
+    email_message_id TEXT,
+
+    email_conversation_id TEXT,
+
     FOREIGN KEY (parts_list_id) REFERENCES parts_lists(id) ON DELETE CASCADE,
 
     FOREIGN KEY (supplier_id) REFERENCES suppliers(id),

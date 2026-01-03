@@ -3,7 +3,7 @@ Simplified Bulk Alternative Part Group Upload Script
 
 Assumes:
 1. All part numbers already exist in the database
-2. We're starting fresh (no existing groups to worry about)
+2. Clears existing alternative groups before starting
 3. Each CSV row = one new alternative group
 """
 
@@ -88,10 +88,18 @@ def process_csv_row_simple(cursor, row_parts: List[str], row_number: int) -> dic
     }
 
 
+def clear_existing_alternatives(cursor):
+    """Clear all existing alternative groups and members"""
+    logger.info("Clearing existing alternative groups and members...")
+    cursor.execute('DELETE FROM part_alt_group_members')
+    cursor.execute('DELETE FROM part_alt_groups')
+    logger.info("Existing alternatives cleared")
+
+
 def process_csv_file_simple(csv_path: str, db_path: str = 'database.db', batch_size: int = 100):
     """
     Process entire CSV file - each row becomes a new alternative group.
-    
+
     Args:
         csv_path: Path to CSV file
         db_path: Path to SQLite database
@@ -99,7 +107,11 @@ def process_csv_file_simple(csv_path: str, db_path: str = 'database.db', batch_s
     """
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
-    
+
+    # Clear existing alternatives first
+    clear_existing_alternatives(cursor)
+    conn.commit()
+
     # Statistics
     stats = {
         'rows_processed': 0,
@@ -234,8 +246,7 @@ if __name__ == '__main__':
     
     logger.info(f"Starting simplified bulk upload from {csv_file}")
     logger.info(f"Database: {db_file}")
-    logger.info("NOTE: This will create NEW groups for each CSV row")
-    logger.info("Make sure you've cleared existing groups if needed!")
+    logger.info("NOTE: This will CLEAR existing alternatives and create NEW groups for each CSV row")
     
     # Process the file
     stats = process_csv_file_simple(csv_file, db_file)

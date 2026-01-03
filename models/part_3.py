@@ -925,7 +925,10 @@ def add_contact_ajax(customer_id, name, second_name, email, job_title=None, phon
     """
     # If no status_id provided, get the default "active" status
     if status_id is None:
-        statuses = get_all_contact_statuses()
+        status_func = globals().get('get_all_contact_statuses')
+        if status_func is None:
+            from models.part_4 import get_all_contact_statuses as status_func
+        statuses = status_func()
         # Look for an "active" status or use the first one
         status_id = 1  # fallback
         for status in statuses:

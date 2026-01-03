@@ -425,8 +425,8 @@ updateApolloMatch(apolloData) {
         }
     }
 
-  updateLeadsSection(leads, searchType) {
-    const leadsSection = document.getElementById('apolloLeadsSection');
+    updateLeadsSection(leads, searchType) {
+        const leadsSection = document.getElementById('apolloLeadsSection');
 
     if (!leads || leads.length === 0) {
         const messages = {
@@ -477,9 +477,8 @@ updateApolloMatch(apolloData) {
                                 ${lead.department ?
                                     `<span class="me-3"><i class="bi bi-diagram-2"></i> ${lead.department}</span>` :
                                     ''}
-                                ${lead.email_status ?
-                                    `<span class="me-3"><i class="bi bi-envelope"></i> ${lead.email_status}</span>` :
-                                    ''}
+                                ${this.formatEmailAvailability(lead)}
+                                ${this.formatPhoneAvailability(lead)}
                                 ${lead.city ?
                                     `<span><i class="bi bi-geo-alt"></i> ${lead.city}${lead.state ? `, ${lead.state}` : ''}</span>` :
                                     ''}
@@ -492,7 +491,7 @@ updateApolloMatch(apolloData) {
                         </div>
                         <div class="d-flex flex-column gap-1">
                             <button class="btn btn-sm btn-success"
-                                    onclick="apolloLeadFinder.enrichAndAddContact('${lead.id}')">
+                                    onclick="apolloLeadFinder.enrichAndAddContact('${lead.id}', this)">
                                 <i class="bi bi-plus-circle"></i> Add
                             </button>
                         </div>
@@ -503,7 +502,28 @@ updateApolloMatch(apolloData) {
     `;
 }
 
-    async enrichAndAddContact(leadId) {
+    formatEmailAvailability(lead) {
+        const statusSuffix = lead.email_status ? ` (${lead.email_status})` : '';
+        if (lead.email_available) {
+            return `<span class="me-3 text-success"><i class="bi bi-envelope-check"></i> Email available${statusSuffix}</span>`;
+        }
+        return `<span class="me-3 text-muted"><i class="bi bi-envelope-x"></i> No email${statusSuffix}</span>`;
+    }
+
+    formatPhoneAvailability(lead) {
+        if (lead.phone_available) {
+            return `<span class="me-3 text-success"><i class="bi bi-telephone-check"></i> Phone available</span>`;
+        }
+        return `<span class="me-3 text-muted"><i class="bi bi-telephone-x"></i> No phone</span>`;
+    }
+
+    async enrichAndAddContact(leadId, button) {
+        let originalButtonHtml = null;
+        if (button) {
+            originalButtonHtml = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Adding...';
+        }
         try {
             // First enrich the contact using existing endpoint
             const enrichResponse = await fetch('/customers/enrich_person', {
@@ -561,6 +581,11 @@ updateApolloMatch(apolloData) {
         } catch (error) {
             console.error('Error adding contact:', error);
             alert(error.message);
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalButtonHtml;
+            }
         }
     }
 

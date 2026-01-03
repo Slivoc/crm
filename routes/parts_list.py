@@ -129,7 +129,7 @@ def get_supplier_quotes(list_id):
     try:
         quotes = db_execute(
             """
-            SELECT 
+            SELECT
                 sq.id,
                 sq.quote_reference,
                 sq.quote_date,
@@ -138,9 +138,11 @@ def get_supplier_quotes(list_id):
                 c.currency_code,
                 sq.notes,
                 sq.date_created,
-                (SELECT COUNT(*) FROM parts_list_supplier_quote_lines 
+                sq.email_message_id,
+                sq.email_conversation_id,
+                (SELECT COUNT(*) FROM parts_list_supplier_quote_lines
                  WHERE supplier_quote_id = sq.id) as line_count,
-                (SELECT COUNT(*) FROM parts_list_supplier_quote_lines 
+                (SELECT COUNT(*) FROM parts_list_supplier_quote_lines
                 WHERE supplier_quote_id = sq.id AND is_no_bid = TRUE) as no_bid_count
             FROM parts_list_supplier_quotes sq
             JOIN suppliers s ON s.id = sq.supplier_id
@@ -183,13 +185,17 @@ def create_supplier_quote(list_id):
         # If not provided, fallback to GBP
         currency_id = data.get('currency_id', 1)
 
+        # Get email tracking fields if provided (for quotes created from mailbox)
+        email_message_id = data.get('email_message_id') or None
+        email_conversation_id = data.get('email_conversation_id') or None
+
         # Create quote header
         row = db_execute(
             """
-            INSERT INTO parts_list_supplier_quotes 
+            INSERT INTO parts_list_supplier_quotes
             (parts_list_id, supplier_id, quote_reference, quote_date,
-             currency_id, notes, created_by_user_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+             currency_id, notes, created_by_user_id, email_message_id, email_conversation_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             """,
             (
@@ -197,9 +203,11 @@ def create_supplier_quote(list_id):
                 supplier_id,
                 data.get('quote_reference'),
                 data.get('quote_date'),
-                currency_id,  # <-- now from the page/request data
+                currency_id,
                 data.get('notes'),
-                session.get('user_id')
+                session.get('user_id'),
+                email_message_id,
+                email_conversation_id
             ),
             fetch='one',
             commit=True,
@@ -6743,3 +6751,255 @@ def debug_routes():
         if 'parts_list' in rule.rule:
             routes.append(f"{rule.rule} -> {rule.endpoint} [{', '.join(rule.methods - {'HEAD', 'OPTIONS'})}]")
     return "<br>".join(sorted(routes))
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/related-emails', methods=['GET'])
+def get_related_emails(list_id):
+    """
+    Display related emails for a parts list by fetching from Graph API using conversation_id.
+    Returns emails from the original conversation thread plus any supplier quote emails.
+    """
+    try:
+        # Get parts list with email tracking fields
+        parts_list = db_execute(
+            """
+            SELECT id, name, email_message_id, email_conversation_id, customer_id
+            FROM parts_lists
+            WHERE id = ?
+            """,
+            (list_id,),
+            fetch='one',
+        )
+
+        if not parts_list:
+            flash('Parts list not found', 'error')
+            return redirect(url_for('parts_list.view_parts_lists'))
+
+        conversation_id = parts_list.get('email_conversation_id') if isinstance(parts_list, dict) else parts_list['email_conversation_id']
+        source_message_id = parts_list.get('email_message_id') if isinstance(parts_list, dict) else parts_list['email_message_id']
+
+        # Get customer info for breadcrumbs
+        customer_name = None
+        if parts_list.get('customer_id'):
+            customer = db_execute("SELECT name FROM customers WHERE id = ?", (parts_list['customer_id'],), fetch='one')
+            customer_name = customer['name'] if customer else None
+
+        # Get supplier quotes with their email tracking
+        supplier_quotes = db_execute(
+            """
+            SELECT
+                sq.id,
+                sq.quote_reference,
+                sq.quote_date,
+                sq.email_message_id,
+                sq.email_conversation_id,
+                sq.date_created,
+                s.name as supplier_name
+            FROM parts_list_supplier_quotes sq
+            JOIN suppliers s ON s.id = sq.supplier_id
+            WHERE sq.parts_list_id = ?
+              AND (sq.email_message_id IS NOT NULL OR sq.email_conversation_id IS NOT NULL)
+            ORDER BY sq.date_created DESC
+            """,
+            (list_id,),
+            fetch='all',
+        )
+
+        # Get recorded supplier emails for this parts list
+        supplier_line_emails = db_execute(
+            """
+            SELECT
+                se.id,
+                se.parts_list_line_id,
+                COALESCE(pll.customer_part_number, pll.base_part_number) as part_number,
+                se.supplier_id,
+                s.name as supplier_name,
+                se.date_sent,
+                se.email_subject,
+                se.recipient_email,
+                se.recipient_name,
+                se.notes,
+                u.username as sent_by_username
+            FROM parts_list_line_supplier_emails se
+            JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
+            JOIN suppliers s ON s.id = se.supplier_id
+            LEFT JOIN users u ON u.id = se.sent_by_user_id
+            WHERE pll.parts_list_id = ?
+            ORDER BY se.date_sent DESC
+            """,
+            (list_id,),
+            fetch='all',
+        )
+
+        # Collect all unique conversation/message IDs to fetch
+        conversation_ids = set()
+        if conversation_id:
+            conversation_ids.add(conversation_id)
+        message_ids = set()
+        if source_message_id:
+            message_ids.add(source_message_id)
+        for sq in (supplier_quotes or []):
+            sq_conv_id = sq.get('email_conversation_id') if isinstance(sq, dict) else sq['email_conversation_id']
+            if sq_conv_id:
+                conversation_ids.add(sq_conv_id)
+            sq_msg_id = sq.get('email_message_id') if isinstance(sq, dict) else sq['email_message_id']
+            if sq_msg_id:
+                message_ids.add(sq_msg_id)
+
+        # If no conversation or message IDs, show empty page
+        if not conversation_ids and not message_ids:
+            breadcrumbs = [
+                ('Home', url_for('index')),
+                ('Parts Lists', url_for('parts_list.view_parts_lists')),
+                (parts_list['name'], url_for('parts_list.view_parts_list', list_id=list_id)),
+                ('Related Emails', None)
+            ]
+            return render_template('parts_list_related_emails.html',
+                                 list_id=list_id,
+                                 list_name=parts_list['name'],
+                                 customer_name=customer_name,
+                                 source_email=None,
+                                 conversation_emails=[],
+                                 supplier_quote_emails=[dict(sq) for sq in (supplier_quotes or [])],
+                                 supplier_line_emails=[dict(se) for se in (supplier_line_emails or [])],
+                                 has_email_tracking=False,
+                                 graph_connected=True)
+
+        # Import Graph helpers from emails module
+        from routes.emails import (
+            _get_graph_settings, _load_graph_cache, _build_msal_app, _save_graph_cache
+        )
+        import requests
+        from urllib.parse import quote as url_quote
+        from dateutil import parser as date_parser
+        from datetime import timezone
+
+        settings = _get_graph_settings(include_secret=True)
+        cache = _load_graph_cache()
+        app = _build_msal_app(settings, cache=cache)
+        accounts = app.get_accounts()
+
+        graph_connected = True
+        if not accounts:
+            graph_connected = False
+
+        token = None
+        if accounts:
+            token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+            _save_graph_cache(cache)
+
+        if not token or "access_token" not in token:
+            graph_connected = False
+
+        # Fetch emails for each conversation/message
+        all_emails = []
+        if graph_connected:
+            headers = {"Authorization": f"Bearer {token['access_token']}"}
+
+            for conv_id in conversation_ids:
+                try:
+                    # Use filter to get all messages in this conversation
+                    params = {
+                        "$filter": f"conversationId eq '{conv_id}'",
+                        "$select": "id,subject,from,toRecipients,receivedDateTime,bodyPreview,webLink,conversationId,hasAttachments",
+                        "$orderby": "receivedDateTime desc",
+                        "$top": 50
+                    }
+                    resp = requests.get(
+                        "https://graph.microsoft.com/v1.0/me/messages",
+                        headers=headers,
+                        params=params,
+                        timeout=20,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        messages = data.get("value", [])
+                        for msg in messages:
+                            msg['_source_conversation_id'] = conv_id
+                            msg['_is_source_conversation'] = (conv_id == conversation_id)
+                            all_emails.append(msg)
+                except Exception as e:
+                    logging.warning(f"Failed to fetch conversation {conv_id}: {e}")
+
+            for msg_id in message_ids:
+                try:
+                    resp = requests.get(
+                        f"https://graph.microsoft.com/v1.0/me/messages/{url_quote(msg_id)}",
+                        headers=headers,
+                        params={
+                            "$select": "id,subject,from,toRecipients,receivedDateTime,bodyPreview,webLink,conversationId,hasAttachments"
+                        },
+                        timeout=20,
+                    )
+                    if resp.status_code == 200:
+                        msg = resp.json()
+                        msg['_source_conversation_id'] = msg.get('conversationId')
+                        msg['_is_source_conversation'] = (msg_id == source_message_id)
+                        all_emails.append(msg)
+                except Exception as e:
+                    logging.warning(f"Failed to fetch message {msg_id}: {e}")
+
+        # Dedupe by message id
+        seen_ids = set()
+        unique_emails = []
+        for email_msg in all_emails:
+            msg_id = email_msg.get('id')
+            if msg_id and msg_id not in seen_ids:
+                seen_ids.add(msg_id)
+                unique_emails.append(email_msg)
+
+        # Sort by date descending
+        unique_emails.sort(
+            key=lambda x: x.get('receivedDateTime', ''),
+            reverse=True
+        )
+
+        def _format_graph_datetime_display(value):
+            if not value:
+                return None
+            try:
+                parsed = date_parser.isoparse(value)
+            except Exception:
+                try:
+                    parsed = date_parser.parse(value)
+                except Exception:
+                    return None
+            if parsed.tzinfo:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed.strftime("%b %d, %Y %I:%M %p")
+
+        for email_msg in unique_emails:
+            email_msg['receivedDateTime_display'] = _format_graph_datetime_display(
+                email_msg.get('receivedDateTime')
+            )
+
+        # Find the source email
+        source_email = None
+        if source_message_id:
+            for email_msg in unique_emails:
+                if email_msg.get('id') == source_message_id:
+                    source_email = email_msg
+                    break
+
+        breadcrumbs = [
+            ('Home', url_for('index')),
+            ('Parts Lists', url_for('parts_list.view_parts_lists')),
+            (parts_list['name'], url_for('parts_list.view_parts_list', list_id=list_id)),
+            ('Related Emails', None)
+        ]
+
+        return render_template('parts_list_related_emails.html',
+                             list_id=list_id,
+                             list_name=parts_list['name'],
+                             customer_name=customer_name,
+                             source_email=source_email,
+                             conversation_emails=unique_emails,
+                             supplier_quote_emails=[dict(sq) for sq in (supplier_quotes or [])],
+                             supplier_line_emails=[dict(se) for se in (supplier_line_emails or [])],
+                             has_email_tracking=bool(conversation_id or source_message_id or message_ids),
+                             graph_connected=graph_connected)
+
+    except Exception as e:
+        logging.exception(f"Error fetching related emails for parts list {list_id}: {e}")
+        flash('Error loading related emails', 'error')
+        return redirect(url_for('parts_list.view_parts_list', list_id=list_id))

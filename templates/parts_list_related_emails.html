@@ -1,0 +1,488 @@
+{% extends "base.html" %}
+
+{% block title %}{{ list_name }} - Related Emails{% endblock %}
+
+{% block extra_css %}
+<style>
+.related-emails-section {
+    margin-bottom: 2rem;
+    border: 1px solid #e9ecef;
+    border-radius: 0.375rem;
+    overflow: hidden;
+}
+
+.related-emails-header {
+    background: #f8f9fa;
+    color: #212529;
+    border-bottom: 1px solid #e9ecef;
+    padding: 1rem 1.5rem;
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.related-emails-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.related-email-item {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #f1f3f5;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.related-email-item:hover {
+    background: #f8f9fa;
+}
+
+.related-email-item:last-child {
+    border-bottom: none;
+}
+
+.related-email-item.source-email {
+    background: #f1f3f5;
+    border-left: 4px solid #adb5bd;
+}
+
+.related-email-subject {
+    font-weight: 600;
+    color: #212529;
+    margin-bottom: 0.25rem;
+}
+
+.related-email-meta {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-bottom: 0.5rem;
+}
+
+.related-email-preview {
+    font-size: 0.875rem;
+    color: #495057;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.related-email-date {
+    font-size: 0.75rem;
+    color: #adb5bd;
+    font-weight: 500;
+}
+
+.supplier-quotes-section {
+    margin-bottom: 2rem;
+    border: 1px solid #e9ecef;
+    border-radius: 0.375rem;
+    overflow: hidden;
+}
+
+.supplier-quotes-header {
+    background: #f8f9fa;
+    color: #212529;
+    border-bottom: 1px solid #e9ecef;
+    padding: 1rem 1.5rem;
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.supplier-quotes-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.supplier-quote-item {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #f1f3f5;
+    transition: background-color 0.15s ease;
+}
+
+.supplier-quote-item:hover {
+    background: #f8f9fa;
+}
+
+.supplier-quote-item:last-child {
+    border-bottom: none;
+}
+
+.supplier-quote-info {
+    font-weight: 600;
+    color: #212529;
+    margin-bottom: 0.25rem;
+}
+
+.supplier-quote-meta {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+.no-data-message {
+    padding: 2rem;
+    text-align: center;
+    color: #6c757d;
+}
+
+.no-data-message i {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+.email-connection-status {
+    padding: 1rem;
+    border-radius: 0.375rem;
+    margin-bottom: 1rem;
+}
+
+.email-connection-status.connected {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    color: #495057;
+}
+
+.email-connection-status.disconnected {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    color: #495057;
+}
+
+.supplier-emails-section {
+    margin-bottom: 2rem;
+    border: 1px solid #e9ecef;
+    border-radius: 0.375rem;
+    overflow: hidden;
+}
+
+.supplier-emails-header {
+    background: #f8f9fa;
+    color: #212529;
+    border-bottom: 1px solid #e9ecef;
+    padding: 1rem 1.5rem;
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.supplier-emails-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.supplier-email-item {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #f1f3f5;
+}
+
+.supplier-email-item:last-child {
+    border-bottom: none;
+}
+
+.supplier-email-info {
+    font-weight: 600;
+    color: #212529;
+    margin-bottom: 0.25rem;
+}
+
+.supplier-email-meta {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Connection Status -->
+    {% if not graph_connected %}
+    <div class="email-connection-status disconnected">
+        <i class="bi bi-exclamation-triangle me-2"></i>
+        <strong>Email connection not available.</strong> Cannot fetch emails from Microsoft Graph API.
+    </div>
+    {% elif not has_email_tracking %}
+    <div class="email-connection-status connected">
+        <i class="bi bi-info-circle me-2"></i>
+        <strong>No email tracking found.</strong> This parts list was not created from an email, so no related emails are available.
+    </div>
+    {% endif %}
+
+    <div class="row">
+        <div class="col-md-8">
+            <!-- Conversation Emails -->
+            <div class="related-emails-section">
+                <h5 class="related-emails-header">
+                    <i class="bi bi-envelope me-2"></i>
+                    Email Conversation
+                    {% if conversation_emails %}
+                        <span class="badge bg-light text-dark ms-2">{{ conversation_emails|length }}</span>
+                    {% endif %}
+                </h5>
+                <div class="related-emails-list">
+                    {% if source_email %}
+                        <div class="related-email-item source-email" onclick="viewEmail('{{ source_email.id }}')">
+                            <div class="related-email-subject">
+                                <i class="bi bi-star-fill text-secondary me-1"></i>
+                                {{ source_email.subject or '(No subject)' }}
+                                <span class="badge bg-light text-dark border ms-2">Source Email</span>
+                            </div>
+                            <div class="related-email-meta">
+                                From: {{ source_email.from.emailAddress.address if source_email.from.emailAddress else 'Unknown' }}
+                                {% if source_email.toRecipients %}
+                                    | To: {{ source_email.toRecipients[0].emailAddress.address if source_email.toRecipients[0].emailAddress else 'Unknown' }}
+                                    {% if source_email.toRecipients|length > 1 %}
+                                        (+{{ source_email.toRecipients|length - 1 }} more)
+                                    {% endif %}
+                                {% endif %}
+                            </div>
+                            <div class="related-email-preview">
+                                {{ source_email.bodyPreview or 'No preview available' }}
+                            </div>
+                            <div class="related-email-date">
+                                {{ source_email.receivedDateTime_display or 'Unknown date' }}
+                            </div>
+                        </div>
+                    {% endif %}
+
+                    {% for email in conversation_emails %}
+                        {% if email.id != (source_email.id if source_email else '') %}
+                        <div class="related-email-item" onclick="viewEmail('{{ email.id }}')">
+                            <div class="related-email-subject">
+                                {{ email.subject or '(No subject)' }}
+                                {% if email._is_source_conversation %}
+                                    <span class="badge bg-light text-dark border ms-2">Conversation</span>
+                                {% else %}
+                                    <span class="badge bg-light text-dark border ms-2">Quote Email</span>
+                                {% endif %}
+                            </div>
+                            <div class="related-email-meta">
+                                From: {{ email.from.emailAddress.address if email.from.emailAddress else 'Unknown' }}
+                                {% if email.toRecipients %}
+                                    | To: {{ email.toRecipients[0].emailAddress.address if email.toRecipients[0].emailAddress else 'Unknown' }}
+                                    {% if email.toRecipients|length > 1 %}
+                                        (+{{ email.toRecipients|length - 1 }} more)
+                                    {% endif %}
+                                {% endif %}
+                            </div>
+                            <div class="related-email-preview">
+                                {{ email.bodyPreview or 'No preview available' }}
+                            </div>
+                            <div class="related-email-date">
+                                {{ email.receivedDateTime_display or 'Unknown date' }}
+                                {% if email.hasAttachments %}
+                                    <i class="bi bi-paperclip ms-2" title="Has attachments"></i>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if not source_email and not conversation_emails %}
+                        <div class="no-data-message">
+                            <i class="bi bi-envelope-x"></i>
+                            <p>No emails found in this conversation.</p>
+                            <small class="text-muted">This parts list may not have been created from an email, or the email data may not be available.</small>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <!-- Supplier Quotes -->
+            <div class="supplier-quotes-section">
+                <h5 class="supplier-quotes-header">
+                    <i class="bi bi-receipt me-2"></i>
+                    Supplier Quotes
+                    {% if supplier_quote_emails %}
+                        <span class="badge bg-light text-dark ms-2">{{ supplier_quote_emails|length }}</span>
+                    {% endif %}
+                </h5>
+                <div class="supplier-quotes-list">
+                    {% for quote in supplier_quote_emails %}
+                    <div class="supplier-quote-item">
+                        <div class="supplier-quote-info">
+                            <i class="bi bi-tag me-1"></i>
+                            {{ quote.supplier_name }}
+                            {% if quote.quote_reference %}
+                                - {{ quote.quote_reference }}
+                            {% endif %}
+                        </div>
+                        <div class="supplier-quote-meta">
+                            {% if quote.quote_date %}
+                                Quoted: {{ quote.quote_date.strftime('%b %d, %Y') }}
+                            {% endif %}
+                            {% if quote.email_message_id or quote.email_conversation_id %}
+                                <br><small class="text-muted"><i class="bi bi-envelope me-1"></i>Email tracked</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+
+                    {% if not supplier_quote_emails %}
+                        <div class="no-data-message">
+                            <i class="bi bi-receipt-x"></i>
+                            <p>No supplier quotes found.</p>
+                            <small class="text-muted">Quotes created from emails will appear here.</small>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Supplier Emails -->
+            <div class="supplier-emails-section">
+                <h5 class="supplier-emails-header">
+                    <i class="bi bi-send me-2"></i>
+                    Supplier Emails
+                    {% if supplier_line_emails %}
+                        <span class="badge bg-light text-dark ms-2">{{ supplier_line_emails|length }}</span>
+                    {% endif %}
+                </h5>
+                <div class="supplier-emails-list">
+                    {% for email in supplier_line_emails %}
+                    <div class="supplier-email-item">
+                        <div class="supplier-email-info">
+                            <i class="bi bi-envelope me-1"></i>
+                            {{ email.supplier_name }}
+                            {% if email.part_number %}
+                                - {{ email.part_number }}
+                            {% endif %}
+                        </div>
+                        <div class="supplier-email-meta">
+                            {% if email.email_subject %}
+                                <div><strong>Subject:</strong> {{ email.email_subject }}</div>
+                            {% endif %}
+                            <div>
+                                {% if email.recipient_email %}
+                                    To: {{ email.recipient_email }}
+                                {% endif %}
+                                {% if email.recipient_name %}
+                                    ({{ email.recipient_name }})
+                                {% endif %}
+                            </div>
+                            {% if email.date_sent %}
+                                <div>Sent: {{ email.date_sent.strftime('%b %d, %Y %I:%M %p') }}</div>
+                            {% endif %}
+                            {% if email.sent_by_username %}
+                                <div>By: {{ email.sent_by_username }}</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+
+                    {% if not supplier_line_emails %}
+                        <div class="no-data-message">
+                            <i class="bi bi-envelope-open"></i>
+                            <p>No supplier emails found.</p>
+                            <small class="text-muted">Emails recorded for this parts list will appear here.</small>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Email Detail Modal -->
+<div class="modal fade" id="emailDetailModal" tabindex="-1" aria-labelledby="emailDetailModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="emailDetailModalLabel">Email Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="emailDetailContent">
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Loading email details...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function viewEmail(messageId) {
+    const modal = new bootstrap.Modal(document.getElementById('emailDetailModal'));
+    const content = document.getElementById('emailDetailContent');
+
+    content.innerHTML = `
+        <div class="text-center">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading email details...</p>
+        </div>
+    `;
+
+    modal.show();
+
+    // Fetch email details from Graph API
+    fetch(`/emails/graph/message/${encodeURIComponent(messageId)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.message) {
+                const msg = data.message;
+                const fromAddr = msg.from?.emailAddress?.address || 'Unknown';
+                const fromName = msg.from?.emailAddress?.name || '';
+                const receivedDate = msg.receivedDateTime ?
+                    new Date(msg.receivedDateTime).toLocaleString() : 'Unknown';
+
+                let toRecipients = '';
+                if (msg.toRecipients && msg.toRecipients.length > 0) {
+                    toRecipients = msg.toRecipients.map(r => r.emailAddress?.address || 'Unknown').join(', ');
+                }
+
+                content.innerHTML = `
+                    <div class="mb-3">
+                        <strong>Subject:</strong> ${msg.subject || '(No subject)'}
+                    </div>
+                    <div class="mb-3">
+                        <strong>From:</strong> ${fromName ? `${fromName} ` : ''}<${fromAddr}>
+                    </div>
+                    <div class="mb-3">
+                        <strong>To:</strong> ${toRecipients || 'Unknown'}
+                    </div>
+                    <div class="mb-3">
+                        <strong>Received:</strong> ${receivedDate}
+                    </div>
+                    <div class="mb-3">
+                        <strong>Body:</strong>
+                        <div class="mt-2 p-3 bg-light rounded">
+                            ${msg.body?.content || msg.bodyPreview || 'No content available'}
+                        </div>
+                    </div>
+                    ${msg.webLink ? `
+                        <div class="mt-3">
+                            <a href="${msg.webLink}" target="_blank" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-box-arrow-up-right me-1"></i>Open in Outlook
+                            </a>
+                        </div>
+                    ` : ''}
+                `;
+            } else {
+                content.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        Failed to load email details: ${data.error || 'Unknown error'}
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            content.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Error loading email: ${error.message}
+                </div>
+            `;
+        });
+}
+</script>
+
+{% endblock %}

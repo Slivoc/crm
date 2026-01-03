@@ -4,41 +4,51 @@
 {% set show_quote_views = show_quote_views|default(false) %}
 <div class="card mb-4" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
     <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
-        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-            <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
-                <i class="bi {{ icon_class }} me-2" style="color:#0d6efd;"></i>
-                Parts List: {{ list_name }}
-                {% if customer_name %}
-                    <span class="text-muted" style="font-size:.9rem;">| {{ customer_name }}</span>
-                {% endif %}
-                {% if status_name %}
-                    <span id="partsListStatusBadge"
-                          class="badge bg-light text-dark border ms-2 d-inline-flex align-items-center gap-1"
-                          style="font-size:.7rem; cursor: pointer;"
-                          data-list-id="{{ list_id }}"
-                          data-status-id="{{ status_id|default('') }}"
-                          role="button"
-                          tabindex="0"
-                          title="Click to change status">
-                        <span class="text-muted" data-role="status-label">Status:</span>
-                        <span data-role="status-name">{{ status_name }}</span>
-                    </span>
-                {% endif %}
-            </h5>
-            <div class="d-flex flex-wrap gap-2">
-                {% if not customer_name %}
-                    <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#assignCustomerModal">
-                        <i class="bi bi-person-plus me-1"></i>Assign Customer
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+            <div class="d-flex align-items-center flex-wrap gap-2">
+                <h5 class="card-title mb-0" style="font-weight:600;color:#212529;">
+                    <i class="bi {{ icon_class }} me-2" style="color:#0d6efd;"></i>
+                    Parts List: {{ list_name }}
+                    {% if customer_name %}
+                        <span class="text-muted" style="font-size:.9rem;">| {{ customer_name }}</span>
+                    {% endif %}
+                    {% if status_name %}
+                        <span id="partsListStatusBadge"
+                              class="badge bg-light text-dark border ms-2 d-inline-flex align-items-center gap-1"
+                              style="font-size:.7rem; cursor: pointer;"
+                              data-list-id="{{ list_id }}"
+                              data-status-id="{{ status_id|default('') }}"
+                              role="button"
+                              tabindex="0"
+                              title="Click to change status">
+                            <span class="text-muted" data-role="status-label">Status:</span>
+                            <span data-role="status-name">{{ status_name }}</span>
+                        </span>
+                    {% endif %}
+                </h5>
+                <!-- Action icons on the left -->
+                <div class="d-flex gap-1 ms-2">
+                    {% if not customer_name %}
+                        <button type="button"
+                                class="btn btn-sm btn-outline-primary"
+                                data-bs-toggle="modal"
+                                data-bs-target="#assignCustomerModal"
+                                title="Assign Customer">
+                            <i class="bi bi-person-plus"></i>
+                        </button>
+                    {% endif %}
+                    <button type="button"
+                            class="btn btn-sm btn-outline-danger"
+                            id="delete-parts-list-btn"
+                            data-list-id="{{ list_id }}"
+                            data-list-name="{{ list_name|e }}"
+                            title="Delete Parts List">
+                        <i class="bi bi-trash"></i>
                     </button>
-                {% endif %}
-                <button type="button"
-                        class="btn btn-sm btn-outline-danger"
-                        id="delete-parts-list-btn"
-                        data-list-id="{{ list_id }}"
-                        data-list-name="{{ list_name|e }}">
-                    <i class="bi bi-trash me-1"></i>Delete
-                </button>
-                <div class="btn-group" role="group">
+                </div>
+            </div>
+            <!-- Navigation buttons on the right -->
+            <div class="btn-group" role="group">
                 <a href="{{ url_for('parts_list.view_parts_list', list_id=list_id) }}"
                    class="btn btn-sm {{ 'btn-primary' if active_page == 'overview' else 'btn-outline-secondary' }}">
                     <i class="bi bi-house-door me-1"></i>Overview
@@ -66,7 +76,10 @@
                         <i class="bi bi-cash-stack me-1"></i>Quoting
                     </a>
                 {% endif %}
-                </div>
+                <a href="{{ url_for('parts_list.get_related_emails', list_id=list_id) }}"
+                   class="btn btn-sm {{ 'btn-primary' if active_page == 'emails' else 'btn-outline-secondary' }}">
+                    <i class="bi bi-envelope me-1"></i>Related Emails
+                </a>
             </div>
         </div>
     </div>

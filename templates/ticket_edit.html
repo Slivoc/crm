@@ -220,12 +220,18 @@
                     <i class="bi bi-chat-left-text me-2"></i>Activity
                 </h5>
                 
-                <form method="post" action="{{ url_for('tickets.add_ticket_update', ticket_id=ticket.id) }}" class="update-form mb-4">
-                    <div class="input-group">
-                        <input type="text" class="form-control" name="update_text" placeholder="Add an update or comment..." required>
+                <form method="post" action="{{ url_for('tickets.add_ticket_update', ticket_id=ticket.id) }}" class="update-form mb-4" id="updateForm">
+                    <div class="input-group position-relative">
+                        <input type="text" class="form-control" name="update_text" id="updateTextInput" placeholder="Add an update or comment... Use @ to mention users" autocomplete="off" required>
                         <button type="submit" class="btn btn-outline-primary">
                             <i class="bi bi-send"></i>
                         </button>
+                        <div id="mentionDropdown" class="mention-dropdown d-none">
+                            <div class="mention-list"></div>
+                        </div>
+                    </div>
+                    <div class="form-text mt-1">
+                        <small class="text-muted">Tip: Type @ to mention and notify a user</small>
                     </div>
                 </form>
 
@@ -238,7 +244,7 @@
                                     <strong>{{ update.user_name }}</strong>
                                     <span class="text-muted">{{ update.created_at.strftime('%d %b %Y %H:%M') if update.created_at else '' }}</span>
                                 </div>
-                                <div class="activity-text">{{ update.update_text }}</div>
+                                <div class="activity-text">{{ update.update_text | replace('@[', '<span class="mention-tag">@') | replace(']', '</span>') | safe }}</div>
                             </div>
                         </div>
                     {% else %}
@@ -1016,7 +1022,22 @@
 .update-form .input-group {
     border: 1px solid #e9ecef;
     border-radius: 8px;
-    overflow: hidden;
+    overflow: visible;
+}
+
+.update-form .input-group > .form-control,
+.update-form .input-group > .btn {
+    border-radius: 0;
+}
+
+.update-form .input-group > .form-control:first-child {
+    border-top-left-radius: 8px;
+    border-bottom-left-radius: 8px;
+}
+
+.update-form .input-group > .btn:last-child {
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
 }
 
 .update-form .form-control {
@@ -1031,6 +1052,89 @@
     border: none;
     border-left: 1px solid #e9ecef;
     border-radius: 0;
+}
+
+/* Mention dropdown */
+.mention-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1060;
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 4px;
+}
+
+.mention-list {
+    padding: 4px 0;
+}
+
+.mention-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.mention-item:hover,
+.mention-item.active {
+    background: #e8f0fe;
+}
+
+.mention-item-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #1a73e8;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+
+.mention-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.mention-item-name {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #212529;
+}
+
+.mention-item-email {
+    font-size: 0.75rem;
+    color: #6c757d;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mention-empty {
+    padding: 12px;
+    text-align: center;
+    color: #6c757d;
+    font-size: 0.85rem;
+}
+
+/* Mention tag in activity text */
+.mention-tag {
+    background: #e8f0fe;
+    color: #1a73e8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 500;
 }
 </style>
 
@@ -1197,6 +1301,196 @@ document.addEventListener('DOMContentLoaded', function() {
             chevron.style.transform = 'rotate(0deg)';
         });
     }
+
+    // Mention functionality
+    initMentionInput();
 });
+
+function initMentionInput() {
+    const input = document.getElementById('updateTextInput');
+    const dropdown = document.getElementById('mentionDropdown');
+    const mentionList = dropdown ? dropdown.querySelector('.mention-list') : null;
+
+    if (!input || !dropdown || !mentionList) {
+        console.log('Mention init failed: missing elements', {input: !!input, dropdown: !!dropdown, mentionList: !!mentionList});
+        return;
+    }
+
+    console.log('Mention input initialized');
+
+    let mentionStart = -1;
+    let activeIndex = -1;
+    let users = [];
+    let searchTimer = null;
+
+    // Hide dropdown
+    function hideDropdown() {
+        dropdown.classList.add('d-none');
+        mentionStart = -1;
+        activeIndex = -1;
+        users = [];
+    }
+
+    // Show dropdown with users
+    function showDropdown(filteredUsers) {
+        users = filteredUsers;
+        activeIndex = users.length > 0 ? 0 : -1;
+        mentionList.innerHTML = '';
+
+        if (users.length === 0) {
+            mentionList.innerHTML = '<div class="mention-empty">No users found</div>';
+        } else {
+            users.forEach((user, index) => {
+                const item = document.createElement('div');
+                item.className = 'mention-item' + (index === activeIndex ? ' active' : '');
+                item.dataset.index = index;
+
+                const initial = (user.username || '?')[0].toUpperCase();
+                item.innerHTML = `
+                    <div class="mention-item-avatar">${initial}</div>
+                    <div class="mention-item-info">
+                        <div class="mention-item-name">${escapeHtml(user.username)}</div>
+                        ${user.email ? `<div class="mention-item-email">${escapeHtml(user.email)}</div>` : ''}
+                    </div>
+                `;
+
+                item.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    selectUser(user);
+                });
+                item.addEventListener('mouseenter', () => {
+                    activeIndex = index;
+                    updateActiveItem();
+                });
+
+                mentionList.appendChild(item);
+            });
+        }
+
+        dropdown.classList.remove('d-none');
+    }
+
+    // Update active item highlight
+    function updateActiveItem() {
+        mentionList.querySelectorAll('.mention-item').forEach((item, index) => {
+            item.classList.toggle('active', index === activeIndex);
+        });
+    }
+
+    // Select a user from the dropdown
+    function selectUser(user) {
+        if (mentionStart < 0) return;
+
+        const value = input.value;
+        const before = value.substring(0, mentionStart);
+        const after = value.substring(input.selectionStart);
+
+        // Insert the mention in format @[username]
+        const mention = `@[${user.username}]`;
+        input.value = before + mention + ' ' + after;
+
+        // Set cursor position after the mention
+        const newPos = before.length + mention.length + 1;
+        input.setSelectionRange(newPos, newPos);
+        input.focus();
+
+        hideDropdown();
+    }
+
+    // Escape HTML to prevent XSS
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Search users
+    function searchUsers(query) {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+            const url = `/tickets/users/search?q=${encodeURIComponent(query)}&limit=8`;
+            console.log('Fetching users:', url);
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Users response:', data);
+                    if (data.success && Array.isArray(data.users)) {
+                        showDropdown(data.users);
+                    } else {
+                        showDropdown([]);
+                    }
+                })
+                .catch((err) => {
+                    console.error('Fetch error:', err);
+                    showDropdown([]);
+                });
+        }, 150);
+    }
+
+    // Input event - detect @ and search
+    input.addEventListener('input', (e) => {
+        const value = input.value;
+        const cursorPos = input.selectionStart;
+
+        // Find @ trigger - look for @ that starts a mention
+        // Match @word pattern (@ at start or after space, followed by non-space chars)
+        const textBeforeCursor = value.substring(0, cursorPos);
+        const mentionMatch = textBeforeCursor.match(/(^|\s)@([^\s\[\]]*)$/);
+
+        if (mentionMatch) {
+            mentionStart = textBeforeCursor.lastIndexOf('@');
+            const query = mentionMatch[2] || '';
+            console.log('Mention detected at', mentionStart, 'query:', query);
+            searchUsers(query);
+        } else {
+            hideDropdown();
+        }
+    });
+
+    // Keyboard navigation
+    input.addEventListener('keydown', (e) => {
+        if (dropdown.classList.contains('d-none')) return;
+
+        switch (e.key) {
+            case 'ArrowDown':
+                e.preventDefault();
+                activeIndex = Math.min(activeIndex + 1, users.length - 1);
+                updateActiveItem();
+                break;
+            case 'ArrowUp':
+                e.preventDefault();
+                activeIndex = Math.max(activeIndex - 1, 0);
+                updateActiveItem();
+                break;
+            case 'Enter':
+            case 'Tab':
+                if (users.length > 0 && activeIndex >= 0) {
+                    e.preventDefault();
+                    selectUser(users[activeIndex]);
+                } else if (users.length > 0) {
+                    e.preventDefault();
+                    selectUser(users[0]);
+                }
+                break;
+            case 'Escape':
+                e.preventDefault();
+                hideDropdown();
+                break;
+        }
+    });
+
+    // Hide dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!dropdown.contains(e.target) && e.target !== input) {
+            hideDropdown();
+        }
+    });
+
+    // Hide dropdown on blur (with delay to allow click)
+    input.addEventListener('blur', () => {
+        setTimeout(hideDropdown, 200);
+    });
+}
 </script>
 {% endblock %}

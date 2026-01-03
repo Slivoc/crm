@@ -1049,7 +1049,9 @@ function saveSupplierQuote() {
         quote_reference: document.getElementById('quote-reference-input').value,
         quote_date: document.getElementById('quote-date-input').value,
         currency_id: parseInt(document.getElementById('quote-currency-select').value),
-        notes: notesInput ? notesInput.value : ''
+        notes: notesInput ? notesInput.value : '',
+        email_message_id: window.EMAIL_MESSAGE_ID || null,
+        email_conversation_id: window.EMAIL_CONVERSATION_ID || null
     };
 
     const headerPromise = currentQuoteId

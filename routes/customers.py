@@ -1722,17 +1722,38 @@ def get_customer_leads(customer_id):
                 'total_entries': data.get('total_entries')
             }
 
+            def has_email_available(person):
+                if person.get('has_email') is True:
+                    return True
+                email = person.get('email')
+                if email:
+                    return True
+                status = (person.get('email_status') or '').lower()
+                return status in {'verified', 'unverified', 'guessed', 'likely', 'available'}
+            
+            def has_phone_available(person):
+                direct = person.get('has_direct_phone')
+                if isinstance(direct, str):
+                    return direct.strip().lower() in {'yes', 'true', '1'}
+                if direct is True:
+                    return True
+                return bool(person.get('phone_numbers'))
+
             leads = [{
                 'id': person.get('id'),
                 'name': f"{person.get('first_name', '')} {person.get('last_name', '')}".strip(),
                 'title': person.get('title'),
                 'email_status': person.get('email_status'),
+                'email_available': has_email_available(person),
+                'has_email': person.get('has_email'),
                 'linkedin_url': person.get('linkedin_url'),
                 'seniority': person.get('seniority'),
                 'organization': person.get('organization', {}).get('name'),
                 'department': person.get('department'),
                 'city': person.get('city'),
-                'state': person.get('state')
+                'state': person.get('state'),
+                'phone_available': has_phone_available(person),
+                'has_direct_phone': person.get('has_direct_phone')
             } for person in data.get('people', [])]
 
             return jsonify({
@@ -1791,13 +1812,26 @@ def enrich_person():
         # Extract relevant information from the enriched data
         person = enriched_data.get('person', {})
         email = person.get('email')
+        phone = person.get('sanitized_phone') or person.get('phone')
+        if not phone:
+            phone_numbers = person.get('phone_numbers') or []
+            if phone_numbers:
+                phone = phone_numbers[0].get('sanitized_number') or phone_numbers[0].get('raw_number')
+        if not phone:
+            contact = person.get('contact') or {}
+            phone = contact.get('sanitized_phone') or contact.get('phone')
+            if not phone:
+                contact_numbers = contact.get('phone_numbers') or []
+                if contact_numbers:
+                    phone = contact_numbers[0].get('sanitized_number') or contact_numbers[0].get('raw_number')
 
         return jsonify({
             'success': True,
             'data': {
                 'email': email,
                 'name': person.get('name'),
-                'title': person.get('title')
+                'title': person.get('title'),
+                'phone': phone
             }
         })
     except requests.exceptions.RequestException as e:

@@ -1106,6 +1106,50 @@ def _fetch_email_associations(message_ids, conversation_ids, table_name):
     return by_message, by_conversation
 
 
+def _fetch_supplier_quote_parts_lists(message_ids, conversation_ids):
+    if not message_ids and not conversation_ids:
+        return {}, {}
+
+    clauses = []
+    params = []
+    if message_ids:
+        clauses.append(f"email_message_id IN ({','.join(['?'] * len(message_ids))})")
+        params.extend(message_ids)
+    if conversation_ids:
+        clauses.append(f"email_conversation_id IN ({','.join(['?'] * len(conversation_ids))})")
+        params.extend(conversation_ids)
+
+    where_clause = " OR ".join(clauses)
+    try:
+        rows = db_execute(
+            f"""
+            SELECT parts_list_id, email_message_id, email_conversation_id, date_created
+            FROM parts_list_supplier_quotes
+            WHERE {where_clause}
+            ORDER BY date_created DESC
+            """,
+            params,
+            fetch="all",
+        ) or []
+    except Exception:
+        return {}, {}
+
+    by_message = {}
+    by_conversation = {}
+    for row in rows:
+        row_data = dict(row) if not isinstance(row, dict) else row
+        parts_list_id = row_data.get("parts_list_id")
+        if not parts_list_id:
+            continue
+        message_id = row_data.get("email_message_id")
+        conversation_id = row_data.get("email_conversation_id")
+        if message_id and message_id not in by_message:
+            by_message[message_id] = parts_list_id
+        if conversation_id and conversation_id not in by_conversation:
+            by_conversation[conversation_id] = parts_list_id
+    return by_message, by_conversation
+
+
 def _find_parts_lists_for_parts(part_numbers, supplier_id=None, limit=15):
     """
     Return candidate parts lists that contain any of the provided part numbers.
@@ -1709,6 +1753,7 @@ def graph_messages():
             conversation_ids = [m.get("conversationId") for m in cached_messages if isinstance(m, dict) and m.get("conversationId")]
             ticket_by_message, ticket_by_conversation = _fetch_email_associations(message_ids, conversation_ids, "tickets")
             parts_list_by_message, parts_list_by_conversation = _fetch_email_associations(message_ids, conversation_ids, "parts_lists")
+            supplier_parts_by_message, supplier_parts_by_conversation = _fetch_supplier_quote_parts_lists(message_ids, conversation_ids)
 
             for message in cached_messages:
                 from_data = message.get("from", {}).get("emailAddress", {}) if isinstance(message, dict) else {}
@@ -1719,7 +1764,12 @@ def graph_messages():
                 message_id = message.get("id")
                 conversation_id = message.get("conversationId")
                 message["ticket_id"] = ticket_by_message.get(message_id) or ticket_by_conversation.get(conversation_id)
-                message["parts_list_id"] = parts_list_by_message.get(message_id) or parts_list_by_conversation.get(conversation_id)
+                message["parts_list_id"] = (
+                    parts_list_by_message.get(message_id)
+                    or parts_list_by_conversation.get(conversation_id)
+                    or supplier_parts_by_message.get(message_id)
+                    or supplier_parts_by_conversation.get(conversation_id)
+                )
 
             # Check if there are more cached messages
             count_row = db_execute(
@@ -1818,6 +1868,7 @@ def graph_messages():
     conversation_ids = [m.get("conversationId") for m in messages if isinstance(m, dict) and m.get("conversationId")]
     ticket_by_message, ticket_by_conversation = _fetch_email_associations(message_ids, conversation_ids, "tickets")
     parts_list_by_message, parts_list_by_conversation = _fetch_email_associations(message_ids, conversation_ids, "parts_lists")
+    supplier_parts_by_message, supplier_parts_by_conversation = _fetch_supplier_quote_parts_lists(message_ids, conversation_ids)
 
     for message in messages:
         from_data = message.get("from", {}).get("emailAddress", {}) if isinstance(message, dict) else {}
@@ -1828,7 +1879,12 @@ def graph_messages():
         message_id = message.get("id")
         conversation_id = message.get("conversationId")
         message["ticket_id"] = ticket_by_message.get(message_id) or ticket_by_conversation.get(conversation_id)
-        message["parts_list_id"] = parts_list_by_message.get(message_id) or parts_list_by_conversation.get(conversation_id)
+        message["parts_list_id"] = (
+            parts_list_by_message.get(message_id)
+            or parts_list_by_conversation.get(conversation_id)
+            or supplier_parts_by_message.get(message_id)
+            or supplier_parts_by_conversation.get(conversation_id)
+        )
 
     try:
         salesperson_id = None
