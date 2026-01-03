@@ -8,10 +8,13 @@ Assumes:
 """
 
 import csv
-import sqlite3
 import logging
 from typing import List
 
+from dotenv import load_dotenv
+from db import get_db_connection, _using_postgres
+
+load_dotenv()
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -27,11 +30,13 @@ def create_base_part_number(part_number: str) -> str:
     return ''.join(c for c in part_number if c.isalnum()).upper()
 
 
-def get_db_connection(db_path: str = 'database.db'):
-    """Create database connection with row factory"""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+def get_db_connection_for_script(db_path: str = 'database.db'):
+    """Create database connection; requires Postgres via DATABASE_URL."""
+    if not _using_postgres():
+        raise RuntimeError("DATABASE_URL must be set to use Postgres for this script.")
+    if db_path and db_path != 'database.db':
+        logger.warning("DATABASE_URL is set; ignoring db_path override.")
+    return get_db_connection()
 
 
 def process_csv_row_simple(cursor, row_parts: List[str], row_number: int) -> dict:
@@ -64,8 +69,16 @@ def process_csv_row_simple(cursor, row_parts: List[str], row_number: int) -> dic
     
     # Create new group
     description = f"Alternative group from CSV row {row_number}"
-    cursor.execute('INSERT INTO part_alt_groups (description) VALUES (?)', (description,))
-    group_id = cursor.lastrowid
+    if _using_postgres():
+        cursor.execute(
+            'INSERT INTO part_alt_groups (description) VALUES (?) RETURNING id',
+            (description,)
+        )
+        row = cursor.fetchone()
+        group_id = row['id'] if isinstance(row, dict) else row[0]
+    else:
+        cursor.execute('INSERT INTO part_alt_groups (description) VALUES (?)', (description,))
+        group_id = cursor.lastrowid
     
     # Add all parts to the group
     parts_added = 0
@@ -76,7 +89,7 @@ def process_csv_row_simple(cursor, row_parts: List[str], row_number: int) -> dic
                 (group_id, base_pn)
             )
             parts_added += 1
-        except sqlite3.IntegrityError as e:
+        except Exception as e:
             logger.warning(f"Row {row_number}: Could not add part {base_pn} - {e}")
     
     logger.info(f"Row {row_number}: Created group {group_id} with {parts_added} parts")
@@ -105,7 +118,7 @@ def process_csv_file_simple(csv_path: str, db_path: str = 'database.db', batch_s
         db_path: Path to SQLite database
         batch_size: Number of rows to process before committing
     """
-    conn = get_db_connection(db_path)
+    conn = get_db_connection_for_script(db_path)
     cursor = conn.cursor()
 
     # Clear existing alternatives first
@@ -181,42 +194,47 @@ def process_csv_file_simple(csv_path: str, db_path: str = 'database.db', batch_s
 
 def verify_results(db_path: str = 'database.db'):
     """Quick verification of results"""
-    conn = get_db_connection(db_path)
+    conn = get_db_connection_for_script(db_path)
     cursor = conn.cursor()
     
     # Count groups
-    group_count = cursor.execute('SELECT COUNT(*) as cnt FROM part_alt_groups').fetchone()['cnt']
+    cursor.execute('SELECT COUNT(*) as cnt FROM part_alt_groups')
+    group_count = cursor.fetchone()['cnt']
     
     # Count members
-    member_count = cursor.execute('SELECT COUNT(*) as cnt FROM part_alt_group_members').fetchone()['cnt']
+    cursor.execute('SELECT COUNT(*) as cnt FROM part_alt_group_members')
+    member_count = cursor.fetchone()['cnt']
     
     # Find largest group
-    largest_group = cursor.execute('''
+    cursor.execute('''
         SELECT group_id, COUNT(*) as member_count 
         FROM part_alt_group_members 
         GROUP BY group_id 
         ORDER BY member_count DESC 
         LIMIT 1
-    ''').fetchone()
+    ''')
+    largest_group = cursor.fetchone()
     
     # Find smallest group
-    smallest_group = cursor.execute('''
+    cursor.execute('''
         SELECT group_id, COUNT(*) as member_count 
         FROM part_alt_group_members 
         GROUP BY group_id 
         ORDER BY member_count ASC 
         LIMIT 1
-    ''').fetchone()
+    ''')
+    smallest_group = cursor.fetchone()
     
     # Average group size
-    avg_size = cursor.execute('''
+    cursor.execute('''
         SELECT AVG(member_count) as avg_size
         FROM (
             SELECT COUNT(*) as member_count 
             FROM part_alt_group_members 
             GROUP BY group_id
         )
-    ''').fetchone()
+    ''')
+    avg_size = cursor.fetchone()
     
     conn.close()
     
@@ -238,7 +256,7 @@ if __name__ == '__main__':
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: python bulk_alt_upload_simple.py <csv_file_path> [db_path]")
+        print("Usage: python bulk_alt_upload.py <csv_file_path> [db_path]")
         sys.exit(1)
     
     csv_file = sys.argv[1]
@@ -246,6 +264,11 @@ if __name__ == '__main__':
     
     logger.info(f"Starting simplified bulk upload from {csv_file}")
     logger.info(f"Database: {db_file}")
+    if _using_postgres():
+        logger.info("DATABASE_URL detected; using Postgres and ignoring db_path overrides.")
+    else:
+        logger.error("DATABASE_URL is required; aborting.")
+        raise SystemExit(1)
     logger.info("NOTE: This will CLEAR existing alternatives and create NEW groups for each CSV row")
     
     # Process the file
