@@ -7,10 +7,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const summary = document.getElementById('suggestionsSummary');
   const loadingState = document.getElementById('suggestionsLoading');
   const refreshBtn = document.getElementById('refreshSuggestions');
+  const loadMoreBtn = document.getElementById('loadMoreSuggestions');
 
   let currentSuggestions = [];
   let templates = [];
   let templatesLoaded = false;
+  let totalAvailable = null;
+  const pageSize = 8;
 
   const countryTemplateKey = 'contactSuggestionsTemplateByCountry';
   let countryTemplateDefaults = {};
@@ -43,6 +46,13 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  };
+
+  const stripHtml = (value) => {
+    if (!value) return '';
+    const holder = document.createElement('div');
+    holder.innerHTML = value;
+    return holder.textContent || holder.innerText || '';
   };
 
   const formatNumber = (value) => {
@@ -91,18 +101,19 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   const renderSummary = (data) => {
-    const suggestions = data?.suggestions || [];
-    if (!suggestions.length) {
+    if (!currentSuggestions.length) {
       summary.innerHTML = '';
       return;
     }
+    const total = Number.isFinite(data?.total_available) ? data.total_available : totalAvailable;
+    const shownCount = currentSuggestions.length;
     const generatedAt = data.generated_at
       ? new Date(data.generated_at).toLocaleString()
       : 'just now';
     summary.innerHTML = `
       <div class="alert alert-secondary d-flex justify-content-between align-items-center">
         <div>
-          <strong>${suggestions.length}</strong> suggestion${suggestions.length === 1 ? '' : 's'} ranked.
+          <strong>${shownCount}</strong>${Number.isFinite(total) ? ` of ${total}` : ''} suggestion${shownCount === 1 ? '' : 's'} shown.
         </div>
         <small class="text-muted">Generated at ${generatedAt}</small>
       </div>
@@ -135,12 +146,25 @@ document.addEventListener('DOMContentLoaded', () => {
     return options.join('');
   };
 
+  const getSelectedContact = (suggestion) => {
+    const contacts = suggestion.contacts || [];
+    if (!contacts.length) return null;
+    const selectedId = suggestion.selected_contact_id;
+    if (selectedId) {
+      const match = contacts.find((contact) => String(contact.id) === String(selectedId));
+      if (match) return match;
+    }
+    return contacts[0];
+  };
+
   const renderSuggestionCard = (suggestion) => {
     const lastContact = suggestion.last_contact;
     const lastEmail = suggestion.last_email;
     const graphEmail = suggestion.last_graph_email;
     const suggestedEmail = suggestion.suggested_email || {};
     const newsItems = suggestion.news_items || [];
+    const contacts = suggestion.contacts || [];
+    const selectedContact = getSelectedContact(suggestion);
     const hasSuggestedEmail = Boolean(suggestedEmail?.subject || suggestedEmail?.body);
     const aiGenerated = Boolean(suggestion.ai_generated || hasSuggestedEmail || newsItems.length);
     const aiError = suggestion.ai_error || '';
@@ -152,6 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const countryLabel = suggestion.country ? ` | ${suggestion.country}` : '';
     const templateId = getTemplateIdForSuggestion(suggestion);
     const graphEmailAge = graphEmail?.date ? relativeDate(graphEmail.date) : '';
+    const graphMessageId = graphEmail?.message_id;
 
     const scoreBadgeClass = suggestion.score >= 95
       ? 'bg-danger'
@@ -179,6 +204,27 @@ document.addEventListener('DOMContentLoaded', () => {
                   ? `${suggestion.score_breakdown.days_since_contact} days stale`
                   : 'No communications yet'
               }</span>
+            </div>
+
+            <div class="mb-2">
+              <label class="form-label small fw-semibold" for="contact-${suggestion.customer_id}">Contact to email</label>
+              ${contacts.length ? `
+                <select class="form-select form-select-sm" id="contact-${suggestion.customer_id}" data-contact-select data-customer-id="${suggestion.customer_id}">
+                  ${contacts.map((contact) => {
+                    const id = String(contact.id || '');
+                    const selected = selectedContact && String(selectedContact.id) === id ? 'selected' : '';
+                    const label = [contact.name, contact.email].filter(Boolean).join(' • ');
+                    return `<option value="${escapeHtml(id)}" ${selected}>${escapeHtml(label)}</option>`;
+                  }).join('')}
+                </select>
+                ${selectedContact?.email ? `
+                  <div class="small text-muted mt-1">
+                    ${escapeHtml(selectedContact.email)}
+                    <a class="ms-2" href="mailto:${escapeHtml(selectedContact.email)}">Open email</a>
+                    <button class="btn btn-sm btn-link p-0 ms-2" data-copy-email="${escapeHtml(selectedContact.email)}">Copy</button>
+                  </div>
+                ` : ''}
+              ` : '<div class="text-muted small">No contacts with email</div>'}
             </div>
 
             <div class="mb-2">
@@ -219,6 +265,12 @@ document.addEventListener('DOMContentLoaded', () => {
               ${graphEmail ? `
                 <div class="small mt-2"><span class="fw-semibold">Graph:</span> ${escapeHtml(graphEmail.subject || 'Email')} ${graphEmailAge ? `<span class="text-muted">(${escapeHtml(graphEmailAge)})</span>` : ''}</div>
                 ${graphEmail.preview ? `<div class="small">${escapeHtml(graphEmail.preview)}</div>` : ''}
+                ${graphMessageId ? `
+                  <div class="mt-2">
+                    <button class="btn btn-sm btn-outline-secondary" data-load-graph data-message-id="${escapeHtml(graphMessageId)}">Load full Graph email</button>
+                    <div class="graph-email-content small mt-2 d-none" data-graph-content></div>
+                  </div>
+                ` : ''}
               ` : ''}
             </div>
 
@@ -258,10 +310,11 @@ document.addEventListener('DOMContentLoaded', () => {
       container.innerHTML = `
         <div class="col-12">
           <div class="alert alert-light text-center mb-0">
-            No customers with zero spend were found.
+            No zero-spend customers with email contacts were found.
           </div>
         </div>
       `;
+      if (loadMoreBtn) loadMoreBtn.classList.add('d-none');
       return;
     }
 
@@ -296,6 +349,78 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
         renderSuggestions(currentSuggestions);
+      });
+    });
+
+    container.querySelectorAll('[data-contact-select]').forEach((select) => {
+      select.addEventListener('change', () => {
+        const customerId = select.getAttribute('data-customer-id');
+        const selected = select.value || '';
+        const suggestion = currentSuggestions.find((item) => String(item.customer_id) === String(customerId));
+        if (suggestion) {
+          suggestion.selected_contact_id = selected || null;
+        }
+        renderSuggestions(currentSuggestions);
+      });
+    });
+
+    container.querySelectorAll('[data-copy-email]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const email = button.getAttribute('data-copy-email') || '';
+        copyToClipboard(email, button);
+      });
+    });
+
+    container.querySelectorAll('[data-load-graph]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const messageId = button.getAttribute('data-message-id');
+        const wrapper = button.closest('.card-body');
+        const output = wrapper ? wrapper.querySelector('[data-graph-content]') : null;
+        if (!messageId || !output) return;
+
+        const isLoaded = output.getAttribute('data-loaded') === 'true';
+        if (isLoaded) {
+          const isHidden = output.classList.toggle('d-none');
+          button.textContent = isHidden ? 'Load full Graph email' : 'Hide full Graph email';
+          return;
+        }
+
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
+
+        try {
+          const response = await fetch(`/emails/graph/message/${encodeURIComponent(messageId)}`);
+          if (!response.ok) {
+            throw new Error('Failed to load Graph email');
+          }
+          const data = await response.json();
+          if (!data?.success || !data?.message) {
+            throw new Error(data?.error?.message || 'Graph email unavailable');
+          }
+          const message = data.message;
+          const subject = message.subject || '';
+          const fromEmail = message.from?.emailAddress?.address || '';
+          const received = message.receivedDateTime
+            ? new Date(message.receivedDateTime).toLocaleString()
+            : '';
+          const body = stripHtml(message.body?.content || message.bodyPreview || '');
+          const lines = [];
+          if (subject) lines.push(`Subject: ${subject}`);
+          if (fromEmail) lines.push(`From: ${fromEmail}`);
+          if (received) lines.push(`Date: ${received}`);
+          if (lines.length) lines.push('');
+          lines.push(body || '(No body content)');
+          output.textContent = lines.join('\n');
+          output.setAttribute('data-loaded', 'true');
+          output.classList.remove('d-none');
+          button.textContent = 'Hide full Graph email';
+        } catch (error) {
+          output.textContent = error?.message || 'Unable to load Graph email';
+          output.classList.remove('d-none');
+          button.textContent = 'Retry Graph email';
+        } finally {
+          button.disabled = false;
+        }
       });
     });
 
@@ -381,14 +506,22 @@ document.addEventListener('DOMContentLoaded', () => {
       container.innerHTML = '';
     }
     try {
-      const response = await fetch(`/salespeople/${salespersonId}/contact-suggestions/data`);
+      const response = await fetch(`/salespeople/${salespersonId}/contact-suggestions/data?limit=${pageSize}&offset=0`);
       if (!response.ok) {
         throw new Error('Failed to load suggestions');
       }
       const data = await response.json();
       currentSuggestions = data.suggestions || [];
+      totalAvailable = Number.isFinite(data.total_available) ? data.total_available : null;
       renderSummary(data);
       renderSuggestions(currentSuggestions);
+      if (loadMoreBtn) {
+        if (totalAvailable !== null && currentSuggestions.length < totalAvailable) {
+          loadMoreBtn.classList.remove('d-none');
+        } else {
+          loadMoreBtn.classList.add('d-none');
+        }
+      }
     } catch (error) {
       console.error(error);
       container.innerHTML = `
@@ -401,6 +534,36 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  const loadMoreSuggestions = async () => {
+    if (!loadMoreBtn) return;
+    loadMoreBtn.disabled = true;
+    loadMoreBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
+
+    try {
+      const offset = currentSuggestions.length;
+      const response = await fetch(`/salespeople/${salespersonId}/contact-suggestions/data?limit=${pageSize}&offset=${offset}`);
+      if (!response.ok) {
+        throw new Error('Failed to load more suggestions');
+      }
+      const data = await response.json();
+      const newSuggestions = data.suggestions || [];
+      totalAvailable = Number.isFinite(data.total_available) ? data.total_available : totalAvailable;
+      currentSuggestions = currentSuggestions.concat(newSuggestions);
+      renderSummary(data);
+      renderSuggestions(currentSuggestions);
+      if (!newSuggestions.length || (totalAvailable !== null && currentSuggestions.length >= totalAvailable)) {
+        loadMoreBtn.classList.add('d-none');
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      loadMoreBtn.disabled = false;
+      loadMoreBtn.textContent = 'Load more suggestions';
+    }
+  };
+
   loadTemplates();
   loadSuggestions();
+
+  loadMoreBtn?.addEventListener('click', loadMoreSuggestions);
 });

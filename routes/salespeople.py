@@ -301,6 +301,7 @@ def _get_latest_graph_emails_for_customers(customer_groups, graph_user_id, limit
         sent_dt = _parse_datetime_value(sent_at)
 
         latest_by_main[match_main] = {
+            'message_id': row.get('message_id'),
             'subject': subject.strip(),
             'preview': _strip_html(preview).strip()[:800],
             'sender_email': row.get('sender_email'),
@@ -309,6 +310,76 @@ def _get_latest_graph_emails_for_customers(customer_groups, graph_user_id, limit
         }
 
     return latest_by_main
+
+
+def _get_contact_emails_for_customers(customer_groups):
+    """Return contact email lists keyed by main customer id."""
+    if not customer_groups:
+        return {}
+
+    child_to_main = {}
+    all_customer_ids = []
+    for main_id, related_ids in customer_groups.items():
+        for cid in related_ids:
+            child_to_main[cid] = main_id
+            all_customer_ids.append(cid)
+
+    if not all_customer_ids:
+        return {}
+
+    placeholders = ','.join('?' for _ in all_customer_ids)
+    rows = db_execute(
+        f"""
+        SELECT id, customer_id, name, second_name, email, job_title
+        FROM contacts
+        WHERE email IS NOT NULL AND email != ''
+          AND customer_id IN ({placeholders})
+        ORDER BY name, second_name
+        """,
+        all_customer_ids,
+        fetch='all'
+    ) or []
+
+    contacts_by_main = {}
+    for row in (dict(r) for r in rows if r):
+        main_id = child_to_main.get(row.get('customer_id'))
+        if not main_id:
+            continue
+        full_name = f"{row.get('name') or ''} {row.get('second_name') or ''}".strip()
+        contacts_by_main.setdefault(main_id, []).append({
+            'id': row.get('id'),
+            'name': full_name or row.get('email'),
+            'email': row.get('email'),
+            'job_title': row.get('job_title')
+        })
+
+    return contacts_by_main
+
+
+def _filter_customers_with_contact_emails(customers):
+    """Filter customers to those with at least one contact email across related companies."""
+    if not customers:
+        return [], {}, {}
+
+    customer_groups = {
+        customer['id']: customer.get('related_customer_ids') or [customer['id']]
+        for customer in customers
+        if customer.get('id')
+    }
+
+    contacts_by_main = _get_contact_emails_for_customers(customer_groups)
+    eligible_main_ids = set(contacts_by_main.keys())
+
+    filtered_customers = [
+        customer for customer in customers
+        if customer and customer.get('id') in eligible_main_ids
+    ]
+    filtered_groups = {
+        main_id: customer_groups[main_id]
+        for main_id in eligible_main_ids
+        if main_id in customer_groups
+    }
+    return filtered_customers, filtered_groups, contacts_by_main
 
 
 def _build_news_lookup_for_customers(salesperson_id):
@@ -590,19 +661,13 @@ def _get_zero_spend_customers(salesperson_id):
         return filtered
 
 
-def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8):
+def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8, offset=0):
     """Aggregate data for the contact suggestions page."""
-    customers = _get_zero_spend_customers(salesperson_id)
-    customers = [customer for customer in customers if customer]
+    customers = [customer for customer in _get_zero_spend_customers(salesperson_id) if customer]
+    customers, customer_groups, contacts_by_main = _filter_customers_with_contact_emails(customers)
 
     if not customers:
-        return [], False
-
-    customer_groups = {
-        customer['id']: customer.get('related_customer_ids') or [customer['id']]
-        for customer in customers
-        if customer.get('id')
-    }
+        return [], False, 0
     comm_snapshots = _get_customer_communication_snapshots(customer_groups, salesperson_id)
     graph_email_map = _get_latest_graph_emails_for_customers(customer_groups, graph_user_id)
 
@@ -623,7 +688,8 @@ def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8):
         })
 
     scored.sort(key=lambda x: x['score'], reverse=True)
-    top_candidates = scored[:limit]
+    total_available = len(scored)
+    top_candidates = scored[offset:offset + limit]
 
     suggestions = []
     for entry in top_candidates:
@@ -663,6 +729,7 @@ def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8):
             'last_contact': last_contact_serialized,
             'last_email': last_email_serialized,
             'last_graph_email': graph_email_map.get(customer['id']),
+            'contacts': contacts_by_main.get(customer['id'], []),
             'news_items': [],
             'suggested_email': None,
             'related_customers': customer.get('related_customer_ids', []),
@@ -670,7 +737,7 @@ def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8):
             'priority_name': customer.get('priority_name')
         })
 
-    return suggestions, False
+    return suggestions, False, total_available
 
 @salespeople_bp.route('/')
 @login_required
@@ -1046,12 +1113,20 @@ def contact_suggestions_data(salesperson_id):
         return jsonify({'success': False, 'error': 'Salesperson not found'}), 404
 
     limit = request.args.get('limit', 8, type=int) or 8
+    offset = request.args.get('offset', 0, type=int) or 0
     try:
         graph_user_id = getattr(current_user, 'id', None)
-        suggestions, cached_news_used = _build_contact_suggestions(salesperson_id, graph_user_id, limit=limit)
+        suggestions, cached_news_used, total_available = _build_contact_suggestions(
+            salesperson_id,
+            graph_user_id,
+            limit=limit,
+            offset=offset
+        )
         return jsonify({
             'success': True,
             'suggestions': suggestions,
+            'total_available': total_available,
+            'next_offset': offset + len(suggestions),
             'generated_at': datetime.utcnow().isoformat() + 'Z',
             'cached_news_used': cached_news_used
         })
