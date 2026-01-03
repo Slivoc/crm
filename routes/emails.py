@@ -841,6 +841,20 @@ def _current_graph_user_id():
     return None
 
 
+def _load_graph_cache_for_request():
+    user_id = _current_graph_user_id()
+    if user_id:
+        return _load_graph_cache_for_user(user_id), user_id
+    return _load_graph_cache(), None
+
+
+def _save_graph_cache_for_request(user_id, cache):
+    if user_id:
+        _save_graph_cache_for_user(user_id, cache)
+    else:
+        _save_graph_cache(cache)
+
+
 def _get_salesperson_id_for_user(user_id):
     row = db_execute(
         "SELECT legacy_salesperson_id FROM salesperson_user_link WHERE user_id = ?",
@@ -1708,7 +1722,7 @@ def graph_sync_cache():
 @emails_bp.route('/emails/graph/messages', methods=['GET'])
 def graph_messages():
     settings = _get_graph_settings(include_secret=True)
-    cache = _load_graph_cache()
+    cache, user_id = _load_graph_cache_for_request()
     app = _build_msal_app(settings, cache=cache)
     accounts = app.get_accounts()
 
@@ -1721,7 +1735,7 @@ def graph_messages():
         }), 400
 
     token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
-    _save_graph_cache(cache)
+    _save_graph_cache_for_request(user_id, cache)
 
     if not token or "access_token" not in token:
         return jsonify({
@@ -1741,7 +1755,6 @@ def graph_messages():
     page_size = max(1, min(page_size, 50))
 
     page_token = request.args.get("page_token")
-    user_id = _current_graph_user_id()
     use_cache_only = request.args.get("use_cache", "").lower() == "true"
 
     # If no page_token and not explicitly forcing cache, try to serve from cache first
@@ -1914,7 +1927,7 @@ def graph_messages():
 @emails_bp.route('/emails/graph/message/<path:message_id>', methods=['GET'])
 def graph_message_detail(message_id):
     settings = _get_graph_settings(include_secret=True)
-    cache = _load_graph_cache()
+    cache, user_id = _load_graph_cache_for_request()
     app = _build_msal_app(settings, cache=cache)
     accounts = app.get_accounts()
 
@@ -1927,7 +1940,7 @@ def graph_message_detail(message_id):
         }), 400
 
     token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
-    _save_graph_cache(cache)
+    _save_graph_cache_for_request(user_id, cache)
 
     if not token or "access_token" not in token:
         return jsonify({
@@ -1972,6 +1985,97 @@ def graph_message_detail(message_id):
         "success": True,
         "message": body,
         "lookup": lookup,
+    })
+
+
+@emails_bp.route('/emails/graph/latest', methods=['GET'])
+def graph_latest_message():
+    email_addr = (request.args.get("email") or "").strip()
+    if not email_addr:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Email address is required.",
+            },
+        }), 400
+
+    settings = _get_graph_settings(include_secret=True)
+    cache, user_id = _load_graph_cache_for_request()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache_for_request(user_id, cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token",
+            },
+            "debug": token,
+        }), 400
+
+    safe_email = email_addr.replace("'", "''")
+    filter_query = (
+        f"from/emailAddress/address eq '{safe_email}' "
+        f"or toRecipients/any(r:r/emailAddress/address eq '{safe_email}') "
+        f"or ccRecipients/any(r:r/emailAddress/address eq '{safe_email}')"
+    )
+    headers = {
+        "Authorization": f"Bearer {token['access_token']}",
+    }
+    params = {
+        "$top": "1",
+        "$select": (
+            "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
+            "body,bodyPreview,webLink,conversationId"
+        ),
+        "$orderby": "receivedDateTime desc",
+        "$filter": filter_query,
+    }
+    resp = requests.get(
+        "https://graph.microsoft.com/v1.0/me/messages",
+        headers=headers,
+        params=params,
+        timeout=20,
+    )
+    try:
+        body = resp.json() if resp.content else None
+    except ValueError:
+        body = resp.text
+
+    if resp.status_code >= 400:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Graph request failed",
+                "status": resp.status_code,
+            },
+            "debug": body,
+        }), 400
+
+    messages = body.get("value", []) if isinstance(body, dict) else []
+    if not messages:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No messages found for that contact.",
+            },
+        }), 404
+
+    message = messages[0]
+    return jsonify({
+        "success": True,
+        "message": message,
     })
 
 

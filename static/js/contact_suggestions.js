@@ -265,12 +265,19 @@ document.addEventListener('DOMContentLoaded', () => {
               ${graphEmail ? `
                 <div class="small mt-2"><span class="fw-semibold">Graph:</span> ${escapeHtml(graphEmail.subject || 'Email')} ${graphEmailAge ? `<span class="text-muted">(${escapeHtml(graphEmailAge)})</span>` : ''}</div>
                 ${graphEmail.preview ? `<div class="small">${escapeHtml(graphEmail.preview)}</div>` : ''}
-                ${graphMessageId ? `
-                  <div class="mt-2">
-                    <button class="btn btn-sm btn-outline-secondary" data-load-graph data-message-id="${escapeHtml(graphMessageId)}">Load full Graph email</button>
-                    <div class="graph-email-content small mt-2 d-none" data-graph-content></div>
-                  </div>
-                ` : ''}
+              ` : ''}
+              ${selectedContact?.email ? `
+                <div class="mt-2">
+                  <button class="btn btn-sm btn-outline-secondary" data-load-graph-latest data-email="${escapeHtml(selectedContact.email)}" data-customer-id="${suggestion.customer_id}">
+                    Load latest Graph email
+                  </button>
+                  ${graphMessageId ? `
+                    <button class="btn btn-sm btn-outline-secondary ms-2" data-load-graph data-message-id="${escapeHtml(graphMessageId)}">
+                      Load cached Graph email
+                    </button>
+                  ` : ''}
+                  <div class="graph-email-content small mt-2 d-none" data-graph-content></div>
+                </div>
               ` : ''}
             </div>
 
@@ -418,6 +425,63 @@ document.addEventListener('DOMContentLoaded', () => {
           output.textContent = error?.message || 'Unable to load Graph email';
           output.classList.remove('d-none');
           button.textContent = 'Retry Graph email';
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+
+    container.querySelectorAll('[data-load-graph-latest]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const email = button.getAttribute('data-email');
+        const wrapper = button.closest('.card-body');
+        const output = wrapper ? wrapper.querySelector('[data-graph-content]') : null;
+        if (!email || !output) return;
+
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
+
+        try {
+          const response = await fetch(`/emails/graph/latest?email=${encodeURIComponent(email)}`);
+          if (!response.ok) {
+            throw new Error('Failed to load latest Graph email');
+          }
+          const data = await response.json();
+          if (!data?.success || !data?.message) {
+            throw new Error(data?.error?.message || 'Graph email unavailable');
+          }
+          const message = data.message;
+          const subject = message.subject || '';
+          const fromEmail = message.from?.emailAddress?.address || '';
+          const received = message.receivedDateTime
+            ? new Date(message.receivedDateTime).toLocaleString()
+            : '';
+          const body = stripHtml(message.body?.content || message.bodyPreview || '');
+          const lines = [];
+          if (subject) lines.push(`Subject: ${subject}`);
+          if (fromEmail) lines.push(`From: ${fromEmail}`);
+          if (received) lines.push(`Date: ${received}`);
+          if (lines.length) lines.push('');
+          lines.push(body || '(No body content)');
+          output.textContent = lines.join('\n');
+          output.classList.remove('d-none');
+          button.textContent = 'Refresh latest Graph email';
+
+          const customerId = button.getAttribute('data-customer-id');
+          const suggestion = currentSuggestions.find((item) => String(item.customer_id) === String(customerId));
+          if (suggestion) {
+            suggestion.last_graph_email = {
+              message_id: message.id,
+              subject: message.subject || '',
+              preview: message.bodyPreview || '',
+              sender_email: fromEmail,
+              date: message.receivedDateTime || message.sentDateTime || null
+            };
+          }
+        } catch (error) {
+          output.textContent = error?.message || 'Unable to load Graph email';
+          output.classList.remove('d-none');
+          button.textContent = 'Retry latest Graph email';
         } finally {
           button.disabled = false;
         }
