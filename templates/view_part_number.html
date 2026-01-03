@@ -644,7 +644,7 @@
                                         {% for quote in supplier_quotes %}
                                         <tr>
                                             <td>
-                                                <a href="{{ url_for('suppliers.view_supplier', supplier_id=quote.supplier_id) }}" class="quick-link">
+                                                <a href="{{ url_for('suppliers.edit_supplier', supplier_id=quote.supplier_id) }}" class="quick-link">
                                                     {{ quote.supplier_name }}
                                                 </a>
                                             </td>
