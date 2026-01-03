@@ -220,8 +220,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
         rows.forEach((row, idx) => {
             const lineData = LINES_DATA[idx];
+            const lineId = row.dataset.lineId;
+            const detailRow = document.querySelector(`.detail-row[data-parent-line-id="${lineId}"]`);
 
-            // Cache Elements
+            // Cache Elements - check detail row for elements moved there
             const elements = {
                 chosenQty: row.querySelector('[data-field="chosen_qty"]'),
                 deliveryPerLine: row.querySelector('[data-field="delivery_per_line"]'),
@@ -229,19 +231,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 quotePriceGbp: row.querySelector('[data-field="quote_price_gbp"]'),
                 deliveryPerUnit: row.querySelector('.delivery-per-unit'),
                 baseCostCell: row.querySelector('.base-cost-gbp'),
-                lineTotalCost: row.querySelector('.line-total-cost'),
+                lineTotalCost: detailRow ? detailRow.querySelector('.line-total-cost') : null,
                 lineTotalQuote: row.querySelector('.line-total-quote'),
                 isNoBid: row.querySelector('[data-field="is_no_bid"]'),
                 statusBtn: row.querySelector('.status-btn'),
-                lineNotes: row.querySelector('[data-field="line_notes"]'),
+                lineNotes: detailRow ? detailRow.querySelector('[data-field="line_notes"]') : null,
                 leadDays: row.querySelector('[data-field="lead_days"]'),
                 manufacturer: row.querySelector('[data-field="manufacturer"]'),
                 displayPartNumber: row.querySelector('[data-field="display_part_number"]'),
-                standardCondition: row.querySelector('[data-field="standard_condition"]'),
-                standardCerts: row.querySelector('[data-field="standard_certs"]'),
+                standardCondition: detailRow ? detailRow.querySelector('[data-field="standard_condition"]') : null,
+                standardCerts: detailRow ? detailRow.querySelector('[data-field="standard_certs"]') : null,
                 calcBaseBtn: row.querySelector('.line-calc-btn[data-calc="base"]'),
                 calcDeliveryBtn: row.querySelector('.line-calc-btn[data-calc="delivery"]'),
-                calcMarginBtn: row.querySelector('.line-calc-btn[data-calc="margin"]')
+                calcMarginBtn: row.querySelector('.line-calc-btn[data-calc="margin"]'),
+                detailRow: detailRow
             };
 
             const status = row.dataset.status || 'created';
@@ -280,8 +283,8 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateRowVisuals(row, elements, fins, status, isNoBid) {
         // Update Totals Text
         if (isNoBid) {
-            elements.lineTotalCost.textContent = 'N/A';
-            elements.lineTotalQuote.textContent = 'N/A';
+            if (elements.lineTotalCost) elements.lineTotalCost.textContent = 'N/A';
+            if (elements.lineTotalQuote) elements.lineTotalQuote.textContent = 'N/A';
             if (elements.deliveryPerUnit) elements.deliveryPerUnit.textContent = 'N/A';
             row.classList.add('no-bid-row');
             row.classList.remove('quoted-row', 'below-minimum');
@@ -291,8 +294,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const quoteDisplay = convertFromGbp(fins.quote, displayCurrencyId);
             const deliveryDisplay = convertFromGbp(fins.deliveryPerUnit, displayCurrencyId);
 
-            elements.lineTotalCost.textContent = formatCurrency(costDisplay, displayCurrencyId);
-            elements.lineTotalQuote.textContent = formatCurrency(quoteDisplay, displayCurrencyId);
+            if (elements.lineTotalCost) elements.lineTotalCost.textContent = formatCurrency(costDisplay, displayCurrencyId);
+            if (elements.lineTotalQuote) elements.lineTotalQuote.textContent = formatCurrency(quoteDisplay, displayCurrencyId);
             if (elements.deliveryPerUnit) elements.deliveryPerUnit.textContent = formatCurrency(deliveryDisplay, displayCurrencyId);
 
             row.classList.remove('no-bid-row');
@@ -305,16 +308,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Update Status Button
         const btn = elements.statusBtn;
-        btn.className = 'btn btn-sm w-100 status-btn'; // Reset
+        btn.className = 'status-btn status-pill'; // Reset
 
         if (status === 'quoted') {
-            btn.classList.add('btn-success');
+            btn.classList.add('status-quoted');
             btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Quoted';
         } else if (status === 'no_bid' || isNoBid) {
-            btn.classList.add('btn-warning');
+            btn.classList.add('status-no-bid');
             btn.innerHTML = '<i class="bi bi-x-circle me-1"></i>No Bid';
         } else {
-            btn.classList.add('btn-outline-secondary');
+            btn.classList.add('status-created');
             btn.innerHTML = '<i class="bi bi-circle me-1"></i>Created';
         }
 
@@ -435,6 +438,25 @@ document.addEventListener('DOMContentLoaded', function() {
             displayInput.classList.add('changed-input');
             cached.lineData.display_part_number = supplierPN;
             markUnsaved();
+            return;
+        }
+
+        const bulkMarginBtn = e.target.closest('.apply-bulk-margin-btn');
+        if (bulkMarginBtn) {
+            const row = bulkMarginBtn.closest('tr');
+            if (!row || row.dataset.locked === '1') return;
+            const cached = rowCache.get(row);
+            if (!cached || !cached.elements.marginPercent) return;
+
+            const bulkMarginInput = document.getElementById('bulk-margin-input');
+            const bulkValue = bulkMarginInput ? parseFloat(bulkMarginInput.value) : NaN;
+            if (!Number.isFinite(bulkValue)) {
+                alert('Bulk margin value is not set.');
+                return;
+            }
+
+            cached.elements.marginPercent.value = bulkValue.toFixed(1);
+            cached.elements.marginPercent.dispatchEvent(new Event('change', { bubbles: true }));
             return;
         }
 
@@ -819,7 +841,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (selectedCols.manufacturer) html += `<td align="left" style="${rowStyle}">${manufacturerVal}</td>`;
             if (selectedCols.condition) html += `<td align="left" style="${rowStyle}">${conditionValue || ''}</td>`;
             if (selectedCols.certs) html += `<td align="left" style="${rowStyle}">${certsValue || ''}</td>`;
-            if (selectedCols.notes) html += `<td align="left" style="${rowStyle}">${elements.lineNotes.value || ''}</td>`;
+            if (selectedCols.notes) html += `<td align="left" style="${rowStyle}">${elements.lineNotes ? elements.lineNotes.value : ''}</td>`;
             html += '</tr>';
         });
 
@@ -855,7 +877,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 lead_days: parseInt(elements.leadDays.value) || null,
                 is_no_bid: elements.isNoBid.checked ? 1 : 0,
                 quoted_status: row.dataset.status,
-                line_notes: elements.lineNotes.value,
+                line_notes: elements.lineNotes ? elements.lineNotes.value : '',
                 standard_condition: elements.standardCondition ? elements.standardCondition.value : '',
                 standard_certs: elements.standardCerts ? elements.standardCerts.value : ''
             });
@@ -1217,9 +1239,80 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // --- EXPANDABLE DETAIL ROWS ---
+    function setupExpandToggle() {
+        document.querySelectorAll('.expand-toggle-btn').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const lineId = this.dataset.lineId;
+                const detailRow = document.querySelector(`.detail-row[data-parent-line-id="${lineId}"]`);
+
+                if (detailRow) {
+                    const isExpanded = detailRow.classList.toggle('expanded');
+                    this.classList.toggle('expanded', isExpanded);
+
+                    // Update icon
+                    const icon = this.querySelector('i');
+                    if (icon) {
+                        icon.style.transform = isExpanded ? 'rotate(90deg)' : '';
+                    }
+                }
+            });
+        });
+
+        const tableBody = document.getElementById('quoteTableBody');
+        if (tableBody) {
+            tableBody.addEventListener('click', function(e) {
+                if (e.target.closest('.detail-row')) return;
+                if (e.target.closest('.expand-toggle-btn')) return;
+                if (e.target.closest('input, select, textarea, button, a, .btn')) return;
+
+                const row = e.target.closest('.quote-row');
+                if (!row) return;
+
+                const lineId = row.dataset.lineId;
+                const detailRow = document.querySelector(`.detail-row[data-parent-line-id="${lineId}"]`);
+                if (!detailRow) return;
+
+                const isExpanded = detailRow.classList.toggle('expanded');
+                const toggleBtn = row.querySelector('.expand-toggle-btn');
+                if (toggleBtn) {
+                    toggleBtn.classList.toggle('expanded', isExpanded);
+                    const icon = toggleBtn.querySelector('i');
+                    if (icon) {
+                        icon.style.transform = isExpanded ? 'rotate(90deg)' : '';
+                    }
+                }
+            });
+        }
+
+        // Also handle editable fields in detail rows
+        document.querySelectorAll('.detail-row .editable-field').forEach(input => {
+            input.addEventListener('change', function() {
+                const lineId = this.dataset.lineId;
+                const field = this.dataset.field;
+                const mainRow = document.querySelector(`.quote-row[data-line-id="${lineId}"]`);
+
+                if (mainRow) {
+                    // Mark as changed
+                    this.classList.add('changed-input');
+                    hasUnsavedChanges = true;
+                    updateSaveButtonState();
+
+                    // Update the cached lineData if available
+                    const cached = rowCache.get(mainRow);
+                    if (cached && cached.lineData) {
+                        cached.lineData[field] = this.value;
+                    }
+                }
+            });
+        });
+    }
+
     // START
     setSummaryCurrencyLabels();
     initializeTable();
     setupDuplicateLineButtons();
     setupCopyPartNumberButtons();
+    setupExpandToggle();
 });

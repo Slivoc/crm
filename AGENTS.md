@@ -38,6 +38,19 @@ context quickly.
 - Consider running `EXPLAIN ANALYZE` for the bulk endpoint to confirm index
   usage once data volume grows.
 
+## UI notes (Jan 2026)
+### Sticky headers/columns fixes (customer quote simple)
+- Sticky headers were being overridden by global table header styles in
+  `static/solid-colors.css`. Targeting `thead th` in
+  `templates/customer_quote_simple.html` keeps the headers sticky even with
+  global `.table thead th` rules.
+- The right-side sticky columns use `position: sticky` + `right` offsets, so
+  their cells need explicit backgrounds (and `background-clip`) to avoid
+  bleed-through when they overlap the scrolling table.
+- Horizontal page scroll was fixed by allowing the main content flex item to
+  shrink (`min-width: 0` in `static/solid-colors.css`). This keeps overflow
+  inside the table container instead of the body.
+
 ## Postgres migration follow-ups (Dec 2025)
 ### What was slow
 - All pages stalled, including static assets (304s), after the Postgres migration.

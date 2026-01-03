@@ -42,7 +42,7 @@ function loadLines() {
     if (tbody) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="12" class="text-muted text-center py-3">Loading...</td>
+                <td colspan="15" class="text-muted text-center py-3">Loading...</td>
             </tr>
         `;
     }
@@ -62,7 +62,7 @@ function loadLines() {
             if (tbody) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="12" class="text-danger text-center py-3">Failed to load lines.</td>
+                        <td colspan="15" class="text-danger text-center py-3">Failed to load lines.</td>
                     </tr>
                 `;
             }
@@ -81,7 +81,7 @@ function renderLines(lines, totalCount) {
     if (!lines.length) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="12" class="text-muted text-center py-3">No lines found.</td>
+                <td colspan="15" class="text-muted text-center py-3">No lines found.</td>
             </tr>
         `;
         if (countLabel) countLabel.textContent = 'Showing 0 lines.';
@@ -109,6 +109,9 @@ function renderLines(lines, totalCount) {
             <td>${line.manufacturer || ''}</td>
             <td>${line.line_number || ''}</td>
             <td>${line.quantity_quoted || ''}</td>
+            <td>${line.qty_available || ''}</td>
+            <td>${line.purchase_increment || ''}</td>
+            <td>${line.moq || ''}</td>
             <td>${unitPrice}</td>
             <td>${noBid}</td>
             <td>${line.line_notes || ''}</td>

@@ -275,6 +275,9 @@ def get_supplier_quote_details(list_id, quote_id):
                 sql.quoted_part_number,
                 sql.manufacturer,
                 sql.quantity_quoted,
+                sql.qty_available,
+                sql.purchase_increment,
+                sql.moq,
                 sql.unit_price,
                 sql.lead_time_days,
                 sql.condition_code,
@@ -425,6 +428,9 @@ def save_supplier_quote_lines(list_id, quote_id):
 
             quoted_part_number = line.get('quoted_part_number')
             quantity_quoted_raw = line.get('quantity_quoted')
+            qty_available_raw = line.get('qty_available')
+            purchase_increment_raw = line.get('purchase_increment')
+            moq_raw = line.get('moq')
             unit_price_raw = line.get('unit_price')
             lead_time_days_raw = line.get('lead_time_days')
             condition_code_raw = line.get('condition_code')
@@ -434,6 +440,9 @@ def save_supplier_quote_lines(list_id, quote_id):
             line_notes_raw = line.get('line_notes')
 
             quantity_quoted = _safe_int(quantity_quoted_raw)
+            qty_available = _safe_int(qty_available_raw)
+            purchase_increment = _safe_int(purchase_increment_raw)
+            moq = _safe_int(moq_raw)
             unit_price = _safe_float(unit_price_raw)
             lead_time_days = _safe_int(lead_time_days_raw)
             condition_code = _normalize_optional_text(condition_code_raw)
@@ -449,6 +458,9 @@ def save_supplier_quote_lines(list_id, quote_id):
             # DEBUG: Log all field values
             logging.info(f"quoted_part_number: '{quoted_part_number}' (type: {type(quoted_part_number).__name__})")
             logging.info(f"quantity_quoted: '{quantity_quoted}' (type: {type(quantity_quoted).__name__})")
+            logging.info(f"qty_available: '{qty_available}' (type: {type(qty_available).__name__})")
+            logging.info(f"purchase_increment: '{purchase_increment}' (type: {type(purchase_increment).__name__})")
+            logging.info(f"moq: '{moq}' (type: {type(moq).__name__})")
             logging.info(f"unit_price: '{unit_price}' (type: {type(unit_price).__name__})")
             logging.info(f"lead_time_days: '{lead_time_days}' (type: {type(lead_time_days).__name__})")
             logging.info(f"condition_code: '{condition_code}' (type: {type(condition_code).__name__})")
@@ -459,6 +471,9 @@ def save_supplier_quote_lines(list_id, quote_id):
             # Skip if there's no meaningful data to save
             has_quote_data = (
                     unit_price is not None or
+                    qty_available is not None or
+                    purchase_increment is not None or
+                    moq is not None or
                     lead_time_days is not None or
                     (condition_code and condition_code.strip()) or
                     (certifications and certifications.strip()) or
@@ -494,6 +509,9 @@ def save_supplier_quote_lines(list_id, quote_id):
                     UPDATE parts_list_supplier_quote_lines
                     SET quoted_part_number = ?,
                         quantity_quoted = ?,
+                        qty_available = ?,
+                        purchase_increment = ?,
+                        moq = ?,
                         unit_price = ?,
                         lead_time_days = ?,
                         condition_code = ?,
@@ -505,8 +523,8 @@ def save_supplier_quote_lines(list_id, quote_id):
                     WHERE id = ?
                     """,
                     (
-                        quoted_part_number, quantity_quoted, unit_price,
-                        lead_time_days, condition_code, certifications,
+                        quoted_part_number, quantity_quoted, qty_available, purchase_increment,
+                        moq, unit_price, lead_time_days, condition_code, certifications,
                         manufacturer, is_no_bid, line_notes, existing['id']
                     ),
                     commit=True,
@@ -518,14 +536,14 @@ def save_supplier_quote_lines(list_id, quote_id):
                     """
                     INSERT INTO parts_list_supplier_quote_lines
                     (supplier_quote_id, parts_list_line_id, quoted_part_number,
-                     manufacturer, quantity_quoted, unit_price, lead_time_days, condition_code,
-                     certifications, is_no_bid, line_notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     manufacturer, quantity_quoted, qty_available, purchase_increment, moq,
+                     unit_price, lead_time_days, condition_code, certifications, is_no_bid, line_notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         quote_id, parts_list_line_id, quoted_part_number,
-                        manufacturer, quantity_quoted, unit_price, lead_time_days, condition_code,
-                        certifications, is_no_bid, line_notes
+                        manufacturer, quantity_quoted, qty_available, purchase_increment, moq,
+                        unit_price, lead_time_days, condition_code, certifications, is_no_bid, line_notes
                     ),
                     commit=True,
                 )
@@ -739,6 +757,9 @@ def supplier_quote_lines_data():
                 sql.quoted_part_number,
                 sql.manufacturer,
                 sql.quantity_quoted,
+                sql.qty_available,
+                sql.purchase_increment,
+                sql.moq,
                 sql.unit_price,
                 sql.lead_time_days,
                 sql.is_no_bid,
@@ -1135,12 +1156,15 @@ We are in the aerospace hardware industry.
 Output ONLY a valid JSON array of objects with DOUBLE QUOTES for all keys and string values.
 Do NOT use markdown formatting like ```json or any wrappers. Output raw JSON only.
 
-Each object should have:
-- part_number: The part number (clean, no extra text)
-- quantity: Quantity quoted (integer, default to 1 if not specified)
-- price: Unit price (decimal number, extract just the number)
-- lead_time_days: Lead time in days (integer, null if not specified)
-- condition: Condition code like "NE", "OH", "SV", "AR" (use null if not specified)
+  Each object should have:
+  - part_number: The part number (clean, no extra text)
+  - quantity: Quantity quoted (integer, default to 1 if not specified)
+  - qty_available: Quantity available/in stock (integer, null if not specified)
+  - purchase_increment: Purchasing/order increment (integer, null if not specified)
+  - moq: Minimum order quantity (integer, null if not specified)
+  - price: Unit price (decimal number, extract just the number)
+  - lead_time_days: Lead time in days (integer, null if not specified)
+  - condition: Condition code like "NE", "OH", "SV", "AR" (use null if not specified)
 - certifications: Keep this concise. Prefer "OEM certs" if there is full trace to OEM/manufacturer. Use "EASA Form 1" or "8130-3" when those certificates are mentioned. Use "Dual release (8130/EASA)" if both are present. If there is no trace or only distributor C of C, set to "no trace". Omit DFARS/ITAR/testing notes from this field.
 - is_no_bid: true if supplier declined to quote this part, false otherwise
 - manufacturer: Extract the manufacturer name if mentioned. Look for common aerospace hardware brands like "Cherry", "Alcoa", "Arconic", "Allfast", "SPS", "Monogram", "Fairchild", "Kaynar", "Huck", "Shur-Lok".
@@ -1238,6 +1262,22 @@ Extract all quoted items into a JSON array."""
                     continue
 
                 quantity = _safe_int(item.get('quantity', 1)) or 1
+                qty_available = _safe_int(
+                    item.get('qty_available')
+                    or item.get('quantity_available')
+                    or item.get('available_qty')
+                    or item.get('inventory')
+                )
+                purchase_increment = _safe_int(
+                    item.get('purchase_increment')
+                    or item.get('increment')
+                    or item.get('order_increment')
+                )
+                moq = _safe_int(
+                    item.get('moq')
+                    or item.get('minimum_order')
+                    or item.get('minimum_order_quantity')
+                )
                 price = _safe_float(item.get('price'))
                 lead_time_days = _safe_int(item.get('lead_time_days'))
 
@@ -1256,6 +1296,9 @@ Extract all quoted items into a JSON array."""
                 cleaned_item = {
                     'part_number': part_number,
                     'quantity': quantity,
+                    'qty_available': qty_available,
+                    'purchase_increment': purchase_increment,
+                    'moq': moq,
                     'price': price,
                     'lead_time_days': lead_time_days,
                     'condition': condition,
@@ -4953,12 +4996,15 @@ def get_all_suppliers():
 @parts_list_bp.route('/parts-lists/<int:list_id>/lines/<int:line_id>/quotes', methods=['GET'])
 def get_line_quotes(list_id, line_id):
     """
-    Get all supplier quotes for a specific parts list line
-    Returns quotes sorted by price (cheapest first)
+    Get all supplier quotes for a specific parts list line.
+    For price break lines, shows ALL quotes for that part number across
+    all lines in this parts list (not just the specific line).
+    Returns quotes sorted by price (cheapest first).
+    Also includes QPL approval data for manufacturer validation.
     """
     try:
         with db_cursor() as cur:
-            # Verify line belongs to list
+            # Verify line belongs to list and get part number info
             line = _execute_with_cursor(
                 cur,
                 """
@@ -4967,7 +5013,7 @@ def get_line_quotes(list_id, line_id):
                     parts_list_id,
                     customer_part_number,
                     base_part_number,
-                    COALESCE(parent_line_id, id) AS quote_line_id
+                    parent_line_id
                 FROM parts_list_lines
                 WHERE id = ? AND parts_list_id = ?
                 """,
@@ -4977,14 +5023,20 @@ def get_line_quotes(list_id, line_id):
             if not line:
                 return jsonify(success=False, message="Line not found"), 404
 
-            # Get all quote lines for this parts list line
+            # Get ALL quote lines for this PART NUMBER in this parts list
+            # This fixes the issue where price break lines couldn't see
+            # offers from parent lines or sibling lines with same part
             quotes = _execute_with_cursor(
                 cur,
                 """
-                SELECT 
+                SELECT
                     sql.id as quote_line_id,
                     sql.quoted_part_number,
+                    sql.manufacturer,
                     sql.quantity_quoted,
+                    sql.qty_available,
+                    sql.purchase_increment,
+                    sql.moq,
                     sql.unit_price,
                     sql.lead_time_days,
                     sql.condition_code,
@@ -5003,13 +5055,15 @@ def get_line_quotes(list_id, line_id):
                 JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
                 JOIN suppliers s ON s.id = sq.supplier_id
                 LEFT JOIN currencies c ON c.id = sq.currency_id
-                WHERE sql.parts_list_line_id = ?
-                ORDER BY 
+                JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+                WHERE pll.parts_list_id = ?
+                AND pll.base_part_number = ?
+                ORDER BY
                     sql.is_no_bid ASC,
                     CASE WHEN sql.unit_price IS NULL THEN 1 ELSE 0 END,
                     sql.unit_price ASC
                 """,
-                (line['quote_line_id'],),
+                (list_id, line['base_part_number']),
             ).fetchall()
 
             # Get latest 3 offers for this part from OTHER parts lists
@@ -5017,10 +5071,14 @@ def get_line_quotes(list_id, line_id):
             other_offers = _execute_with_cursor(
                 cur,
                 """
-                SELECT 
+                SELECT
                     sql.id as quote_line_id,
                     sql.quoted_part_number,
+                    sql.manufacturer,
                     sql.quantity_quoted,
+                    sql.qty_available,
+                    sql.purchase_increment,
+                    sql.moq,
                     sql.unit_price,
                     sql.lead_time_days,
                     sql.condition_code,
@@ -5052,10 +5110,31 @@ def get_line_quotes(list_id, line_id):
                 (line['base_part_number'], list_id),
             ).fetchall()
 
+            # Get QPL approved manufacturers for this part number
+            # Match on base_part_number against manufacturer_part_number or airbus_material
+            qpl_approvals = []
+            if line['base_part_number']:
+                qpl_approvals = _execute_with_cursor(
+                    cur,
+                    """
+                    SELECT DISTINCT
+                        manufacturer_name,
+                        cage_code,
+                        approval_status
+                    FROM manufacturer_approvals
+                    WHERE manufacturer_part_number = ?
+                       OR airbus_material = ?
+                    ORDER BY manufacturer_name
+                    LIMIT 20
+                    """,
+                    (line['base_part_number'], line['base_part_number']),
+                ).fetchall()
+
         return jsonify(
             success=True,
             quotes=[dict(q) for q in quotes or []],
-            other_offers=[dict(o) for o in other_offers or []]
+            other_offers=[dict(o) for o in other_offers or []],
+            qpl_approvals=[dict(q) for q in qpl_approvals or []]
         )
 
     except Exception as e:

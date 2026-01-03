@@ -206,14 +206,6 @@
                         <li><h6 class="dropdown-header">Emailed suppliers</h6></li>
                         <li><span class="dropdown-item-text text-muted">No emailed suppliers</span></li>
                     </ul>
-                    <a href="{{ url_for('parts_list.manage_supplier_quotes', list_id=list_id) }}"
-                       class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-wrench-adjustable-circle me-1"></i>Manage Quotes
-                    </a>
-                    <a href="{{ url_for('parts_list.manage_supplier_quote_lines') }}"
-                       class="btn btn-sm btn-outline-warning">
-                        <i class="bi bi-diagram-2 me-1"></i>Manage Quote Lines
-                    </a>
                 </div>
 
                 <button id="save-all-costs-btn" class="btn btn-sm btn-primary">
@@ -586,96 +578,124 @@
 <script src="{{ url_for('static', filename='js/supplier_quotes.js') }}"></script>
 
 <!-- Quote Selection Modal (per line) -->
-<!-- Quote Selection Modal -->
+<!-- Quote Selection Modal - Redesigned -->
 <div class="modal fade" id="quoteSelectionModal" tabindex="-1">
-    <div class="modal-dialog modal-xl">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">
-                    <i class="bi bi-clipboard-check me-2"></i>
-                    Select Quote for Part: <span id="quote-modal-part-number" class="text-primary"></span>
-                </h5>
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content" style="border: none; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+            <div class="modal-header" style="background: #f8f9fa; border-bottom: 1px solid #e9ecef; padding: 1rem 1.5rem;">
+                <div>
+                    <h5 class="modal-title mb-1" style="font-weight: 600; color: #212529;">
+                        Select Supplier Quote
+                    </h5>
+                    <div class="d-flex align-items-center gap-3">
+                        <span class="text-muted" style="font-size: 0.9rem;">
+                            Part: <strong id="quote-modal-part-number" style="color: #0d6efd;"></strong>
+                        </span>
+                        <span class="text-muted" style="font-size: 0.9rem;">
+                            Qty: <strong id="quote-modal-qty" style="color: #495057;"></strong>
+                        </span>
+                    </div>
+                </div>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body">
+            <div class="modal-body" style="padding: 1.5rem; background: #fff;">
                 <!-- Loading spinner -->
                 <div id="quotes-loading" class="text-center py-5">
-                    <div class="spinner-border text-primary" role="status">
+                    <div class="spinner-border" style="color: #6c757d;" role="status">
                         <span class="visually-hidden">Loading...</span>
                     </div>
                     <p class="mt-2 text-muted">Loading quotes...</p>
                 </div>
 
-            <!-- Main content -->
-            <div id="quotes-content" style="display: none;">
-                <!-- Quotes for this parts list -->
-                <h6 class="mb-3">
-                    <i class="bi bi-list-check me-2"></i>Quotes for This Parts List
-                </h6>
-
-                <!-- No quotes message -->
-                <div id="no-quotes-message" class="alert alert-info" style="display: none;">
-                    <i class="bi bi-info-circle me-2"></i>
-                    No quotes available for this part yet.
-                </div>
-
-                <!-- Quotes table -->
-                <div class="table-responsive">
-                    <table class="table table-hover" id="quotes-table">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Supplier</th>
-                                <th>Quote Ref</th>
-                                <th>Date</th>
-                                <th>Part Number</th>
-                                <th>Qty</th>
-                                <th>Unit Price</th>
-                                <th>Lead Time</th>
-                                <th>Condition</th>
-                                <th>Certs</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody id="quotes-table-body">
+                <!-- Main content -->
+                <div id="quotes-content" style="display: none;">
+                    <!-- QPL Info Section -->
+                    <div id="qpl-info-section" class="mb-4" style="display: none;">
+                        <div class="d-flex align-items-center gap-2 mb-2">
+                            <i class="bi bi-shield-check" style="color: #198754;"></i>
+                            <span style="font-weight: 600; font-size: 0.85rem; color: #495057;">Airbus QPL Approved Manufacturers</span>
+                        </div>
+                        <div id="qpl-info-content" class="d-flex flex-wrap gap-2">
                             <!-- Populated by JavaScript -->
-                        </tbody>
-                    </table>
-                </div>
+                        </div>
+                    </div>
 
-                <!-- Other Offers Section -->
-                <div id="other-offers-section" class="mt-4" style="display: none;">
-                    <hr class="my-4">
-                    <h6 class="text-muted mb-3">
-                        <i class="bi bi-clock-history me-2"></i>Recent Offers from Other Parts Lists
-                    </h6>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover">
-                            <thead class="table-light">
+                    <!-- Quotes for this parts list -->
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <h6 class="mb-0" style="font-weight: 600; color: #495057;">
+                            Quotes for This Parts List
+                        </h6>
+                    </div>
+
+                    <!-- No quotes message -->
+                    <div id="no-quotes-message" class="text-center py-4" style="display: none; background: #f8f9fa; border-radius: 6px;">
+                        <i class="bi bi-inbox" style="font-size: 2rem; color: #adb5bd;"></i>
+                        <p class="mt-2 mb-0 text-muted">No quotes available for this part yet.</p>
+                    </div>
+
+                    <!-- Quotes table -->
+                    <div class="table-responsive" style="border: 1px solid #e9ecef; border-radius: 6px;">
+                        <table class="table table-hover mb-0" id="quotes-table" style="font-size: 0.875rem;">
+                            <thead style="background: #f8f9fa;">
                                 <tr>
-                                    <th>Supplier</th>
-                                    <th>Parts List</th>
-                                    <th>Quote Ref</th>
-                                    <th>Date</th>
-                                    <th>Part Number</th>
-                                    <th>Qty</th>
-                                    <th>Unit Price</th>
-                                    <th>Lead Time</th>
-                                    <th>Condition</th>
-                                    <th>Action</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem;">Supplier</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem;">Part Number</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem;">Manufacturer</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem; text-align: right;">Qty</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem; text-align: right;">Qty Avail</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem; text-align: right;">Increment</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem; text-align: right;">MOQ</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem; text-align: right;">Unit Price</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem; text-align: right;">Line Cost</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem; text-align: center;">Lead</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem;">Cond</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem;">Certs</th>
+                                    <th style="font-weight: 600; color: #495057; padding: 0.75rem; text-align: center; width: 80px;">Action</th>
                                 </tr>
                             </thead>
-                            <tbody id="other-offers-table-body">
+                            <tbody id="quotes-table-body">
                                 <!-- Populated by JavaScript -->
                             </tbody>
                         </table>
                     </div>
-                    <small class="text-muted">
-                        <i class="bi bi-info-circle me-1"></i>
-                        These are the 3 most recent offers for this part from other parts lists
-                    </small>
+
+                    <!-- Other Offers Section -->
+                    <div id="other-offers-section" class="mt-4" style="display: none;">
+                        <div class="d-flex align-items-center gap-2 mb-3">
+                            <i class="bi bi-clock-history" style="color: #6c757d;"></i>
+                            <h6 class="mb-0" style="font-weight: 600; color: #6c757d;">Recent Offers from Other Parts Lists</h6>
+                        </div>
+                        <div class="table-responsive" style="border: 1px solid #e9ecef; border-radius: 6px;">
+                            <table class="table table-hover mb-0" style="font-size: 0.85rem;">
+                                <thead style="background: #f8f9fa;">
+                                    <tr>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem;">Supplier</th>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem;">Parts List</th>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem;">Part Number</th>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem;">Manufacturer</th>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem; text-align: right;">Qty</th>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem; text-align: right;">Qty Avail</th>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem; text-align: right;">Increment</th>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem; text-align: right;">MOQ</th>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem; text-align: right;">Unit Price</th>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem; text-align: right;">Line Cost</th>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem; text-align: center;">Lead</th>
+                                        <th style="font-weight: 600; color: #6c757d; padding: 0.6rem; text-align: center; width: 70px;">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="other-offers-table-body">
+                                    <!-- Populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <small class="text-muted mt-2 d-block">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Recent offers for this part from other parts lists
+                        </small>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
-</div></div>
+</div>
 {% endblock %}

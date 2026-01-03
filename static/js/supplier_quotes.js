@@ -751,6 +751,9 @@ function initializeEmptyQuoteLines(supplierId = null) {
                     requested_quantity: line.quantity,
                     quoted_part_number: line.customer_part_number,
                     quantity_quoted: line.quantity,
+                    qty_available: null,
+                    purchase_increment: null,
+                    moq: null,
                     unit_price: null,
                     lead_time_days: null,
                     condition_code: '',
@@ -783,6 +786,9 @@ function initializeQuoteLinesTable(lines) {
         line.quoted_part_number || line.customer_part_number,
         line.manufacturer || '',
         line.quantity_quoted,
+        line.qty_available,
+        line.purchase_increment,
+        line.moq,
         line.unit_price,
         line.lead_time_days,
         line.condition_code,
@@ -802,6 +808,9 @@ function initializeQuoteLinesTable(lines) {
             'Quoted Part #',
             'Manufacturer',
             'Qty Quoted',
+            'Qty Avail',
+            'Increment',
+            'MOQ',
             'Unit Price',
             'Lead Days',
             'Condition',
@@ -818,20 +827,23 @@ function initializeQuoteLinesTable(lines) {
             { data: 3, type: 'text' },
             { data: 4, type: 'text' },
             { data: 5, type: 'numeric' },
-            { data: 6, type: 'numeric', numericFormat: { pattern: '0,0.00' } },
+            { data: 6, type: 'numeric' },
             { data: 7, type: 'numeric' },
-            { data: 8, type: 'text' },
-            { data: 9, type: 'text' },
+            { data: 8, type: 'numeric' },
+            { data: 9, type: 'numeric', numericFormat: { pattern: '0,0.00' } },
+            { data: 10, type: 'numeric' },
+            { data: 11, type: 'text' },
+            { data: 12, type: 'text' },
             {
-                data: 10,
+                data: 13,
                 type: 'text',
                 renderer: noBidCheckboxRenderer,
                 readOnly: false,
                 className: 'htCenter'
             },
-            { data: 11, type: 'text' },
-            { data: 12, type: 'numeric', readOnly: true, className: 'htCenter' },
-            { data: 13, type: 'checkbox', readOnly: true }
+            { data: 14, type: 'text' },
+            { data: 15, type: 'numeric', readOnly: true, className: 'htCenter' },
+            { data: 16, type: 'checkbox', readOnly: true }
         ],
         rowHeaders: true,
         height: 500,
@@ -842,7 +854,7 @@ function initializeQuoteLinesTable(lines) {
         filters: true,
         dropdownMenu: true,
         hiddenColumns: {
-            columns: [13],
+            columns: [16],
             indicators: false
         },
         hiddenRows: {
@@ -882,12 +894,12 @@ function initializeQuoteLinesTable(lines) {
             }
 
             // Other quotes warning
-            if (col === 12 && this.instance.getDataAtCell(row, col) > 0) {
+            if (col === 15 && this.instance.getDataAtCell(row, col) > 0) {
                 cellProperties.className = ((cellProperties.className || '') + ' bg-warning').trim();
             }
 
             // No-bid styling (takes precedence)
-            if (this.instance.getDataAtCell(row, 10) === true) {
+            if (this.instance.getDataAtCell(row, 13) === true) {
                 cellProperties.className = 'bg-secondary text-white';
             }
 
@@ -1004,12 +1016,15 @@ function applyExtractedDataToTable(extractedLines) {
                 [bestIndex, 3, extracted.part_number],
                 [bestIndex, 4, extracted.manufacturer || ''],
                 [bestIndex, 5, extracted.quantity],
-                [bestIndex, 6, extracted.price],
-                [bestIndex, 7, extracted.lead_time_days],
-                [bestIndex, 8, extracted.condition],
-                [bestIndex, 9, extracted.certifications],
-                [bestIndex, 10, !!extracted.is_no_bid],
-                [bestIndex, 11, extracted.notes]
+                [bestIndex, 6, extracted.qty_available],
+                [bestIndex, 7, extracted.purchase_increment],
+                [bestIndex, 8, extracted.moq],
+                [bestIndex, 9, extracted.price],
+                [bestIndex, 10, extracted.lead_time_days],
+                [bestIndex, 11, extracted.condition],
+                [bestIndex, 12, extracted.certifications],
+                [bestIndex, 13, !!extracted.is_no_bid],
+                [bestIndex, 14, extracted.notes]
             ]);
         } else {
             console.warn(`No strong match for extracted PN "${extractedPN}", bestScore=${bestScore.toFixed(2)}`);
@@ -1128,12 +1143,15 @@ function saveQuoteLines(quoteId) {
         quoted_part_number: tableData[index][3],
         manufacturer: tableData[index][4],
         quantity_quoted: tableData[index][5],
-        unit_price: tableData[index][6],
-        lead_time_days: tableData[index][7],
-        condition_code: tableData[index][8],
-        certifications: tableData[index][9],
-        is_no_bid: !!tableData[index][10],
-        line_notes: tableData[index][11]
+        qty_available: tableData[index][6],
+        purchase_increment: tableData[index][7],
+        moq: tableData[index][8],
+        unit_price: tableData[index][9],
+        lead_time_days: tableData[index][10],
+        condition_code: tableData[index][11],
+        certifications: tableData[index][12],
+        is_no_bid: !!tableData[index][13],
+        line_notes: tableData[index][14]
     }));
 
     return fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/supplier-quotes/${quoteId}/lines/save`, {

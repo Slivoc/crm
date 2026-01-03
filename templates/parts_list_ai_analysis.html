@@ -149,6 +149,7 @@
                             <th>Qty Needed</th>
                             <th>Unit Price</th>
                             <th>Inventory</th>
+                            <th>Increment</th>
                             <th>MOQ</th>
                             <th>Status</th>
                         </tr>
@@ -624,6 +625,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                     '<td>' + result.quantity + '</td>' +
                                     '<td>' + (hasPrice ? '$' + parseFloat(result.unit_price).toFixed(2) : '-') + '</td>' +
                                     '<td>' + (result.inventory || '-') + '</td>' +
+                                    '<td>' + (result.purchase_increment || '-') + '</td>' +
                                     '<td>' + (result.minimum_order || '-') + '</td>' +
                                     '<td>' + (hasPrice ? '<span class="badge bg-success">Found</span>' : '<span class="badge bg-secondary">No result</span>') + '</td>';
                     body.appendChild(row);

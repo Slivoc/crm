@@ -958,6 +958,7 @@ def _ensure_monroe_tables(cur):
             unit_price DECIMAL(12,4),
             inventory INTEGER,
             minimum_order INTEGER,
+            purchase_increment INTEGER,
             currency_code TEXT DEFAULT 'USD',
             search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             error_message TEXT
@@ -1098,13 +1099,14 @@ def _run_monroe_check_background(list_id, line_ids):
             has_price = scrape_result.get('unit_price') is not None
             inventory = scrape_result.get('inventory') if has_price else None
             minimum_order = scrape_result.get('minimum_order') if has_price else None
+            purchase_increment = scrape_result.get('purchase_increment') if has_price else None
 
             # Store result
             cur.execute("""
                 INSERT INTO monroe_search_results
                 (parts_list_id, parts_list_line_id, base_part_number, searched_part_number,
-                 unit_price, inventory, minimum_order, error_message)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 unit_price, inventory, minimum_order, purchase_increment, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 list_id,
                 line['id'],
@@ -1113,6 +1115,7 @@ def _run_monroe_check_background(list_id, line_ids):
                 scrape_result.get('unit_price'),
                 inventory,
                 minimum_order,
+                purchase_increment,
                 scrape_result.get('error')
             ))
             conn.commit()
@@ -1183,6 +1186,7 @@ def _scrape_monroe(product_name, headless=True):
         "unit_price": None,
         "inventory": None,
         "minimum_order": None,
+        "purchase_increment": None,
         "error": None
     }
 
@@ -1258,6 +1262,10 @@ def _scrape_monroe(product_name, headless=True):
                             moq_match = re.search(r'\d+', value)
                             if moq_match:
                                 result["minimum_order"] = int(moq_match.group())
+                        if 'increment' in label and not result["purchase_increment"]:
+                            inc_match = re.search(r'\d+', value)
+                            if inc_match:
+                                result["purchase_increment"] = int(inc_match.group())
             else:
                 result["error"] = f"Product '{product_name}' not found in Monroe catalog"
 
@@ -1485,13 +1493,14 @@ def monroe_check(list_id):
             has_price = scrape_result.get('unit_price') is not None
             inventory = scrape_result.get('inventory') if has_price else None
             minimum_order = scrape_result.get('minimum_order') if has_price else None
+            purchase_increment = scrape_result.get('purchase_increment') if has_price else None
 
             # Store result
             cur.execute("""
                 INSERT INTO monroe_search_results
                 (parts_list_id, parts_list_line_id, base_part_number, searched_part_number,
-                 unit_price, inventory, minimum_order, error_message)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 unit_price, inventory, minimum_order, purchase_increment, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 list_id,
                 line['id'],
@@ -1500,6 +1509,7 @@ def monroe_check(list_id):
                 scrape_result.get('unit_price'),
                 inventory,
                 minimum_order,
+                purchase_increment,
                 scrape_result.get('error')
             ))
 
@@ -1510,6 +1520,7 @@ def monroe_check(list_id):
                 'unit_price': scrape_result.get('unit_price'),
                 'inventory': inventory,
                 'minimum_order': minimum_order,
+                'purchase_increment': purchase_increment,
                 'error': scrape_result.get('error')
             })
 
@@ -1547,6 +1558,7 @@ def monroe_results(list_id):
                 msr.unit_price,
                 msr.inventory,
                 msr.minimum_order,
+                msr.purchase_increment,
                 msr.currency_code,
                 msr.search_date,
                 msr.error_message
@@ -1626,7 +1638,7 @@ def monroe_load_as_offer(list_id):
         # Get Monroe results
         placeholders = ",".join("?" for _ in result_ids)
         cur.execute(f"""
-            SELECT msr.*, pll.line_number
+            SELECT msr.*, pll.line_number, pll.quantity as requested_quantity
             FROM monroe_search_results msr
             JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
             WHERE msr.id IN ({placeholders})
@@ -1637,17 +1649,26 @@ def monroe_load_as_offer(list_id):
         # Create quote lines
         lines_created = 0
         for result in results:
+            requested_qty = result.get('requested_quantity') or 1
+            moq = result.get('minimum_order') or 1
+            quantity_quoted = max(requested_qty, moq)
+            if quantity_quoted < 1:
+                quantity_quoted = 1
             cur.execute("""
                 INSERT INTO parts_list_supplier_quote_lines
                 (supplier_quote_id, parts_list_line_id, quoted_part_number,
-                 quantity_quoted, unit_price, condition_code, is_no_bid)
-                VALUES (?, ?, ?, ?, ?, 'NE', FALSE)
+                 quantity_quoted, unit_price, condition_code, is_no_bid,
+                 qty_available, purchase_increment, moq)
+                VALUES (?, ?, ?, ?, ?, 'NE', FALSE, ?, ?, ?)
             """, (
                 quote_id,
                 result['parts_list_line_id'],
                 result['searched_part_number'],
-                result.get('inventory') or result.get('minimum_order') or 1,
-                result['unit_price']
+                quantity_quoted,
+                result['unit_price'],
+                result.get('inventory'),
+                result.get('purchase_increment'),
+                result.get('minimum_order')
             ))
             lines_created += 1
 

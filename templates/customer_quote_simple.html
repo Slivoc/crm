@@ -9,6 +9,8 @@
     max-height: calc(100vh - 400px);
     overflow: auto;
     border: 1px solid #dee2e6;
+    position: relative;
+    max-width: 100%;
 }
 
 .stats-card {
@@ -68,8 +70,11 @@
     white-space: nowrap;
     table-layout: auto;  /* Changed from fixed */
     width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    overflow: visible;
 }
-.quote-table th {
+.quote-table thead th {
     position: sticky;
     top: 0;
     background-color: #f8f9fa;
@@ -115,12 +120,6 @@
 /* 1. Base State: Transparent border reserves the 3px space (Prevents Reflow) */
 .quote-row {
     border-left: 3px solid transparent;
-
-    /* PERFORMANCE MAGIC BULLET */
-    contain: layout style;
-
-    /* Optional: Improves scrolling performance on massive lists */
-    content-visibility: auto;
 }
 
 /* 2. Quoted State: Only change color (Repaint only, fast) */
@@ -160,16 +159,41 @@
 }
 
 /* Fix for Button Colors */
-.status-btn.btn-success {
-    background-color: #198754;
-    border-color: #198754;
-    color: white;
+/* Compact status badge */
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-size: 0.7rem;
+    font-weight: 600;
 }
 
-.status-btn.btn-warning {
-    background-color: #ffc107;
-    border-color: #ffc107;
-    color: #000;
+.status-btn.status-pill {
+    width: auto;
+    box-shadow: none;
+    line-height: 1.2;
+    background: transparent;
+}
+
+.status-btn.status-created {
+    border-color: #ced4da;
+    color: #6c757d;
+    background: #f8f9fa;
+}
+
+.status-btn.status-quoted {
+    border-color: #b6dfc5;
+    color: #0f5132;
+    background: #d1e7dd;
+}
+
+.status-btn.status-no-bid {
+    border-color: #ffe08a;
+    color: #856404;
+    background: #fff3cd;
 }
 
 /* --- Animation Fix --- */
@@ -194,15 +218,231 @@
     box-shadow: none !important;
 }
 
-.line-calc-actions {
+.value-stack {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
 }
 
-.line-calc-actions .btn {
+.calc-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid #dee2e6;
+    background: #f8f9fa;
+    color: #495057;
     font-size: 0.7rem;
-    padding: 0.15rem 0.4rem;
+    line-height: 1.2;
+}
+
+.calc-pill:hover {
+    background: #e9ecef;
+    color: #212529;
+}
+
+.calc-pill.calc-pill-accent {
+    border-color: #c3e6cb;
+    background: #eaf6ee;
+    color: #0f5132;
+}
+
+/* --- Quote Price Column - PROMINENT STYLING --- */
+.quote-table th.quote-price-header {
+    background: linear-gradient(135deg, #198754 0%, #157347 100%);
+    color: white;
+    font-weight: 700;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 3px solid #0f5132;
+    position: sticky;
+    top: 0;
+    z-index: 11;
+}
+
+.quote-price-cell {
+    background-color: #f0fff4;
+    position: relative;
+}
+
+.quote-price-cell input {
+    font-weight: 700;
+    font-size: 1rem !important;
+    color: #198754;
+    background-color: #f0fff4 !important;
+    border: 2px solid #198754 !important;
+    text-align: right;
+    padding-right: 0.75rem !important;
+}
+
+.quote-price-cell input:focus {
+    background-color: #fff !important;
+    border-color: #0f5132 !important;
+    box-shadow: 0 0 0 0.25rem rgba(25, 135, 84, 0.25) !important;
+}
+
+/* Highlight entire row's quote price when row is quoted */
+.quote-table tr.quoted-row .quote-price-cell input {
+    background-color: #d1e7dd !important;
+}
+
+/* Visual separator before quote price column */
+.quote-price-separator {
+    border-left: 3px solid #198754 !important;
+}
+
+/* --- STICKY RIGHT COLUMNS --- */
+/* Quote Price column - sticky to right */
+.quote-table th.sticky-right-1,
+.quote-table td.sticky-right-1 {
+    position: sticky;
+    right: 130px;
+    z-index: 5;
+    background-color: #fff;
+    background-clip: padding-box;
+}
+
+/* Line Total column - sticky to far right */
+.quote-table th.sticky-right-0,
+.quote-table td.sticky-right-0 {
+    position: sticky;
+    right: 0;
+    z-index: 5;
+    background-color: #fff;
+    background-clip: padding-box;
+}
+
+/* Headers need higher z-index (sticky top AND right) */
+.quote-table th.sticky-right-1,
+.quote-table th.sticky-right-0 {
+    top: 0;
+    z-index: 15;
+}
+
+/* Shadow to indicate frozen columns */
+.quote-table td.sticky-right-1,
+.quote-table th.sticky-right-1 {
+    box-shadow: -4px 0 8px -4px rgba(0,0,0,0.2);
+}
+
+/* Background overrides for row states */
+.quote-table tr.quoted-row td.sticky-right-1,
+.quote-table tr.quoted-row td.sticky-right-0 {
+    background-color: #d1e7dd;
+}
+
+.quote-table tr.below-minimum td.sticky-right-1,
+.quote-table tr.below-minimum td.sticky-right-0 {
+    background-color: #ffebee;
+}
+
+.quote-table tr.no-bid-row td.sticky-right-1,
+.quote-table tr.no-bid-row td.sticky-right-0 {
+    background-color: #fff3cd;
+}
+
+/* Quote price cell special styling */
+.quote-table td.quote-price-cell.sticky-right-1 {
+    background-color: #f0fff4;
+}
+
+.quote-table tr.quoted-row td.quote-price-cell.sticky-right-1 {
+    background-color: #d1e7dd;
+}
+
+/* --- EXPANDABLE DETAIL ROW --- */
+.detail-row {
+    display: none;
+    background-color: #f8f9fa;
+}
+
+.detail-row.expanded {
+    display: table-row;
+}
+
+.detail-row td {
+    padding: 0.75rem 1rem;
+    border-top: none;
+    background-color: #f3f6fb;
+    border-top: 2px solid #e1e7f0;
+}
+
+.detail-content {
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+}
+
+.detail-field {
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+}
+
+.detail-field label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #6c757d;
+    margin-bottom: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.detail-field input {
+    font-size: 0.875rem;
+}
+
+.detail-field.notes-field {
+    flex: 1;
+    min-width: 300px;
+}
+
+.detail-field.notes-field input {
+    width: 100%;
+}
+
+.supplier-info {
+    font-size: 0.75rem;
+    color: #6c757d;
+    margin-top: 0.25rem;
+}
+
+/* Expand toggle button */
+.expand-toggle-btn {
+    background: none;
+    border: none;
+    padding: 0.15rem 0.35rem;
+    cursor: pointer;
+    color: #6c757d;
+    font-size: 0.875rem;
+    transition: transform 0.2s ease;
+}
+
+.expand-toggle-btn:hover {
+    color: #0d6efd;
+}
+
+.expand-toggle-btn.expanded i {
+    transform: rotate(90deg);
+}
+
+/* Row with details indicator */
+.quote-row.has-details {
+    cursor: pointer;
+}
+
+/* Line total quote styling to match quote price prominence */
+.line-total-quote-cell {
+    font-weight: 600;
+    color: #198754;
+    background-color: #f0fff4 !important;
+}
+
+.quote-table tr.quoted-row td.line-total-quote-cell {
+    background-color: #d1e7dd !important;
 }
 </style>
 {% endblock %}
@@ -363,17 +603,11 @@
                             <th style="min-width: 100px;">Delivery/Unit</th>
                             <th style="min-width: 120px;">Delivery/Line</th>
                             <th style="min-width: 100px;">Margin %</th>
-                            <th style="min-width: 130px;">Line Calc</th>
-                            <th style="min-width: 130px;">Quote Price (GBP)</th>
-                            <th style="min-width: 130px;">BOM Guide (GBP)</th>
-                            <th style="min-width: 130px;">Line Total Cost</th>
-                            <th style="min-width: 130px;">Line Total Quote</th>
                             <th style="min-width: 90px;">Lead Days</th>
                             <th style="min-width: 80px;">No Bid</th>
-                            <th style="min-width: 110px;">Status</th>
-                            <th style="min-width: 140px;">Condition</th>
-                            <th style="min-width: 160px;">Certs</th>
-                            <th style="min-width: 200px;">Notes</th>
+                            <th style="min-width: 50px;">Details</th>
+                            <th style="min-width: 140px;" class="quote-price-header quote-price-separator sticky-right-1">Quote Price</th>
+                            <th style="min-width: 130px; background: linear-gradient(135deg, #198754 0%, #157347 100%); color: white; font-weight: 600;" class="sticky-right-0">Line Total</th>
                         </tr>
                     </thead>
                    <tbody id="quoteTableBody">
@@ -420,6 +654,18 @@
                 </button>
             </div>
             {% endif %}
+
+            <div class="mt-1">
+                <button class="status-btn status-pill" data-field="quoted_status">
+                    {% if line.quoted_status == 'quoted' %}
+                    <i class="bi bi-check-circle me-1"></i>Quoted
+                    {% elif line.quoted_status == 'no_bid' %}
+                    <i class="bi bi-x-circle me-1"></i>No Bid
+                    {% else %}
+                    <i class="bi bi-circle me-1"></i>Created
+                    {% endif %}
+                </button>
+            </div>
         </td>
 
         <td>
@@ -466,9 +712,23 @@
 
         <td class="read-only">{{ line.chosen_currency_code or 'GBP' }}</td>
 
-        <td class="read-only base-cost-gbp">GBP {{ '%.2f'|format(line.base_cost_gbp or 0) }}</td>
+        <td class="read-only">
+            <div class="value-stack">
+                <span class="base-cost-gbp">GBP {{ '%.2f'|format(line.base_cost_gbp or 0) }}</span>
+                <button type="button" class="calc-pill line-calc-btn" data-calc="base" title="Recalculate base cost">
+                    <i class="bi bi-calculator"></i>Base
+                </button>
+            </div>
+        </td>
 
-        <td class="read-only delivery-per-unit">GBP {{ '%.2f'|format(line.delivery_per_unit or 0) }}</td>
+        <td class="read-only">
+            <div class="value-stack">
+                <span class="delivery-per-unit">GBP {{ '%.2f'|format(line.delivery_per_unit or 0) }}</span>
+                <button type="button" class="calc-pill line-calc-btn" data-calc="delivery" title="Recalculate delivery per unit">
+                    <i class="bi bi-truck"></i>Delivery
+                </button>
+            </div>
+        </td>
 
         <td>
             <input type="number" class="form-control form-control-sm editable-field"
@@ -478,39 +738,16 @@
         </td>
 
         <td>
-            <input type="number" class="form-control form-control-sm editable-field"
-                   data-field="margin_percent"
-                   value="{{ '%.1f'|format(line.margin_percent or 0) }}"
-                   min="0" max="99" step="0.1">
-        </td>
-
-        <td>
-            <div class="line-calc-actions">
-                <button type="button" class="btn btn-outline-secondary line-calc-btn" data-calc="base">
-                    <i class="bi bi-calculator me-1"></i>Base
-                </button>
-                <button type="button" class="btn btn-outline-secondary line-calc-btn" data-calc="delivery">
-                    <i class="bi bi-truck me-1"></i>Delivery
+            <div class="value-stack">
+                <input type="number" class="form-control form-control-sm editable-field"
+                       data-field="margin_percent"
+                       value="{{ '%.1f'|format(line.margin_percent or 0) }}"
+                       min="0" max="99" step="0.1">
+                <button type="button" class="calc-pill calc-pill-accent apply-bulk-margin-btn" title="Apply bulk margin value">
+                    <i class="bi bi-percent"></i>Use bulk
                 </button>
             </div>
         </td>
-
-        <td>
-            <input type="number" class="form-control form-control-sm editable-field"
-                   data-field="quote_price_gbp"
-                   value="{{ '%.2f'|format(line.quote_price_gbp or 0) }}"
-                   min="0" step="0.01">
-        </td>
-
-        <td class="read-only">
-            {% if line.bom_guide_price %}
-            GBP {{ '%.2f'|format(line.bom_guide_price) }}
-            {% else %}-{% endif %}
-        </td>
-
-        <td class="read-only line-total-cost">GBP 0.00</td>
-
-        <td class="read-only line-total-quote">GBP 0.00</td>
 
         <td>
             <input type="number" class="form-control form-control-sm editable-field"
@@ -525,47 +762,66 @@
                    {% if line.is_no_bid %}checked{% endif %}>
         </td>
 
-        <td>
-            <button class="btn btn-sm w-100 status-btn" data-field="quoted_status">
-                {% if line.quoted_status == 'quoted' %}
-                <i class="bi bi-check-circle me-1"></i>Quoted
-                {% elif line.quoted_status == 'no_bid' %}
-                <i class="bi bi-x-circle me-1"></i>No Bid
-                {% else %}
-                <i class="bi bi-circle me-1"></i>Created
-                {% endif %}
+        <td class="text-center">
+            <button type="button" class="btn expand-toggle-btn" data-line-id="{{ line.id }}" title="Show details">
+                <i class="bi bi-chevron-right"></i>
             </button>
         </td>
 
-        <td>
-            <input type="text" class="form-control form-control-sm editable-field"
-                   data-field="standard_condition"
-                   value="{{ line.standard_condition or '' }}"
-                   placeholder="e.g. NE, FN">
+        <td class="quote-price-cell quote-price-separator sticky-right-1">
+            <input type="number" class="form-control form-control-sm editable-field"
+                   data-field="quote_price_gbp"
+                   value="{{ '%.2f'|format(line.quote_price_gbp or 0) }}"
+                   min="0" step="0.01">
         </td>
 
-        <td>
-            <input type="text" class="form-control form-control-sm editable-field"
-                   data-field="standard_certs"
-                   value="{{ line.standard_certs or '' }}"
-                   placeholder="e.g. man certs">
-        </td>
-
-        <td>
-            <input type="text" class="form-control form-control-sm editable-field"
-                   data-field="line_notes"
-                   value="{{ line.line_notes or '' }}">
-            {% if line.supplier_condition_code or line.supplier_certifications %}
-            <small class="text-muted d-block mt-1">
-                {% if line.supplier_condition_code %}
-                    Condition: {{ line.supplier_condition_code }}
-                {% endif %}
-                {% if line.supplier_condition_code and line.supplier_certifications %} | {% endif %}
-                {% if line.supplier_certifications %}
-                    Certs: {{ line.supplier_certifications }}
-                {% endif %}
-            </small>
-            {% endif %}
+        <td class="read-only line-total-quote line-total-quote-cell sticky-right-0">GBP 0.00</td>
+    </tr>
+    <!-- Expandable detail row -->
+    <tr class="detail-row" data-parent-line-id="{{ line.id }}">
+        <td colspan="19">
+            <div class="detail-content">
+                <div class="detail-field">
+                    <label>Condition</label>
+                    <input type="text" class="form-control form-control-sm editable-field"
+                           data-field="standard_condition"
+                           data-line-id="{{ line.id }}"
+                           value="{{ line.standard_condition or '' }}"
+                           placeholder="e.g. NE, FN">
+                    {% if line.supplier_condition_code %}
+                    <div class="supplier-info">Supplier: {{ line.supplier_condition_code }}</div>
+                    {% endif %}
+                </div>
+                <div class="detail-field">
+                    <label>Certifications</label>
+                    <input type="text" class="form-control form-control-sm editable-field"
+                           data-field="standard_certs"
+                           data-line-id="{{ line.id }}"
+                           value="{{ line.standard_certs or '' }}"
+                           placeholder="e.g. man certs">
+                    {% if line.supplier_certifications %}
+                    <div class="supplier-info">Supplier: {{ line.supplier_certifications }}</div>
+                    {% endif %}
+                </div>
+                <div class="detail-field">
+                    <label>BOM Guide Price</label>
+                    <span class="form-control form-control-sm read-only">
+                        {% if line.bom_guide_price %}GBP {{ '%.2f'|format(line.bom_guide_price) }}{% else %}-{% endif %}
+                    </span>
+                </div>
+                <div class="detail-field">
+                    <label>Line Total Cost</label>
+                    <span class="form-control form-control-sm read-only line-total-cost" data-line-id="{{ line.id }}">GBP 0.00</span>
+                </div>
+                <div class="detail-field notes-field">
+                    <label>Notes</label>
+                    <input type="text" class="form-control form-control-sm editable-field"
+                           data-field="line_notes"
+                           data-line-id="{{ line.id }}"
+                           value="{{ line.line_notes or '' }}"
+                           placeholder="Add notes...">
+                </div>
+            </div>
         </td>
     </tr>
     {% endfor %}

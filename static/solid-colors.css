@@ -52,9 +52,47 @@
   background-color: #f0f0f0;
   min-height: 100vh;
   border-top-left-radius: 20px;
-  overflow: hidden;
+  overflow: visible;
+  min-width: 0;
   border-left: 1px solid var(--border-color);
   box-shadow: -5px 0 15px rgba(0, 0, 0, 0.05);
+}
+
+body.sidebar-collapsed .flex-shrink-0 {
+  width: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+body.sidebar-collapsed .top-pane {
+  left: 0;
+}
+
+body.sidebar-collapsed .main-content {
+  margin-left: 0;
+}
+
+.sidebar-collapse-toggle {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.sidebar-collapse-toggle:hover {
+  background: #e9ecef;
+  color: var(--text-dark);
+}
+
+body.sidebar-collapsed .sidebar-collapse-toggle i {
+  transform: rotate(180deg);
 }
 
 /* Sidebar Menu Items */

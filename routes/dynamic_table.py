@@ -79,7 +79,7 @@ def generate_sql_query(user_query):
     Table: parts_list_lines (id, parts_list_id, line_number, customer_part_number, base_part_number, quantity, parent_line_id, line_type, chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days, customer_notes, internal_notes, date_created, date_modified, chosen_qty)
     Table: parts_list_statuses (id, name, display_order)
     Table: parts_list_supplier_quotes (id, parts_list_id, supplier_id, quote_reference, quote_date, currency_id, notes, date_created, date_modified, created_by_user_id)
-    Table: parts_list_supplier_quote_lines (id, supplier_quote_id, parts_list_line_id, quoted_part_number, manufacturer, quantity_quoted, unit_price, lead_time_days, condition_code, certifications, is_no_bid, line_notes, date_created, date_modified)
+    Table: parts_list_supplier_quote_lines (id, supplier_quote_id, parts_list_line_id, quoted_part_number, manufacturer, quantity_quoted, qty_available, purchase_increment, moq, unit_price, lead_time_days, condition_code, certifications, is_no_bid, line_notes, date_created, date_modified)
     Table: parts_list_line_suppliers (id, parts_list_line_id, supplier_id, supplier_name, cost, currency_id, lead_days, source_type, source_reference, condition_code, notes, is_preferred)
     Table: parts_list_line_supplier_emails (id, parts_list_line_id, supplier_id, date_sent, sent_by_user_id, email_subject, email_body, recipient_email, recipient_name, notes)
     Table: parts_list_line_suggested_suppliers (id, parts_list_line_id, supplier_id, source_type, date_added)

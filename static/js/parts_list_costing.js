@@ -647,6 +647,17 @@ function showQuotesModal(lineId, partNumber) {
         partSpan.textContent = partNumber;
     }
 
+    // Get qty from the row
+    const row = document.querySelector(`tr[data-line-id="${lineId}"]`);
+    const qtySpan = document.getElementById('quote-modal-qty');
+    if (qtySpan && row) {
+        const chosenQtyInput = row.querySelector('.chosen-qty-input');
+        const requestedQty = row.querySelector('.badge[data-requested-qty]');
+        const qty = (chosenQtyInput && chosenQtyInput.value) ||
+                    (requestedQty && requestedQty.dataset.requestedQty) || '-';
+        qtySpan.textContent = qty;
+    }
+
     const modalEl = document.getElementById('quoteSelectionModal');
     if (!modalEl) return;
 
@@ -659,6 +670,10 @@ function showQuotesModal(lineId, partNumber) {
     if (loading) loading.style.display = 'block';
     if (content) content.style.display = 'none';
 
+    // Hide QPL section initially
+    const qplSection = document.getElementById('qpl-info-section');
+    if (qplSection) qplSection.style.display = 'none';
+
     // Load quotes
     loadQuotesForLine(lineId);
 }
@@ -670,6 +685,16 @@ function loadQuotesForLine(lineId) {
         return;
     }
 
+    // Get quantity for line cost calculation
+    const row = document.querySelector(`tr[data-line-id="${lineId}"]`);
+    let requiredQty = 1;
+    if (row) {
+        const chosenQtyInput = row.querySelector('.chosen-qty-input');
+        const requestedQty = row.querySelector('.badge[data-requested-qty]');
+        requiredQty = parseInt((chosenQtyInput && chosenQtyInput.value) ||
+                    (requestedQty && requestedQty.dataset.requestedQty)) || 1;
+    }
+
     fetch(`/parts_list/parts-lists/${listId}/lines/${lineId}/quotes`)
         .then(response => response.json())
         .then(data => {
@@ -679,7 +704,7 @@ function loadQuotesForLine(lineId) {
             if (content) content.style.display = 'block';
 
             if (data.success && data.quotes && data.quotes.length > 0) {
-                displayQuotes(data.quotes, lineId);
+                displayQuotes(data.quotes, lineId, requiredQty);
             } else {
                 const table = document.getElementById('quotes-table');
                 const noMsg = document.getElementById('no-quotes-message');
@@ -689,7 +714,12 @@ function loadQuotesForLine(lineId) {
 
             // Display other offers section
             if (data.success && data.other_offers) {
-                displayOtherOffers(data.other_offers, lineId);
+                displayOtherOffers(data.other_offers, lineId, requiredQty);
+            }
+
+            // Display QPL info
+            if (data.success && data.qpl_approvals && data.qpl_approvals.length > 0) {
+                displayQPLInfo(data.qpl_approvals);
             }
         })
         .catch(error => {
@@ -698,18 +728,19 @@ function loadQuotesForLine(lineId) {
         });
 }
 
-function displayQuotes(quotes, lineId) {
+function displayQuotes(quotes, lineId, requiredQty) {
     const tbody = document.getElementById('quotes-table-body');
     if (!tbody) return;
 
     tbody.innerHTML = '';
+    requiredQty = requiredQty || 1;
 
     const parseUnitPrice = (value) => {
         const parsed = parseFloat(value);
         return Number.isFinite(parsed) ? parsed : null;
     };
 
-    const formatUnitPrice = (value, currencyCode) => {
+    const formatPrice = (value, currencyCode) => {
         const parsed = parseUnitPrice(value);
         if (parsed === null) return '-';
         const prefix = currencyCode ? `${currencyCode} ` : '';
@@ -721,6 +752,9 @@ function displayQuotes(quotes, lineId) {
         ? Math.min(...validQuotes.map(q => parseUnitPrice(q.unit_price)))
         : null;
 
+    // Get QPL approved manufacturers for highlighting
+    const qplManufacturers = window._qplApprovedManufacturers || [];
+
     quotes.forEach(quote => {
         const unitPriceValue = parseUnitPrice(quote.unit_price);
         const isCheapest =
@@ -728,39 +762,65 @@ function displayQuotes(quotes, lineId) {
             unitPriceValue !== null &&
             unitPriceValue === cheapestPrice;
 
+        // Calculate line cost
+        const quotedQty = parseInt(quote.quantity_quoted) || requiredQty;
+        const lineCost = unitPriceValue !== null ? unitPriceValue * quotedQty : null;
+
+        // Check if manufacturer is QPL approved
+        const manufacturer = quote.manufacturer || '';
+        const isQPLApproved = manufacturer && qplManufacturers.some(qpl =>
+            qpl.toLowerCase() === manufacturer.toLowerCase() ||
+            manufacturer.toLowerCase().includes(qpl.toLowerCase()) ||
+            qpl.toLowerCase().includes(manufacturer.toLowerCase())
+        );
+
         const row = document.createElement('tr');
 
         const quoteNotes = quote.line_notes || '';
         const encodedQuoteNotes = quoteNotes ? encodeURIComponent(quoteNotes) : '';
 
         if (isCheapest) {
-            row.classList.add('table-success');
-            row.style.fontWeight = '600';
+            row.style.background = '#f0f9f4';
         }
 
         if (quote.is_no_bid) {
-            row.classList.add('table-secondary', 'text-muted');
+            row.style.background = '#f8f9fa';
+            row.style.color = '#6c757d';
         }
 
         row.innerHTML = `
-            <td>
-                ${quote.supplier_name}
-                ${isCheapest ? '<span class="badge bg-success ms-2">Cheapest</span>' : ''}
-                ${quote.is_no_bid ? '<span class="badge bg-secondary ms-2">No Bid</span>' : ''}
+            <td style="padding: 0.75rem;">
+                <div style="font-weight: 500;">${quote.supplier_name}</div>
+                <div style="font-size: 0.75rem; color: #6c757d;">
+                    ${quote.quote_reference ? `Ref: ${quote.quote_reference}` : ''}
+                    ${quote.quote_date ? ` · ${quote.quote_date}` : ''}
+                </div>
+                ${isCheapest ? '<span class="badge" style="background: #198754; font-size: 0.75rem; margin-top: 2px;">Lowest</span>' : ''}
+                ${quote.is_no_bid ? '<span class="badge" style="background: #6c757d; font-size: 0.75rem; margin-top: 2px;">No Bid</span>' : ''}
             </td>
-            <td>${quote.quote_reference || '-'}</td>
-            <td>${quote.quote_date || '-'}</td>
-            <td>${quote.quoted_part_number || '-'}</td>
-            <td>${quote.quantity_quoted || '-'}</td>
-            <td>
-                ${quote.is_no_bid ? '-' : formatUnitPrice(quote.unit_price, quote.currency_code)}
+            <td style="padding: 0.75rem;">${quote.quoted_part_number || '-'}</td>
+            <td style="padding: 0.75rem;">
+                ${manufacturer ? `
+                    <span>${manufacturer}</span>
+                    ${isQPLApproved ? '<span class="badge" style="background: #198754; font-size: 0.7rem; margin-left: 4px;" title="QPL Approved">QPL</span>' : ''}
+                ` : '<span style="color: #adb5bd;">-</span>'}
             </td>
-            <td>${quote.lead_time_days ? `${quote.lead_time_days} days` : '-'}</td>
-            <td>${quote.condition_code || '-'}</td>
-            <td><small>${quote.certifications || '-'}</small></td>
-            <td>
+            <td style="padding: 0.75rem; text-align: right;">${quote.quantity_quoted || '-'}</td>
+            <td style="padding: 0.75rem; text-align: right;">${quote.qty_available || '-'}</td>
+            <td style="padding: 0.75rem; text-align: right;">${quote.purchase_increment || '-'}</td>
+            <td style="padding: 0.75rem; text-align: right;">${quote.moq || '-'}</td>
+            <td style="padding: 0.75rem; text-align: right; font-weight: 500;">
+                ${quote.is_no_bid ? '-' : formatPrice(quote.unit_price, quote.currency_code)}
+            </td>
+            <td style="padding: 0.75rem; text-align: right; font-weight: 600; color: #0d6efd;">
+                ${lineCost !== null && !quote.is_no_bid ? formatPrice(lineCost, quote.currency_code) : '-'}
+            </td>
+            <td style="padding: 0.75rem; text-align: center;">${quote.lead_time_days ? `${quote.lead_time_days}d` : '-'}</td>
+            <td style="padding: 0.75rem;">${quote.condition_code || '-'}</td>
+            <td style="padding: 0.75rem; font-size: 0.8rem; max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${quote.certifications || ''}">${quote.certifications || '-'}</td>
+            <td style="padding: 0.75rem; text-align: center;">
                 ${!quote.is_no_bid && unitPriceValue !== null ? `
-                    <button class="btn btn-sm btn-primary use-quote-btn"
+                    <button class="btn btn-sm use-quote-btn" style="background: #0d6efd; color: white; border: none; padding: 0.25rem 0.75rem; font-size: 0.8rem;"
                             data-line-id="${lineId}"
                             data-quote-line-id="${quote.quote_line_id}"
                             data-supplier-id="${quote.supplier_id}"
@@ -770,16 +830,16 @@ function displayQuotes(quotes, lineId) {
                             data-lead-days="${quote.lead_time_days || ''}"
                             data-quoted-quantity="${quote.quantity_quoted || ''}"
                             data-quote-notes="${encodedQuoteNotes}">
-                        Use This
+                        Use
                     </button>
-                ` : '<span class="text-muted">-</span>'}
+                ` : '-'}
             </td>
         `;
 
         tbody.appendChild(row);
     });
 
-    // Attach click handlers to "Use This" buttons
+    // Attach click handlers to "Use" buttons
     tbody.querySelectorAll('.use-quote-btn').forEach(btn => {
         btn.addEventListener('click', function () {
             useQuoteForLine(
@@ -802,7 +862,43 @@ function displayQuotes(quotes, lineId) {
     if (noMsg) noMsg.style.display = 'none';
 }
 
-function displayOtherOffers(offers, lineId) {
+function displayQPLInfo(approvals) {
+    const section = document.getElementById('qpl-info-section');
+    const content = document.getElementById('qpl-info-content');
+    if (!section || !content) return;
+
+    if (!approvals || approvals.length === 0) {
+        section.style.display = 'none';
+        window._qplApprovedManufacturers = [];
+        return;
+    }
+
+    // Store for use in displayQuotes
+    window._qplApprovedManufacturers = approvals.map(a => a.manufacturer_name);
+
+    content.innerHTML = '';
+    approvals.forEach(approval => {
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.style.cssText = 'background: #e8f5e9; color: #2e7d32; font-weight: 500; font-size: 0.85rem; padding: 0.45rem 0.7rem;';
+
+        let text = approval.manufacturer_name;
+        if (approval.cage_code) {
+            text += ` (${approval.cage_code})`;
+        }
+        badge.textContent = text;
+
+        if (approval.approval_status) {
+            badge.title = `Status: ${approval.approval_status}`;
+        }
+
+        content.appendChild(badge);
+    });
+
+    section.style.display = 'block';
+}
+
+function displayOtherOffers(offers, lineId, requiredQty) {
     const container = document.getElementById('other-offers-section');
     if (!container) return;
 
@@ -816,31 +912,59 @@ function displayOtherOffers(offers, lineId) {
     if (!tbody) return;
 
     tbody.innerHTML = '';
+    requiredQty = requiredQty || 1;
+
+    // Get QPL approved manufacturers for highlighting
+    const qplManufacturers = window._qplApprovedManufacturers || [];
 
     offers.forEach(offer => {
         const unitPriceValue = parseFloat(offer.unit_price);
         const hasUnitPrice = Number.isFinite(unitPriceValue);
+        const quotedQty = parseInt(offer.quantity_quoted) || requiredQty;
+        const lineCost = hasUnitPrice ? unitPriceValue * quotedQty : null;
+
+        // Check if manufacturer is QPL approved
+        const manufacturer = offer.manufacturer || '';
+        const isQPLApproved = manufacturer && qplManufacturers.some(qpl =>
+            qpl.toLowerCase() === manufacturer.toLowerCase() ||
+            manufacturer.toLowerCase().includes(qpl.toLowerCase()) ||
+            qpl.toLowerCase().includes(manufacturer.toLowerCase())
+        );
+
         const row = document.createElement('tr');
         const offerNotes = offer.line_notes || '';
         const encodedOfferNotes = offerNotes ? encodeURIComponent(offerNotes) : '';
         row.innerHTML = `
-            <td>${offer.supplier_name}</td>
-            <td>
-                <a href="/parts_list/parts-lists/${offer.parts_list_id}" target="_blank" class="text-decoration-none">
+            <td style="padding: 0.6rem;">
+                <div style="font-weight: 500;">${offer.supplier_name}</div>
+                <div style="font-size: 0.7rem; color: #6c757d;">
+                    ${offer.quote_reference ? `Ref: ${offer.quote_reference}` : ''}
+                    ${offer.quote_date ? ` · ${offer.quote_date}` : ''}
+                </div>
+            </td>
+            <td style="padding: 0.6rem;">
+                <a href="/parts_list/parts-lists/${offer.parts_list_id}" target="_blank" style="text-decoration: none; color: #0d6efd; font-size: 0.85rem;">
                     ${offer.parts_list_name}
-                    <i class="bi bi-box-arrow-up-right ms-1 small"></i>
+                    <i class="bi bi-box-arrow-up-right ms-1" style="font-size: 0.7rem;"></i>
                 </a>
             </td>
-            <td>${offer.quote_reference || '-'}</td>
-            <td>${offer.quote_date || '-'}</td>
-            <td>${offer.quoted_part_number || '-'}</td>
-            <td>${offer.quantity_quoted || '-'}</td>
-            <td>${hasUnitPrice ? `${offer.currency_code || ''} ${unitPriceValue.toFixed(2)}`.trim() : '-'}</td>
-            <td>${offer.lead_time_days ? `${offer.lead_time_days} days` : '-'}</td>
-            <td>${offer.condition_code || '-'}</td>
-            <td>
+            <td style="padding: 0.6rem;">${offer.quoted_part_number || '-'}</td>
+            <td style="padding: 0.6rem;">
+                ${manufacturer ? `
+                    <span>${manufacturer}</span>
+                    ${isQPLApproved ? '<span class="badge" style="background: #198754; font-size: 0.7rem; margin-left: 4px;" title="QPL Approved">QPL</span>' : ''}
+                ` : '<span style="color: #adb5bd;">-</span>'}
+            </td>
+            <td style="padding: 0.6rem; text-align: right;">${offer.quantity_quoted || '-'}</td>
+            <td style="padding: 0.6rem; text-align: right;">${offer.qty_available || '-'}</td>
+            <td style="padding: 0.6rem; text-align: right;">${offer.purchase_increment || '-'}</td>
+            <td style="padding: 0.6rem; text-align: right;">${offer.moq || '-'}</td>
+            <td style="padding: 0.6rem; text-align: right; font-weight: 500;">${hasUnitPrice ? `${offer.currency_code || ''} ${unitPriceValue.toFixed(2)}`.trim() : '-'}</td>
+            <td style="padding: 0.6rem; text-align: right; font-weight: 600; color: #6c757d;">${lineCost !== null ? `${offer.currency_code || ''} ${lineCost.toFixed(2)}`.trim() : '-'}</td>
+            <td style="padding: 0.6rem; text-align: center;">${offer.lead_time_days ? `${offer.lead_time_days}d` : '-'}</td>
+            <td style="padding: 0.6rem; text-align: center;">
                 ${hasUnitPrice ? `
-                    <button class="btn btn-sm btn-outline-primary use-other-offer-btn"
+                    <button class="btn btn-sm use-other-offer-btn" style="background: transparent; color: #0d6efd; border: 1px solid #0d6efd; padding: 0.2rem 0.5rem; font-size: 0.75rem;"
                             data-line-id="${lineId}"
                             data-quote-line-id="${offer.quote_line_id}"
                             data-supplier-id="${offer.supplier_id}"
@@ -850,9 +974,9 @@ function displayOtherOffers(offers, lineId) {
                             data-lead-days="${offer.lead_time_days || ''}"
                             data-quoted-quantity="${offer.quantity_quoted || ''}"
                             data-quote-notes="${encodedOfferNotes}">
-                        Use This
+                        Use
                     </button>
-                ` : '<span class="text-muted">-</span>'}
+                ` : '-'}
             </td>
         `;
         tbody.appendChild(row);

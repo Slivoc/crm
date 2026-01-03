@@ -1089,7 +1089,10 @@ input:-webkit-autofill {
             <!-- Top Pane (Breadcrumbs + Shortcuts) -->
             <div class="top-pane d-flex justify-content-between align-items-center">
                 <!-- Breadcrumbs -->
-                <nav aria-label="breadcrumb">
+                <nav aria-label="breadcrumb" class="d-flex align-items-center gap-2">
+                    <button type="button" class="sidebar-collapse-toggle" id="sidebarCollapseToggle" aria-label="Toggle sidebar">
+                        <i class="bi bi-chevron-left"></i>
+                    </button>
                     <ol class="breadcrumb mb-0">
                         {% for label, link in breadcrumbs %}
                             {% if loop.last %}
@@ -1636,8 +1639,30 @@ $('#global-quick-search').on('submit', function(e) {
 
     <script>
         const API_KEY = "{{ config['API_KEY'] }}";
-    </script>
+</script>
 
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const toggle = document.getElementById('sidebarCollapseToggle');
+    if (!toggle) {
+        return;
+    }
+
+    const applyState = (isCollapsed) => {
+        document.body.classList.toggle('sidebar-collapsed', isCollapsed);
+        toggle.setAttribute('aria-pressed', isCollapsed ? 'true' : 'false');
+    };
+
+    const stored = localStorage.getItem('sidebarCollapsed') === 'true';
+    applyState(stored);
+
+    toggle.addEventListener('click', () => {
+        const isCollapsed = !document.body.classList.contains('sidebar-collapsed');
+        applyState(isCollapsed);
+        localStorage.setItem('sidebarCollapsed', isCollapsed ? 'true' : 'false');
+    });
+});
+</script>
     <!-- Rest of your existing script includes and modals... -->
     {% include 'components/activity_modal.html' %}
     {% include 'components/email_modal.html' %}
