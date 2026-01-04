@@ -68,6 +68,15 @@
                     date_issued: "PO date", total_value: "PO total"
                 }
             },
+            purchase_order_lines: {
+                description: "Line items within purchase orders",
+                fields: {
+                    id: "Primary key", purchase_order_id: "FK to purchase_orders", line_number: "Line #",
+                    base_part_number: "Part identifier", quantity: "Qty ordered", price: "Unit price",
+                    ship_date: "Ship date", promised_date: "Promised delivery date", status_id: "FK to statuses",
+                    sales_order_line_id: "FK to sales_order_lines (optional link)"
+                }
+            },
             suppliers: {
                 description: "Vendor/supplier companies",
                 fields: { id: "Primary key", name: "Company name", contact_name: "Primary contact", contact_email: "Email", currency: "Default currency" }

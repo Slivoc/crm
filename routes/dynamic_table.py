@@ -64,7 +64,7 @@ def generate_sql_query(user_query):
     Table: sales_order_lines (id, sales_order_id, line_number, base_cost, price, quantity, delivery_date, requested_date, promise_date, ship_date, sales_status_id, note, rfq_line_id, updated_at, base_part_number)
     Table: customer_addresses (id, customer_id, address, city, postal_code, country, is_default_shipping, is_default_invoicing)
     Table: purchase_orders (id, purchase_order_ref, supplier_id, date_issued, incoterms, payment_terms, purchase_status_id, currency_id, delivery_address_id, billing_address_id, created_at, updated_at, total_value)
-    Table: purchase_order_lines (id, purchase_order_id, line_number, base_part_number, quantity, price, ship_date, promised_date, status_id, created_at, updated_at, sales_order_line_id)
+    Table: purchase_order_lines (id, purchase_order_id, line_number, base_part_number, quantity, price, ship_date, promised_date, status_id, sales_order_line_id, received_quantity, created_at, updated_at)
     Table: acknowledgments (id, sales_order_id, acknowledgment_pdf, created_at)
     Table: projects (id, customer_id, salesperson_id, status_id, name)
     Table: project_stages (id, project_id, name, description, parent_stage_id, stage_order, status_id, date_created, due_date, recurrence_id)
