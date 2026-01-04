@@ -1076,12 +1076,12 @@ def _standardize_certifications(raw_value, existing_notes=None):
     oem_context = notes_lower or lower_value
     no_trace_context = notes_lower or lower_value
 
+    if normalized is None and any(term in notes_lower for term in no_trace_terms):
+        normalized = "no trace"
+
     if (normalized is None or normalized == "no trace") and oem_context:
         if not any(term in no_trace_context for term in no_trace_terms) and has_oem_trace_signal(oem_context):
             normalized = "OEM certs"
-
-    if normalized is None:
-        normalized = "no trace"
 
     combined_notes = '; '.join([note for note in notes_parts if note]) or None
     return normalized, combined_notes
