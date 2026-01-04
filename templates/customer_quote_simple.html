@@ -34,35 +34,6 @@
     margin: 0;
 }
 
-.summary-card {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border: none;
-}
-
-.summary-card .card-body {
-    padding: 1.5rem;
-}
-
-.summary-item {
-    margin-bottom: 1rem;
-}
-
-.summary-item:last-child {
-    margin-bottom: 0;
-}
-
-.summary-item strong {
-    display: block;
-    font-size: 0.875rem;
-    opacity: 0.9;
-    margin-bottom: 0.25rem;
-}
-
-.summary-item .value {
-    font-size: 1.75rem;
-    font-weight: 700;
-}
 
 /* In your <style> block */
 .quote-table {
@@ -491,33 +462,37 @@
         </div>
     </div>
 
-    <!-- Summary Card -->
-    <div class="card summary-card mb-4">
-        <div class="card-body">
-            <div class="row">
-                <div class="col-md-3">
-                    <div class="summary-item">
-                        <strong>Total Cost (<span id="summaryCurrencyCodeCost">GBP</span>)</strong>
-                        <div class="value" id="totalCost">GBP 0.00</div>
-                    </div>
+    <!-- Summary Cards Row -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card stats-card">
+                <div class="card-body">
+                    <h6>Total Cost (<span id="summaryCurrencyCodeCost">GBP</span>)</h6>
+                    <p class="stat-value text-info" id="totalCost">GBP 0.00</p>
                 </div>
-                <div class="col-md-3">
-                    <div class="summary-item">
-                        <strong>Total Quote (<span id="summaryCurrencyCodeQuote">GBP</span>)</strong>
-                        <div class="value" id="totalQuote">GBP 0.00</div>
-                    </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stats-card">
+                <div class="card-body">
+                    <h6>Total Quote (<span id="summaryCurrencyCodeQuote">GBP</span>)</h6>
+                    <p class="stat-value text-success" id="totalQuote">GBP 0.00</p>
                 </div>
-                <div class="col-md-3">
-                    <div class="summary-item">
-                        <strong>Total Margin (<span id="summaryCurrencyCodeMargin">GBP</span>)</strong>
-                        <div class="value" id="totalMargin">GBP 0.00</div>
-                    </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stats-card">
+                <div class="card-body">
+                    <h6>Total Margin (<span id="summaryCurrencyCodeMargin">GBP</span>)</h6>
+                    <p class="stat-value text-warning" id="totalMargin">GBP 0.00</p>
                 </div>
-                <div class="col-md-3">
-                    <div class="summary-item">
-                        <strong>Average Margin (%)</strong>
-                        <div class="value" id="avgMargin">0%</div>
-                    </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stats-card">
+                <div class="card-body">
+                    <h6>Average Margin (%)</h6>
+                    <p class="stat-value text-danger" id="avgMargin">0%</p>
                 </div>
             </div>
         </div>
