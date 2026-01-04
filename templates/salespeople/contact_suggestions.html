@@ -47,6 +47,19 @@
     border-radius: 8px;
     padding: 0.5rem;
   }
+  .graph-email-content .graph-email-meta {
+    font-size: 0.85rem;
+    color: #6c757d;
+    margin-bottom: 0.5rem;
+  }
+  .graph-email-content .graph-email-body {
+    line-height: 1.4;
+    font-size: 0.95rem;
+  }
+  .graph-email-content .graph-email-body img {
+    max-width: 100%;
+    height: auto;
+  }
 </style>
 {% endblock %}
 
@@ -88,6 +101,7 @@
         <li>Suggestions require at least one contact email.</li>
         <li>Higher estimated revenue and larger fleets increase the score.</li>
         <li>More stale communications rise to the top.</li>
+        <li>Load the latest Graph email to give AI the right context for follow-ups.</li>
         <li>Generate AI drafts per customer to pull news and draft an opening email.</li>
       </ul>
     </div>

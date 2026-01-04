@@ -41,11 +41,14 @@ bom_bp = Blueprint('bom', __name__, url_prefix='/bom')
 @bom_bp.route('/')
 def boms():
     # Get all BOMs with their details
-    boms = db_execute('''
+    customer_names_expr = (
+        "STRING_AGG(DISTINCT c.name, ', ')" if _using_postgres() else "GROUP_CONCAT(DISTINCT c.name)"
+    )
+    boms = db_execute(f'''
         SELECT bh.*,
                COUNT(DISTINCT bl.id) as components_count,
                COUNT(DISTINCT cb.customer_id) as customers_count,
-               GROUP_CONCAT(DISTINCT c.name) as customer_names
+               {customer_names_expr} as customer_names
         FROM bom_headers bh
         LEFT JOIN bom_lines bl ON bh.id = bl.bom_header_id
         LEFT JOIN customer_boms cb ON bh.id = cb.bom_header_id

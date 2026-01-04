@@ -445,15 +445,16 @@ def _compute_suggestion_score(customer, comm_info):
     }
 
 
-def _generate_email_suggestion(customer, comm_info, news_items, last_email_preview, seed_template=None):
+def _generate_email_suggestion(customer, comm_info, news_items, last_email_preview, seed_template=None, last_email_body=None):
     """Use OpenAI to draft the next outreach email with contextual cues."""
     client = _get_openai_email_client()
 
     last_email_summary = None
-    if last_email_preview:
+    if last_email_preview or last_email_body:
         last_email_summary = {
-            'subject': last_email_preview.get('subject'),
-            'preview': last_email_preview.get('preview')
+            'subject': (last_email_preview or {}).get('subject') if isinstance(last_email_preview, dict) else None,
+            'preview': (last_email_preview or {}).get('preview') if isinstance(last_email_preview, dict) else None,
+            'body': (last_email_body or '').strip() if last_email_body else None
         }
 
     news_snippets = []
@@ -478,6 +479,8 @@ def _generate_email_suggestion(customer, comm_info, news_items, last_email_previ
         "You are a concise B2B sales assistant. "
         "Suggest the next email for a zero-spend customer. "
         "Return ONLY valid JSON with keys 'subject' and 'body'. "
+        "If last_email.body is provided, treat it as the most recent email thread "
+        "and draft a relevant follow-up that references prior context (e.g., quotes). "
         "Keep the body under 150 words, personalize with any news snippets, "
         "and propose a clear next step. "
         "If a seed_template is provided, use it as the base structure and tone."
@@ -1160,6 +1163,8 @@ def contact_suggestions_ai(salesperson_id):
     except (TypeError, ValueError):
         template_id = None
     seed_template = _build_seed_template(template_id)
+    graph_email_subject = payload.get('graph_email_subject')
+    graph_email_body = payload.get('graph_email_body')
 
     customers = _get_zero_spend_customers(salesperson_id)
     customer = next((c for c in customers if c and c.get('id') == customer_id), None)
@@ -1184,6 +1189,14 @@ def contact_suggestions_ai(salesperson_id):
             last_email.get('message_id'),
             graph_user_id
         )
+    graph_email_body_clean = None
+    if graph_email_body or graph_email_subject:
+        preview_source = graph_email_body or ''
+        graph_email_body_clean = _strip_html(preview_source).strip()
+        last_email_preview = {
+            'subject': (graph_email_subject or '').strip(),
+            'preview': graph_email_body_clean[:1200]
+        }
 
     news_map, cached_news_used = _build_news_lookup_for_customers(salesperson_id)
     _hydrate_news_for_customers([customer], news_map)
@@ -1194,7 +1207,8 @@ def contact_suggestions_ai(salesperson_id):
         comm_info,
         news_items,
         last_email_preview,
-        seed_template=seed_template
+        seed_template=seed_template,
+        last_email_body=graph_email_body_clean
     )
 
     return jsonify({

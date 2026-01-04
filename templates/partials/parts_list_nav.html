@@ -28,21 +28,30 @@
                 </h5>
                 <!-- Action icons on the left -->
                 <div class="d-flex gap-1 ms-2">
+                    <a href="{{ url_for('parts_list.get_related_emails', list_id=list_id) }}"
+                       class="btn btn-sm pl-icon-btn text-secondary {{ 'active' if active_page == 'emails' else '' }}"
+                       title="Related Emails"
+                       aria-label="Related Emails"
+                       {% if active_page == 'emails' %}aria-current="page"{% endif %}>
+                        <i class="bi bi-envelope"></i>
+                    </a>
                     {% if not customer_name %}
                         <button type="button"
-                                class="btn btn-sm btn-outline-primary"
+                                class="btn btn-sm pl-icon-btn text-primary"
                                 data-bs-toggle="modal"
                                 data-bs-target="#assignCustomerModal"
-                                title="Assign Customer">
+                                title="Assign Customer"
+                                aria-label="Assign Customer">
                             <i class="bi bi-person-plus"></i>
                         </button>
                     {% endif %}
                     <button type="button"
-                            class="btn btn-sm btn-outline-danger"
+                            class="btn btn-sm pl-icon-btn text-danger"
                             id="delete-parts-list-btn"
                             data-list-id="{{ list_id }}"
                             data-list-name="{{ list_name|e }}"
-                            title="Delete Parts List">
+                            title="Delete Parts List"
+                            aria-label="Delete Parts List">
                         <i class="bi bi-trash"></i>
                     </button>
                 </div>
@@ -76,14 +85,30 @@
                         <i class="bi bi-cash-stack me-1"></i>Quoting
                     </a>
                 {% endif %}
-                <a href="{{ url_for('parts_list.get_related_emails', list_id=list_id) }}"
-                   class="btn btn-sm {{ 'btn-primary' if active_page == 'emails' else 'btn-outline-secondary' }}">
-                    <i class="bi bi-envelope me-1"></i>Related Emails
-                </a>
             </div>
         </div>
     </div>
 </div>
+
+<style>
+.pl-icon-btn {
+    border: 0;
+    background: transparent;
+    padding: 0.25rem 0.4rem;
+    line-height: 1;
+}
+.pl-icon-btn:hover,
+.pl-icon-btn:focus {
+    background: #f1f3f5;
+}
+.pl-icon-btn:focus {
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+}
+.pl-icon-btn.active {
+    color: #0d6efd;
+    background: #e7f1ff;
+}
+</style>
 
 <script>
 (function() {

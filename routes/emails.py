@@ -1998,6 +1998,12 @@ def graph_latest_message():
                 "message": "Email address is required.",
             },
         }), 400
+    days_back = request.args.get("days_back", "365")
+    try:
+        days_back = int(days_back)
+    except (TypeError, ValueError):
+        days_back = 365
+    days_back = max(1, min(days_back, 1825))
 
     settings = _get_graph_settings(include_secret=True)
     cache, user_id = _load_graph_cache_for_request()
@@ -2026,15 +2032,16 @@ def graph_latest_message():
 
     safe_email = email_addr.replace("'", "''")
     filter_query = (
-        f"from/emailAddress/address eq '{safe_email}' "
-        f"or toRecipients/any(r:r/emailAddress/address eq '{safe_email}') "
+        f"toRecipients/any(r:r/emailAddress/address eq '{safe_email}') "
         f"or ccRecipients/any(r:r/emailAddress/address eq '{safe_email}')"
     )
     headers = {
         "Authorization": f"Bearer {token['access_token']}",
+        "ConsistencyLevel": "eventual",
     }
     params = {
         "$top": "1",
+        "$count": "true",
         "$select": (
             "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
             "body,bodyPreview,webLink,conversationId"
@@ -2043,7 +2050,7 @@ def graph_latest_message():
         "$filter": filter_query,
     }
     resp = requests.get(
-        "https://graph.microsoft.com/v1.0/me/messages",
+        "https://graph.microsoft.com/v1.0/me/mailFolders/SentItems/messages",
         headers=headers,
         params=params,
         timeout=20,
@@ -2054,14 +2061,111 @@ def graph_latest_message():
         body = resp.text
 
     if resp.status_code >= 400:
+        fallback_params = {
+            "$top": "50",
+            "$select": (
+                "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
+                "body,bodyPreview,webLink,conversationId"
+            ),
+            "$orderby": "sentDateTime desc",
+        }
+        needle = email_addr.lower()
+        cutoff = datetime.utcnow() - timedelta(days=days_back)
+
+        def _matches_email(message):
+            from_addr = (
+                message.get("from", {})
+                .get("emailAddress", {})
+                .get("address", "")
+            )
+            if from_addr and from_addr.lower() == needle:
+                return True
+            for recipient in message.get("toRecipients", []) or []:
+                addr = recipient.get("emailAddress", {}).get("address", "")
+                if addr and addr.lower() == needle:
+                    return True
+            for recipient in message.get("ccRecipients", []) or []:
+                addr = recipient.get("emailAddress", {}).get("address", "")
+                if addr and addr.lower() == needle:
+                    return True
+            return False
+
+        message = None
+        next_link = None
+        for _ in range(30):
+            if next_link:
+                fallback_resp = requests.get(next_link, headers=headers, timeout=20)
+            else:
+                fallback_resp = requests.get(
+                    "https://graph.microsoft.com/v1.0/me/mailFolders/SentItems/messages",
+                    headers=headers,
+                    params=fallback_params,
+                    timeout=20,
+                )
+            try:
+                fallback_body = fallback_resp.json() if fallback_resp.content else None
+            except ValueError:
+                fallback_body = fallback_resp.text
+
+            if fallback_resp.status_code >= 400:
+                return jsonify({
+                    "success": False,
+                    "error": {
+                        "message": "Graph request failed",
+                        "status": resp.status_code,
+                    },
+                    "debug": body,
+                }), 400
+
+            messages = fallback_body.get("value", []) if isinstance(fallback_body, dict) else []
+            message = next(
+                (msg for msg in messages if isinstance(msg, dict) and _matches_email(msg)),
+                None
+            )
+            if message:
+                break
+
+            oldest_seen = None
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                sent_value = msg.get("sentDateTime") or msg.get("receivedDateTime")
+                if not sent_value:
+                    continue
+                try:
+                    sent_dt = parser.parse(sent_value)
+                except (TypeError, ValueError):
+                    continue
+                if sent_dt.tzinfo is None:
+                    sent_dt = sent_dt.replace(tzinfo=timezone.utc)
+                sent_dt = sent_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                if oldest_seen is None or sent_dt < oldest_seen:
+                    oldest_seen = sent_dt
+
+            if oldest_seen and oldest_seen < cutoff:
+                break
+
+            next_link = (
+                fallback_body.get("@odata.nextLink")
+                if isinstance(fallback_body, dict)
+                else None
+            )
+            if not next_link:
+                break
+
+        if not message:
+            return jsonify({
+                "success": False,
+                "error": {
+                    "message": "No messages found for that contact.",
+                },
+            }), 404
+
         return jsonify({
-            "success": False,
-            "error": {
-                "message": "Graph request failed",
-                "status": resp.status_code,
-            },
-            "debug": body,
-        }), 400
+            "success": True,
+            "message": message,
+            "fallback": True,
+        })
 
     messages = body.get("value", []) if isinstance(body, dict) else []
     if not messages:

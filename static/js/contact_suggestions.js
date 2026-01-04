@@ -55,6 +55,51 @@ document.addEventListener('DOMContentLoaded', () => {
     return holder.textContent || holder.innerText || '';
   };
 
+  const sanitizeGraphHtml = (html) => {
+    if (!html) return '';
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const removeSelectors = ['script', 'style', 'meta', 'link', 'head', 'title'];
+    removeSelectors.forEach((selector) => {
+      doc.querySelectorAll(selector).forEach((el) => el.remove());
+    });
+    const walker = document.createTreeWalker(doc, NodeFilter.SHOW_COMMENT);
+    const comments = [];
+    while (walker.nextNode()) {
+      comments.push(walker.currentNode);
+    }
+    comments.forEach((node) => node.parentNode?.removeChild(node));
+    doc.querySelectorAll('*').forEach((el) => {
+      el.removeAttribute('style');
+      el.removeAttribute('class');
+      el.removeAttribute('id');
+    });
+    return doc.body ? doc.body.innerHTML : '';
+  };
+
+  const renderGraphMessage = (message, output) => {
+    const subject = message.subject || '';
+    const fromEmail = message.from?.emailAddress?.address || '';
+    const received = message.receivedDateTime
+      ? new Date(message.receivedDateTime).toLocaleString()
+      : '';
+    const headerLines = [];
+    if (subject) headerLines.push(`Subject: ${subject}`);
+    if (fromEmail) headerLines.push(`From: ${fromEmail}`);
+    if (received) headerLines.push(`Date: ${received}`);
+
+    const rawBody = message.body?.content || message.bodyPreview || '';
+    const sanitized = sanitizeGraphHtml(rawBody);
+    const textBody = stripHtml(sanitized || rawBody);
+
+    const headerHtml = headerLines.length
+      ? `<div class="graph-email-meta">${escapeHtml(headerLines.join(' · '))}</div>`
+      : '';
+    const bodyHtml = sanitized || escapeHtml(textBody).replace(/\n/g, '<br>');
+    output.innerHTML = `${headerHtml}<div class="graph-email-body">${bodyHtml}</div>`;
+    output.setAttribute('data-text', textBody);
+  };
+
   const formatNumber = (value) => {
     const num = Number(value || 0);
     if (!Number.isFinite(num)) return '0';
@@ -277,6 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </button>
                   ` : ''}
                   <div class="graph-email-content small mt-2 d-none" data-graph-content></div>
+                  <div class="small text-muted mt-1">Load the latest email to guide the AI draft.</div>
                 </div>
               ` : ''}
             </div>
@@ -405,19 +451,7 @@ document.addEventListener('DOMContentLoaded', () => {
             throw new Error(data?.error?.message || 'Graph email unavailable');
           }
           const message = data.message;
-          const subject = message.subject || '';
-          const fromEmail = message.from?.emailAddress?.address || '';
-          const received = message.receivedDateTime
-            ? new Date(message.receivedDateTime).toLocaleString()
-            : '';
-          const body = stripHtml(message.body?.content || message.bodyPreview || '');
-          const lines = [];
-          if (subject) lines.push(`Subject: ${subject}`);
-          if (fromEmail) lines.push(`From: ${fromEmail}`);
-          if (received) lines.push(`Date: ${received}`);
-          if (lines.length) lines.push('');
-          lines.push(body || '(No body content)');
-          output.textContent = lines.join('\n');
+          renderGraphMessage(message, output);
           output.setAttribute('data-loaded', 'true');
           output.classList.remove('d-none');
           button.textContent = 'Hide full Graph email';
@@ -442,7 +476,7 @@ document.addEventListener('DOMContentLoaded', () => {
         button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
 
         try {
-          const response = await fetch(`/emails/graph/latest?email=${encodeURIComponent(email)}`);
+          const response = await fetch(`/emails/graph/latest?email=${encodeURIComponent(email)}&days_back=730`);
           if (!response.ok) {
             throw new Error('Failed to load latest Graph email');
           }
@@ -451,31 +485,27 @@ document.addEventListener('DOMContentLoaded', () => {
             throw new Error(data?.error?.message || 'Graph email unavailable');
           }
           const message = data.message;
-          const subject = message.subject || '';
           const fromEmail = message.from?.emailAddress?.address || '';
-          const received = message.receivedDateTime
-            ? new Date(message.receivedDateTime).toLocaleString()
-            : '';
-          const body = stripHtml(message.body?.content || message.bodyPreview || '');
-          const lines = [];
-          if (subject) lines.push(`Subject: ${subject}`);
-          if (fromEmail) lines.push(`From: ${fromEmail}`);
-          if (received) lines.push(`Date: ${received}`);
-          if (lines.length) lines.push('');
-          lines.push(body || '(No body content)');
-          output.textContent = lines.join('\n');
+          renderGraphMessage(message, output);
           output.classList.remove('d-none');
           button.textContent = 'Refresh latest Graph email';
 
           const customerId = button.getAttribute('data-customer-id');
           const suggestion = currentSuggestions.find((item) => String(item.customer_id) === String(customerId));
           if (suggestion) {
+            const rawBody = message.body?.content || message.bodyPreview || '';
+            const sanitized = sanitizeGraphHtml(rawBody);
             suggestion.last_graph_email = {
               message_id: message.id,
               subject: message.subject || '',
               preview: message.bodyPreview || '',
               sender_email: fromEmail,
               date: message.receivedDateTime || message.sentDateTime || null
+            };
+            suggestion.last_graph_email_full = {
+              subject: message.subject || '',
+              body_html: sanitized || rawBody,
+              body_text: stripHtml(sanitized || rawBody)
             };
           }
         } catch (error) {
@@ -525,6 +555,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const payload = { customer_id: customerId };
     if (templateId) payload.template_id = templateId;
+    if (suggestion?.last_graph_email_full?.body_text || suggestion?.last_graph_email_full?.body_html) {
+      payload.graph_email_subject = suggestion.last_graph_email_full.subject || '';
+      payload.graph_email_body = suggestion.last_graph_email_full.body_text || suggestion.last_graph_email_full.body_html;
+    }
 
     try {
       const response = await fetch(`/salespeople/${salespersonId}/contact-suggestions/ai`, {
