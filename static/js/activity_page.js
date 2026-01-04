@@ -1159,16 +1159,40 @@ document.addEventListener('DOMContentLoaded', function() {
         labels.push(monthLabel);
     }
 
-    // Initialize chart data
+    // Create gradient fills for trendy chart styling
+    const createGradient = (ctx, colorStart, colorEnd) => {
+        const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+        gradient.addColorStop(0, colorStart);
+        gradient.addColorStop(1, colorEnd);
+        return gradient;
+    };
+
+    // Initialize chart data with modern styling
     let personalSalesData = {
         labels: labels,
         datasets: [{
             label: 'Sales Value (£)',
             data: Array(24).fill(0),
-            backgroundColor: 'rgba(54, 162, 235, 0.2)',
-            borderColor: 'rgba(54, 162, 235, 1)',
-            borderWidth: 2,
-            tension: 0.1
+            backgroundColor: function(context) {
+                const chart = context.chart;
+                const {ctx, chartArea} = chart;
+                if (!chartArea) return 'rgba(54, 162, 235, 0.1)';
+                const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                gradient.addColorStop(0, 'rgba(54, 162, 235, 0.0)');
+                gradient.addColorStop(0.5, 'rgba(54, 162, 235, 0.1)');
+                gradient.addColorStop(1, 'rgba(54, 162, 235, 0.3)');
+                return gradient;
+            },
+            borderColor: 'rgb(54, 162, 235)',
+            borderWidth: 3,
+            tension: 0.4,
+            fill: true,
+            pointRadius: 0,
+            pointHoverRadius: 8,
+            pointHoverBackgroundColor: 'rgb(54, 162, 235)',
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 3,
+            pointHitRadius: 20
         }]
     };
 
@@ -1177,10 +1201,26 @@ document.addEventListener('DOMContentLoaded', function() {
         datasets: [{
             label: 'Account Sales Value (£)',
             data: Array(24).fill(0),
-            backgroundColor: 'rgba(255, 159, 64, 0.2)',
-            borderColor: 'rgba(255, 159, 64, 1)',
-            borderWidth: 2,
-            tension: 0.1
+            backgroundColor: function(context) {
+                const chart = context.chart;
+                const {ctx, chartArea} = chart;
+                if (!chartArea) return 'rgba(255, 159, 64, 0.1)';
+                const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                gradient.addColorStop(0, 'rgba(255, 159, 64, 0.0)');
+                gradient.addColorStop(0.5, 'rgba(255, 159, 64, 0.1)');
+                gradient.addColorStop(1, 'rgba(255, 159, 64, 0.3)');
+                return gradient;
+            },
+            borderColor: 'rgb(255, 159, 64)',
+            borderWidth: 3,
+            tension: 0.4,
+            fill: true,
+            pointRadius: 0,
+            pointHoverRadius: 8,
+            pointHoverBackgroundColor: 'rgb(255, 159, 64)',
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 3,
+            pointHitRadius: 20
         }]
     };
 
@@ -1218,41 +1258,82 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
             },
+            animation: {
+                duration: 750,
+                easing: 'easeOutQuart'
+            },
             scales: {
                 y: {
                     beginAtZero: true,
                     title: {
                         display: true,
-                        text: 'Sales Value (£)'
+                        text: 'Sales Value (£)',
+                        color: '#6b7280',
+                        font: { weight: '500' }
+                    },
+                    grid: {
+                        color: 'rgba(0, 0, 0, 0.05)',
+                        drawBorder: false
+                    },
+                    ticks: {
+                        color: '#6b7280',
+                        padding: 10
+                    },
+                    border: {
+                        display: false
                     }
                 },
                 x: {
                     title: {
                         display: true,
-                        text: 'Month (click for breakdown)'
+                        text: 'Month (click for breakdown)',
+                        color: '#6b7280',
+                        font: { weight: '500' }
                     },
                     ticks: {
                         maxTicksLimit: 12,
                         maxRotation: 45,
-                        minRotation: 0
+                        minRotation: 0,
+                        color: '#6b7280',
+                        padding: 8
+                    },
+                    grid: {
+                        display: false
+                    },
+                    border: {
+                        display: false
                     }
                 }
             },
             plugins: {
+                legend: {
+                    display: true,
+                    labels: {
+                        usePointStyle: true,
+                        pointStyle: 'circle',
+                        padding: 20,
+                        color: '#6b7280',
+                        font: { size: 12 }
+                    }
+                },
                 tooltip: {
                     enabled: true,
                     mode: 'index',
                     intersect: false,
-                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                    titleColor: '#212529',
-                    bodyColor: '#495057',
-                    borderColor: '#dee2e6',
+                    backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                    titleColor: '#f9fafb',
+                    bodyColor: '#d1d5db',
+                    borderColor: 'rgba(99, 102, 241, 0.3)',
                     borderWidth: 1,
-                    cornerRadius: 8,
-                    displayColors: false,
+                    cornerRadius: 12,
+                    displayColors: true,
+                    boxWidth: 8,
+                    boxHeight: 8,
+                    boxPadding: 4,
+                    usePointStyle: true,
                     padding: 16,
                     bodyFont: { size: 13 },
-                    titleFont: { size: 14, weight: 'bold' },
+                    titleFont: { size: 14, weight: '600' },
                     callbacks: {
                         title: function(tooltipItems) {
                             let suffix = '';
@@ -1609,10 +1690,26 @@ document.addEventListener('DOMContentLoaded', function() {
             datasets: [{
                 label: `${customerSalesData.customer_name} Sales (£)`,
                 data: customerSalesData.values,
-                backgroundColor: 'rgba(34, 197, 94, 0.2)',
-                borderColor: 'rgba(34, 197, 94, 1)',
-                borderWidth: 2,
-                tension: 0.1
+                backgroundColor: function(context) {
+                    const chart = context.chart;
+                    const {ctx, chartArea} = chart;
+                    if (!chartArea) return 'rgba(34, 197, 94, 0.1)';
+                    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                    gradient.addColorStop(0, 'rgba(34, 197, 94, 0.0)');
+                    gradient.addColorStop(0.5, 'rgba(34, 197, 94, 0.1)');
+                    gradient.addColorStop(1, 'rgba(34, 197, 94, 0.3)');
+                    return gradient;
+                },
+                borderColor: 'rgb(34, 197, 94)',
+                borderWidth: 3,
+                tension: 0.4,
+                fill: true,
+                pointRadius: 0,
+                pointHoverRadius: 8,
+                pointHoverBackgroundColor: 'rgb(34, 197, 94)',
+                pointHoverBorderColor: '#fff',
+                pointHoverBorderWidth: 3,
+                pointHitRadius: 20
             }]
         };
         salesChart.data = customerChartData;
@@ -1695,23 +1792,47 @@ document.addEventListener('DOMContentLoaded', function() {
         baselineDataset = JSON.parse(JSON.stringify(baselineData.datasets[0]));
     }
 
-    baselineDataset.backgroundColor = 'rgba(156, 163, 175, 0.2)';
-    baselineDataset.borderColor = 'rgba(156, 163, 175, 1)';
+    baselineDataset.backgroundColor = 'rgba(156, 163, 175, 0.05)';
+    baselineDataset.borderColor = 'rgba(156, 163, 175, 0.6)';
     baselineDataset.borderDash = [5, 5];
+    baselineDataset.borderWidth = 2;
+    baselineDataset.tension = 0.4;
+    baselineDataset.fill = true;
+    baselineDataset.pointRadius = 0;
+    baselineDataset.pointHoverRadius = 6;
     datasets.push(baselineDataset);
+
+    // Modern color palette for compared customers
+    const modernColors = [
+        'rgb(239, 68, 68)',    // red
+        'rgb(34, 197, 94)',    // green
+        'rgb(168, 85, 247)',   // purple
+        'rgb(14, 165, 233)',   // sky
+        'rgb(249, 115, 22)',   // orange
+        'rgb(236, 72, 153)'    // pink
+    ];
 
     // Add compared customers
     Array.from(comparedCustomers.entries()).forEach(([customerId, data], index) => {
-        const colorIndex = index % customerColors.length;
-        const color = customerColors[colorIndex];
+        const colorIndex = index % modernColors.length;
+        const color = modernColors[colorIndex];
+        const rgbMatch = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        const [_, r, g, b] = rgbMatch || [null, 99, 102, 241];
 
         datasets.push({
             label: `${data.customer.name} (£)`,
             data: data.salesData.values,
-            backgroundColor: color.replace('1)', '0.2)'),
+            backgroundColor: `rgba(${r}, ${g}, ${b}, 0.1)`,
             borderColor: color,
             borderWidth: 3,
-            tension: 0.1
+            tension: 0.4,
+            fill: true,
+            pointRadius: 0,
+            pointHoverRadius: 8,
+            pointHoverBackgroundColor: color,
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 3,
+            pointHitRadius: 20
         });
     });
 
@@ -2167,10 +2288,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
         data.customers.forEach((customer, index) => {
             const customerId = `customer-${index}`;
-            const isFirst = index === 0;
             html += `<div class="accordion-item">
                 <h2 class="accordion-header">
-                    <button class="accordion-button ${isFirst ? '' : 'collapsed'}" type="button"
+                    <button class="accordion-button collapsed" type="button"
                             data-bs-toggle="collapse" data-bs-target="#${customerId}">
                         <div class="d-flex justify-content-between align-items-center w-100">
                             <div>
@@ -2184,7 +2304,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         </div>
                     </button>
                 </h2>
-                <div id="${customerId}" class="accordion-collapse collapse ${isFirst ? 'show' : ''}"
+                <div id="${customerId}" class="accordion-collapse collapse"
                      data-bs-parent="#monthlyBreakdownAccordion">
                     <div class="accordion-body p-0">
                         <table class="table table-sm mb-0">
