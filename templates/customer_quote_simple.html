@@ -34,6 +34,37 @@
     margin: 0;
 }
 
+.summary-bar {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+    font-size: 0.875rem;
+}
+
+.summary-item-compact {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    flex: 1;
+    min-width: 0;
+}
+
+.summary-item-compact label {
+    font-size: 0.8rem;
+    color: #6c757d;
+    font-weight: 600;
+    margin: 0;
+}
+
+.summary-item-compact .value {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #212529;
+}
 
 /* In your <style> block */
 .quote-table {
@@ -426,75 +457,39 @@
     {% set show_quote_views = true %}
     {% include 'partials/parts_list_nav.html' %}
 
-    <!-- Stats Row -->
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="card stats-card">
-                <div class="card-body">
-                    <h6>Total Lines</h6>
-                    <p class="stat-value text-primary">{{ total_lines }}</p>
-                </div>
-            </div>
+    <!-- Summary Bar -->
+    <div class="summary-bar mb-4">
+        <div class="summary-item-compact">
+            <label>Total Lines</label>
+            <div class="value" id="totalLinesCount">{{ total_lines }}</div>
         </div>
-        <div class="col-md-3">
-            <div class="card stats-card">
-                <div class="card-body">
-                    <h6>Created (Not Yet Quoted)</h6>
-                    <p class="stat-value text-secondary" id="createdLinesCount">{{ lines_created }}</p>
-                </div>
-            </div>
+        <div class="summary-item-compact">
+            <label>Created (Not Yet Quoted)</label>
+            <div class="value" id="createdLinesCount">{{ lines_created }}</div>
         </div>
-        <div class="col-md-3">
-            <div class="card stats-card">
-                <div class="card-body">
-                    <h6>Quoted Lines</h6>
-                    <p class="stat-value text-success" id="quotedLinesCount">{{ lines_quoted }}</p>
-                </div>
-            </div>
+        <div class="summary-item-compact">
+            <label>Quoted Lines</label>
+            <div class="value" id="quotedLinesCount">{{ lines_quoted }}</div>
         </div>
-        <div class="col-md-3">
-            <div class="card stats-card">
-                <div class="card-body">
-                    <h6>No Bid Lines</h6>
-                    <p class="stat-value text-warning" id="noBidLinesCount">{{ lines_no_bid }}</p>
-                </div>
-            </div>
+        <div class="summary-item-compact">
+            <label>No Bid Lines</label>
+            <div class="value" id="noBidLinesCount">{{ lines_no_bid }}</div>
         </div>
-    </div>
-
-    <!-- Summary Cards Row -->
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="card stats-card">
-                <div class="card-body">
-                    <h6>Total Cost (<span id="summaryCurrencyCodeCost">GBP</span>)</h6>
-                    <p class="stat-value text-info" id="totalCost">GBP 0.00</p>
-                </div>
-            </div>
+        <div class="summary-item-compact">
+            <label>Total Cost (<span id="summaryCurrencyCodeCost">GBP</span>)</label>
+            <div class="value" id="totalCost">GBP 0.00</div>
         </div>
-        <div class="col-md-3">
-            <div class="card stats-card">
-                <div class="card-body">
-                    <h6>Total Quote (<span id="summaryCurrencyCodeQuote">GBP</span>)</h6>
-                    <p class="stat-value text-success" id="totalQuote">GBP 0.00</p>
-                </div>
-            </div>
+        <div class="summary-item-compact">
+            <label>Total Quote (<span id="summaryCurrencyCodeQuote">GBP</span>)</label>
+            <div class="value" id="totalQuote">GBP 0.00</div>
         </div>
-        <div class="col-md-3">
-            <div class="card stats-card">
-                <div class="card-body">
-                    <h6>Total Margin (<span id="summaryCurrencyCodeMargin">GBP</span>)</h6>
-                    <p class="stat-value text-warning" id="totalMargin">GBP 0.00</p>
-                </div>
-            </div>
+        <div class="summary-item-compact">
+            <label>Total Margin (<span id="summaryCurrencyCodeMargin">GBP</span>)</label>
+            <div class="value" id="totalMargin">GBP 0.00</div>
         </div>
-        <div class="col-md-3">
-            <div class="card stats-card">
-                <div class="card-body">
-                    <h6>Average Margin (%)</h6>
-                    <p class="stat-value text-danger" id="avgMargin">0%</p>
-                </div>
-            </div>
+        <div class="summary-item-compact">
+            <label>Average Margin (%)</label>
+            <div class="value" id="avgMargin">0%</div>
         </div>
     </div>
 
