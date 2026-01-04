@@ -35,6 +35,64 @@ def _fetch_inserted_id(cur):
         return None
     return getattr(cur, 'lastrowid', None)
 
+def _load_bom_dataframe(file, filename):
+    if filename.endswith('.csv'):
+        return pd.read_csv(file)
+    if filename.endswith(('.xlsx', '.xls')):
+        return pd.read_excel(file)
+    raise ValueError("Unsupported file format. Use CSV or Excel")
+
+
+def _import_bom_dataframe(cur, bom_id, df, start_position=0):
+    imported_count = 0
+    skipped_count = 0
+
+    for idx, row in df.iterrows():
+        try:
+            raw_part_number = str(row.get('part_number', '')).strip()
+            if not raw_part_number:
+                skipped_count += 1
+                continue
+
+            base_part_number = create_base_part_number(raw_part_number)
+            quantity = int(row.get('quantity', 1))
+            position = start_position + ((idx + 1) * 10)
+            raw_guide_price = row.get('guide_price')
+            guide_price = float(raw_guide_price) if pd.notna(raw_guide_price) else None
+
+            part = _execute_with_cursor(cur,
+                'SELECT base_part_number FROM part_numbers WHERE base_part_number = ?',
+                (base_part_number,)
+            ).fetchone()
+
+            if not part:
+                _execute_with_cursor(cur,
+                    'INSERT INTO part_numbers (part_number, base_part_number) VALUES (?, ?)',
+                    (raw_part_number, base_part_number)
+                )
+
+            _execute_with_cursor(cur, '''
+                INSERT INTO bom_lines (
+                    bom_header_id, base_part_number, quantity,
+                    reference_designator, notes, position, guide_price
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                bom_id,
+                base_part_number,
+                quantity,
+                row.get('reference_designator'),
+                row.get('notes'),
+                position,
+                guide_price
+            ))
+
+            imported_count += 1
+        except Exception as exc:
+            logging.error(f"Failed to import row {idx}: {exc}", exc_info=True)
+            skipped_count += 1
+
+    return imported_count, skipped_count
+
 bom_bp = Blueprint('bom', __name__, url_prefix='/bom')
 
 
@@ -82,56 +140,8 @@ def create_bom():
                 file = request.files['file']
                 if file.filename:
                     filename = secure_filename(file.filename)
-
-                    if filename.endswith('.csv'):
-                        df = pd.read_csv(file)
-                    elif filename.endswith(('.xlsx', '.xls')):
-                        df = pd.read_excel(file)
-                    else:
-                        raise ValueError("Unsupported file format")
-
-                    for idx, row in df.iterrows():
-                        raw_part_number = str(row.get('part_number', '')).strip()
-                        if not raw_part_number:
-                            continue
-
-                        base_part_number = create_base_part_number(raw_part_number)
-                        quantity = int(row.get('quantity', 1))
-                        position = int(row.get('position', (idx + 1) * 10))
-                        raw_guide_price = row.get('guide_price')
-                        logging.info(f"Row {idx} - Part: {raw_part_number}")
-                        logging.info(f"  Raw guide_price value: {raw_guide_price}")
-                        logging.info(f"  Type: {type(raw_guide_price)}")
-                        logging.info(f"  pd.notna(): {pd.notna(raw_guide_price)}")
-                        guide_price = float(raw_guide_price) if pd.notna(raw_guide_price) else None
-                        logging.info(f"  Final guide_price: {guide_price}")
-
-                        part = _execute_with_cursor(cur,
-                            'SELECT base_part_number FROM part_numbers WHERE base_part_number = ?',
-                            [base_part_number]
-                        ).fetchone()
-
-                        if not part:
-                            _execute_with_cursor(cur,
-                                'INSERT INTO part_numbers (part_number, base_part_number) VALUES (?, ?)',
-                                [raw_part_number, base_part_number]
-                            )
-
-                        _execute_with_cursor(cur, '''
-                            INSERT INTO bom_lines (
-                                bom_header_id, base_part_number, quantity,
-                                reference_designator, notes, position, guide_price
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ''', [
-                            bom_id,
-                            base_part_number,
-                            quantity,
-                            row.get('reference_designator'),
-                            row.get('notes'),
-                            position,
-                            guide_price
-                        ])
-                        logging.info(f"  Inserted with guide_price: {guide_price}")
+                    df = _load_bom_dataframe(file, filename)
+                    _import_bom_dataframe(cur, bom_id, df)
 
         return redirect(url_for('bom.view_bom', bom_id=bom_id))
 
@@ -238,21 +248,13 @@ def import_components(bom_id):
     logging.info(f"Starting import for BOM {bom_id} from file: {filename}")
 
     try:
-        if filename.endswith('.csv'):
-            df = pd.read_csv(file)
-        elif filename.endswith(('.xlsx', '.xls')):
-            df = pd.read_excel(file)
-        else:
-            return jsonify({'error': 'Unsupported file format. Use CSV or Excel'}), 400
+        df = _load_bom_dataframe(file, filename)
     except Exception as exc:
         logging.error(f"Failed to read file for BOM {bom_id}: {exc}")
         return jsonify({'error': f"Failed to read file: {exc}"}), 400
 
     logging.info(f"Loaded dataframe with {len(df)} rows")
     logging.info(f"Columns in file: {list(df.columns)}")
-
-    imported_count = 0
-    skipped_count = 0
 
     with db_cursor(commit=True) as cur:
         max_position_row = _execute_with_cursor(cur, '''
@@ -262,85 +264,7 @@ def import_components(bom_id):
         ''', (bom_id,)).fetchone()
         max_position = max_position_row['max_pos'] if max_position_row else 0
         logging.info(f"Current max position: {max_position}")
-
-        for idx, row in df.iterrows():
-            logging.info(f"\n--- Processing Row {idx} ---")
-            raw_part_number = str(row.get('part_number', '')).strip()
-            logging.info(f"Raw part_number: '{raw_part_number}'")
-
-            if not raw_part_number:
-                logging.warning(f"Row {idx}: Skipping - empty part_number")
-                skipped_count += 1
-                continue
-
-            try:
-                base_part_number = create_base_part_number(raw_part_number)
-                logging.info(f"Base part_number: '{base_part_number}'")
-
-                raw_quantity = row.get('quantity', 1)
-                quantity = int(raw_quantity)
-                logging.info(f"Quantity: {quantity} (from {raw_quantity})")
-
-                position = max_position + ((idx + 1) * 10)
-                logging.info(f"Position: {position}")
-
-                raw_guide_price = row.get('guide_price')
-                logging.info(f"Raw guide_price value: {raw_guide_price}")
-                logging.info(f"Raw guide_price type: {type(raw_guide_price)}")
-                logging.info(f"pd.notna(guide_price): {pd.notna(raw_guide_price)}")
-                logging.info(f"pd.isna(guide_price): {pd.isna(raw_guide_price)}")
-
-                guide_price = float(raw_guide_price) if pd.notna(raw_guide_price) else None
-                logging.info(f"Final guide_price for INSERT: {guide_price}")
-
-                part = _execute_with_cursor(cur,
-                    'SELECT base_part_number FROM part_numbers WHERE base_part_number = ?',
-                    (base_part_number,)
-                ).fetchone()
-
-                if not part:
-                    logging.info(f"Part {base_part_number} not found, creating new part")
-                    _execute_with_cursor(cur,
-                        'INSERT INTO part_numbers (part_number, base_part_number) VALUES (?, ?)',
-                        (raw_part_number, base_part_number)
-                    )
-                else:
-                    logging.info(f"Part {base_part_number} already exists")
-
-                ref_des = row.get('reference_designator')
-                notes = row.get('notes')
-                logging.info(f"Reference designator: {ref_des}")
-                logging.info(f"Notes: {notes}")
-                logging.info(f"  guide_price: {guide_price}")
-
-                insert_line = _with_returning_clause('''
-                    INSERT INTO bom_lines (
-                        bom_header_id, base_part_number, quantity,
-                        reference_designator, notes, position, guide_price
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''')
-                _execute_with_cursor(cur, insert_line, (
-                    bom_id,
-                    base_part_number,
-                    quantity,
-                    ref_des,
-                    notes,
-                    position,
-                    guide_price
-                ))
-                new_line_id = _fetch_inserted_id(cur)
-
-                verify = _execute_with_cursor(cur,
-                    'SELECT guide_price FROM bom_lines WHERE id = ?',
-                    (new_line_id,)
-                ).fetchone()
-                logging.info(f"Verification - guide_price in DB: {verify['guide_price'] if verify else 'NOT FOUND'}")
-
-                imported_count += 1
-
-            except Exception as exc:
-                logging.error(f"Failed to import row {idx}: {exc}", exc_info=True)
-                skipped_count += 1
+        imported_count, skipped_count = _import_bom_dataframe(cur, bom_id, df, start_position=max_position)
 
     logging.info(f"Successfully imported: {imported_count} components")
     logging.info(f"Skipped (empty part_number): {skipped_count} rows")
@@ -635,6 +559,34 @@ def add_customer(bom_id):
 
     except Exception as exc:
         logging.error(f"Error adding customer to BOM {bom_id}: {exc}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(exc)
+        }), 400
+
+
+@bom_bp.route('/delete/<int:bom_id>', methods=['POST'])
+def delete_bom(bom_id):
+    try:
+        with db_cursor(commit=True) as cur:
+            _execute_with_cursor(cur, '''
+                DELETE FROM bom_pricing
+                WHERE bom_line_id IN (
+                    SELECT id FROM bom_lines WHERE bom_header_id = ?
+                )
+            ''', (bom_id,))
+            _execute_with_cursor(cur, 'DELETE FROM bom_lines WHERE bom_header_id = ?', (bom_id,))
+            _execute_with_cursor(cur, 'DELETE FROM bom_files WHERE bom_header_id = ?', (bom_id,))
+            _execute_with_cursor(cur, 'DELETE FROM customer_boms WHERE bom_header_id = ?', (bom_id,))
+            _execute_with_cursor(cur, 'DELETE FROM bom_revisions WHERE bom_header_id = ?', (bom_id,))
+            _execute_with_cursor(cur, 'DELETE FROM bom_headers WHERE id = ?', (bom_id,))
+
+        return jsonify({
+            'status': 'success',
+            'message': 'BOM deleted successfully'
+        })
+    except Exception as exc:
+        logging.error(f"Error deleting BOM {bom_id}: {exc}", exc_info=True)
         return jsonify({
             'status': 'error',
             'message': str(exc)

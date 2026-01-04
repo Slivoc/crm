@@ -457,6 +457,31 @@ document.addEventListener('DOMContentLoaded', function() {
             hot.setDataAtCell(index, 0, checked);
         });
     });
+
+    // Delete BOM Handler
+    $('#deleteBomBtn').on('click', async function(e) {
+        e.preventDefault();
+        if (!confirm('Delete this BOM? This cannot be undone.')) {
+            return;
+        }
+
+        showSpinner();
+        try {
+            const response = await fetch('{{ url_for("bom.delete_bom", bom_id=bom.id) }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to delete BOM');
+            }
+            window.location.href = '{{ url_for("bom.boms") }}';
+        } catch (error) {
+            showAlert('Error deleting BOM: ' + error.message, 'danger');
+        } finally {
+            hideSpinner();
+        }
+    });
 });
 
 </script>
