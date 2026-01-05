@@ -8,8 +8,10 @@ Usage:
     python import_manufacturer_approvals.py Airbus_QPL.xlsx
 """
 import argparse
+import csv
 import logging
 import os
+import re
 from datetime import datetime, date, timezone
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
@@ -59,6 +61,8 @@ UPSERT_COLUMNS: Sequence[str] = (
     "p_status_text",
     "status_change_date",
     "qir_count",
+    "airbus_material_base",
+    "manufacturer_part_number_base",
     "created_at",
     "updated_at",
 )
@@ -107,6 +111,16 @@ def clean_text(value: Any) -> Optional[str]:
         return str(value).strip()
     text = str(value).strip()
     return text or None
+
+
+def normalize_part_number(value: Any) -> Optional[str]:
+    """Normalize part number by removing special characters and converting to uppercase."""
+    text = clean_text(value)
+    if not text:
+        return None
+    # Remove special characters (dashes, spaces, etc) and convert to uppercase
+    normalized = re.sub(r'[^A-Z0-9]', '', text.upper())
+    return normalized if normalized else None
 
 
 def normalize_country(value: Any) -> Optional[str]:
@@ -169,18 +183,26 @@ def iter_records(xlsx_path: str, limit: Optional[int]) -> Iterator[Dict[str, Any
         workbook.close()
 
 
-def build_payload(record: Dict[str, Any], import_id: int) -> Optional[Tuple[Any, ...]]:
+def build_payload(record: Dict[str, Any], import_id: int) -> Optional[Tuple[Tuple[Any, ...], Optional[str]]]:
+    """Build a payload for insertion, returning (payload_tuple, skip_reason).
+
+    Returns None if record should be skipped, or (payload_tuple, None) if valid.
+    """
     manufacturer_name = clean_text(record.get("manufacturer_name"))
     airbus_material = clean_text(record.get("airbus_material"))
     manufacturer_part_number = clean_text(record.get("manufacturer_part_number"))
 
     if not manufacturer_name:
-        return None
+        return (None, "Missing manufacturer name")
     if not airbus_material and not manufacturer_part_number:
-        return None
+        return (None, "Missing both Airbus Material and Manufacturer PN")
+
+    # Normalize both part numbers for searching
+    airbus_material_base = normalize_part_number(airbus_material)
+    manufacturer_part_number_base = normalize_part_number(manufacturer_part_number)
 
     now = datetime.now(tz=timezone.utc)
-    return (
+    payload = (
         import_id,
         clean_text(record.get("manufacturer_code")),
         manufacturer_name,
@@ -199,9 +221,12 @@ def build_payload(record: Dict[str, Any], import_id: int) -> Optional[Tuple[Any,
         clean_text(record.get("p_status_text")),
         parse_status_date(record.get("status_change_date")),
         parse_int(record.get("qir_count")),
+        airbus_material_base,
+        manufacturer_part_number_base,
         now,
         now,
     )
+    return (payload, None)
 
 
 def start_import(cursor, source_file: str) -> int:
@@ -269,14 +294,31 @@ def process_file(
     import_id = start_import(cursor, xlsx_path)
     stats = {"rows_seen": 0, "rows_written": 0, "rows_skipped": 0}
     batch: List[Tuple[Any, ...]] = []
+    skipped_rows: List[Dict[str, Any]] = []
 
-    for record in iter_records(xlsx_path, limit):
+    # Create output file for skipped rows
+    output_dir = os.path.dirname(os.path.abspath(xlsx_path))
+    skipped_file = os.path.join(output_dir, f"skipped_rows_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+
+    for row_num, record in enumerate(iter_records(xlsx_path, limit), start=2):  # start=2 because row 1 is header
         stats["rows_seen"] += 1
-        payload = build_payload(record, import_id)
-        if not payload:
+        result = build_payload(record, import_id)
+
+        if result[0] is None:
+            # Record was skipped
             stats["rows_skipped"] += 1
+            skipped_rows.append({
+                "row_number": row_num,
+                "reason": result[1],
+                "manufacturer_name": record.get("manufacturer_name"),
+                "airbus_material": record.get("airbus_material"),
+                "manufacturer_part_number": record.get("manufacturer_part_number"),
+                "cage_code": record.get("cage_code"),
+                "standard": record.get("standard"),
+            })
             continue
 
+        payload = result[0]
         batch.append(payload)
         if len(batch) >= batch_size:
             upsert_batch(cursor, batch)
@@ -288,6 +330,15 @@ def process_file(
         stats["rows_written"] += len(batch)
 
     update_import_row_count(cursor, import_id, stats["rows_written"])
+
+    # Write skipped rows to CSV
+    if skipped_rows:
+        with open(skipped_file, "w", newline="", encoding="utf-8") as f:
+            fieldnames = ["row_number", "reason", "manufacturer_name", "airbus_material", "manufacturer_part_number", "cage_code", "standard"]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(skipped_rows)
+        logger.info(f"Skipped rows written to {skipped_file}")
 
     if dry_run:
         logger.info("Dry-run enabled; rolling back transaction.")
@@ -324,7 +375,7 @@ def main() -> None:
             xlsx_path=args.xlsx_path,
             batch_size=args.batch_size,
             limit=args.limit,
-            truncate_first=args.truncate_first,
+            truncate_first=True,
             dry_run=args.dry_run,
         )
     finally:

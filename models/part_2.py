@@ -1178,7 +1178,7 @@ def get_excess_lines_by_part_number(base_part_number):
 
 # Fetch manufacturer approvals for this part number
 def get_manufacturer_approvals_by_part_number(base_part_number):
-    # Clean the base_part_number to match airbus_material format
+    # Query using normalized part numbers for matching
     rows = db_execute('''
         SELECT
             id,
@@ -1195,7 +1195,7 @@ def get_manufacturer_approvals_by_part_number(base_part_number):
             p_status,
             p_status_text
         FROM manufacturer_approvals
-        WHERE airbus_material = ? OR manufacturer_part_number = ?
+        WHERE airbus_material_base = ? OR manufacturer_part_number_base = ?
         ORDER BY manufacturer_name
     ''', (base_part_number, base_part_number), fetch='all') or []
     return [dict(row) for row in rows]

@@ -2218,8 +2218,7 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
     qpl_row = _execute_with_cursor(cursor, '''
         SELECT COUNT(*) as count
         FROM manufacturer_approvals
-        WHERE manufacturer_part_number = ?
-           OR airbus_material = ?
+        WHERE airbus_material_base = ? OR manufacturer_part_number_base = ?
     ''', (base_part_number, base_part_number)).fetchone()
     qpl_count = qpl_row['count'] if qpl_row else 0
 
@@ -2582,8 +2581,7 @@ def get_qpl_matches():
             """
             SELECT manufacturer_name, cage_code, location
             FROM manufacturer_approvals
-            WHERE manufacturer_part_number = ?
-               OR airbus_material = ?
+            WHERE airbus_material_base = ? OR manufacturer_part_number_base = ?
             ORDER BY manufacturer_name, cage_code, location
             """,
             (base_part_number, base_part_number),
@@ -3478,8 +3476,8 @@ def view_parts_lists():
                     AND EXISTS (
                         SELECT 1
                         FROM manufacturer_approvals ma
-                        WHERE ma.manufacturer_part_number = pll.base_part_number
-                           OR ma.airbus_material = pll.base_part_number
+                        WHERE ma.airbus_material_base = pll.base_part_number
+                           OR ma.manufacturer_part_number_base = pll.base_part_number
                     )) AS qpl_line_count
             FROM parts_lists pl
             LEFT JOIN customers c ON c.id = pl.customer_id
@@ -5122,8 +5120,7 @@ def get_line_quotes(list_id, line_id):
                         cage_code,
                         approval_status
                     FROM manufacturer_approvals
-                    WHERE manufacturer_part_number = ?
-                       OR airbus_material = ?
+                    WHERE airbus_material_base = ? OR manufacturer_part_number_base = ?
                     ORDER BY manufacturer_name
                     LIMIT 20
                     """,
