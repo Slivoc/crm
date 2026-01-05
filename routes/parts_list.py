@@ -1283,6 +1283,12 @@ Extract all quoted items into a JSON array."""
 
                 condition = _normalize_optional_text(item.get('condition'))
                 certifications = _normalize_optional_text(item.get('certifications'))
+                manufacturer = _normalize_optional_text(
+                    item.get('manufacturer')
+                    or item.get('manufacturer_name')
+                    or item.get('mfg')
+                    or item.get('mfr')
+                )
 
                 is_no_bid_raw = item.get('is_no_bid', False)
                 if isinstance(is_no_bid_raw, str):
@@ -1304,7 +1310,8 @@ Extract all quoted items into a JSON array."""
                     'condition': condition,
                     'certifications': certifications,
                     'is_no_bid': is_no_bid,
-                    'notes': notes
+                    'notes': notes,
+                    'manufacturer': manufacturer
                 }
 
                 logger.debug("Cleaned item %d: %r", idx, cleaned_item)
