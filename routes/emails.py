@@ -2655,6 +2655,8 @@ def mailbox_save_supplier_contact():
         return jsonify(success=False, error=str(exc)), 500
 
 
+MAILBOX_PDF_SCAN_MAX_BYTES = 3 * 1024 * 1024
+
 @emails_bp.route('/emails/mailbox/scan-pdf-attachment', methods=['POST'])
 def mailbox_scan_pdf_attachment():
     """
@@ -2707,6 +2709,12 @@ def mailbox_scan_pdf_attachment():
             return jsonify(success=False, error="Invalid attachment response"), 400
 
         content_bytes_b64 = body.get("contentBytes") if isinstance(body, dict) else None
+        size_bytes = body.get("size") if isinstance(body, dict) else None
+        if size_bytes and size_bytes > MAILBOX_PDF_SCAN_MAX_BYTES:
+            return jsonify(
+                success=False,
+                error=f"Attachment exceeds {MAILBOX_PDF_SCAN_MAX_BYTES // (1024 * 1024)} MB limit",
+            ), 400
         if not content_bytes_b64:
             return jsonify(success=False, error="Attachment has no content"), 400
 
@@ -2715,6 +2723,11 @@ def mailbox_scan_pdf_attachment():
         import io
 
         pdf_bytes = base64.b64decode(content_bytes_b64)
+        if len(pdf_bytes) > MAILBOX_PDF_SCAN_MAX_BYTES:
+            return jsonify(
+                success=False,
+                error=f"Attachment exceeds {MAILBOX_PDF_SCAN_MAX_BYTES // (1024 * 1024)} MB limit",
+            ), 400
         text_parts = []
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             for page in pdf.pages:

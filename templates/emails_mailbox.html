@@ -357,6 +357,8 @@ mailboxLoadImages = mailboxLoadImages === null ? true : mailboxLoadImages === 't
 const inlinePrefetchInFlight = new Set();
 const INLINE_PREFETCH_LIMIT = 6;
 const INLINE_PREFETCH_CONCURRENCY = 2;
+const MAX_ATTACHMENT_SCAN_COUNT = 3;
+const MAX_ATTACHMENT_SCAN_BYTES = 3 * 1024 * 1024;
 updateLoadImagesButton();
 
 function parsePartsAvailabilitySubject(subject) {
@@ -386,6 +388,96 @@ function updateSupplierQuoteButton(subject) {
     } else {
         createSupplierQuoteBtn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i>Supplier Quote';
     }
+}
+
+function formatBytes(bytes) {
+    if (bytes === null || bytes === undefined) return '';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = Number(bytes);
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex += 1;
+    }
+    const precision = size < 10 && unitIndex > 0 ? 1 : 0;
+    return `${size.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function getAttachmentScanCandidates() {
+    const pdfs = selectedMessagePdfAttachments || [];
+    const candidates = [];
+    let skippedTooLarge = 0;
+    pdfs.forEach(att => {
+        const size = Number(att?.size || 0);
+        if (size && size > MAX_ATTACHMENT_SCAN_BYTES) {
+            skippedTooLarge += 1;
+            return;
+        }
+        if (candidates.length < MAX_ATTACHMENT_SCAN_COUNT) {
+            candidates.push(att);
+        }
+    });
+    const skippedExtra = Math.max(0, pdfs.length - skippedTooLarge - candidates.length);
+    return { candidates, skippedTooLarge, skippedExtra };
+}
+
+function mergeScanResults(results) {
+    const partsMap = new Map();
+    const suggestionsMap = new Map();
+    let truncated = false;
+    results.filter(Boolean).forEach(result => {
+        (result.parts || []).forEach(part => {
+            const key = String(part.part_number || '').trim().toUpperCase();
+            if (!key || partsMap.has(key)) return;
+            partsMap.set(key, part);
+        });
+        (result.suggestions || []).forEach(item => {
+            const key = item.parts_list_id || item.parts_list_name || '';
+            if (!key || suggestionsMap.has(key)) return;
+            suggestionsMap.set(key, item);
+        });
+        if (result.truncated) truncated = true;
+    });
+    return {
+        parts: Array.from(partsMap.values()),
+        suggestions: Array.from(suggestionsMap.values()),
+        truncated,
+    };
+}
+
+async function fetchEmailScan(text) {
+    const payload = {
+        text,
+        supplier_id: mailboxSelectedSupplierData?.id || null
+    };
+    const response = await fetch('/emails/mailbox/scan-parts', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+        throw new Error(data.error || 'AI scan failed');
+    }
+    return data;
+}
+
+async function fetchPdfAttachmentScan(attachmentId) {
+    const payload = {
+        message_id: selectedMessage.id,
+        attachment_id: attachmentId,
+        supplier_id: mailboxSelectedSupplierData?.id || null
+    };
+    const response = await fetch('/emails/mailbox/scan-pdf-attachment', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+        throw new Error(data.error || 'AI scan failed');
+    }
+    return data;
 }
 
 function setGraphStatus(settings) {
@@ -623,7 +715,7 @@ function renderPartScanResults() {
         return;
     }
 
-    const { parts = [], suggestions = [], truncated } = mailboxPartsScanData;
+    const { parts = [], suggestions = [], truncated, attachment_count, attachment_skipped } = mailboxPartsScanData;
     if (!parts.length) {
         mailboxPartsScanResults.innerHTML = `
             <div class="alert alert-light border mb-0">
@@ -684,7 +776,14 @@ function renderPartScanResults() {
         <div class="mb-2">${partsHtml}</div>
         ${suggestionsHtml}
     `;
-    mailboxPartsScanMeta.textContent = `${parts.length} part(s) detected${truncated ? ' (truncated message)' : ''}`;
+    let metaText = `${parts.length} part(s) detected${truncated ? ' (truncated message)' : ''}`;
+    if (attachment_count) {
+        metaText += ` · ${attachment_count} attachment(s) scanned`;
+    }
+    if (attachment_skipped) {
+        metaText += ` · ${attachment_skipped} skipped`;
+    }
+    mailboxPartsScanMeta.textContent = metaText;
 
     // Add click handlers for quick quote buttons (when no supplier selected)
     mailboxPartsScanResults.querySelectorAll('.scan-result-quote-btn').forEach(btn => {
@@ -763,13 +862,19 @@ function renderPdfAttachmentsDropdown() {
     pdfAttachmentsDropdown.style.display = 'inline-block';
     pdfAttachmentsBtn.disabled = false;
 
-    pdfAttachmentsList.innerHTML = pdfs.map(pdf => `
-        <li>
-            <button type="button" class="dropdown-item pdf-scan-item" data-attachment-id="${pdf.id}" data-pdf-name="${pdf.name}">
-                <i class="bi bi-file-earmark-pdf me-1"></i>${pdf.name}
-            </button>
-        </li>
-    `).join('');
+    pdfAttachmentsList.innerHTML = pdfs.map(pdf => {
+        const size = Number(pdf?.size || 0);
+        const isTooLarge = size && size > MAX_ATTACHMENT_SCAN_BYTES;
+        const sizeLabel = size ? ` <span class="text-muted ms-2">(${formatBytes(size)})</span>` : '';
+        const tooLargeLabel = isTooLarge ? ' <span class="text-muted ms-2">(too large)</span>' : '';
+        return `
+            <li>
+                <button type="button" class="dropdown-item pdf-scan-item${isTooLarge ? ' text-muted' : ''}" data-attachment-id="${pdf.id}" data-pdf-name="${pdf.name}" ${isTooLarge ? 'disabled' : ''}>
+                    <i class="bi bi-file-earmark-pdf me-1"></i>${pdf.name}${isTooLarge ? tooLargeLabel : sizeLabel}
+                </button>
+            </li>
+        `;
+    }).join('');
 
     // Add click handlers
     pdfAttachmentsList.querySelectorAll('.pdf-scan-item').forEach(item => {
@@ -783,27 +888,20 @@ function renderPdfAttachmentsDropdown() {
 
 async function scanPdfAttachment(attachmentId, pdfName) {
     if (!selectedMessage || mailboxPartsScanInFlight) return;
+    const attachment = (selectedMessagePdfAttachments || []).find(item => item.id === attachmentId);
+    const size = Number(attachment?.size || 0);
+    if (size && size > MAX_ATTACHMENT_SCAN_BYTES) {
+        showToast(`Attachment "${pdfName || 'PDF'}" is ${formatBytes(size)}. Limit is ${formatBytes(MAX_ATTACHMENT_SCAN_BYTES)}.`, 'warning');
+        return;
+    }
     mailboxPartsScanInFlight = true;
     const original = pdfAttachmentsBtn.innerHTML;
     pdfAttachmentsBtn.disabled = true;
     pdfAttachmentsBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning...';
 
     try {
-        const payload = {
-            message_id: selectedMessage.id,
-            attachment_id: attachmentId,
-            supplier_id: mailboxSelectedSupplierData?.id || null
-        };
-        const response = await fetch('/emails/mailbox/scan-pdf-attachment', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-        if (!response.ok || !data.success) {
-            throw new Error(data.error || 'PDF scan failed');
-        }
-        mailboxPartsScanData = data;
+        const data = await fetchPdfAttachmentScan(attachmentId);
+        mailboxPartsScanData = { ...data, attachment_count: 1 };
         renderSupplierMatchState();
         showToast(`Scanned ${pdfName}: ${data.parts?.length || 0} part(s) found`, 'success');
     } catch (error) {
@@ -1705,21 +1803,41 @@ mailboxScanPartsBtn?.addEventListener('click', async () => {
     mailboxScanPartsBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning...';
 
     try {
-        const bodyText = extractTextFromBody(selectedMessage) || selectedMessage.bodyPreview || '';
-        const payload = {
-            text: bodyText,
-            supplier_id: mailboxSelectedSupplierData?.id || null
-        };
-        const response = await fetch('/emails/mailbox/scan-parts', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-        if (!response.ok || !data.success) {
-            throw new Error(data.error || 'AI scan failed');
+        const bodyText = (extractTextFromBody(selectedMessage) || selectedMessage.bodyPreview || '').trim();
+        const { candidates, skippedTooLarge, skippedExtra } = getAttachmentScanCandidates();
+        if (!bodyText && !candidates.length) {
+            throw new Error('No email text or PDF attachments to scan');
         }
-        mailboxPartsScanData = data;
+
+        let bodyData = null;
+        if (bodyText) {
+            try {
+                bodyData = await fetchEmailScan(bodyText);
+            } catch (error) {
+                showToast(error.message || 'Email scan failed', 'warning');
+            }
+        }
+
+        let attachmentResults = [];
+        if (candidates.length) {
+            attachmentResults = await Promise.all(candidates.map(async att => {
+                try {
+                    return await fetchPdfAttachmentScan(att.id);
+                } catch (error) {
+                    showToast(error.message || `PDF scan failed: ${att.name || 'Attachment'}`, 'warning');
+                    return null;
+                }
+            }));
+        }
+
+        const combinedResults = [bodyData, ...attachmentResults].filter(Boolean);
+        if (!combinedResults.length) {
+            throw new Error('AI scan failed');
+        }
+        const merged = mergeScanResults(combinedResults);
+        merged.attachment_count = attachmentResults.filter(Boolean).length;
+        merged.attachment_skipped = skippedTooLarge + skippedExtra;
+        mailboxPartsScanData = merged;
         renderSupplierMatchState();
         showToast('AI scan complete', 'success');
     } catch (error) {
