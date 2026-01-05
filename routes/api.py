@@ -308,6 +308,7 @@ def preview_email():
 
         # Convert line breaks to HTML for display
         body_html = body.replace('\n', '<br>')
+        body_without_signature = body_html
 
         # Add email signature
         email_signature = _get_default_signature()
@@ -322,7 +323,8 @@ def preview_email():
             'success': True,
             'data': {
                 'subject': subject,
-                'body': body_html
+                'body': body_html,
+                'body_without_signature': body_without_signature
             }
         })
 
@@ -418,10 +420,6 @@ def send_email():
         for placeholder, value in replacements.items():
             body = body.replace(placeholder, value)
 
-        # Add BCC
-        bcc_email = '145554557@bcc.eu1.hubspot.com'
-        print(f"BCC added: {bcc_email}")
-
         # Fetch and attach the email signature
         email_signature = _get_default_signature()
         if email_signature:
@@ -453,7 +451,6 @@ def send_email():
                 subject=subject,
                 html_body=body.strip(),
                 to_emails=[contact_email],
-                bcc_emails=[bcc_email] if bcc_email else None,
                 attachments=attachments,
                 user_id=graph_user_id,
             )
@@ -1239,10 +1236,6 @@ def send_custom_email():
             signature_html = email_signature.get('signature_html', '')
             body += signature_html
 
-        # Add BCC
-        bcc_email = '145554557@bcc.eu1.hubspot.com'
-        print(f"BCC added: {bcc_email}")
-
         attachments = build_graph_inline_attachments()
 
         print(f"Preparing to send email for request {request_id}")
@@ -1268,7 +1261,6 @@ def send_custom_email():
                 subject=subject,
                 html_body=body.strip(),
                 to_emails=[contact_email],
-                bcc_emails=[bcc_email] if bcc_email else None,
                 attachments=attachments,
                 user_id=graph_user_id,
             )

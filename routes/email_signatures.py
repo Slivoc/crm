@@ -57,7 +57,7 @@ def _list_signature_images():
         stat = entry.stat()
         images.append({
             'filename': entry.name,
-            'url': url_for('signatures.signature_image', filename=entry.name),
+            'url': url_for('signatures.signature_image', filename=entry.name, _external=True),
             'uploaded_at': datetime.fromtimestamp(stat.st_mtime),
             'size_kb': round(stat.st_size / 1024, 1)
         })

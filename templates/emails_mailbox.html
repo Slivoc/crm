@@ -551,12 +551,54 @@ function renderSupplierRequests() {
                     <div class="text-muted small">Last request: ${lastSent}</div>
                     <div class="supplier-request-actions">
                         <a class="btn btn-sm btn-outline-primary" href="${quickUrl}">Open quick quote</a>
+                        <button type="button" class="btn btn-sm btn-outline-danger supplier-request-nobid-btn" data-list-id="${request.parts_list_id}" data-awaiting-lines="${request.awaiting_lines}">
+                            No bid all
+                        </button>
                         <a class="btn btn-sm btn-outline-secondary" href="/parts_list/view/${request.parts_list_id}" target="_blank" rel="noopener">View list</a>
                     </div>
                 </div>
             </div>
         `;
     }).join('');
+
+    mailboxSupplierRequestsList.querySelectorAll('.supplier-request-nobid-btn').forEach(btn => {
+        btn.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const listId = btn.getAttribute('data-list-id');
+            const awaitingLines = Number(btn.getAttribute('data-awaiting-lines') || 0);
+            if (!listId || !mailboxSelectedSupplierData?.id) return;
+            const supplierName = mailboxSelectedSupplierData.name || 'this supplier';
+            const confirmText = `Mark ${awaitingLines} line(s) as no bid for ${supplierName} on PL #${listId}?`;
+            if (!confirm(confirmText)) return;
+
+            const original = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>No bid...';
+            try {
+                const response = await fetch(`/parts_list/api/parts-lists/${listId}/quick-no-bid/${mailboxSelectedSupplierData.id}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        all: true,
+                        quote_reference: 'Mailbox No Bid',
+                        notes: 'Quick no bid from mailbox'
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || data.error || 'Failed to mark no bid');
+                }
+                showToast(`Marked ${awaitingLines} line(s) as no bid for PL #${listId}`, 'success');
+                await fetchSupplierOutstandingRequests(mailboxSelectedSupplierData.id);
+            } catch (error) {
+                showToast(error.message || 'Failed to mark no bid', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = original;
+            }
+        });
+    });
 }
 
 function renderPartScanResults() {

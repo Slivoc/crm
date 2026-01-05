@@ -1437,7 +1437,7 @@ class EmailModal {
                     // This might require a separate API call to get the raw template
                     // For now, we'll use the personalized content and try to reverse-engineer it
                     this.originalSubject = previewData.subject || '';
-                    this.originalBody = previewData.body || '';
+                    this.originalBody = previewData.body_without_signature || previewData.body || '';
                 }
 
                 this.updatePreview(previewData);
@@ -1955,17 +1955,7 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
         }
     });
 
-    // Remove signature patterns from personalized content
-    const signaturePatterns = [
-        /<br><br>.*?<img.*?signature.*?>/gis,
-        /<br><br>.*linkedin.*?<\/a>/gis,
-        /<div.*?signature.*?<\/div>/gis,
-        /<p.*?signature.*?<\/p>/gis
-    ];
-
-    signaturePatterns.forEach(pattern => {
-        personalizedBody = personalizedBody.replace(pattern, '');
-    });
+    personalizedBody = this.stripSignatureHtml(personalizedBody);
 
     // Ensure line breaks are preserved in personalized content
     personalizedBody = this.preserveLineBreaksInHtml(personalizedBody);
@@ -2005,7 +1995,7 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
                 const previewData = result.data || result;
                 return {
                     subject: previewData.subject || baseSubject,
-                    bodyHtml: previewData.body || baseBodyHtml
+                    bodyHtml: this.stripSignatureHtml(previewData.body_without_signature || previewData.body || baseBodyHtml)
                 };
             } else {
                 throw new Error('Invalid response from server');
@@ -2023,7 +2013,7 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
     async copyToClipboard(htmlContent) {
         try {
             // First, let's ensure the HTML has proper line break formatting
-            const normalizedHtml = this.normalizeHtmlLineBreaks(htmlContent);
+            const normalizedHtml = this.normalizeHtmlLineBreaks(this.stripSignatureHtml(htmlContent));
 
             // Try modern clipboard API with both HTML and plain text
             if (navigator.clipboard && window.ClipboardItem) {
@@ -2087,25 +2077,15 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
         }
     }
 
-    // NEW: Normalize HTML to ensure proper line breaks
+    // Normalize HTML for Outlook copy without inflating line spacing.
     normalizeHtmlLineBreaks(htmlContent) {
-        let normalized = htmlContent;
+        let normalized = htmlContent || '';
 
-        // Ensure paragraph breaks become double line breaks
-        normalized = normalized.replace(/<\/p>\s*<p[^>]*>/gi, '</p><br><p>');
+        normalized = normalized.replace(/\r\n|\r/g, '\n');
+        normalized = normalized.replace(/\n/g, '<br>');
 
-        // Ensure div breaks become line breaks
-        normalized = normalized.replace(/<\/div>\s*<div[^>]*>/gi, '</div><br><div>');
-
-        // Convert any single <br> to <br><br> for better visibility in Outlook
-        // But avoid converting already doubled breaks
-        normalized = normalized.replace(/<br\s*\/?>\s*(?!<br)/gi, '<br><br>');
-
-        // Ensure block elements have proper spacing
-        normalized = normalized.replace(/<\/(h[1-6]|p|div|blockquote|li)>/gi, '</$1><br>');
-
-        // Clean up any triple+ breaks that might have been created
-        normalized = normalized.replace(/(<br\s*\/?>){3,}/gi, '<br><br>');
+        // Clean up any triple+ breaks that might have been created.
+        normalized = normalized.replace(/(<br\s*\/?>\s*){3,}/gi, '<br><br>');
 
         return normalized;
     }
@@ -2479,16 +2459,7 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
 
         // Optional: Remove signature from the body if it's included in the template
         // You can customize this logic based on how your signatures are structured
-        const signaturePatterns = [
-            /<br><br>.*?<img.*?signature.*?>/gis,  // Common signature pattern with images
-            /<br><br>.*linkedin.*?<\/a>/gis,      // LinkedIn signature links
-            /<div.*?signature.*?<\/div>/gis,      // Signature divs
-            /<p.*?signature.*?<\/p>/gis           // Signature paragraphs
-        ];
-
-        signaturePatterns.forEach(pattern => {
-            bodyContent = bodyContent.replace(pattern, '');
-        });
+        bodyContent = this.stripSignatureHtml(bodyContent);
 
         // FIXED: Preserve line breaks in the preview display
         if (emailBody) {
@@ -2536,6 +2507,22 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
         processed = processed.replace(/<\/(h[1-6])>/gi, '</$1><br>');
 
         return processed;
+    }
+
+    stripSignatureHtml(htmlContent) {
+        let content = htmlContent || '';
+        const signaturePatterns = [
+            /<br><br>.*?<img.*?signature.*?>/gis,
+            /<br><br>.*linkedin.*?<\/a>/gis,
+            /<div.*?signature.*?<\/div>/gis,
+            /<p.*?signature.*?<\/p>/gis
+        ];
+
+        signaturePatterns.forEach(pattern => {
+            content = content.replace(pattern, '');
+        });
+
+        return content;
     }
 
     showPreviewError(errorMessage) {

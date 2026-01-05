@@ -525,6 +525,143 @@ def _generate_email_suggestion(customer, comm_info, news_items, last_email_previ
         }
 
 
+def _build_contact_comm_snapshot(communications):
+    """Build a lightweight communication snapshot for a single contact."""
+    if not communications:
+        return {}
+
+    snapshot = {'last_contact': None, 'last_email': None}
+    for idx, comm in enumerate(communications):
+        comm_type = (comm.get('communication_type') or '').lower()
+        payload = {
+            'type': comm.get('communication_type'),
+            'notes': comm.get('notes'),
+            'datetime': comm.get('date'),
+            'message_id': comm.get('email_message_id')
+        }
+        if idx == 0:
+            snapshot['last_contact'] = payload
+        if comm_type == 'email' and snapshot['last_email'] is None:
+            snapshot['last_email'] = payload
+        if snapshot['last_contact'] and snapshot['last_email']:
+            break
+
+    return snapshot
+
+
+def _get_customer_outreach_profile(customer_id):
+    """Fetch customer fields needed for outreach suggestions and news hints."""
+    row = db_execute(
+        """
+        SELECT 
+            c.id,
+            c.name,
+            c.description,
+            c.country,
+            c.website,
+            c.fleet_size,
+            c.estimated_revenue,
+            c.salesperson_id,
+            cs.status AS customer_status,
+            (
+                SELECT update_text
+                FROM customer_updates cu
+                WHERE cu.customer_id = c.id
+                ORDER BY cu.date DESC
+                LIMIT 1
+            ) AS latest_update
+        FROM customers c
+        LEFT JOIN customer_status cs ON c.status_id = cs.id
+        WHERE c.id = ?
+        """,
+        (customer_id,),
+        fetch='one'
+    )
+    return dict(row) if row else None
+
+
+def _generate_contact_email_suggestion(contact, customer, comm_info, news_items, last_email_preview, last_email_body=None):
+    """Use OpenAI to draft the next email to a specific contact."""
+    client = _get_openai_email_client()
+    contact_name = f"{contact.get('name') or ''} {contact.get('second_name') or ''}".strip()
+    contact_title = contact.get('job_title') or ''
+
+    last_email_summary = None
+    if last_email_preview or last_email_body:
+        last_email_summary = {
+            'subject': (last_email_preview or {}).get('subject') if isinstance(last_email_preview, dict) else None,
+            'preview': (last_email_preview or {}).get('preview') if isinstance(last_email_preview, dict) else None,
+            'body': (last_email_body or '').strip() if last_email_body else None
+        }
+
+    news_snippets = []
+    for item in news_items[:2]:
+        headline = item.get('headline') or ''
+        summary = item.get('summary') or ''
+        news_snippets.append(f"{headline}: {summary}")
+
+    payload = {
+        'contact_name': contact_name,
+        'contact_title': contact_title,
+        'customer_name': customer.get('name'),
+        'customer_status': customer.get('customer_status'),
+        'estimated_revenue': customer.get('estimated_revenue') or 0,
+        'fleet_size': customer.get('fleet_size') or 0,
+        'latest_update': customer.get('latest_update'),
+        'last_contact': comm_info.get('last_contact') if comm_info else None,
+        'news_snippets': news_snippets,
+        'last_email': last_email_summary
+    }
+
+    system_prompt = (
+        "You are a concise B2B sales assistant. "
+        "Draft the next email to a specific contact using the provided context. "
+        "Return ONLY valid JSON with keys 'subject' and 'body'. "
+        "If last_email.body is provided, treat it as the most recent email thread "
+        "and draft a relevant follow-up that references prior context. "
+        "Address the contact by name when available. "
+        "Keep the body under 150 words, personalize with any news snippets, "
+        "and propose a clear next step."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload, default=str)}
+            ],
+            temperature=0.4,
+            max_tokens=320
+        )
+        content = response.choices[0].message.content.strip()
+        if content.startswith('```'):
+            parts = content.split('```')
+            content = parts[1] if len(parts) > 1 else content
+            if content.startswith('json'):
+                content = content[4:]
+        suggestion = json.loads(content)
+        return {
+            'subject': suggestion.get('subject', '').strip(),
+            'body': suggestion.get('body', '').strip(),
+            'source': 'openai'
+        }
+    except Exception as exc:
+        print(f"Contact email suggestion failed for {contact_name}: {exc}")
+        fallback_subject = f"Quick follow-up with {customer.get('name')}"
+        fallback_body = (
+            f"Hi {contact_name or 'there'},\n\n"
+            "I wanted to follow up and see if there are any upcoming needs we can support. "
+            "Would you be open to a quick call this week to align?\n\n"
+            "Best regards,"
+        )
+        return {
+            'subject': fallback_subject,
+            'body': fallback_body,
+            'source': 'fallback'
+        }
+
+
 def _serialize_contact_payload(payload):
     """Make contact payloads JSON serializable."""
     if not payload:
@@ -970,13 +1107,146 @@ def activity(salesperson_id):
             print(f"DEBUG: Error preloading call list: {e}")
             call_list_prefill = None
 
+        quotes_by_day = []
+        try:
+            quote_rows = db_execute(
+                """
+                SELECT
+                    DATE(cql.quoted_on) AS quoted_date,
+                    COUNT(DISTINCT pl.id) AS quoted_lists,
+                    COALESCE(SUM(
+                        COALESCE(cql.quote_price_gbp, 0) *
+                        COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                    ), 0) AS quoted_value_gbp
+                FROM customer_quote_lines cql
+                JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+                JOIN parts_lists pl ON pl.id = pll.parts_list_id
+                WHERE pl.salesperson_id = ?
+                  AND cql.quoted_status = 'quoted'
+                  AND cql.quoted_on IS NOT NULL
+                GROUP BY DATE(cql.quoted_on)
+                ORDER BY quoted_date DESC
+                LIMIT 10
+                """,
+                (salesperson_id,),
+                fetch='all'
+            ) or []
+
+            def _format_quote_date(value):
+                if isinstance(value, datetime):
+                    return value.strftime('%Y-%m-%d')
+                if isinstance(value, date):
+                    return value.strftime('%Y-%m-%d')
+                if value is None:
+                    return ''
+                return str(value)
+
+            quotes_by_day = [
+                {
+                    'quoted_date': _format_quote_date(row.get('quoted_date')),
+                    'quoted_lists': int(row.get('quoted_lists') or 0),
+                    'quoted_value_gbp': float(row.get('quoted_value_gbp') or 0),
+                }
+                for row in [dict(r) for r in quote_rows]
+            ]
+        except Exception as e:
+            print(f"DEBUG: Error loading quotes by day: {e}")
+            quotes_by_day = []
+
+        quoted_status_id = request.args.get('quoted_status_id', type=int)
+        parts_list_statuses = []
+        try:
+            status_rows = db_execute(
+                """
+                SELECT id, name
+                FROM parts_list_statuses
+                ORDER BY display_order ASC, name ASC
+                """,
+                fetch='all'
+            ) or []
+            parts_list_statuses = [dict(r) for r in status_rows]
+        except Exception as e:
+            print(f"DEBUG: Error loading parts list statuses: {e}")
+            parts_list_statuses = []
+
+        top_quoted_lists = []
+        try:
+            status_clause = ""
+            params = [salesperson_id]
+            if quoted_status_id:
+                status_clause = "AND pl.status_id = ?"
+                params.append(quoted_status_id)
+
+            top_rows = db_execute(
+                f"""
+                SELECT
+                    pl.id,
+                    pl.name,
+                    c.name AS customer_name,
+                    pls.name AS status_name,
+                    pl.date_modified,
+                    COALESCE(SUM(CASE
+                        WHEN cql.quoted_status = 'quoted'
+                             AND COALESCE(cql.is_no_bid, 0) = 0
+                             AND cql.quote_price_gbp > 0
+                        THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                        ELSE 0 END), 0) AS quoted_value_gbp
+                FROM parts_lists pl
+                LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
+                LEFT JOIN customers c ON c.id = pl.customer_id
+                LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+                LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                WHERE pl.salesperson_id = ?
+                {status_clause}
+                GROUP BY pl.id, pl.name, c.name, pl.date_modified, pls.name
+                HAVING COALESCE(SUM(CASE
+                    WHEN cql.quoted_status = 'quoted'
+                         AND COALESCE(cql.is_no_bid, 0) = 0
+                         AND cql.quote_price_gbp > 0
+                    THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                    ELSE 0 END), 0) > 0
+                ORDER BY quoted_value_gbp DESC, pl.date_modified DESC
+                LIMIT 10
+                """,
+                params,
+                fetch='all'
+            ) or []
+
+            def _format_list_date(value):
+                if isinstance(value, datetime):
+                    return value.strftime('%Y-%m-%d')
+                if isinstance(value, date):
+                    return value.strftime('%Y-%m-%d')
+                if value is None:
+                    return ''
+                return str(value)
+
+            top_quoted_lists = [
+                {
+                    'id': row.get('id'),
+                    'name': row.get('name') or '',
+                    'customer_name': row.get('customer_name') or '',
+                    'status_name': row.get('status_name') or '',
+                    'date_modified': _format_list_date(row.get('date_modified')),
+                    'quoted_value_gbp': float(row.get('quoted_value_gbp') or 0),
+                }
+                for row in [dict(r) for r in top_rows]
+            ]
+        except Exception as e:
+            print(f"DEBUG: Error loading top quoted lists: {e}")
+            top_quoted_lists = []
+
         t_render = time.perf_counter()
         response = render_template(template,
                                salesperson=salesperson,
             all_salespeople=all_salespeople,  # ADD THIS LINE
             assigned_customers=assigned_customers,
             pending_orders=salesperson_orders,  # Keep the variable name for compatibility
-            call_list_prefill=call_list_prefill
+            call_list_prefill=call_list_prefill,
+            quotes_by_day=quotes_by_day,
+            top_quoted_lists=top_quoted_lists,
+            parts_list_statuses=parts_list_statuses,
+            quoted_status_id=quoted_status_id
         )
         timings['render_template'] = time.perf_counter() - t_render
         return response
@@ -2398,6 +2668,120 @@ def contact_details(contact_id):
     except Exception as e:
         print(f"Error getting contact details: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
+
+
+@salespeople_bp.route('/contact_details/<int:contact_id>/news')
+@login_required
+def contact_details_news(contact_id):
+    """Return latest customer news hints for the contact details view."""
+    salesperson_id = request.args.get('salesperson_id', type=int)
+    contact = db_execute(
+        "SELECT id, customer_id FROM contacts WHERE id = ?",
+        (contact_id,),
+        fetch='one'
+    )
+    if not contact:
+        return jsonify({'success': False, 'error': 'Contact not found'}), 404
+    contact = dict(contact)
+
+    customer = _get_customer_outreach_profile(contact.get('customer_id'))
+    if not customer:
+        return jsonify({'success': False, 'error': 'Customer not found'}), 404
+
+    if salesperson_id and customer.get('salesperson_id') != salesperson_id:
+        return jsonify({'success': False, 'error': 'Contact not authorized'}), 403
+
+    news_map, cached_news_used = _build_news_lookup_for_customers(customer.get('salesperson_id'))
+    _hydrate_news_for_customers([customer], news_map, max_fetch=1)
+    news_items = news_map.get((customer.get('name') or '').lower(), [])
+
+    return jsonify({
+        'success': True,
+        'contact_id': contact_id,
+        'customer_id': customer.get('id'),
+        'news_items': news_items,
+        'cached_news_used': cached_news_used
+    })
+
+
+@salespeople_bp.route('/contact_details/<int:contact_id>/next-email', methods=['POST'])
+@login_required
+def contact_details_next_email(contact_id):
+    """Generate the next email suggestion for a contact."""
+    payload = request.get_json(silent=True) or {}
+    salesperson_id = payload.get('salesperson_id')
+    try:
+        salesperson_id = int(salesperson_id) if salesperson_id else None
+    except (TypeError, ValueError):
+        salesperson_id = None
+
+    contact = db_execute(
+        """
+        SELECT id, customer_id, name, second_name, job_title, email
+        FROM contacts
+        WHERE id = ?
+        """,
+        (contact_id,),
+        fetch='one'
+    )
+    if not contact:
+        return jsonify({'success': False, 'error': 'Contact not found'}), 404
+    contact = dict(contact)
+
+    customer = _get_customer_outreach_profile(contact.get('customer_id'))
+    if not customer:
+        return jsonify({'success': False, 'error': 'Customer not found'}), 404
+
+    if salesperson_id and customer.get('salesperson_id') != salesperson_id:
+        return jsonify({'success': False, 'error': 'Contact not authorized'}), 403
+
+    communications = get_contact_communications(contact_id, salesperson_id)
+    comm_info = _build_contact_comm_snapshot(communications)
+
+    graph_email_subject = payload.get('graph_email_subject')
+    graph_email_body = payload.get('graph_email_body')
+
+    last_email_preview = None
+    graph_email_body_clean = None
+    if graph_email_body or graph_email_subject:
+        preview_source = graph_email_body or ''
+        graph_email_body_clean = _strip_html(preview_source).strip()
+        last_email_preview = {
+            'subject': (graph_email_subject or '').strip(),
+            'preview': graph_email_body_clean[:1200]
+        }
+
+    if not last_email_preview:
+        last_email = comm_info.get('last_email') or {}
+        if last_email.get('message_id'):
+            graph_user_id = getattr(current_user, 'id', None)
+            last_email_preview = _get_email_preview_from_cache(
+                last_email.get('message_id'),
+                graph_user_id
+            )
+
+    news_map, cached_news_used = _build_news_lookup_for_customers(customer.get('salesperson_id'))
+    _hydrate_news_for_customers([customer], news_map, max_fetch=1)
+    news_items = news_map.get((customer.get('name') or '').lower(), [])
+
+    suggested_email = _generate_contact_email_suggestion(
+        contact,
+        customer,
+        comm_info,
+        news_items,
+        last_email_preview,
+        last_email_body=graph_email_body_clean
+    )
+
+    return jsonify({
+        'success': True,
+        'contact_id': contact_id,
+        'customer_id': customer.get('id'),
+        'suggested_email': suggested_email,
+        'news_items': news_items,
+        'cached_news_used': cached_news_used
+    })
+
 
 @salespeople_bp.route('/save_contact_notes', methods=['POST'])
 @login_required

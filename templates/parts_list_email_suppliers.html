@@ -1110,11 +1110,13 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
         const origHTML = btn.innerHTML;
 
         try {
+            const bodyHtmlForCopy = currentEmailData.body_html_without_signature || currentEmailData.body_html;
+
             // Copy HTML + plain text
             await navigator.clipboard.write([
                 new ClipboardItem({
-                    'text/html': new Blob([currentEmailData.body_html], {type: 'text/html'}),
-                    'text/plain': new Blob([currentEmailData.body_html.replace(/<[^>]*>/g, '')], {type: 'text/plain'})
+                    'text/html': new Blob([bodyHtmlForCopy], {type: 'text/html'}),
+                    'text/plain': new Blob([bodyHtmlForCopy.replace(/<[^>]*>/g, '')], {type: 'text/plain'})
                 })
             ]);
 

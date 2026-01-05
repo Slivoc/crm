@@ -739,6 +739,74 @@ def build_graph_inline_attachments():
     return attachments
 
 
+_SIGNATURE_IMAGE_URL_MARKERS = ("/signatures/images/", "/uploads/signatures/")
+
+
+def _get_signature_upload_folder():
+    uploads_root = current_app.config.get("UPLOAD_FOLDER", "uploads")
+    return os.path.join(current_app.root_path, uploads_root, "signatures")
+
+
+def _signature_filename_from_url(url):
+    if not url or url.lower().startswith("cid:"):
+        return None
+    parsed = urlparse(url)
+    path = parsed.path or ""
+    for marker in _SIGNATURE_IMAGE_URL_MARKERS:
+        if marker in path:
+            return os.path.basename(path.split(marker, 1)[1]) or None
+    return None
+
+
+def _inline_signature_images(html_body):
+    if not html_body:
+        return html_body or "", []
+
+    if not any(marker in html_body for marker in _SIGNATURE_IMAGE_URL_MARKERS):
+        return html_body, []
+
+    url_patterns = [
+        re.compile(r'(?:src|background)\s*=\s*(["\'])([^"\']+)\1', re.IGNORECASE),
+        re.compile(r'url\(\s*(["\']?)([^"\'\)]+)\1\s*\)', re.IGNORECASE),
+    ]
+
+    urls = []
+    for pattern in url_patterns:
+        urls.extend(match.group(2) for match in pattern.finditer(html_body))
+
+    if not urls:
+        return html_body, []
+
+    signature_folder = _get_signature_upload_folder()
+    attachments = []
+    cid_by_filename = {}
+
+    for url in urls:
+        filename = _signature_filename_from_url(url)
+        if not filename:
+            continue
+        if filename not in cid_by_filename:
+            path = os.path.join(signature_folder, filename)
+            if not os.path.exists(path):
+                continue
+            with open(path, "rb") as img:
+                img_data = img.read()
+            content_type, _ = mimetypes.guess_type(path)
+            content_id = f"sig_{uuid.uuid4().hex}"
+            cid_by_filename[filename] = content_id
+            attachments.append({
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": filename,
+                "contentId": content_id,
+                "contentType": content_type or "application/octet-stream",
+                "isInline": True,
+                "contentBytes": base64.b64encode(img_data).decode("ascii"),
+            })
+        html_body = html_body.replace(url, f"cid:{cid_by_filename[filename]}")
+
+    return html_body, attachments
+
+
 def send_graph_email(subject, html_body, to_emails, *, cc_emails=None, bcc_emails=None, attachments=None, user_id=None):
     settings = _get_graph_settings(include_secret=True)
     if not settings.get("client_id") or not settings.get("tenant_id") or not settings.get("client_secret"):
@@ -762,9 +830,14 @@ def send_graph_email(subject, html_body, to_emails, *, cc_emails=None, bcc_email
     if not to_list:
         return {"success": False, "error": "No valid recipients provided."}
 
+    html_body = html_body or ""
+    html_body, signature_attachments = _inline_signature_images(html_body)
+    final_attachments = list(attachments) if attachments else []
+    final_attachments.extend(signature_attachments)
+
     message = {
         "subject": subject or "",
-        "body": {"contentType": "HTML", "content": html_body or ""},
+        "body": {"contentType": "HTML", "content": html_body},
         "toRecipients": to_list,
     }
 
@@ -778,8 +851,8 @@ def send_graph_email(subject, html_body, to_emails, *, cc_emails=None, bcc_email
         if bcc_list:
             message["bccRecipients"] = bcc_list
 
-    if attachments:
-        message["attachments"] = attachments
+    if final_attachments:
+        message["attachments"] = final_attachments
 
     headers = {
         "Authorization": f"Bearer {token['access_token']}",
@@ -988,6 +1061,70 @@ def _get_cached_emails(user_id, limit=25, offset=0):
                 pass
 
     return messages
+
+
+def _get_cached_latest_message_for_email(user_id, email_addr, limit=200):
+    """Return the latest cached message that matches the email address."""
+    if not user_id or not email_addr:
+        return None
+
+    needle = email_addr.lower()
+    rows = db_execute(
+        """
+        SELECT raw_message, body_preview, subject, received_datetime, sent_datetime,
+               from_data, to_recipients, cc_recipients, web_link
+        FROM graph_email_cache
+        WHERE user_id = ?
+        ORDER BY COALESCE(received_datetime, sent_datetime) DESC
+        LIMIT ?
+        """,
+        (user_id, limit),
+        fetch="all",
+    ) or []
+
+    def _parse_json_value(value):
+        if value is None:
+            return None
+        if isinstance(value, (bytes, bytearray)):
+            value = value.decode('utf-8', errors='ignore')
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        return value
+
+    def _matches(message):
+        from_data = message.get('from') or message.get('from_data') or {}
+        from_addr = _extract_graph_addresses(from_data)
+        if any(addr and addr.lower() == needle for addr in from_addr):
+            return True
+        for field in ('toRecipients', 'ccRecipients', 'to_recipients', 'cc_recipients'):
+            emails = _extract_graph_addresses(message.get(field))
+            if any(addr and addr.lower() == needle for addr in emails):
+                return True
+        return False
+
+    for row in rows:
+        raw_msg = row.get('raw_message') if isinstance(row, dict) else row[0]
+        message = _parse_json_value(raw_msg)
+        if isinstance(message, dict) and _matches(message):
+            return message
+
+        message = {
+            'subject': row.get('subject') if isinstance(row, dict) else row[2],
+            'bodyPreview': row.get('body_preview') if isinstance(row, dict) else row[1],
+            'receivedDateTime': row.get('received_datetime') if isinstance(row, dict) else row[3],
+            'sentDateTime': row.get('sent_datetime') if isinstance(row, dict) else row[4],
+            'from': _parse_json_value(row.get('from_data') if isinstance(row, dict) else row[5]) or {},
+            'toRecipients': _parse_json_value(row.get('to_recipients') if isinstance(row, dict) else row[6]) or [],
+            'ccRecipients': _parse_json_value(row.get('cc_recipients') if isinstance(row, dict) else row[7]) or [],
+            'webLink': row.get('web_link') if isinstance(row, dict) else row[8]
+        }
+        if _matches(message):
+            return message
+
+    return None
 
 
 def _update_sync_status(user_id, success=True, error=None, delta_link=None):
@@ -2007,6 +2144,13 @@ def graph_latest_message():
 
     settings = _get_graph_settings(include_secret=True)
     cache, user_id = _load_graph_cache_for_request()
+    cached_message = _get_cached_latest_message_for_email(user_id, email_addr)
+    if cached_message:
+        return jsonify({
+            "success": True,
+            "message": cached_message,
+            "cached": True,
+        })
     app = _build_msal_app(settings, cache=cache)
     accounts = app.get_accounts()
 
@@ -2161,6 +2305,9 @@ def graph_latest_message():
                 },
             }), 404
 
+        if user_id:
+            _cache_email_messages(user_id, [message])
+
         return jsonify({
             "success": True,
             "message": message,
@@ -2177,6 +2324,8 @@ def graph_latest_message():
         }), 404
 
     message = messages[0]
+    if user_id:
+        _cache_email_messages(user_id, [message])
     return jsonify({
         "success": True,
         "message": message,
@@ -3398,8 +3547,6 @@ def send_email_from_template(template_id):
     Send an email using a template with proper HTML formatting and embedded images
     """
     try:
-        bcc_email = "145554557@bcc.eu1.hubspot.com"
-
         # Get template and form data
         template = get_template_by_id(template_id)
         if not template:
@@ -3489,7 +3636,6 @@ def send_email_from_template(template_id):
                 subject=subject,
                 html_body=body.strip(),
                 to_emails=[contact_email],
-                bcc_emails=[bcc_email] if bcc_email else None,
                 attachments=attachments,
             )
             if not result.get("success"):
@@ -5103,6 +5249,7 @@ def preview_email():
 
             # Convert line breaks to HTML for display
             body_html = body.replace('\n', '<br>')
+            body_without_signature = body_html
 
             # Add email signature for preview
             email_signature = _get_default_signature()
@@ -5120,6 +5267,7 @@ def preview_email():
                 'data': {
                     'subject': subject,
                     'body': body_html,
+                    'body_without_signature': body_without_signature,
                     'recipient': contact['email'],
                     'recipient_name': contact['name']
                 }
@@ -5184,8 +5332,6 @@ def send_custom_email():
             processed_subject = processed_subject.replace(placeholder_pattern, str(value))
             processed_body = processed_body.replace(placeholder_pattern, str(value))
 
-        bcc_email = "145554557@bcc.eu1.hubspot.com"
-
         # Convert body to HTML
         body_html = processed_body.replace('\n', '<br>')
         body_html = f"""
@@ -5215,7 +5361,6 @@ def send_custom_email():
             subject=processed_subject,
             html_body=body_html.strip(),
             to_emails=[contact['email']],
-            bcc_emails=[bcc_email] if bcc_email else None,
             attachments=attachments,
         )
         if not result.get("success"):

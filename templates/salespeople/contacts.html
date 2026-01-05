@@ -40,6 +40,36 @@
     padding-bottom: 1rem;
     border-bottom: 1px solid #eee;
   }
+  .graph-email-content {
+    white-space: pre-wrap;
+    background: #fff;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 0.5rem;
+  }
+  .graph-email-content .graph-email-meta {
+    font-size: 0.85rem;
+    color: #6c757d;
+    margin-bottom: 0.5rem;
+  }
+  .graph-email-content .graph-email-body {
+    line-height: 1.4;
+    font-size: 0.95rem;
+  }
+  .graph-email-content .graph-email-body img {
+    max-width: 100%;
+    height: auto;
+  }
+  .news-hint-item {
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    background: #f8f9fa;
+  }
+  .news-hint-meta {
+    font-size: 0.8rem;
+    color: #6c757d;
+  }
   / Communication type badges /
   .badge-email {
     background-color: #4CAF50;
@@ -1138,6 +1168,98 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   // DEFINE HELPER FUNCTIONS EARLY
+  const escapeHtml = (value) => {
+    if (value === undefined || value === null) return '';
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  };
+
+  const stripHtml = (value) => {
+    if (!value) return '';
+    const holder = document.createElement('div');
+    holder.innerHTML = value;
+    return holder.textContent || holder.innerText || '';
+  };
+
+  const sanitizeGraphHtml = (html) => {
+    if (!html) return '';
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const removeSelectors = ['script', 'style', 'meta', 'link', 'head', 'title'];
+    removeSelectors.forEach((selector) => {
+      doc.querySelectorAll(selector).forEach((el) => el.remove());
+    });
+    const walker = document.createTreeWalker(doc, NodeFilter.SHOW_COMMENT);
+    const comments = [];
+    while (walker.nextNode()) {
+      comments.push(walker.currentNode);
+    }
+    comments.forEach((node) => node.parentNode?.removeChild(node));
+    doc.querySelectorAll('*').forEach((el) => {
+      el.removeAttribute('style');
+      el.removeAttribute('class');
+      el.removeAttribute('id');
+    });
+    return doc.body ? doc.body.innerHTML : '';
+  };
+
+  const renderGraphMessage = (message, output) => {
+    const subject = message.subject || '';
+    const fromEmail = message.from?.emailAddress?.address || '';
+    const received = message.receivedDateTime
+      ? new Date(message.receivedDateTime).toLocaleString()
+      : '';
+    const headerLines = [];
+    if (subject) headerLines.push(`Subject: ${subject}`);
+    if (fromEmail) headerLines.push(`From: ${fromEmail}`);
+    if (received) headerLines.push(`Date: ${received}`);
+
+    const rawBody = message.body?.content || message.bodyPreview || '';
+    const sanitized = sanitizeGraphHtml(rawBody);
+    const textBody = stripHtml(sanitized || rawBody);
+
+    const headerHtml = headerLines.length
+      ? `<div class="graph-email-meta">${escapeHtml(headerLines.join(' | '))}</div>`
+      : '';
+    const bodyHtml = sanitized || escapeHtml(textBody).replace(/\n/g, '<br>');
+    output.innerHTML = `${headerHtml}<div class="graph-email-body">${bodyHtml}</div>`;
+    output.dataset.subject = subject;
+    output.dataset.bodyText = textBody;
+    output.dataset.webLink = message.webLink || '';
+  };
+
+  const renderNewsHints = (items, container) => {
+    if (!items || !items.length) {
+      container.innerHTML = '<div class="text-muted small">No recent news found.</div>';
+      return;
+    }
+    const hints = items.slice(0, 3).map((item) => {
+      const headline = escapeHtml(item.headline || 'News update');
+      const summary = escapeHtml(item.summary || '');
+      const source = escapeHtml(item.source || '');
+      const date = escapeHtml(item.published_date || '');
+      const impact = escapeHtml(item.business_impact || '');
+      const metaParts = [source, date, impact ? `Impact: ${impact}` : ''].filter(Boolean);
+      const meta = metaParts.length ? `<div class="news-hint-meta">${metaParts.join(' | ')}</div>` : '';
+      const summaryHtml = summary ? `<div class="small">${summary}</div>` : '';
+      return `<div class="news-hint-item"><div class="fw-semibold">${headline}</div>${summaryHtml}${meta}</div>`;
+    });
+    container.innerHTML = hints.join('');
+  };
+
+  const getContactDetailsInputs = () => {
+    const content = document.getElementById('contactDetailsContent');
+    return {
+      contactId: content?.querySelector('#contactIdInput')?.value || '',
+      customerId: content?.querySelector('#contactCustomerIdInput')?.value || '',
+      contactEmail: content?.querySelector('#contactEmailInput')?.value || ''
+    };
+  };
+
   function setupContactDetailsEventListeners() {
     const contactDetailsContent = document.getElementById('contactDetailsContent');
 
@@ -1185,6 +1307,167 @@ document.addEventListener('DOMContentLoaded', function () {
     if (detailsCommunicationDate) {
       const today = new Date().toISOString().split('T')[0];
       detailsCommunicationDate.value = today;
+    }
+
+    const loadGraphEmailBtn = contactDetailsContent.querySelector('#loadGraphEmailBtn');
+    if (loadGraphEmailBtn) {
+      loadGraphEmailBtn.addEventListener('click', async () => {
+        const { contactEmail } = getContactDetailsInputs();
+        const output = contactDetailsContent.querySelector('#graphEmailContent');
+        const copyBtn = contactDetailsContent.querySelector('#graphEmailCopyBtn');
+        const openBtn = contactDetailsContent.querySelector('#graphEmailOpenBtn');
+
+        if (!contactEmail) {
+          output.innerHTML = '<div class="text-muted small">No email address on file.</div>';
+          return;
+        }
+
+        copyBtn?.classList.add('d-none');
+        openBtn?.classList.add('d-none');
+        if (openBtn) {
+          openBtn.removeAttribute('href');
+        }
+
+        loadGraphEmailBtn.disabled = true;
+        loadGraphEmailBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
+        output.innerHTML = '<div class="text-muted small">Loading latest email...</div>';
+
+        try {
+          const response = await fetch(`/emails/graph/latest?email=${encodeURIComponent(contactEmail)}&days_back=730`);
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data?.error?.message || 'Unable to load Graph email');
+          }
+          renderGraphMessage(data.message || {}, output);
+          const textBody = output.dataset.bodyText || '';
+          if (textBody) {
+            copyBtn?.classList.remove('d-none');
+          }
+          const webLink = output.dataset.webLink || '';
+          if (openBtn && webLink) {
+            openBtn.href = webLink;
+            openBtn.classList.remove('d-none');
+          }
+        } catch (error) {
+          output.innerHTML = `<div class="text-muted small">${escapeHtml(error.message || 'Unable to load Graph email')}</div>`;
+        } finally {
+          loadGraphEmailBtn.disabled = false;
+          loadGraphEmailBtn.innerHTML = '<i class="bi bi-envelope"></i> Load latest';
+        }
+      });
+    }
+
+    const graphEmailCopyBtn = contactDetailsContent.querySelector('#graphEmailCopyBtn');
+    if (graphEmailCopyBtn) {
+      graphEmailCopyBtn.addEventListener('click', async () => {
+        const output = contactDetailsContent.querySelector('#graphEmailContent');
+        const textBody = output?.dataset.bodyText || '';
+        if (!textBody) return;
+        try {
+          await navigator.clipboard.writeText(textBody);
+          showToast('Graph email copied', 'success');
+        } catch (error) {
+          showToast('Unable to copy email text', 'error');
+        }
+      });
+    }
+
+    const refreshNewsBtn = contactDetailsContent.querySelector('#refreshNewsBtn');
+    if (refreshNewsBtn) {
+      refreshNewsBtn.addEventListener('click', async () => {
+        const { contactId } = getContactDetailsInputs();
+        const salesPersonId = document.getElementById('salesPersonId')?.value;
+        const container = contactDetailsContent.querySelector('#newsHintsList');
+        if (!contactId || !container) return;
+
+        refreshNewsBtn.disabled = true;
+        refreshNewsBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
+        container.innerHTML = '<div class="text-muted small">Loading news...</div>';
+
+        try {
+          const response = await fetch(`/salespeople/contact_details/${contactId}/news?salesperson_id=${encodeURIComponent(salesPersonId || '')}`, {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data?.error || 'Unable to load news');
+          }
+          renderNewsHints(data.news_items, container);
+        } catch (error) {
+          container.innerHTML = `<div class="text-muted small">${escapeHtml(error.message || 'Unable to load news')}</div>`;
+        } finally {
+          refreshNewsBtn.disabled = false;
+          refreshNewsBtn.innerHTML = '<i class="bi bi-newspaper"></i> Load news';
+        }
+      });
+    }
+
+    const generateNextEmailBtn = contactDetailsContent.querySelector('#generateNextEmailBtn');
+    if (generateNextEmailBtn) {
+      generateNextEmailBtn.addEventListener('click', async () => {
+        const { contactId, customerId } = getContactDetailsInputs();
+        const salesPersonId = document.getElementById('salesPersonId')?.value;
+        if (!contactId || !customerId) return;
+
+        const subjectField = contactDetailsContent.querySelector('#aiSuggestedSubject');
+        const bodyField = contactDetailsContent.querySelector('#aiSuggestedBody');
+        const copyBtn = contactDetailsContent.querySelector('#copyAiEmailBtn');
+        const graphOutput = contactDetailsContent.querySelector('#graphEmailContent');
+        const newsContainer = contactDetailsContent.querySelector('#newsHintsList');
+
+        const graphEmailSubject = graphOutput?.dataset.subject || '';
+        const graphEmailBody = graphOutput?.dataset.bodyText || '';
+
+        generateNextEmailBtn.disabled = true;
+        generateNextEmailBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating';
+
+        try {
+          const response = await fetch(`/salespeople/contact_details/${contactId}/next-email`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+              salesperson_id: salesPersonId,
+              customer_id: customerId,
+              graph_email_subject: graphEmailSubject,
+              graph_email_body: graphEmailBody
+            })
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data?.error || 'Unable to generate email');
+          }
+
+          const suggestion = data.suggested_email || {};
+          if (subjectField) subjectField.value = suggestion.subject || '';
+          if (bodyField) bodyField.value = suggestion.body || '';
+          if (copyBtn) copyBtn.disabled = !(suggestion.subject || suggestion.body);
+          if (newsContainer) renderNewsHints(data.news_items, newsContainer);
+        } catch (error) {
+          showToast(error.message || 'Unable to generate email', 'error');
+        } finally {
+          generateNextEmailBtn.disabled = false;
+          generateNextEmailBtn.innerHTML = '<i class="bi bi-stars"></i> Generate';
+        }
+      });
+    }
+
+    const copyAiEmailBtn = contactDetailsContent.querySelector('#copyAiEmailBtn');
+    if (copyAiEmailBtn) {
+      copyAiEmailBtn.addEventListener('click', async () => {
+        const subject = contactDetailsContent.querySelector('#aiSuggestedSubject')?.value || '';
+        const body = contactDetailsContent.querySelector('#aiSuggestedBody')?.value || '';
+        if (!subject && !body) return;
+        const text = `Subject: ${subject}\n\n${body}`;
+        try {
+          await navigator.clipboard.writeText(text);
+          showToast('Suggestion copied', 'success');
+        } catch (error) {
+          showToast('Unable to copy suggestion', 'error');
+        }
+      });
     }
   }
 

@@ -3091,6 +3091,8 @@ def generate_supplier_email():
             <p>Thanks,<br><br>{sender_name}</p>
         '''
 
+        body_html_without_signature = body_html
+
         signature = None
         if current_user and getattr(current_user, "is_authenticated", False):
             signature = get_user_default_signature(current_user.id)
@@ -3105,6 +3107,7 @@ def generate_supplier_email():
             'supplier_id': supplier_id,
             'subject': subject,
             'body_html': body_html,
+            'body_html_without_signature': body_html_without_signature,
             'recipient_email': contact_email,
             'recipient_name': contact_name,
             'parts': parts
@@ -5822,7 +5825,7 @@ def apply_quick_no_bid(list_id, supplier_id):
                     _execute_with_cursor(cur, """
                         INSERT INTO parts_list_supplier_quote_lines
                             (supplier_quote_id, parts_list_line_id, is_no_bid)
-                        VALUES (?, ?, FALSE)
+                        VALUES (?, ?, TRUE)
                     """, (quote_id, lid))
 
         return jsonify(success=True, quote_id=quote_id)

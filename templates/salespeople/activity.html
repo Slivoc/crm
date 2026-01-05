@@ -630,6 +630,102 @@
     </div>
   </div>
 
+  <div class="row mb-4">
+    <div class="col-lg-6 mb-4 mb-lg-0">
+      <div class="card h-100">
+        <div class="card-header">
+          <h5 class="card-title mb-0">
+            <i class="bi bi-graph-up-arrow text-success me-2"></i>
+            Quotes by Day (Last 10)
+          </h5>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Date</th>
+                  <th class="text-center">Lists Quoted</th>
+                  <th class="text-end">Value (GBP)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% if quotes_by_day and quotes_by_day|length > 0 %}
+                  {% for day in quotes_by_day %}
+                    <tr>
+                      <td>{{ day.quoted_date or '-' }}</td>
+                      <td class="text-center">{{ day.quoted_lists }}</td>
+                      <td class="text-end">{{ format_currency(day.quoted_value_gbp, '£') }}</td>
+                    </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr>
+                    <td colspan="3" class="text-center text-muted py-3">No quotes in the last 10 days.</td>
+                  </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header">
+          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <h5 class="card-title mb-0">
+              <i class="bi bi-trophy text-warning me-2"></i>
+              Top Quoted Parts Lists
+            </h5>
+            <form method="get" class="d-flex align-items-center gap-2">
+              <label for="quotedStatusFilter" class="small text-muted">Status</label>
+              <select id="quotedStatusFilter" name="quoted_status_id" class="form-select form-select-sm" onchange="this.form.submit()">
+                <option value="">All</option>
+                {% for status in parts_list_statuses %}
+                  <option value="{{ status.id }}" {% if quoted_status_id == status.id %}selected{% endif %}>
+                    {{ status.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </form>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>List</th>
+                  <th>Customer</th>
+                  <th>Status</th>
+                  <th class="text-end">Value (GBP)</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% if top_quoted_lists and top_quoted_lists|length > 0 %}
+                  {% for item in top_quoted_lists %}
+                    <tr>
+                      <td>{{ item.name or '-' }}</td>
+                      <td>{{ item.customer_name or '-' }}</td>
+                      <td>{{ item.status_name or '-' }}</td>
+                      <td class="text-end">{{ format_currency(item.quoted_value_gbp, '£') }}</td>
+                      <td>{{ item.date_modified or '-' }}</td>
+                    </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr>
+                    <td colspan="5" class="text-center text-muted py-3">No quoted parts lists found.</td>
+                  </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Enhanced Sales Chart Section with Customer Exclusion -->
 <div class="row mb-4">
     <div class="col-12">

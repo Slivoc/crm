@@ -64,6 +64,73 @@
     </div>
   </div>
 </div>
+<div class="row mb-4">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0">Latest Email (Graph)</h5>
+        {% if contact.email %}
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="loadGraphEmailBtn">
+          <i class="bi bi-envelope"></i> Load latest
+        </button>
+        {% else %}
+        <span class="text-muted small">No email on file</span>
+        {% endif %}
+      </div>
+      <div class="card-body">
+        <div class="graph-email-content small" id="graphEmailContent">
+          {% if contact.email %}
+            <div class="text-muted">No email loaded yet.</div>
+          {% else %}
+            <div class="text-muted">Add an email address to load Graph activity.</div>
+          {% endif %}
+        </div>
+        <div class="mt-2 d-flex gap-2">
+          <a class="btn btn-sm btn-outline-primary d-none" id="graphEmailOpenBtn" href="#" target="_blank" rel="noopener">
+            <i class="bi bi-box-arrow-up-right"></i> Open in Outlook
+          </a>
+          <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="graphEmailCopyBtn">
+            <i class="bi bi-clipboard"></i> Copy text
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0">Next Email Suggestion</h5>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="generateNextEmailBtn">
+          <i class="bi bi-stars"></i> Generate
+        </button>
+      </div>
+      <div class="card-body">
+        <div class="mb-2">
+          <label class="form-label small text-muted">Subject</label>
+          <input type="text" class="form-control" id="aiSuggestedSubject" readonly>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small text-muted">Body</label>
+          <textarea class="form-control" id="aiSuggestedBody" rows="6" readonly></textarea>
+        </div>
+        <div class="d-flex gap-2 mb-3">
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="copyAiEmailBtn" disabled>
+            <i class="bi bi-clipboard"></i> Copy
+          </button>
+        </div>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h6 class="mb-0">Conversation hints</h6>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshNewsBtn">
+            <i class="bi bi-newspaper"></i> Load news
+          </button>
+        </div>
+        <div id="newsHintsList" class="d-flex flex-column gap-2">
+          <div class="text-muted small">No news loaded yet.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 <!-- Contact Communications Timeline -->
 <div class="card">
   <div class="card-header">
@@ -156,6 +223,8 @@
 </div>
 <!-- Hidden Contact ID for JavaScript reference -->
 <input type="hidden" id="contactIdInput" value="{{ contact.id }}">
+<input type="hidden" id="contactCustomerIdInput" value="{{ contact.customer_id }}">
+<input type="hidden" id="contactEmailInput" value="{{ contact.email or '' }}">
 <script>
   // Save contact notes functionality
   document.addEventListener('DOMContentLoaded', function() {
