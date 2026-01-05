@@ -922,6 +922,7 @@ async function fetchMessageAttachments(messageId) {
 
         selectedMessagePdfAttachments = (data.attachments || []).filter(att => att.is_pdf && !att.is_inline);
         renderPdfAttachmentsDropdown();
+        return selectedMessagePdfAttachments;
     } catch (error) {
         console.error('Failed to fetch attachments:', error);
     }
@@ -1804,6 +1805,9 @@ mailboxScanPartsBtn?.addEventListener('click', async () => {
 
     try {
         const bodyText = (extractTextFromBody(selectedMessage) || selectedMessage.bodyPreview || '').trim();
+        if (selectedMessage.hasAttachments && !selectedMessagePdfAttachments.length) {
+            await fetchMessageAttachments(selectedMessage.id);
+        }
         const { candidates, skippedTooLarge, skippedExtra } = getAttachmentScanCandidates();
         if (!bodyText && !candidates.length) {
             throw new Error('No email text or PDF attachments to scan');

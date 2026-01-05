@@ -2090,7 +2090,7 @@ def graph_message_detail(message_id):
 
     headers = {"Authorization": f"Bearer {token['access_token']}"}
     params = {
-        "$select": "id,subject,from,receivedDateTime,body,bodyPreview,webLink,conversationId",
+        "$select": "id,subject,from,receivedDateTime,body,bodyPreview,webLink,conversationId,hasAttachments",
     }
     safe_message_id = quote(message_id, safe="")
     resp = requests.get(
