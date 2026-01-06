@@ -1566,7 +1566,7 @@ def _update_sync_status(user_id, success=True, error=None, delta_link=None):
         SET last_sync_at = CURRENT_TIMESTAMP,
             last_sync_success = EXCLUDED.last_sync_success,
             last_sync_error = EXCLUDED.last_sync_error,
-            delta_link = COALESCE(EXCLUDED.delta_link, delta_link),
+            delta_link = COALESCE(EXCLUDED.delta_link, graph_email_sync_status.delta_link),
             total_cached_messages = EXCLUDED.total_cached_messages,
             updated_at = CURRENT_TIMESTAMP
         """,
