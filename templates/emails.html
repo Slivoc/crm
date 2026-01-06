@@ -85,6 +85,32 @@
                     </form>
                 </div>
             </div>
+
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-white border-0">
+                    <strong>Email Triage</strong>
+                </div>
+                <div class="card-body">
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="triageEnabledToggle">
+                        <label class="form-check-label" for="triageEnabledToggle">
+                            Enable background triage
+                        </label>
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="triagePartsListToggle">
+                        <label class="form-check-label" for="triagePartsListToggle">
+                            Auto-create parts lists for new customer emails
+                        </label>
+                        <div class="form-text">
+                            Triage only runs on new threads and known customer contacts.
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-outline-primary" id="saveTriageBtn">
+                        Save triage settings
+                    </button>
+                </div>
+            </div>
         </div>
 
         <div class="col-lg-7">
@@ -124,6 +150,9 @@
 const graphSeed = {{ graph | tojson }};
 const graphStatusEl = document.getElementById('graphStatus');
 const graphDebugOutput = document.getElementById('graphDebugOutput');
+const triageEnabledToggle = document.getElementById('triageEnabledToggle');
+const triagePartsListToggle = document.getElementById('triagePartsListToggle');
+const saveTriageBtn = document.getElementById('saveTriageBtn');
 
 function collectGraphSettings() {
     const payload = {
@@ -152,6 +181,46 @@ function setGraphStatus(settings) {
         graphStatusEl.classList.add('status-pill--warn');
         graphStatusEl.classList.remove('status-pill--ready');
     }
+}
+
+function setTriageUI(settings) {
+    const triageEnabled = !!settings.enabled;
+    const partsListEnabled = !!settings.categories?.parts_list_request?.enabled;
+    triageEnabledToggle.checked = triageEnabled;
+    triagePartsListToggle.checked = partsListEnabled;
+    triagePartsListToggle.disabled = !triageEnabled;
+}
+
+async function fetchTriageSettings() {
+    const response = await fetch('/emails/triage/settings');
+    const data = await response.json();
+    if (!data.success) {
+        throw new Error(data.error || 'Failed to load triage settings');
+    }
+    setTriageUI(data.settings || {});
+    return data.settings;
+}
+
+async function saveTriageSettings() {
+    const payload = {
+        enabled: triageEnabledToggle.checked,
+        categories: {
+            parts_list_request: {
+                enabled: triagePartsListToggle.checked
+            }
+        }
+    };
+    const response = await fetch('/emails/triage/settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!data.success) {
+        throw new Error(data.error || 'Failed to save triage settings');
+    }
+    setTriageUI(data.settings || {});
+    return data.settings;
 }
 
 async function saveGraphSettings() {
@@ -232,6 +301,23 @@ document.getElementById('testGraphBtn').addEventListener('click', async () => {
     }
 });
 
+triageEnabledToggle.addEventListener('change', () => {
+    triagePartsListToggle.disabled = !triageEnabledToggle.checked;
+});
+
+saveTriageBtn.addEventListener('click', async () => {
+    const buttons = [saveTriageBtn];
+    toggleLoading(buttons, true);
+    try {
+        await saveTriageSettings();
+        showToast('Triage settings saved', 'success');
+    } catch (error) {
+        showToast(error.message, 'error');
+    } finally {
+        toggleLoading(buttons, false);
+    }
+});
+
 document.getElementById('clearGraphBtn').addEventListener('click', () => {
     graphDebugOutput.textContent = 'No Graph calls yet.';
 });
@@ -278,6 +364,9 @@ function createToastContainer() {
 }
 
 setGraphStatus(graphSeed);
+fetchTriageSettings().catch((error) => {
+    showToast(error.message || 'Failed to load triage settings', 'error');
+});
 </script>
 
 <style>

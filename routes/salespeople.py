@@ -6089,3 +6089,195 @@ def save_monthly_goal():
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# -----------------------------------------------------------------------------
+# CONSOLIDATED PLANNER (ALL SALESPEOPLE)
+# -----------------------------------------------------------------------------
+@salespeople_bp.route('/planner/consolidated')
+@login_required
+def consolidated_planner():
+    """Renders the consolidated planner page showing all salespeople's plans"""
+    # Get all active salespeople
+    all_salespeople = get_all_salespeople_with_customer_counts()
+
+    # Default to current month
+    today = datetime.now().date()
+    default_month = today.strftime('%Y-%m')
+
+    return render_template(
+        'salespeople/consolidated_planner.html',
+        all_salespeople=all_salespeople,
+        default_month=default_month
+    )
+
+
+@salespeople_bp.route('/planner/consolidated/data')
+@login_required
+def get_consolidated_planner_data():
+    """Fetches planner data for all salespeople for a given month"""
+    try:
+        target_month_str = request.args.get('month')
+        if not target_month_str:
+            target_month_str = datetime.now().strftime('%Y-%m')
+
+        target_date = datetime.strptime(target_month_str, '%Y-%m').date()
+
+        # Get all salespeople
+        all_salespeople = get_all_salespeople_with_customer_counts()
+
+        consolidated_data = []
+
+        for salesperson in all_salespeople:
+            salesperson_id = salesperson['id']
+
+            # Get consolidated customers for this salesperson
+            consolidated_customers = get_consolidated_customer_ids(salesperson_id)
+
+            # Collect all relevant customer IDs
+            relevant_customer_ids = set()
+            for main_id, group in consolidated_customers.items():
+                relevant_customer_ids.update(group['all_customer_ids'])
+
+            db = get_db_connection()
+
+            # Fetch saved targets (same as individual planner)
+            saved_targets = db.execute("""
+                SELECT customer_id, target_amount, notes, is_locked
+                FROM customer_monthly_targets
+                WHERE salesperson_id = ? AND target_month = ?
+            """, (salesperson_id, target_month_str)).fetchall()
+
+            target_map = {
+                row['customer_id']: {
+                    'amount': float(row['target_amount'] or 0),
+                    'notes': row['notes'] or '',
+                    'is_locked': bool(row['is_locked'])
+                }
+                for row in saved_targets
+            }
+
+            # Build customer_month_map using the EXACT same query as individual planner
+            if _using_postgres():
+                chart_date_expr = "to_char(date_entered, 'YYYY-MM')"
+            else:
+                chart_date_expr = "strftime('%Y-%m', date_entered)"
+
+            customer_month_map = {}
+            if relevant_customer_ids:
+                placeholders = ','.join(['?' for _ in relevant_customer_ids])
+                aggregated_history_query = f"""
+                    SELECT customer_id, {chart_date_expr} as yyyy_mm,
+                    SUM(CASE WHEN total_value IS NULL OR total_value::text = '' THEN 0 ELSE total_value END) as val
+                    FROM sales_orders
+                    WHERE customer_id IN ({placeholders})
+                    GROUP BY customer_id, yyyy_mm
+                """
+                aggregated_rows = db_execute(aggregated_history_query, list(relevant_customer_ids), fetch='all') or []
+                for row in aggregated_rows:
+                    cust_id = row['customer_id']
+                    customer_month_map.setdefault(cust_id, {})[row['yyyy_mm']] = float(row['val'] or 0)
+
+            db.close()
+
+            # Build customer list with targets and actuals (same logic as individual planner)
+            customers = []
+            today = datetime.now().date()
+            three_months_ago = today - relativedelta(months=3)
+
+            # Sort consolidated customers by size
+            sorted_customers = sorted(
+                consolidated_customers.items(),
+                key=lambda item: len(item[1]['all_customer_ids']),
+                reverse=True
+            )
+
+            processed_ids = set()
+
+            for main_id, group in sorted_customers:
+                str_main_id = str(main_id)
+
+                if str_main_id in processed_ids:
+                    continue
+
+                processed_ids.add(str_main_id)
+                for sub_id in group['all_customer_ids']:
+                    processed_ids.add(str(sub_id))
+
+                all_ids = group['all_customer_ids']
+                sales_map = defaultdict(float)
+                for sub_id in all_ids:
+                    month_map = customer_month_map.get(sub_id, {})
+                    for month_key, month_val in month_map.items():
+                        sales_map[month_key] += month_val
+
+                actual_sales = sales_map.get(target_month_str, 0)
+
+                # Calculate recent average for target calculation
+                recent_total = 0
+                previous_active_total = 0
+                for i in range(24, 0, -1):
+                    d = today - relativedelta(months=i)
+                    key = d.strftime('%Y-%m')
+                    val = sales_map.get(key, 0)
+                    if i <= 3:
+                        recent_total += val
+                    elif i <= 12:
+                        previous_active_total += val
+
+                recent_average = recent_total / 3
+
+                # Check for saved target
+                is_saved = str_main_id in target_map
+                saved_data = target_map.get(str_main_id, {})
+
+                # Calculate target (same logic as individual planner)
+                if is_saved:
+                    suggested_target = saved_data.get('amount', 0)
+                    notes = saved_data.get('notes', '')
+                else:
+                    # Calculate target based on recent performance
+                    if recent_average > 0:
+                        suggested_target = round(recent_average * 1.1, -1)
+                    elif previous_active_total > 0:
+                        suggested_target = round((previous_active_total / 9), -1)
+                    else:
+                        suggested_target = 0
+                    notes = ''
+
+                # Filter out very small customers (unless saved)
+                if not is_saved and suggested_target < 100 and actual_sales < 100 and previous_active_total < 500:
+                    continue
+
+                customers.append({
+                    'id': main_id,
+                    'name': group['main_customer_name'],
+                    'target': suggested_target,
+                    'actual': actual_sales,
+                    'notes': notes
+                })
+
+            # Calculate totals
+            total_target = sum(c['target'] for c in customers)
+            total_actual = sum(c['actual'] for c in customers)
+
+            # Only include salespeople with customers
+            if customers:
+                consolidated_data.append({
+                    'salesperson_id': salesperson_id,
+                    'salesperson_name': salesperson['name'],
+                    'customers': customers,
+                    'total_target': total_target,
+                    'total_actual': total_actual
+                })
+
+        return jsonify({
+            'success': True,
+            'data': consolidated_data,
+            'month': target_month_str
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500

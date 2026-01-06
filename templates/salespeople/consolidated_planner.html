@@ -1,0 +1,421 @@
+{% extends "base.html" %}
+
+{% block title %}Consolidated Planner - All Salespeople{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+    .salesperson-section {
+        margin-bottom: 2rem;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .salesperson-header {
+        background: #0d6efd;
+        color: white;
+        padding: 1rem 1.5rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .salesperson-header h4 {
+        margin: 0;
+        font-weight: 600;
+    }
+
+    .salesperson-stats {
+        display: flex;
+        gap: 2rem;
+        font-size: 0.9rem;
+    }
+
+    .stat-item {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+    }
+
+    .stat-label {
+        opacity: 0.9;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .stat-value {
+        font-size: 1.2rem;
+        font-weight: 700;
+    }
+
+    .customer-table {
+        width: 100%;
+        margin: 0;
+    }
+
+    .customer-table th {
+        background-color: #f8f9fa;
+        padding: 0.75rem 1rem;
+        font-weight: 600;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #495057;
+    }
+
+    .customer-table td {
+        padding: 0.75rem 1rem;
+        border-top: 1px solid #dee2e6;
+    }
+
+    .customer-table tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+
+    .progress-cell {
+        min-width: 150px;
+    }
+
+    .progress-bar-wrapper {
+        height: 8px;
+        background-color: #e9ecef;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 0.25rem;
+    }
+
+    .progress-bar-fill {
+        height: 100%;
+        background-color: #28a745;
+        transition: width 0.3s ease;
+    }
+
+    .progress-bar-fill.warning {
+        background-color: #ffc107;
+    }
+
+    .progress-bar-fill.danger {
+        background-color: #dc3545;
+    }
+
+    .empty-state {
+        padding: 3rem;
+        text-align: center;
+        color: #6c757d;
+        background-color: #f8f9fa;
+    }
+
+    .summary-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .summary-card {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 1.25rem;
+        text-align: center;
+    }
+
+    .summary-card-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #495057;
+    }
+
+    .summary-card-label {
+        font-size: 0.85rem;
+        color: #6c757d;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-top: 0.5rem;
+    }
+
+    .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(255, 255, 255, 0.9);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+    }
+
+    .no-customers-msg {
+        padding: 1rem 1.5rem;
+        background-color: #f8f9fa;
+        color: #6c757d;
+        font-style: italic;
+        text-align: center;
+        border-top: 1px solid #dee2e6;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4 align-items-center">
+        <div class="col-md-6">
+            <h2 class="fw-bold mb-1">Consolidated Target Planner</h2>
+            <p class="text-muted mb-0">Overview of all salespeople's monthly targets</p>
+        </div>
+        <div class="col-md-6 text-md-end">
+            <div class="d-inline-flex align-items-center gap-3">
+                <div class="input-group" style="max-width: 200px;">
+                    <span class="input-group-text bg-white"><i class="bi bi-calendar-event"></i></span>
+                    <input type="month" id="planningMonth" class="form-control" value="{{ default_month }}">
+                </div>
+
+                <a href="{{ url_for('salespeople.dashboard') }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="summary-cards" id="summaryCards" style="display: none;">
+        <div class="summary-card">
+            <div class="summary-card-value" id="totalSalespeople">0</div>
+            <div class="summary-card-label">Salespeople</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-card-value" id="totalCustomers">0</div>
+            <div class="summary-card-label">Total Customers</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-card-value text-primary" id="totalTarget">£0</div>
+            <div class="summary-card-label">Total Target</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-card-value text-success" id="totalActual">£0</div>
+            <div class="summary-card-label">Total Actual</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-card-value" id="overallProgress">0%</div>
+            <div class="summary-card-label">Overall Progress</div>
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="text-center">
+            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-3 text-muted">Loading planner data for all salespeople...</p>
+        </div>
+    </div>
+
+    <!-- Salespeople Sections -->
+    <div id="plannerContent"></div>
+</div>
+
+<script>
+const monthInput = document.getElementById('planningMonth');
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadConsolidatedData();
+
+    monthInput.addEventListener('change', () => {
+        loadConsolidatedData();
+    });
+});
+
+function loadConsolidatedData() {
+    const month = monthInput.value;
+    if (!month) return;
+
+    document.getElementById('loadingOverlay').style.display = 'flex';
+    document.getElementById('plannerContent').innerHTML = '';
+    document.getElementById('summaryCards').style.display = 'none';
+
+    fetch(`/salespeople/planner/consolidated/data?month=${month}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                renderConsolidatedPlanner(data.data);
+            } else {
+                alert('Error loading data: ' + data.error);
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Failed to load planner data');
+        })
+        .finally(() => {
+            document.getElementById('loadingOverlay').style.display = 'none';
+        });
+}
+
+function renderConsolidatedPlanner(data) {
+    const container = document.getElementById('plannerContent');
+    container.innerHTML = '';
+
+    if (!data || data.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <i class="bi bi-inbox" style="font-size: 3rem; opacity: 0.3;"></i>
+                <h4 class="mt-3">No Planning Data</h4>
+                <p>No salespeople have created plans for this month yet.</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Calculate summary stats
+    let totalSalespeople = data.length;
+    let totalCustomers = 0;
+    let totalTargetAmount = 0;
+    let totalActualAmount = 0;
+
+    data.forEach(salesperson => {
+        totalCustomers += salesperson.customers.length;
+        totalTargetAmount += salesperson.total_target;
+        totalActualAmount += salesperson.total_actual;
+    });
+
+    const overallProgress = totalTargetAmount > 0
+        ? Math.round((totalActualAmount / totalTargetAmount) * 100)
+        : 0;
+
+    // Update summary cards
+    document.getElementById('totalSalespeople').textContent = totalSalespeople;
+    document.getElementById('totalCustomers').textContent = totalCustomers;
+    document.getElementById('totalTarget').textContent = formatCurrency(totalTargetAmount);
+    document.getElementById('totalActual').textContent = formatCurrency(totalActualAmount);
+    document.getElementById('overallProgress').textContent = overallProgress + '%';
+    document.getElementById('summaryCards').style.display = 'grid';
+
+    // Render each salesperson section
+    data.forEach(salesperson => {
+        const section = createSalespersonSection(salesperson);
+        container.appendChild(section);
+    });
+}
+
+function createSalespersonSection(salesperson) {
+    const section = document.createElement('div');
+    section.className = 'salesperson-section';
+
+    const progress = salesperson.total_target > 0
+        ? Math.round((salesperson.total_actual / salesperson.total_target) * 100)
+        : 0;
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'salesperson-header';
+    header.innerHTML = `
+        <div>
+            <h4>
+                <i class="bi bi-person-circle me-2"></i>${salesperson.salesperson_name}
+            </h4>
+        </div>
+        <div class="salesperson-stats">
+            <div class="stat-item">
+                <span class="stat-label">Customers</span>
+                <span class="stat-value">${salesperson.customers.length}</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Target</span>
+                <span class="stat-value">${formatCurrency(salesperson.total_target)}</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Actual</span>
+                <span class="stat-value">${formatCurrency(salesperson.total_actual)}</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Progress</span>
+                <span class="stat-value">${progress}%</span>
+            </div>
+        </div>
+    `;
+    section.appendChild(header);
+
+    // Table
+    if (salesperson.customers.length === 0) {
+        const emptyMsg = document.createElement('div');
+        emptyMsg.className = 'no-customers-msg';
+        emptyMsg.textContent = 'No customers with targets for this month';
+        section.appendChild(emptyMsg);
+    } else {
+        const table = document.createElement('table');
+        table.className = 'customer-table';
+        table.innerHTML = `
+            <thead>
+                <tr>
+                    <th>Customer</th>
+                    <th class="text-end">Target</th>
+                    <th class="text-end">Actual</th>
+                    <th>Progress</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        `;
+
+        const tbody = table.querySelector('tbody');
+        salesperson.customers.forEach(customer => {
+            const row = createCustomerRow(customer);
+            tbody.appendChild(row);
+        });
+
+        section.appendChild(table);
+    }
+
+    return section;
+}
+
+function createCustomerRow(customer) {
+    const row = document.createElement('tr');
+
+    const progress = customer.target > 0
+        ? Math.min((customer.actual / customer.target) * 100, 100)
+        : 0;
+
+    let progressClass = '';
+    if (progress >= 80) progressClass = '';
+    else if (progress >= 50) progressClass = 'warning';
+    else progressClass = 'danger';
+
+    row.innerHTML = `
+        <td>
+            <strong>${customer.name}</strong>
+        </td>
+        <td class="text-end">
+            <strong>${formatCurrency(customer.target)}</strong>
+        </td>
+        <td class="text-end">
+            ${formatCurrency(customer.actual)}
+        </td>
+        <td class="progress-cell">
+            <div class="progress-bar-wrapper">
+                <div class="progress-bar-fill ${progressClass}" style="width: ${progress}%"></div>
+            </div>
+            <small class="text-muted">${Math.round(progress)}%</small>
+        </td>
+        <td>
+            <small class="text-muted">${customer.notes || '—'}</small>
+        </td>
+    `;
+
+    return row;
+}
+
+function formatCurrency(val) {
+    return new Intl.NumberFormat('en-GB', {
+        style: 'currency',
+        currency: 'GBP',
+        maximumFractionDigits: 0
+    }).format(val);
+}
+</script>
+{% endblock %}

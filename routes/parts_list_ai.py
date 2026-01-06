@@ -1031,10 +1031,72 @@ def _set_monroe_auto_check(cur, enabled):
         )
 
 
-def _run_monroe_check_background(list_id, line_ids):
+def _get_user_monroe_settings(cur, user_id):
+    """
+    Get Monroe settings for a specific user.
+    Returns dict with auto_search_new_parts and auto_create_supplier_offer.
+    """
+    cur.execute("""
+        SELECT auto_search_new_parts, auto_create_supplier_offer
+        FROM user_monroe_settings
+        WHERE user_id = ?
+    """, (user_id,))
+    row = cur.fetchone()
+    if row:
+        return {
+            'auto_search_new_parts': bool(row['auto_search_new_parts']),
+            'auto_create_supplier_offer': bool(row['auto_create_supplier_offer'])
+        }
+    # Return defaults if no settings found
+    return {
+        'auto_search_new_parts': False,
+        'auto_create_supplier_offer': False
+    }
+
+
+def _set_user_monroe_settings(cur, user_id, auto_search_new_parts=None, auto_create_supplier_offer=None):
+    """
+    Set Monroe settings for a specific user.
+    Only updates fields that are provided (not None).
+    """
+    # Check if user settings exist
+    cur.execute("SELECT 1 FROM user_monroe_settings WHERE user_id = ?", (user_id,))
+    exists = cur.fetchone()
+
+    if exists:
+        # Update existing settings
+        updates = []
+        params = []
+        if auto_search_new_parts is not None:
+            updates.append("auto_search_new_parts = ?")
+            params.append(auto_search_new_parts)
+        if auto_create_supplier_offer is not None:
+            updates.append("auto_create_supplier_offer = ?")
+            params.append(auto_create_supplier_offer)
+
+        if updates:
+            updates.append("updated_at = CURRENT_TIMESTAMP")
+            params.append(user_id)
+            sql = f"UPDATE user_monroe_settings SET {', '.join(updates)} WHERE user_id = ?"
+            cur.execute(sql, params)
+    else:
+        # Insert new settings
+        cur.execute("""
+            INSERT INTO user_monroe_settings
+            (user_id, auto_search_new_parts, auto_create_supplier_offer)
+            VALUES (?, ?, ?)
+        """, (
+            user_id,
+            auto_search_new_parts if auto_search_new_parts is not None else False,
+            auto_create_supplier_offer if auto_create_supplier_offer is not None else False
+        ))
+
+
+def _run_monroe_check_background(list_id, line_ids, user_id=None, auto_create_offer=False):
     """
     Run Monroe check in background thread for specified line IDs.
     Called when auto-check is enabled and new lines are added.
+    If auto_create_offer is True, will automatically create a supplier quote for results with prices.
     """
     if not PLAYWRIGHT_AVAILABLE:
         logging.warning("Monroe auto-check skipped: Playwright not available")
@@ -1059,6 +1121,8 @@ def _run_monroe_check_background(list_id, line_ids):
             WHERE parts_list_id = ? AND id IN ({placeholders})
         """, (list_id, *line_ids))
         lines = [dict(row) for row in cur.fetchall()]
+
+        result_ids = []  # Track result IDs for auto-offer creation
 
         for line in lines:
             part_number = line['customer_part_number'] or line['base_part_number']
@@ -1102,26 +1166,60 @@ def _run_monroe_check_background(list_id, line_ids):
             purchase_increment = scrape_result.get('purchase_increment') if has_price else None
 
             # Store result
-            cur.execute("""
-                INSERT INTO monroe_search_results
-                (parts_list_id, parts_list_line_id, base_part_number, searched_part_number,
-                 unit_price, inventory, minimum_order, purchase_increment, error_message)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                list_id,
-                line['id'],
-                line['base_part_number'],
-                part_number,
-                scrape_result.get('unit_price'),
-                inventory,
-                minimum_order,
-                purchase_increment,
-                scrape_result.get('error')
-            ))
+            if _using_postgres():
+                cur.execute("""
+                    INSERT INTO monroe_search_results
+                    (parts_list_id, parts_list_line_id, base_part_number, searched_part_number,
+                     unit_price, inventory, minimum_order, purchase_increment, error_message)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
+                """, (
+                    list_id,
+                    line['id'],
+                    line['base_part_number'],
+                    part_number,
+                    scrape_result.get('unit_price'),
+                    inventory,
+                    minimum_order,
+                    purchase_increment,
+                    scrape_result.get('error')
+                ))
+                result_row = cur.fetchone()
+                if result_row and has_price:
+                    result_ids.append(result_row['id'])
+            else:
+                cur.execute("""
+                    INSERT INTO monroe_search_results
+                    (parts_list_id, parts_list_line_id, base_part_number, searched_part_number,
+                     unit_price, inventory, minimum_order, purchase_increment, error_message)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    list_id,
+                    line['id'],
+                    line['base_part_number'],
+                    part_number,
+                    scrape_result.get('unit_price'),
+                    inventory,
+                    minimum_order,
+                    purchase_increment,
+                    scrape_result.get('error')
+                ))
+                if has_price:
+                    result_ids.append(cur.lastrowid)
+
             conn.commit()
 
             # Small delay between requests to be respectful to Monroe's servers
             time.sleep(1)
+
+        # Auto-create supplier offer if enabled and we have results with prices
+        if auto_create_offer and result_ids:
+            try:
+                _auto_create_monroe_offer(cur, list_id, result_ids, user_id)
+                conn.commit()
+                logging.info(f"Monroe: Auto-created supplier offer for list {list_id} with {len(result_ids)} lines")
+            except Exception as e:
+                logging.exception(f"Failed to auto-create Monroe offer: {e}")
 
         conn.close()
         logging.info(f"Monroe auto-check completed for list {list_id}, {len(lines)} lines")
@@ -1130,9 +1228,100 @@ def _run_monroe_check_background(list_id, line_ids):
         logging.exception(f"Monroe auto-check failed: {e}")
 
 
-def trigger_monroe_auto_check(list_id, line_ids):
+def _auto_create_monroe_offer(cur, list_id, result_ids, user_id):
     """
-    Trigger Monroe auto-check in a background thread if enabled.
+    Automatically create a supplier quote/offer from Monroe results.
+    Similar to monroe_load_as_offer endpoint but for background processing.
+    """
+    if not result_ids:
+        return
+
+    # Get Monroe supplier ID
+    monroe_supplier_id = _get_monroe_supplier_id(cur)
+    if not monroe_supplier_id:
+        logging.error("Cannot auto-create Monroe offer: Monroe supplier not configured")
+        return
+
+    # Get USD currency ID
+    cur.execute("SELECT id FROM currencies WHERE currency_code = 'USD'")
+    currency_row = cur.fetchone()
+    if currency_row:
+        usd_currency_id = currency_row['id']
+    else:
+        # Try to create USD currency
+        if _using_postgres():
+            cur.execute("INSERT INTO currencies (currency_code, exchange_rate_to_eur) VALUES ('USD', 1.0) RETURNING id")
+            currency_row = cur.fetchone()
+            usd_currency_id = currency_row['id'] if currency_row else 1
+        else:
+            cur.execute("INSERT INTO currencies (currency_code, exchange_rate_to_eur) VALUES ('USD', 1.0)")
+            usd_currency_id = cur.lastrowid
+
+    # Create supplier quote header
+    if _using_postgres():
+        cur.execute("""
+            INSERT INTO parts_list_supplier_quotes
+            (parts_list_id, supplier_id, quote_reference, quote_date, currency_id, notes, created_by_user_id)
+            VALUES (?, ?, ?, CURRENT_DATE, ?, ?, ?)
+            RETURNING id
+        """, (list_id, monroe_supplier_id, 'Monroe Web Scrape (Auto)', usd_currency_id,
+              'Auto-imported from Monroe Aerospace website', user_id))
+        quote_row = cur.fetchone()
+        quote_id = quote_row['id']
+    else:
+        cur.execute("""
+            INSERT INTO parts_list_supplier_quotes
+            (parts_list_id, supplier_id, quote_reference, quote_date, currency_id, notes, created_by_user_id)
+            VALUES (?, ?, ?, DATE('now'), ?, ?, ?)
+        """, (list_id, monroe_supplier_id, 'Monroe Web Scrape (Auto)', usd_currency_id,
+              'Auto-imported from Monroe Aerospace website', user_id))
+        quote_id = cur.lastrowid
+
+    # Get Monroe results
+    placeholders = ",".join("?" for _ in result_ids)
+    cur.execute(f"""
+        SELECT msr.*, pll.line_number, pll.quantity as requested_quantity
+        FROM monroe_search_results msr
+        JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
+        WHERE msr.id IN ({placeholders})
+          AND msr.unit_price IS NOT NULL
+    """, result_ids)
+    results = [dict(row) for row in cur.fetchall()]
+
+    # Create quote lines
+    lines_created = 0
+    for result in results:
+        requested_qty = result.get('requested_quantity') or 1
+        moq = result.get('minimum_order') or 1
+        quantity_quoted = max(requested_qty, moq)
+        if quantity_quoted < 1:
+            quantity_quoted = 1
+
+        cur.execute("""
+            INSERT INTO parts_list_supplier_quote_lines
+            (supplier_quote_id, parts_list_line_id, quoted_part_number,
+             quantity_quoted, unit_price, condition_code, is_no_bid,
+             qty_available, purchase_increment, moq)
+            VALUES (?, ?, ?, ?, ?, 'NE', FALSE, ?, ?, ?)
+        """, (
+            quote_id,
+            result['parts_list_line_id'],
+            result['searched_part_number'],
+            quantity_quoted,
+            result['unit_price'],
+            result.get('inventory'),
+            result.get('purchase_increment'),
+            result.get('minimum_order')
+        ))
+        lines_created += 1
+
+    logging.info(f"Auto-created Monroe quote {quote_id} with {lines_created} lines")
+    return quote_id
+
+
+def trigger_monroe_auto_check(list_id, line_ids, user_id=None):
+    """
+    Trigger Monroe auto-check in a background thread if enabled for the user.
     Called from add_lines endpoint.
     """
     if not PLAYWRIGHT_AVAILABLE:
@@ -1142,8 +1331,32 @@ def trigger_monroe_auto_check(list_id, line_ids):
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # Check if auto-check is enabled
-        if not _get_monroe_auto_check(cur):
+        # If no user_id provided, get it from the parts list
+        if user_id is None:
+            cur.execute("""
+                SELECT salesperson_id FROM parts_lists WHERE id = ?
+            """, (list_id,))
+            row = cur.fetchone()
+            if row:
+                # Look up user_id from salesperson_id
+                cur.execute("""
+                    SELECT user_id FROM salesperson_user_link WHERE legacy_salesperson_id = ?
+                """, (row['salesperson_id'],))
+                user_row = cur.fetchone()
+                if user_row:
+                    user_id = user_row['user_id']
+
+        # Check user-specific settings
+        if user_id:
+            user_settings = _get_user_monroe_settings(cur, user_id)
+            auto_search = user_settings.get('auto_search_new_parts', False)
+            auto_create_offer = user_settings.get('auto_create_supplier_offer', False)
+        else:
+            auto_search = False
+            auto_create_offer = False
+
+        # If auto-search is not enabled for this user, exit
+        if not auto_search:
             conn.close()
             return
 
@@ -1157,11 +1370,11 @@ def trigger_monroe_auto_check(list_id, line_ids):
         # Run in background thread
         thread = threading.Thread(
             target=_run_monroe_check_background,
-            args=(list_id, line_ids),
+            args=(list_id, line_ids, user_id, auto_create_offer),
             daemon=True
         )
         thread.start()
-        logging.info(f"Monroe auto-check started in background for list {list_id}")
+        logging.info(f"Monroe auto-check started in background for list {list_id}, user {user_id}")
 
     except Exception as e:
         logging.exception(f"Failed to trigger Monroe auto-check: {e}")
@@ -1325,34 +1538,49 @@ def _get_lines_with_monroe_history(cur, list_id):
 
 @parts_list_ai_bp.route('/api/monroe-settings', methods=['GET', 'POST'])
 def monroe_settings():
-    """Get or set Monroe supplier ID and auto-check setting."""
+    """Get or set Monroe supplier ID and per-user settings."""
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        user_id = session.get('user_id')
 
         if request.method == 'POST':
             data = request.get_json() or {}
             supplier_id = data.get('supplier_id')
-            auto_check = data.get('auto_check')
+            auto_search_new_parts = data.get('auto_search_new_parts')
+            auto_create_supplier_offer = data.get('auto_create_supplier_offer')
 
+            # Global setting: Monroe supplier ID
             if supplier_id:
                 _set_monroe_supplier_id(cur, supplier_id)
 
-            if auto_check is not None:
-                _set_monroe_auto_check(cur, bool(auto_check))
+            # User-level settings
+            if user_id and (auto_search_new_parts is not None or auto_create_supplier_offer is not None):
+                _set_user_monroe_settings(
+                    cur,
+                    user_id,
+                    auto_search_new_parts=auto_search_new_parts,
+                    auto_create_supplier_offer=auto_create_supplier_offer
+                )
 
             conn.commit()
             conn.close()
 
-            if supplier_id or auto_check is not None:
-                return jsonify(success=True, supplier_id=supplier_id, auto_check=auto_check)
-
-            conn.close()
-            return jsonify(success=False, message="No settings provided"), 400
+            return jsonify(
+                success=True,
+                supplier_id=supplier_id,
+                auto_search_new_parts=auto_search_new_parts,
+                auto_create_supplier_offer=auto_create_supplier_offer
+            )
 
         # GET - return current settings and list of suppliers for selection
         monroe_id = _get_monroe_supplier_id(cur)
-        auto_check = _get_monroe_auto_check(cur)
+
+        # Get user-specific settings if user is logged in
+        user_settings = {}
+        if user_id:
+            user_settings = _get_user_monroe_settings(cur, user_id)
+
         cur.execute("SELECT id, name FROM suppliers ORDER BY name")
         suppliers = [dict(row) for row in cur.fetchall()]
         conn.close()
@@ -1360,7 +1588,8 @@ def monroe_settings():
         return jsonify(
             success=True,
             monroe_supplier_id=monroe_id,
-            auto_check=auto_check,
+            auto_search_new_parts=user_settings.get('auto_search_new_parts', False),
+            auto_create_supplier_offer=user_settings.get('auto_create_supplier_offer', False),
             suppliers=suppliers
         )
 

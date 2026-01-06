@@ -4,7 +4,8 @@
       "Bash(grep:*)",
       "Bash(find:*)",
       "Bash(cat:*)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(python:*)"
     ]
   }
 }

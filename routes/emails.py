@@ -21,6 +21,7 @@ import quopri
 from email.utils import parsedate_to_datetime
 # Standard library imports
 import os
+import html
 import email  # Import the base email library
 import imaplib
 import re
@@ -56,6 +57,7 @@ from dateutil import parser
 import extract_msg  # For processing .msg email files
 import msal
 import requests
+from openai import OpenAI
 
 # Project-specific imports (replace with your actual module structure)
 from db import db_cursor, execute as db_execute
@@ -125,6 +127,15 @@ INLINE_ATTACHMENT_CACHE_MAX = 200
 _INLINE_ATTACHMENT_CACHE = {}
 _INLINE_ATTACHMENT_CACHE_LOCK = Lock()
 
+TRIAGE_SETTINGS_KEY = "email_triage_settings"
+TRIAGE_CATEGORY_PARTS_LIST = "parts_list_request"
+DEFAULT_TRIAGE_SETTINGS = {
+    "enabled": False,
+    "categories": {
+        TRIAGE_CATEGORY_PARTS_LIST: {"enabled": False},
+    },
+}
+
 
 def _get_app_setting(key, default=None):
     row = db_execute(
@@ -160,6 +171,59 @@ def _parse_bool(value, default=False):
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalize_triage_settings(settings):
+    if not isinstance(settings, dict):
+        settings = {}
+    categories = settings.get("categories")
+    if not isinstance(categories, dict):
+        categories = {}
+    parts_list = categories.get(TRIAGE_CATEGORY_PARTS_LIST)
+    if not isinstance(parts_list, dict):
+        parts_list = {}
+    return {
+        "enabled": _parse_bool(settings.get("enabled"), default=False),
+        "categories": {
+            TRIAGE_CATEGORY_PARTS_LIST: {
+                "enabled": _parse_bool(parts_list.get("enabled"), default=False),
+            },
+        },
+    }
+
+
+def _get_email_triage_settings():
+    raw = _get_app_setting(TRIAGE_SETTINGS_KEY)
+    if raw is None:
+        return _normalize_triage_settings(DEFAULT_TRIAGE_SETTINGS)
+    if isinstance(raw, dict):
+        return _normalize_triage_settings(raw)
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return _normalize_triage_settings(DEFAULT_TRIAGE_SETTINGS)
+    return _normalize_triage_settings(parsed)
+
+
+def _apply_triage_updates(current_settings, updates):
+    merged = dict(current_settings or {})
+    if isinstance(updates, dict):
+        if "enabled" in updates:
+            merged["enabled"] = updates.get("enabled")
+        if "categories" in updates and isinstance(updates.get("categories"), dict):
+            merged_categories = dict((current_settings or {}).get("categories") or {})
+            for key, value in updates["categories"].items():
+                if isinstance(value, dict):
+                    merged_categories[key] = dict(merged_categories.get(key) or {})
+                    merged_categories[key].update(value)
+            merged["categories"] = merged_categories
+    return _normalize_triage_settings(merged)
+
+
+def _set_email_triage_settings(settings):
+    normalized = _normalize_triage_settings(settings)
+    _set_app_setting(TRIAGE_SETTINGS_KEY, json.dumps(normalized))
+    return normalized
 
 
 def _get_default_signature(user_id=None):
@@ -440,6 +504,8 @@ def sync_graph_mailbox_emails():
         "users": 0,
         "messages_synced": 0,
         "errors": 0,
+        "triage_processed": 0,
+        "triage_created": 0,
     }
 
     for row in user_rows:
@@ -501,6 +567,12 @@ def sync_graph_mailbox_emails():
                 _cache_email_messages(user_id, messages)
                 totals["messages_synced"] += len(messages)
                 _update_sync_status(user_id, success=True)
+                try:
+                    triage_result = _run_email_triage_for_messages(user_id, messages, headers)
+                    totals["triage_processed"] += triage_result.get("processed", 0)
+                    totals["triage_created"] += triage_result.get("created", 0)
+                except Exception as exc:
+                    current_app.logger.warning("Email triage failed for user %s: %s", user_id, exc)
 
         except Exception as exc:
             totals["errors"] += 1
@@ -1031,6 +1103,350 @@ def _cache_email_messages(user_id, messages):
         )
 
 
+def _triage_action_exists(user_id, message_id, triage_type):
+    if not user_id or not message_id or not triage_type:
+        return False
+    row = db_execute(
+        """
+        SELECT 1 FROM email_triage_actions
+        WHERE user_id = ? AND message_id = ? AND triage_type = ?
+        """,
+        (user_id, message_id, triage_type),
+        fetch="one",
+    )
+    return bool(row)
+
+
+def _record_triage_action(user_id, message_id, conversation_id, triage_type, action, status, result=None):
+    if not user_id or not message_id or not triage_type:
+        return
+    result_json = json.dumps(result) if isinstance(result, (dict, list)) else None
+    db_execute(
+        """
+        INSERT INTO email_triage_actions
+            (user_id, message_id, conversation_id, triage_type, action, status, result_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, message_id, triage_type) DO UPDATE
+        SET action = EXCLUDED.action,
+            status = EXCLUDED.status,
+            result_json = EXCLUDED.result_json,
+            created_at = CURRENT_TIMESTAMP
+        """,
+        (user_id, message_id, conversation_id, triage_type, action, status, result_json),
+        commit=True,
+    )
+
+
+def _is_reply_subject(subject):
+    if not subject:
+        return False
+    normalized = subject.strip().lower()
+    return normalized.startswith(("re:", "fw:", "fwd:"))
+
+
+def _conversation_has_prior_messages(user_id, conversation_id, received_datetime, message_id):
+    if not user_id or not conversation_id or not received_datetime:
+        return False
+    row = db_execute(
+        """
+        SELECT 1 FROM graph_email_cache
+        WHERE user_id = ?
+          AND conversation_id = ?
+          AND message_id != ?
+          AND received_datetime < ?
+        LIMIT 1
+        """,
+        (user_id, conversation_id, message_id, received_datetime),
+        fetch="one",
+    )
+    return bool(row)
+
+
+def _extract_body_text_from_graph_message(message):
+    body = message.get("body") if isinstance(message, dict) else None
+    content = ""
+    content_type = ""
+    if isinstance(body, dict):
+        content = body.get("content") or ""
+        content_type = (body.get("contentType") or "").lower()
+    if content_type == "html" and content:
+        text = BeautifulSoup(content, "html.parser").get_text(" ", strip=True)
+    else:
+        text = content
+    if not text:
+        text = message.get("bodyPreview") or ""
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _fetch_graph_message_for_triage(headers, message_id):
+    if not headers or not message_id:
+        return None
+    params = {
+        "$select": "id,subject,from,body,bodyPreview,conversationId,receivedDateTime",
+    }
+    safe_message_id = quote(message_id, safe="")
+    resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}",
+        headers=headers,
+        params=params,
+        timeout=20,
+    )
+    if resp.status_code >= 400:
+        return None
+    try:
+        return resp.json() if resp.content else None
+    except ValueError:
+        return None
+
+
+def _classify_email_for_triage(subject, body_text):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    client = OpenAI(api_key=api_key)
+    trimmed_body = (body_text or "")[:4000]
+    prompt = (
+        "Classify this email for CRM triage. Decide if it is a NEW customer parts list request. "
+        "Return ONLY valid JSON with keys: category, should_create_parts_list, confidence, reason. "
+        f"Use category '{TRIAGE_CATEGORY_PARTS_LIST}' or 'other'."
+    )
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Return only JSON. No markdown, no extra text."},
+            {"role": "user", "content": f"{prompt}\n\nSubject: {subject}\nBody: {trimmed_body}"},
+        ],
+        temperature=0.1,
+        max_tokens=200,
+    )
+    content = response.choices[0].message.content.strip()
+    if content.startswith("```"):
+        content = content.strip("`")
+        if content.lower().startswith("json"):
+            content = content[4:].strip()
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        return None
+
+
+def _fallback_extract_tabular(text):
+    parts = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.lower().startswith("part #") or line.lower().startswith("part number"):
+            continue
+        if "\t" in line:
+            cols = [c.strip() for c in line.split("\t") if c.strip()]
+            if len(cols) >= 2:
+                part_number = cols[0]
+                qty_match = re.search(r"\b(\d+)\b", cols[-1])
+                qty = int(qty_match.group(1)) if qty_match else 1
+                parts.append({"part_number": part_number, "quantity": qty})
+                continue
+        match = re.search(r"^\s*([A-Za-z0-9\-]+)\b.*?(\d+)\s*$", line)
+        if match:
+            parts.append({"part_number": match.group(1), "quantity": int(match.group(2))})
+    return parts
+
+
+def _log_parts_list_creation(list_id, list_name, customer_id, contact_id, salesperson_id):
+    if not (list_id and customer_id and contact_id and salesperson_id):
+        return
+    list_url = url_for("parts_list.view_parts_list", list_id=list_id)
+    safe_name = html.escape(list_name or f"Parts List {list_id}")
+    notes = (
+        f"<i class=\"bi bi-list-check text-primary me-1\"></i> "
+        f"Parts list created: <a href=\"{list_url}\">{safe_name}</a>"
+    )
+    from models import insert_update
+    insert_update(
+        customer_id,
+        salesperson_id,
+        notes,
+        contact_id=contact_id,
+        communication_type="Other",
+    )
+
+
+def _create_parts_list_from_triage(user_id, contact, message, body_text):
+    if contact and not isinstance(contact, dict):
+        contact = dict(contact)
+    contact_id = contact.get("id") if contact else None
+    customer_id = contact.get("customer_id") if contact else None
+    if not contact_id or not customer_id:
+        return None
+    subject = message.get("subject") or ""
+    message_id = message.get("id")
+    conversation_id = message.get("conversationId")
+
+    salesperson_id = _get_salesperson_id_for_user(user_id) or user_id
+    list_name = f"Email: {subject[:50]}" if subject else "Email Import"
+
+    clean_body = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", body_text or "")
+    clean_body = re.sub(r"[^\x09\x0a\x0d\x20-\x7e]", " ", clean_body)
+    clean_body = " ".join(clean_body.split())
+    if len(clean_body) > 20000:
+        clean_body = clean_body[:20000]
+
+    extracted = extract_part_numbers_and_quantities(clean_body) if clean_body else []
+    if not extracted:
+        extracted = _fallback_extract_tabular(clean_body)
+
+    with db_cursor(commit=True) as cur:
+        list_row = _execute_with_cursor(
+            cur,
+            """
+            INSERT INTO parts_lists
+                (name, customer_id, contact_id, salesperson_id, status_id, notes,
+                 email_message_id, email_conversation_id, date_created, date_modified)
+            VALUES (?, ?, ?, ?, 1, '', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING id
+            """,
+            (list_name, customer_id, contact_id, salesperson_id, message_id, conversation_id),
+            fetch="one",
+        )
+        list_id = list_row["id"] if list_row else getattr(cur, "lastrowid", None)
+
+        if extracted:
+            for idx, part in enumerate(extracted):
+                part_number = part.get("part_number") if isinstance(part, dict) else part[0]
+                quantity = part.get("quantity") if isinstance(part, dict) else part[1]
+                _execute_with_cursor(
+                    cur,
+                    """
+                    INSERT INTO parts_list_lines
+                        (parts_list_id, line_number, customer_part_number, base_part_number, quantity)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        list_id,
+                        idx + 1,
+                        part_number,
+                        create_base_part_number(part_number),
+                        quantity or 1,
+                    ),
+                )
+
+    _log_parts_list_creation(list_id, list_name, customer_id, contact_id, salesperson_id)
+    return {
+        "list_id": list_id,
+        "parts_count": len(extracted),
+        "list_name": list_name,
+    }
+
+
+def _run_email_triage_for_messages(user_id, messages, headers):
+    settings = _get_email_triage_settings()
+    category_settings = settings.get("categories", {}).get(TRIAGE_CATEGORY_PARTS_LIST, {})
+    if not settings.get("enabled") or not category_settings.get("enabled"):
+        return {"processed": 0, "created": 0}
+
+    processed = 0
+    created = 0
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        message_id = message.get("id")
+        if not message_id:
+            continue
+        if _triage_action_exists(user_id, message_id, TRIAGE_CATEGORY_PARTS_LIST):
+            continue
+
+        from_data = message.get("from", {}).get("emailAddress", {}) if isinstance(message.get("from"), dict) else {}
+        sender_email = _normalize_email_address(from_data.get("address"))
+        if not sender_email:
+            continue
+        contact = get_contact_by_email(sender_email)
+        if contact and not isinstance(contact, dict):
+            contact = dict(contact)
+        if not contact or not contact.get("customer_id"):
+            continue
+
+        subject = message.get("subject") or ""
+        if _is_reply_subject(subject):
+            continue
+
+        conversation_id = message.get("conversationId")
+        received_dt = message.get("receivedDateTime")
+        if _email_has_parts_list_association(message_id, conversation_id):
+            continue
+        if _conversation_has_prior_messages(user_id, conversation_id, received_dt, message_id):
+            continue
+
+        detailed_message = _fetch_graph_message_for_triage(headers, message_id) or message
+        body_text = _extract_body_text_from_graph_message(detailed_message)
+        if not body_text:
+            continue
+
+        classification = _classify_email_for_triage(subject, body_text)
+        if not classification:
+            _record_triage_action(
+                user_id,
+                message_id,
+                conversation_id,
+                TRIAGE_CATEGORY_PARTS_LIST,
+                "classify",
+                "failed",
+                {"reason": "classification_failed"},
+            )
+            continue
+
+        processed += 1
+        category = classification.get("category")
+        should_create = classification.get("should_create_parts_list")
+        if category == TRIAGE_CATEGORY_PARTS_LIST and _parse_bool(should_create, default=False):
+            if _email_has_parts_list_association(message_id, conversation_id):
+                _record_triage_action(
+                    user_id,
+                    message_id,
+                    conversation_id,
+                    TRIAGE_CATEGORY_PARTS_LIST,
+                    "create_parts_list",
+                    "skipped",
+                    {"reason": "parts_list_exists"},
+                )
+                continue
+
+            result = _create_parts_list_from_triage(user_id, contact, detailed_message, body_text)
+            if result and result.get("list_id"):
+                created += 1
+                _record_triage_action(
+                    user_id,
+                    message_id,
+                    conversation_id,
+                    TRIAGE_CATEGORY_PARTS_LIST,
+                    "create_parts_list",
+                    "created",
+                    result,
+                )
+            else:
+                _record_triage_action(
+                    user_id,
+                    message_id,
+                    conversation_id,
+                    TRIAGE_CATEGORY_PARTS_LIST,
+                    "create_parts_list",
+                    "failed",
+                    {"reason": "create_failed"},
+                )
+        else:
+            _record_triage_action(
+                user_id,
+                message_id,
+                conversation_id,
+                TRIAGE_CATEGORY_PARTS_LIST,
+                "classify",
+                "skipped",
+                {"category": category, "confidence": classification.get("confidence")},
+            )
+
+    return {"processed": processed, "created": created}
+
+
 def _get_cached_emails(user_id, limit=25, offset=0):
     """Retrieve cached emails from database"""
     if not user_id:
@@ -1299,6 +1715,41 @@ def _fetch_supplier_quote_parts_lists(message_ids, conversation_ids):
         if conversation_id and conversation_id not in by_conversation:
             by_conversation[conversation_id] = parts_list_id
     return by_message, by_conversation
+
+
+def _email_has_parts_list_association(message_id, conversation_id):
+    if not message_id and not conversation_id:
+        return False
+    clauses = []
+    params = []
+    if message_id:
+        clauses.append("email_message_id = ?")
+        params.append(message_id)
+    if conversation_id:
+        clauses.append("email_conversation_id = ?")
+        params.append(conversation_id)
+    where_clause = " OR ".join(clauses)
+    parts_row = db_execute(
+        f"""
+        SELECT 1 FROM parts_lists
+        WHERE {where_clause}
+        LIMIT 1
+        """,
+        params,
+        fetch="one",
+    )
+    if parts_row:
+        return True
+    supplier_row = db_execute(
+        f"""
+        SELECT 1 FROM parts_list_supplier_quotes
+        WHERE {where_clause}
+        LIMIT 1
+        """,
+        params,
+        fetch="one",
+    )
+    return bool(supplier_row)
 
 
 def _find_parts_lists_for_parts(part_numbers, supplier_id=None, limit=15):
@@ -1606,6 +2057,19 @@ def graph_settings():
     data = request.get_json(silent=True) or {}
     settings = _set_graph_settings(data)
     return jsonify({'success': True, 'settings': settings})
+
+
+@emails_bp.route('/emails/triage/settings', methods=['GET', 'POST'])
+def email_triage_settings():
+    if request.method == 'GET':
+        settings = _get_email_triage_settings()
+        return jsonify({'success': True, 'settings': settings})
+
+    data = request.get_json(silent=True) or {}
+    current_settings = _get_email_triage_settings()
+    merged = _apply_triage_updates(current_settings, data)
+    saved = _set_email_triage_settings(merged)
+    return jsonify({'success': True, 'settings': saved})
 
 
 @emails_bp.route('/emails/graph/connect', methods=['GET'])

@@ -178,13 +178,23 @@
                         </select>
                     </div>
                     <hr>
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" id="monroeAutoCheck">
-                        <label class="form-check-label" for="monroeAutoCheck">
-                            <strong>Auto-check Monroe when lines are added</strong>
+                    <h6 class="mb-3">My Default Settings</h6>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="monroeAutoSearchNewParts">
+                        <label class="form-check-label" for="monroeAutoSearchNewParts">
+                            <strong>Search Monroe for all new parts lists</strong>
                         </label>
                         <p class="text-muted small mt-1 mb-0">
                             When enabled, Monroe will be automatically checked in the background whenever new parts list lines are added. Results will appear when you view the AI Analysis page.
+                        </p>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="monroeAutoCreateOffer">
+                        <label class="form-check-label" for="monroeAutoCreateOffer">
+                            <strong>Auto-create parts list supplier offer for Monroe results</strong>
+                        </label>
+                        <p class="text-muted small mt-1 mb-0">
+                            When enabled, Monroe results will be automatically loaded as a supplier quote/offer. Otherwise, you'll need to manually select and load them.
                         </p>
                     </div>
                 </div>
@@ -706,7 +716,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (s.id === data.monroe_supplier_id) opt.selected = true;
                     select.appendChild(opt);
                 });
-                document.getElementById('monroeAutoCheck').checked = !!data.auto_check;
+                document.getElementById('monroeAutoSearchNewParts').checked = !!data.auto_search_new_parts;
+                document.getElementById('monroeAutoCreateOffer').checked = !!data.auto_create_supplier_offer;
                 var myModal = new bootstrap.Modal(document.getElementById('monroeSettingsModal'));
                 myModal.show();
             }
@@ -715,9 +726,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('saveMonroeSettings').addEventListener('click', async function() {
         const supplierId = document.getElementById('monroeSupplierSelect').value;
-        const autoCheck = document.getElementById('monroeAutoCheck').checked;
+        const autoSearchNewParts = document.getElementById('monroeAutoSearchNewParts').checked;
+        const autoCreateOffer = document.getElementById('monroeAutoCreateOffer').checked;
 
-        if (!supplierId) return;
+        if (!supplierId) {
+            alert('Please select a Monroe supplier');
+            return;
+        }
 
         try {
             const resp = await fetch('/parts-list-ai/api/monroe-settings', {
@@ -725,7 +740,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     supplier_id: parseInt(supplierId),
-                    auto_check: autoCheck
+                    auto_search_new_parts: autoSearchNewParts,
+                    auto_create_supplier_offer: autoCreateOffer
                 })
             });
             const data = await resp.json();

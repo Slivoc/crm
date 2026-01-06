@@ -384,6 +384,9 @@ function buildColumns() {
             className: 'htCenter',
             renderer: qplRenderer
         },
+        { data: 'qpl_approvals_display', type: 'text', width: 260, readOnly: true },
+        { data: 'contacted_suppliers_display', type: 'text', width: 200, readOnly: true },
+        { data: 'no_bid_suppliers_display', type: 'text', width: 180, readOnly: true },
         { data: 'quantity', type: 'numeric', width: 80, className: 'htCenter' }
     ];
 
@@ -434,7 +437,7 @@ function buildColumns() {
 
 function buildNestedHeaders() {
     const topHeaders = [
-        { label: '', colspan: 6 }
+        { label: '', colspan: 9 }
     ];
 
     supplierColumns.forEach(supplier => {
@@ -453,6 +456,9 @@ function buildNestedHeaders() {
         'Part Number',
         'Base Part',
         'QPL',
+        'QPL Approvals',
+        'Contacted',
+        'No Bid',
         'Qty'
     ];
 
@@ -541,6 +547,9 @@ document.addEventListener('DOMContentLoaded', function() {
         qpl_approval_count: line.qpl_approval_count || 0,
         qpl_manufacturers: line.qpl_manufacturers || [],
         qpl_approvals: line.qpl_approvals || [],
+        qpl_approvals_display: line.qpl_approvals_display || '',
+        contacted_suppliers_display: line.contacted_suppliers_display || '',
+        no_bid_suppliers_display: line.no_bid_suppliers_display || '',
         quantity: line.quantity || 1,
         chosen_cost: line.chosen_cost || null,
         chosen_supplier_name: line.chosen_supplier_name || (line.chosen_source_type === 'stock' ? 'Stock' : ''),
@@ -639,6 +648,12 @@ document.addEventListener('DOMContentLoaded', function() {
             selected: false,
             part_number: '',
             base_part_number: '',
+            qpl_approval_count: 0,
+            qpl_manufacturers: [],
+            qpl_approvals: [],
+            qpl_approvals_display: '',
+            contacted_suppliers_display: '',
+            no_bid_suppliers_display: '',
             quantity: 1,
             chosen_cost: null,
             chosen_supplier_name: '',

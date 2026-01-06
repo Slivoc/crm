@@ -1087,6 +1087,21 @@ def _standardize_certifications(raw_value, existing_notes=None):
     return normalized, combined_notes
 
 
+def _extract_quoted_part_number(text):
+    if not text:
+        return None
+
+    match = re.search(
+        r'\b(?:quoting|quoted)\s*[:#-]?\s*(?:p/?n\s*)?([A-Z0-9][A-Z0-9\-\/\.]+)',
+        text,
+        re.IGNORECASE
+    )
+    if not match:
+        return None
+
+    return match.group(1).strip()
+
+
 _CURRENCY_CODE_PATTERN = re.compile(
     r'\b(USD|EUR|GBP|CAD|AUD|NZD|CHF|JPY|CNY|SEK|NOK|DKK|SGD|HKD|INR|KRW|MXN|BRL|AED|SAR|ZAR|TRY|PLN|CZK|HUF|RON)\b',
     re.IGNORECASE,
@@ -1165,7 +1180,7 @@ Do NOT use markdown formatting like ```json or any wrappers. Output raw JSON onl
   - price: Unit price (decimal number, extract just the number)
   - lead_time_days: Lead time in days (integer, null if not specified)
   - condition: Condition code like "NE", "OH", "SV", "AR" (use null if not specified)
-- certifications: Keep this concise. Prefer "OEM certs" if there is full trace to OEM/manufacturer. Use "EASA Form 1" or "8130-3" when those certificates are mentioned. Use "Dual release (8130/EASA)" if both are present. If there is no trace or only distributor C of C, set to "no trace". Omit DFARS/ITAR/testing notes from this field.
+- certifications: Keep this concise. Prefer "OEM certs" if there is full trace to OEM/manufacturer. Use "EASA Form 1" or "8130-3" when those certificates are mentioned. Use "Dual release (8130/EASA)" if both are present. Use "no trace" ONLY when explicitly stated (e.g., "no certs", "no trace", "distributor C of C only"). If not mentioned, use null. Omit DFARS/ITAR/testing notes from this field.
 - is_no_bid: true if supplier declined to quote this part, false otherwise
 - manufacturer: Extract the manufacturer name if mentioned. Look for common aerospace hardware brands like "Cherry", "Alcoa", "Arconic", "Allfast", "SPS", "Monogram", "Fairchild", "Kaynar", "Huck", "Shur-Lok".
 - notes: Any additional relevant notes about this line. If DFARS/ITAR compliance, test reports, or other paperwork details are mentioned, put them here instead of certifications.
@@ -1175,7 +1190,9 @@ Look for common patterns:
 - Lead times like "3-4 weeks", "Stock", "ARO" should be converted to days (weeks * 7)
 - Condition codes are usually 2 letters
 - Prices might have currency symbols - extract just the number
-- Part numbers might be slightly different from requested - use what supplier provided"""
+- Part numbers might be slightly different from requested - use what supplier provided
+- If a line includes "Quoting: <PN>" or "Quoted: <PN>", use that as the part_number
+- If MOQ is present, the quoted quantity should be at least the MOQ"""
                 },
                 {
                     "role": "user",
@@ -1297,7 +1314,16 @@ Extract all quoted items into a JSON array."""
                     is_no_bid = bool(is_no_bid_raw)
 
                 notes = str(item.get('notes', '')).strip() or None
+                quoted_part_number = _extract_quoted_part_number(notes)
+                if quoted_part_number and quoted_part_number != part_number:
+                    if not notes or part_number not in notes:
+                        notes = f"{notes}; Requested PN: {part_number}" if notes else f"Requested PN: {part_number}"
+                    part_number = quoted_part_number
+
                 certifications, notes = _standardize_certifications(certifications, notes)
+
+                if moq is not None and (quantity is None or quantity < moq):
+                    quantity = moq
 
                 cleaned_item = {
                     'part_number': part_number,
@@ -3239,12 +3265,74 @@ def table_view(list_id):
             entry['approval_count'] = len(entry['approvals'])
             entry.pop('manufacturers', None)
 
+    line_ids = [line.get('id') for line in lines if line.get('id')]
+    no_bid_line_ids = sorted({line.get('parent_line_id') or line.get('id') for line in lines if line.get('id')})
+    contacted_lookup = {}
+    no_bid_lookup = {}
+
+    if line_ids or no_bid_line_ids:
+        with db_cursor() as cur:
+            if line_ids:
+                placeholders = ','.join(['?'] * len(line_ids))
+                contacted_rows = _execute_with_cursor(cur, f"""
+                    SELECT se.parts_list_line_id, s.name as supplier_name
+                    FROM parts_list_line_supplier_emails se
+                    JOIN suppliers s ON s.id = se.supplier_id
+                    WHERE se.parts_list_line_id IN ({placeholders})
+                    ORDER BY s.name
+                """, line_ids).fetchall() or []
+
+                for row in contacted_rows:
+                    line_id = _safe_row_get(row, 'parts_list_line_id')
+                    supplier_name = _safe_row_get(row, 'supplier_name')
+                    if not (line_id and supplier_name):
+                        continue
+                    contacted_lookup.setdefault(line_id, set()).add(supplier_name)
+
+            if no_bid_line_ids:
+                placeholders = ','.join(['?'] * len(no_bid_line_ids))
+                no_bid_rows = _execute_with_cursor(cur, f"""
+                    SELECT sql.parts_list_line_id, s.name as supplier_name
+                    FROM parts_list_supplier_quote_lines sql
+                    JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                    JOIN suppliers s ON s.id = sq.supplier_id
+                    WHERE sql.parts_list_line_id IN ({placeholders})
+                      AND sql.is_no_bid = TRUE
+                    ORDER BY s.name
+                """, no_bid_line_ids).fetchall() or []
+
+                for row in no_bid_rows:
+                    line_id = _safe_row_get(row, 'parts_list_line_id')
+                    supplier_name = _safe_row_get(row, 'supplier_name')
+                    if not (line_id and supplier_name):
+                        continue
+                    no_bid_lookup.setdefault(line_id, set()).add(supplier_name)
+
     for line in lines:
         base_key = line.get('base_part_number')
         qpl_summary = qpl_lookup.get(base_key, {})
         line['qpl_approval_count'] = qpl_summary.get('approval_count', 0)
         line['qpl_manufacturers'] = qpl_summary.get('manufacturer_names', [])
         line['qpl_approvals'] = qpl_summary.get('approvals', [])
+        approvals = line['qpl_approvals'] or []
+        formatted_approvals = []
+        for approval in approvals:
+            name = (approval or {}).get('manufacturer_name')
+            cage = (approval or {}).get('cage_code')
+            status = (approval or {}).get('approval_status')
+            location = (approval or {}).get('location')
+            parts = [p for p in [name, f"CAGE {cage}" if cage else None, status, location] if p]
+            if parts:
+                formatted_approvals.append(" - ".join(parts))
+        line['qpl_approvals_display'] = "; ".join(formatted_approvals)
+
+        contacted_suppliers = sorted(contacted_lookup.get(line.get('id'), set()))
+        no_bid_key = line.get('parent_line_id') or line.get('id')
+        no_bid_suppliers = sorted(no_bid_lookup.get(no_bid_key, set()))
+        line['contacted_suppliers'] = contacted_suppliers
+        line['no_bid_suppliers'] = no_bid_suppliers
+        line['contacted_suppliers_display'] = ", ".join(contacted_suppliers)
+        line['no_bid_suppliers_display'] = ", ".join(no_bid_suppliers)
 
     breadcrumbs = [
         ('Home', url_for('index')),

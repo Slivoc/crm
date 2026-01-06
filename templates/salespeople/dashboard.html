@@ -11,6 +11,9 @@
       <p class="text-muted">Customer contact engagement metrics for the sales team</p>
     </div>
     <div class="col-md-4 text-md-end">
+      <a href="{{ url_for('salespeople.consolidated_planner') }}" class="btn btn-success me-2">
+        <i class="bi bi-calendar-check"></i> Consolidated Planner
+      </a>
       <button class="btn btn-outline-secondary me-2" data-bs-toggle="offcanvas" data-bs-target="#manageSaleseople">
         <i class="bi bi-people"></i> Manage Salespeople
       </button>
@@ -53,6 +56,9 @@
               <ul class="dropdown-menu">
                 <li><a class="dropdown-item" href="{{ url_for('salespeople.activity', salesperson_id=salesperson.id) }}">
                   <i class="bi bi-speedometer2"></i> Full Dashboard
+                </a></li>
+                <li><a class="dropdown-item" href="{{ url_for('salespeople.planner_index', salesperson_id=salesperson.id) }}">
+                  <i class="bi bi-calendar-check"></i> Monthly Planner
                 </a></li>
                 <li><a class="dropdown-item" href="{{ url_for('salespeople.customers', salesperson_id=salesperson.id) }}">
                   <i class="bi bi-people"></i> Customers
@@ -209,6 +215,9 @@
   <div class="btn-group" role="group">
     <a href="{{ url_for('salespeople.activity', salesperson_id=salesperson.id) }}" class="btn btn-sm btn-outline-primary">
       <i class="bi bi-graph-up-arrow"></i> Dashboard
+    </a>
+    <a href="{{ url_for('salespeople.planner_index', salesperson_id=salesperson.id) }}" class="btn btn-sm btn-outline-success">
+      <i class="bi bi-calendar-check"></i> Planner
     </a>
     <a href="{{ url_for('salespeople.customers', salesperson_id=salesperson.id) }}" class="btn btn-sm btn-outline-primary">
       <i class="bi bi-person-badge"></i> Customers
