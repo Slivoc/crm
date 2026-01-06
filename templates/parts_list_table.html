@@ -234,6 +234,24 @@
     </div>
 </div>
 
+<!-- QPL Details Modal -->
+<div class="modal fade" id="qplDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">QPL Approvals</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="qplDetailsBody" class="table-responsive"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -306,6 +324,31 @@ function currencyRenderer(instance, td, row, col, prop, value, cellProperties) {
     }
 }
 
+function qplRenderer(instance, td, row, col, prop, value, cellProperties) {
+    Handsontable.renderers.TextRenderer.apply(this, arguments);
+
+    const count = parseInt(value, 10) || 0;
+    const rowData = instance.getSourceDataAtRow(row) || {};
+
+    td.classList.add('htCenter');
+
+    if (count <= 0) {
+        td.innerHTML = '<span class="text-muted">-</span>';
+        return;
+    }
+
+    const label = count === 1 ? '1 approval' : `${count} approvals`;
+    const manufacturers = (rowData.qpl_manufacturers || []).join(', ');
+    const safeManufacturers = manufacturers.replace(/"/g, '&quot;');
+    const tooltip = manufacturers ? `title="${safeManufacturers}"` : '';
+    td.innerHTML = `
+        <button type="button" class="btn btn-sm btn-outline-success" ${tooltip}
+                onclick="showQplDetails(${row})">
+            ${label}
+        </button>
+    `;
+}
+
 function isBestPrice(rowData, currentProp, currentValue) {
     if (!currentValue) return false;
 
@@ -334,6 +377,13 @@ function buildColumns() {
         { data: 'line_number', type: 'numeric', width: 70, readOnly: true, className: 'htCenter' },
         { data: 'part_number', type: 'text', width: 180, readOnly: false },
         { data: 'base_part_number', type: 'text', width: 180, readOnly: false },
+        {
+            data: 'qpl_approval_count',
+            width: 90,
+            readOnly: true,
+            className: 'htCenter',
+            renderer: qplRenderer
+        },
         { data: 'quantity', type: 'numeric', width: 80, className: 'htCenter' }
     ];
 
@@ -384,7 +434,7 @@ function buildColumns() {
 
 function buildNestedHeaders() {
     const topHeaders = [
-        { label: '', colspan: 5 }
+        { label: '', colspan: 6 }
     ];
 
     supplierColumns.forEach(supplier => {
@@ -402,6 +452,7 @@ function buildNestedHeaders() {
         'Line #',
         'Part Number',
         'Base Part',
+        'QPL',
         'Qty'
     ];
 
@@ -487,6 +538,9 @@ document.addEventListener('DOMContentLoaded', function() {
         selected: false,
         part_number: line.customer_part_number || '',
         base_part_number: line.base_part_number || '',
+        qpl_approval_count: line.qpl_approval_count || 0,
+        qpl_manufacturers: line.qpl_manufacturers || [],
+        qpl_approvals: line.qpl_approvals || [],
         quantity: line.quantity || 1,
         chosen_cost: line.chosen_cost || null,
         chosen_supplier_name: line.chosen_supplier_name || (line.chosen_source_type === 'stock' ? 'Stock' : ''),
@@ -945,6 +999,77 @@ function viewSupplierQuotes() {
     }
 
     modal.show();
+}
+
+function showQplDetails(rowIndex) {
+    const rowData = allPartsData[rowIndex];
+    if (!rowData) return;
+
+    const modalEl = document.getElementById('qplDetailsModal');
+    const modal = new bootstrap.Modal(modalEl);
+    const bodyEl = document.getElementById('qplDetailsBody');
+
+    const render = (approvals) => {
+        if (!approvals || approvals.length === 0) {
+            bodyEl.innerHTML = '<p class="text-muted mb-0">No QPL approvals found for this part.</p>';
+        } else {
+            const rows = approvals.map(a => `
+                <tr>
+                    <td>${a.manufacturer_name || '-'}</td>
+                    <td>${a.cage_code || '-'}</td>
+                    <td>${a.approval_status || '-'}</td>
+                    <td>${a.location || '-'}</td>
+                </tr>
+            `).join('');
+
+            bodyEl.innerHTML = `
+                <div class="alert alert-info py-2 px-3 mb-3">
+                    <strong>${rowData.base_part_number || rowData.part_number || 'Part'}</strong><br>
+                    ${approvals.length} approved manufacturer${approvals.length === 1 ? '' : 's'}
+                </div>
+                <table class="table table-sm mb-0">
+                    <thead>
+                        <tr>
+                            <th>Manufacturer</th>
+                            <th>CAGE</th>
+                            <th>Status</th>
+                            <th>Location</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+
+        modal.show();
+    };
+
+    const existingApprovals = rowData.qpl_approvals || [];
+    if (existingApprovals.length > 0 || !rowData.base_part_number) {
+        render(existingApprovals);
+        return;
+    }
+
+    bodyEl.innerHTML = '<p class="text-muted mb-0">Loading approvals...</p>';
+    modal.show();
+
+    fetch(`/parts_list/parts-lists/qpl?part=${encodeURIComponent(rowData.base_part_number)}`)
+        .then(resp => resp.json())
+        .then(data => {
+            const approvals = data.success ? (data.results || []) : [];
+            rowData.qpl_approvals = approvals;
+            rowData.qpl_approval_count = approvals.length;
+            rowData.qpl_manufacturers = approvals.map(a => a.manufacturer_name).filter(Boolean);
+            render(approvals);
+
+            if (partsListHot) {
+                partsListHot.render();
+            }
+        })
+        .catch(error => {
+            console.error('Error loading QPL approvals:', error);
+            bodyEl.innerHTML = '<p class="text-danger mb-0">Error loading approvals.</p>';
+        });
 }
 
 function saveAllChanges() {

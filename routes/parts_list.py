@@ -3187,7 +3187,64 @@ def table_view(list_id):
         """,
         (list_id,),
         fetch='all',
-    )
+    ) or []
+
+    lines = [dict(line) for line in lines]
+
+    # Bulk fetch QPL approvals for all base part numbers in this list
+    base_part_numbers = sorted({line.get('base_part_number') for line in lines if line.get('base_part_number')})
+    qpl_lookup = {}
+
+    if base_part_numbers:
+        placeholders = ','.join(['?'] * len(base_part_numbers))
+        qpl_query = f"""
+            SELECT
+                COALESCE(NULLIF(ma.manufacturer_part_number_base, ''), ma.airbus_material_base) AS base_part_number,
+                ma.manufacturer_name,
+                ma.cage_code,
+                ma.approval_status,
+                ma.location
+            FROM manufacturer_approvals ma
+            WHERE ma.airbus_material_base IN ({placeholders})
+               OR ma.manufacturer_part_number_base IN ({placeholders})
+            ORDER BY base_part_number, manufacturer_name
+        """
+
+        with db_cursor() as cur:
+            qpl_rows = _execute_with_cursor(cur, qpl_query, (*base_part_numbers, *base_part_numbers)).fetchall() or []
+
+        for qpl in qpl_rows:
+            base_key = _safe_row_get(qpl, 'base_part_number')
+            if not base_key:
+                continue
+
+            entry = qpl_lookup.setdefault(base_key, {
+                'approvals': [],
+                'manufacturers': set(),
+            })
+
+            approval = {
+                'manufacturer_name': _safe_row_get(qpl, 'manufacturer_name'),
+                'cage_code': _safe_row_get(qpl, 'cage_code'),
+                'approval_status': _safe_row_get(qpl, 'approval_status'),
+                'location': _safe_row_get(qpl, 'location'),
+            }
+
+            entry['approvals'].append(approval)
+            if approval['manufacturer_name']:
+                entry['manufacturers'].add(approval['manufacturer_name'])
+
+        for base_key, entry in qpl_lookup.items():
+            entry['manufacturer_names'] = sorted(entry['manufacturers'])
+            entry['approval_count'] = len(entry['approvals'])
+            entry.pop('manufacturers', None)
+
+    for line in lines:
+        base_key = line.get('base_part_number')
+        qpl_summary = qpl_lookup.get(base_key, {})
+        line['qpl_approval_count'] = qpl_summary.get('approval_count', 0)
+        line['qpl_manufacturers'] = qpl_summary.get('manufacturer_names', [])
+        line['qpl_approvals'] = qpl_summary.get('approvals', [])
 
     breadcrumbs = [
         ('Home', url_for('index')),
@@ -3203,7 +3260,7 @@ def table_view(list_id):
                            customer_name=header['customer_name'],
                            status_id=header.get('status_id'),
                            status_name=header.get('status_name'),
-                           lines=[dict(line) for line in lines])
+                           lines=lines)
 
 
 # Your existing update_line route is already perfect for this!
