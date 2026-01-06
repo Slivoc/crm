@@ -71,6 +71,9 @@
                             <button type="button" class="btn btn-sm btn-warning" id="createTicketBtn" disabled title="Create Ticket">
                                 <i class="bi bi-ticket-detailed me-1"></i>Ticket
                             </button>
+                            <button type="button" class="btn btn-sm btn-outline-dark" id="mailboxTriageBtn" disabled title="Preview triage decision">
+                                <i class="bi bi-diagram-3 me-1"></i>Triage
+                            </button>
                             <a class="btn btn-sm btn-outline-secondary disabled" id="openOutlookBtn" href="#" target="_blank" rel="noopener" title="Open in Outlook">
                                 <i class="bi bi-box-arrow-up-right"></i>
                             </a>
@@ -267,6 +270,30 @@
     </div>
 </div>
 
+<!-- Triage Preview Modal -->
+<div class="modal fade" id="mailboxTriageModal" tabindex="-1" aria-labelledby="mailboxTriageLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="mailboxTriageLabel">
+                    <i class="bi bi-diagram-3 me-2"></i>Triage preview
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-2" id="mailboxTriageStatus"></div>
+                <div class="mb-2 text-muted small" id="mailboxTriageClassification"></div>
+                <div class="mb-2">
+                    <div class="fw-semibold">Reasons</div>
+                    <ul class="small mb-2" id="mailboxTriageReasons"></ul>
+                </div>
+                <div class="fw-semibold">Raw</div>
+                <pre class="mailbox-triage-raw" id="mailboxTriageRaw"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 const graphSeed = {{ graph | tojson }};
 const graphStatusEl = document.getElementById('graphStatus');
@@ -290,6 +317,7 @@ const createPartsListBtn = document.getElementById('createPartsListBtn');
 const createExcessListBtn = document.getElementById('createExcessListBtn');
 const createSupplierQuoteBtn = document.getElementById('createSupplierQuoteBtn');
 const createTicketBtn = document.getElementById('createTicketBtn');
+const mailboxTriageBtn = document.getElementById('mailboxTriageBtn');
 const openOutlookBtn = document.getElementById('openOutlookBtn');
 const loadImagesToggle = document.getElementById('loadImagesToggle');
 const loadImagesLabel = document.getElementById('loadImagesLabel');
@@ -331,6 +359,11 @@ const supplierStatusBadge = document.getElementById('supplierStatusBadge');
 const pdfAttachmentsDropdown = document.getElementById('pdfAttachmentsDropdown');
 const pdfAttachmentsBtn = document.getElementById('pdfAttachmentsBtn');
 const pdfAttachmentsList = document.getElementById('pdfAttachmentsList');
+const mailboxTriageModal = document.getElementById('mailboxTriageModal');
+const mailboxTriageStatus = document.getElementById('mailboxTriageStatus');
+const mailboxTriageClassification = document.getElementById('mailboxTriageClassification');
+const mailboxTriageReasons = document.getElementById('mailboxTriageReasons');
+const mailboxTriageRaw = document.getElementById('mailboxTriageRaw');
 
 let messageCache = [];
 let selectedMessage = null;
@@ -401,6 +434,49 @@ function formatBytes(bytes) {
     }
     const precision = size < 10 && unitIndex > 0 ? 1 : 0;
     return `${size.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function resetTriagePreview() {
+    if (!mailboxTriageStatus || !mailboxTriageReasons || !mailboxTriageRaw || !mailboxTriageClassification) return;
+    mailboxTriageStatus.textContent = '';
+    mailboxTriageClassification.textContent = '';
+    mailboxTriageReasons.innerHTML = '';
+    mailboxTriageRaw.textContent = '';
+}
+
+function renderTriagePreview(preview) {
+    if (!mailboxTriageStatus || !mailboxTriageReasons || !mailboxTriageRaw || !mailboxTriageClassification) return;
+    const status = preview?.status ? preview.status.replace(/_/g, ' ') : 'unknown';
+    const shouldCreate = preview?.should_create_parts_list ? 'Yes' : 'No';
+    mailboxTriageStatus.textContent = `Status: ${status}. Create parts list: ${shouldCreate}.`;
+
+    const classification = preview?.classification || null;
+    if (classification) {
+        const bits = [];
+        if (classification.category) bits.push(`Category: ${classification.category}`);
+        if (classification.confidence !== undefined) bits.push(`Confidence: ${classification.confidence}`);
+        if (classification.reason) bits.push(`Reason: ${classification.reason}`);
+        mailboxTriageClassification.textContent = bits.join(' | ');
+    } else {
+        mailboxTriageClassification.textContent = 'No classification available.';
+    }
+
+    mailboxTriageReasons.innerHTML = '';
+    const reasons = Array.isArray(preview?.reasons) ? preview.reasons : [];
+    if (!reasons.length) {
+        const li = document.createElement('li');
+        li.className = 'text-muted';
+        li.textContent = 'None';
+        mailboxTriageReasons.appendChild(li);
+    } else {
+        reasons.forEach(reason => {
+            const li = document.createElement('li');
+            li.textContent = reason;
+            mailboxTriageReasons.appendChild(li);
+        });
+    }
+
+    mailboxTriageRaw.textContent = JSON.stringify(preview, null, 2);
 }
 
 function getAttachmentScanCandidates() {
@@ -1357,6 +1433,8 @@ async function selectMessage(messageId) {
         item.classList.toggle('selected', item.getAttribute('data-id') === messageId);
     });
     selectedMessageId = messageId;
+    mailboxTriageBtn.disabled = true;
+    resetTriagePreview();
     mailboxSelectedSupplierData = null;
     mailboxSupplierRequests = [];
     mailboxPartsScanData = null;
@@ -1446,6 +1524,7 @@ async function selectMessage(messageId) {
         createPartsListBtn.disabled = false;
         createExcessListBtn.disabled = false;
         createTicketBtn.disabled = false;
+        mailboxTriageBtn.disabled = false;
         renderSupplierMatchState();
 
         // Fetch PDF attachments for the email (non-blocking)
@@ -1853,6 +1932,34 @@ mailboxScanPartsBtn?.addEventListener('click', async () => {
     }
 });
 
+mailboxTriageBtn?.addEventListener('click', async () => {
+    if (!selectedMessage) return;
+    const original = mailboxTriageBtn.innerHTML;
+    mailboxTriageBtn.disabled = true;
+    mailboxTriageBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Triage';
+    resetTriagePreview();
+
+    try {
+        const response = await fetch('/emails/mailbox/triage-preview', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ message_id: selectedMessage.id })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error?.message || 'Triage preview failed');
+        }
+        renderTriagePreview(data.preview);
+        const modal = new bootstrap.Modal(mailboxTriageModal);
+        modal.show();
+    } catch (error) {
+        showToast(error.message || 'Triage preview failed', 'error');
+    } finally {
+        mailboxTriageBtn.disabled = !selectedMessage;
+        mailboxTriageBtn.innerHTML = original;
+    }
+});
+
 createPartsListBtn.addEventListener('click', async () => {
     if (!selectedMessage) return;
     createPartsListBtn.disabled = true;
@@ -2104,6 +2211,16 @@ loadMailboxMessages({ reset: true });
     display: flex;
     gap: 8px;
     align-items: center;
+}
+
+.mailbox-triage-raw {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 8px;
+    max-height: 240px;
+    overflow: auto;
+    font-size: 0.75rem;
 }
 
 /* Layout */

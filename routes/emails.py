@@ -11,6 +11,7 @@ from flask import (
     Response,
     logging,
     current_app,
+    has_request_context,
 
     send_from_directory
 )
@@ -1144,7 +1145,18 @@ def _is_reply_subject(subject):
     if not subject:
         return False
     normalized = subject.strip().lower()
-    return normalized.startswith(("re:", "fw:", "fwd:"))
+    return normalized.startswith((
+        "re:",
+        "fw:",
+        "fwd:",
+        "res:",
+        "aw:",
+        "sv:",
+        "antwoord:",
+        "risposta:",
+        "respuesta:",
+        "resposta:",
+    ))
 
 
 def _conversation_has_prior_messages(user_id, conversation_id, received_datetime, message_id):
@@ -1256,10 +1268,33 @@ def _fallback_extract_tabular(text):
     return parts
 
 
+def _filter_extracted_parts_by_text(extracted, body_text):
+    if not extracted:
+        return []
+    normalized_text = re.sub(r"[^a-z0-9]+", "", (body_text or "").lower())
+    if not normalized_text:
+        return extracted
+
+    filtered = []
+    for item in extracted:
+        part_number = item.get("part_number") if isinstance(item, dict) else item[0]
+        quantity = item.get("quantity") if isinstance(item, dict) else item[1]
+        normalized_part = re.sub(r"[^a-z0-9]+", "", (part_number or "").lower())
+        if normalized_part and normalized_part in normalized_text:
+            filtered.append({"part_number": part_number, "quantity": quantity})
+    return filtered
+
+
 def _log_parts_list_creation(list_id, list_name, customer_id, contact_id, salesperson_id):
     if not (list_id and customer_id and contact_id and salesperson_id):
         return
-    list_url = url_for("parts_list.view_parts_list", list_id=list_id)
+    try:
+        if has_request_context():
+            list_url = url_for("parts_list.view_parts_list", list_id=list_id)
+        else:
+            list_url = f"/parts_list/view/{list_id}"
+    except Exception:
+        list_url = f"/parts_list/view/{list_id}"
     safe_name = html.escape(list_name or f"Parts List {list_id}")
     notes = (
         f"<i class=\"bi bi-list-check text-primary me-1\"></i> "
@@ -1296,6 +1331,7 @@ def _create_parts_list_from_triage(user_id, contact, message, body_text):
         clean_body = clean_body[:20000]
 
     extracted = extract_part_numbers_and_quantities(clean_body) if clean_body else []
+    extracted = _filter_extracted_parts_by_text(extracted, clean_body)
     if not extracted:
         extracted = _fallback_extract_tabular(clean_body)
 
@@ -1448,6 +1484,98 @@ def _run_email_triage_for_messages(user_id, messages, headers):
             )
 
     return {"processed": processed, "created": created}
+
+
+def _triage_preview_for_message(user_id, message, headers):
+    result = {
+        "message_id": message.get("id") if isinstance(message, dict) else None,
+        "conversation_id": message.get("conversationId") if isinstance(message, dict) else None,
+        "subject": message.get("subject") if isinstance(message, dict) else None,
+        "from_email": None,
+        "eligible": False,
+        "should_create_parts_list": False,
+        "status": "skipped",
+        "reasons": [],
+        "classification": None,
+        "contact": None,
+        "settings": {},
+    }
+
+    settings = _get_email_triage_settings()
+    category_settings = settings.get("categories", {}).get(TRIAGE_CATEGORY_PARTS_LIST, {})
+    result["settings"] = {
+        "triage_enabled": bool(settings.get("enabled")),
+        "category_enabled": bool(category_settings.get("enabled")),
+    }
+    if not settings.get("enabled"):
+        result["reasons"].append("triage_disabled")
+        return result
+    if not category_settings.get("enabled"):
+        result["reasons"].append("category_disabled")
+        return result
+
+    message_id = result["message_id"]
+    if not message_id:
+        result["reasons"].append("missing_message_id")
+        return result
+    if not user_id:
+        result["reasons"].append("missing_user_id")
+        return result
+    if _triage_action_exists(user_id, message_id, TRIAGE_CATEGORY_PARTS_LIST):
+        result["reasons"].append("action_exists")
+        return result
+
+    from_data = message.get("from", {}).get("emailAddress", {}) if isinstance(message, dict) else {}
+    sender_email = _normalize_email_address(from_data.get("address"))
+    result["from_email"] = sender_email
+    if not sender_email:
+        result["reasons"].append("missing_sender_email")
+        return result
+
+    contact = get_contact_by_email(sender_email)
+    if contact and not isinstance(contact, dict):
+        contact = dict(contact)
+    if not contact or not contact.get("customer_id"):
+        result["reasons"].append("sender_not_customer_contact")
+        return result
+    result["contact"] = {
+        "id": contact.get("id"),
+        "name": contact.get("name") or contact.get("full_name"),
+        "customer_id": contact.get("customer_id"),
+    }
+
+    subject = result["subject"] or ""
+    if _is_reply_subject(subject):
+        result["reasons"].append("reply_subject")
+        return result
+
+    conversation_id = result["conversation_id"]
+    received_dt = message.get("receivedDateTime") if isinstance(message, dict) else None
+    if _email_has_parts_list_association(message_id, conversation_id):
+        result["reasons"].append("parts_list_exists")
+        return result
+    if _conversation_has_prior_messages(user_id, conversation_id, received_dt, message_id):
+        result["reasons"].append("prior_conversation_messages")
+        return result
+
+    detailed_message = _fetch_graph_message_for_triage(headers, message_id) or message
+    body_text = _extract_body_text_from_graph_message(detailed_message)
+    if not body_text:
+        result["reasons"].append("missing_body_text")
+        return result
+
+    classification = _classify_email_for_triage(subject, body_text)
+    if not classification:
+        result["reasons"].append("classification_failed")
+        return result
+
+    result["classification"] = classification
+    result["eligible"] = True
+    category = classification.get("category")
+    should_create = _parse_bool(classification.get("should_create_parts_list"), default=False)
+    result["should_create_parts_list"] = bool(category == TRIAGE_CATEGORY_PARTS_LIST and should_create)
+    result["status"] = "would_create" if result["should_create_parts_list"] else "would_skip"
+    return result
 
 
 def _get_cached_emails(user_id, limit=25, offset=0):
@@ -2589,6 +2717,60 @@ def graph_message_detail(message_id):
         "success": True,
         "message": body,
         "lookup": lookup,
+    })
+
+
+@emails_bp.route('/emails/mailbox/triage-preview', methods=['POST'])
+def mailbox_triage_preview():
+    payload = request.get_json(silent=True) or {}
+    message_id = (payload.get("message_id") or "").strip()
+    if not message_id:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Message ID is required.",
+            },
+        }), 400
+
+    settings = _get_graph_settings(include_secret=True)
+    cache, user_id = _load_graph_cache_for_request()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache_for_request(user_id, cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token",
+            },
+            "debug": token,
+        }), 400
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    message = _fetch_graph_message_for_triage(headers, message_id)
+    if not message:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Unable to fetch message for triage preview.",
+            },
+        }), 400
+
+    preview = _triage_preview_for_message(user_id, message, headers)
+    return jsonify({
+        "success": True,
+        "preview": preview,
     })
 
 
