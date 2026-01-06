@@ -566,13 +566,16 @@ def sync_graph_mailbox_emails():
             if messages:
                 _cache_email_messages(user_id, messages)
                 totals["messages_synced"] += len(messages)
-                _update_sync_status(user_id, success=True)
                 try:
                     triage_result = _run_email_triage_for_messages(user_id, messages, headers)
                     totals["triage_processed"] += triage_result.get("processed", 0)
                     totals["triage_created"] += triage_result.get("created", 0)
                 except Exception as exc:
                     current_app.logger.warning("Email triage failed for user %s: %s", user_id, exc)
+                try:
+                    _update_sync_status(user_id, success=True)
+                except Exception as exc:
+                    current_app.logger.warning("Email sync status update failed for user %s: %s", user_id, exc)
 
         except Exception as exc:
             totals["errors"] += 1
