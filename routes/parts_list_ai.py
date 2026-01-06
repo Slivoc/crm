@@ -1,4 +1,5 @@
 from flask import Blueprint, render_template, request, jsonify, url_for, session
+from flask_login import current_user
 from models import get_db_connection, get_base_currency
 import logging
 from openai import OpenAI
@@ -1542,7 +1543,7 @@ def monroe_settings():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        user_id = session.get('user_id')
+        user_id = current_user.id if getattr(current_user, 'is_authenticated', False) else session.get('user_id')
 
         if request.method == 'POST':
             data = request.get_json() or {}
