@@ -921,6 +921,7 @@ input:-webkit-autofill {
     <div class="collapse" id="purchasing-collapse">
         <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
             <li><a href="{{ url_for('suppliers.suppliers') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-building me-2"></i>Suppliers</a></li>
+            <li><a href="{{ url_for('supplier_portal.supplier_portal_home') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-network-wired me-2"></i>Supplier Portal</a></li>
             <li><a href="{{ url_for('offers.offers_list') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-tag me-2"></i>Offers</a></li>
             <li><a href="{{ url_for('purchase_orders.list_purchase_orders') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-bag-check me-2"></i>Purchase Orders</a></li>
             <li><a href="{{ url_for('expediting.expedite_dashboard') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-speedometer2 me-2"></i>Expediting</a></li>
@@ -1110,6 +1111,12 @@ input:-webkit-autofill {
                     <a href="{{ url_for('tickets.list_tickets') }}" class="btn btn-outline-secondary" title="Tickets">
                         <i class="bi bi-ticket-perforated"></i>
                     </a>
+                    <div class="input-group" style="width: 120px;">
+                        <input type="number" class="form-control form-control-sm" id="ticketNumberInput" placeholder="#" min="1" title="Enter ticket number">
+                        <button class="btn btn-outline-secondary btn-sm" type="button" id="goToTicketBtn" title="Go to ticket">
+                            <i class="bi bi-arrow-right"></i>
+                        </button>
+                    </div>
                     {% endif %}
                     <a href="{{ url_for('emails.mailbox_page') }}" class="btn btn-outline-secondary" title="Mailbox">
                         <i class="bi bi-envelope"></i>
@@ -1608,7 +1615,7 @@ function openAddCustomerModal(customerName = null) {
                 );
             }
 
-        // Global Quick Search Handler
+    // Global Quick Search Handler
 $('#global-quick-search').on('submit', function(e) {
     e.preventDefault();
     const q = $(this).find('input[type="search"]').val().trim();
@@ -1633,6 +1640,24 @@ $('#global-quick-search').on('submit', function(e) {
     // Fallback: normal part number / list search
     window.location = `/parts_list/parts-lists/search?q=${encodeURIComponent(q)}`;
 });
+    });
+
+    // Ticket number input functionality
+    document.getElementById('goToTicketBtn').addEventListener('click', function() {
+        const ticketInput = document.getElementById('ticketNumberInput');
+        const ticketNumber = ticketInput.value.trim();
+        if (ticketNumber && ticketNumber > 0) {
+            window.location.href = `/tickets/${ticketNumber}`;
+        }
+    });
+
+    document.getElementById('ticketNumberInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            const ticketNumber = this.value.trim();
+            if (ticketNumber && ticketNumber > 0) {
+                window.location.href = `/tickets/${ticketNumber}`;
+            }
+        }
     });
     </script>
     {% endblock %}

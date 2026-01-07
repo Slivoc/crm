@@ -430,6 +430,28 @@ def process_sales_orders(df, results):
 
 def process_order_lines(df, results):
     """Process order lines from the CSV with extensive debugging"""
+    def _parse_quantity(value):
+        if pd.isna(value):
+            raise ValueError("Quantity is missing")
+        try:
+            qty_value = float(str(value).strip())
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid quantity '{value}'")
+        if pd.isna(qty_value):
+            raise ValueError("Quantity is missing")
+        return int(round(qty_value))
+
+    def _parse_price(value):
+        if pd.isna(value):
+            return 0.0
+        try:
+            price_value = float(str(value).strip())
+        except (ValueError, TypeError):
+            return 0.0
+        if pd.isna(price_value):
+            return 0.0
+        return price_value
+
     with db_cursor(commit=True) as db:
         cursor = db
 
@@ -475,8 +497,8 @@ def process_order_lines(df, results):
             try:
                 # Validate data
                 line_number = int(float(line_no))
-                qty = float(quantity)
-                price = float(unit_price) if pd.notna(unit_price) else None
+                qty = _parse_quantity(quantity)
+                price = _parse_price(unit_price)
 
                 print(f"  Parsed: Line#{line_number}, Qty={qty}, Price={price}")
 

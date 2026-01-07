@@ -524,6 +524,39 @@ def _notify_assignment(ticket_id, assignee_id, workspace_id, title, is_task, wor
     send_email(contact["email"], subject, html_body, text_body)
 
 
+def _notify_returned_ticket(ticket_id, creator_id, workspace_id, title, workspace_lookup=None):
+    """Send notification to ticket creator when ticket is returned."""
+    if not creator_id or not workspace_id:
+        return
+
+    contact = _get_user_contact(creator_id)
+    if not contact or not contact.get("email"):
+        return
+
+    workspace_name = None
+    if workspace_lookup and workspace_id in workspace_lookup:
+        workspace_name = workspace_lookup[workspace_id].get("name")
+    if not workspace_name:
+        workspace_name = _fetch_workspace_name(workspace_id) or "workspace"
+
+    ticket_url = url_for('tickets.view_ticket', ticket_id=ticket_id, _external=True)
+    subject = f"Ticket returned: #{ticket_id}"
+    greeting = contact.get("username") or "there"
+    html_body = (
+        f"<p>Hi {greeting},</p>"
+        f"<p>Your ticket has been returned in the <strong>{workspace_name}</strong> workspace.</p>"
+        f"<p><strong>#{ticket_id} {title}</strong></p>"
+        f'<p><a href="{ticket_url}">View in Sproutt</a></p>'
+    )
+    text_body = (
+        f"Hi {greeting},\n\n"
+        f"Your ticket has been returned in the {workspace_name} workspace.\n"
+        f"#{ticket_id} {title}\n\n"
+        f"View: {ticket_url}"
+    )
+    send_email(contact["email"], subject, html_body, text_body)
+
+
 def _fetch_updates(ticket_id):
     rows = db_execute(
         """
@@ -1415,9 +1448,9 @@ def quick_status(ticket_id):
     changes = [f"Status changed to {status_name}"]
     if status_name.lower() == 'returned':
         changes.append("Returned to creator")
-    if assigned_user_id != ticket.get('assigned_user_id'):
-        changes.append("Assignee updated")
+
     _add_ticket_update(ticket_id, user_id, "; ".join(changes))
+
     if assigned_user_id and assigned_user_id != ticket.get('assigned_user_id'):
         _notify_assignment(
             ticket_id,
@@ -1425,6 +1458,16 @@ def quick_status(ticket_id):
             ticket.get("workspace_id"),
             ticket.get("title") or "Ticket",
             bool(ticket.get("parent_ticket_id")),
+            None,
+        )
+
+    # Send notification to creator if ticket was returned
+    if status_name.lower() == 'returned' and ticket.get('created_by_user_id'):
+        _notify_returned_ticket(
+            ticket_id,
+            ticket.get('created_by_user_id'),
+            ticket.get("workspace_id"),
+            ticket.get("title") or "Ticket",
             None,
         )
 
@@ -1748,7 +1791,7 @@ def manage_workspaces():
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, FALSE, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES (?, ?, TRUE, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 [(workspace_id, member_id) for member_id in member_ids],
                 many=True,

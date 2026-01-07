@@ -962,7 +962,8 @@ def _ensure_monroe_tables(cur):
             purchase_increment INTEGER,
             currency_code TEXT DEFAULT 'USD',
             search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            error_message TEXT
+            error_message TEXT,
+            debug_info TEXT
         )
     """)
     cur.execute("""
@@ -1099,11 +1100,14 @@ def _run_monroe_check_background(list_id, line_ids, user_id=None, auto_create_of
     Called when auto-check is enabled and new lines are added.
     If auto_create_offer is True, will automatically create a supplier quote for results with prices.
     """
+    logging.info(f"Monroe auto-check background started: list {list_id}, line_ids={line_ids}, user={user_id}")
+
     if not PLAYWRIGHT_AVAILABLE:
         logging.warning("Monroe auto-check skipped: Playwright not available")
         return
 
     if not line_ids:
+        logging.warning(f"Monroe auto-check skipped for list {list_id}: no line_ids provided")
         return
 
     try:
@@ -1116,12 +1120,14 @@ def _run_monroe_check_background(list_id, line_ids, user_id=None, auto_create_of
 
         # Get line details
         placeholders = ",".join("?" for _ in line_ids)
+        logging.info(f"Monroe auto-check: Fetching {len(line_ids)} lines from database")
         cur.execute(f"""
             SELECT id, customer_part_number, base_part_number, quantity
             FROM parts_list_lines
             WHERE parts_list_id = ? AND id IN ({placeholders})
         """, (list_id, *line_ids))
         lines = [dict(row) for row in cur.fetchall()]
+        logging.info(f"Monroe auto-check: Found {len(lines)} lines in database")
 
         result_ids = []  # Track result IDs for auto-offer creation
 
@@ -1325,7 +1331,10 @@ def trigger_monroe_auto_check(list_id, line_ids, user_id=None):
     Trigger Monroe auto-check in a background thread if enabled for the user.
     Called from add_lines endpoint.
     """
+    logging.info(f"Monroe auto-check trigger called for list {list_id}, user {user_id}, lines {line_ids}")
+
     if not PLAYWRIGHT_AVAILABLE:
+        logging.warning(f"Monroe auto-check skipped for list {list_id}: Playwright not available")
         return
 
     try:
@@ -1334,6 +1343,7 @@ def trigger_monroe_auto_check(list_id, line_ids, user_id=None):
 
         # If no user_id provided, get it from the parts list
         if user_id is None:
+            logging.info(f"Monroe auto-check: No user_id provided, looking up from parts list {list_id}")
             cur.execute("""
                 SELECT salesperson_id FROM parts_lists WHERE id = ?
             """, (list_id,))
@@ -1346,26 +1356,35 @@ def trigger_monroe_auto_check(list_id, line_ids, user_id=None):
                 user_row = cur.fetchone()
                 if user_row:
                     user_id = user_row['user_id']
+                    logging.info(f"Monroe auto-check: Found user_id {user_id} from salesperson {row['salesperson_id']}")
+                else:
+                    logging.warning(f"Monroe auto-check: No user linked to salesperson {row['salesperson_id']}")
 
         # Check user-specific settings
         if user_id:
             user_settings = _get_user_monroe_settings(cur, user_id)
             auto_search = user_settings.get('auto_search_new_parts', False)
             auto_create_offer = user_settings.get('auto_create_supplier_offer', False)
+            logging.info(f"Monroe auto-check: User {user_id} settings: auto_search={auto_search}, auto_create_offer={auto_create_offer}")
         else:
             auto_search = False
             auto_create_offer = False
+            logging.warning(f"Monroe auto-check skipped for list {list_id}: No user_id found")
 
         # If auto-search is not enabled for this user, exit
         if not auto_search:
+            logging.info(f"Monroe auto-check skipped for list {list_id}: auto_search_new_parts is disabled for user {user_id}")
             conn.close()
             return
 
         # Check if Monroe supplier is configured
-        if not _get_monroe_supplier_id(cur):
+        monroe_supplier_id = _get_monroe_supplier_id(cur)
+        if not monroe_supplier_id:
+            logging.warning(f"Monroe auto-check skipped for list {list_id}: Monroe supplier not configured")
             conn.close()
             return
 
+        logging.info(f"Monroe auto-check: All checks passed, starting background thread for list {list_id}")
         conn.close()
 
         # Run in background thread
@@ -1379,6 +1398,200 @@ def trigger_monroe_auto_check(list_id, line_ids, user_id=None):
 
     except Exception as e:
         logging.exception(f"Failed to trigger Monroe auto-check: {e}")
+
+
+def trigger_monroe_auto_check_with_status(list_id, line_ids, user_id, status_id, force=False):
+    """
+    Trigger Monroe check with status tracking.
+    Used when manually triggering from Supplier Portal.
+    """
+    if not PLAYWRIGHT_AVAILABLE:
+        return
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Check if Monroe supplier is configured
+        monroe_supplier_id = _get_monroe_supplier_id(cur)
+        if not monroe_supplier_id:
+            # Update status to failed
+            cur.execute("""
+                UPDATE supplier_scrape_status
+                SET status = 'failed', error_message = 'Monroe supplier not configured', completed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (status_id,))
+            conn.commit()
+            conn.close()
+            return
+
+        # Get user settings for auto_create_offer
+        auto_create_offer = False
+        if user_id:
+            user_settings = _get_user_monroe_settings(cur, user_id)
+            auto_create_offer = user_settings.get('auto_create_supplier_offer', False)
+
+        conn.close()
+
+        # Run in background thread with status tracking
+        thread = threading.Thread(
+            target=_run_monroe_check_with_status,
+            args=(list_id, line_ids, user_id, auto_create_offer, status_id),
+            daemon=True
+        )
+        thread.start()
+        logging.info(f"Monroe check with status tracking started for list {list_id}, status {status_id}")
+
+    except Exception as e:
+        logging.exception(f"Failed to trigger Monroe check with status: {e}")
+
+
+def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer, status_id):
+    """
+    Run Monroe check with status updates.
+    """
+    if not PLAYWRIGHT_AVAILABLE:
+        return
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Update status to in_progress
+        cur.execute("""
+            UPDATE supplier_scrape_status
+            SET status = 'in_progress'
+            WHERE id = ?
+        """, (status_id,))
+        conn.commit()
+
+        # Ensure tables exist
+        _ensure_monroe_tables(cur)
+        conn.commit()
+
+        # Get line details
+        placeholders = ",".join("?" for _ in line_ids)
+        cur.execute(f"""
+            SELECT id, customer_part_number, base_part_number, quantity
+            FROM parts_list_lines
+            WHERE parts_list_id = ? AND id IN ({placeholders})
+        """, (list_id, *line_ids))
+        lines = [dict(row) for row in cur.fetchall()]
+
+        result_ids = []
+        processed = 0
+        successful = 0
+        failed = 0
+
+        for line in lines:
+            part_number = line['customer_part_number'] or line['base_part_number']
+            if not part_number:
+                processed += 1
+                failed += 1
+                continue
+
+            # Update current part number
+            cur.execute("""
+                UPDATE supplier_scrape_status
+                SET current_part_number = ?, processed_lines = ?
+                WHERE id = ?
+            """, (part_number, processed, status_id))
+            conn.commit()
+
+            logging.info(f"Monroe status {status_id}: Checking {part_number}")
+
+            # Scrape Monroe
+            scrape_result = _scrape_monroe(part_number, headless=True)
+
+            has_price = scrape_result.get('unit_price') is not None
+            inventory = scrape_result.get('inventory') if has_price else None
+            minimum_order = scrape_result.get('minimum_order') if has_price else None
+            purchase_increment = scrape_result.get('purchase_increment') if has_price else None
+
+            # Store debug info as JSON string
+            debug_info_json = json.dumps(scrape_result.get('debug_info', []))
+
+            # Store result
+            if _using_postgres():
+                cur.execute("""
+                    INSERT INTO monroe_search_results
+                    (parts_list_id, parts_list_line_id, base_part_number, searched_part_number,
+                     unit_price, inventory, minimum_order, purchase_increment, error_message, debug_info)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
+                """, (
+                    list_id, line['id'], line['base_part_number'], part_number,
+                    scrape_result.get('unit_price'), inventory, minimum_order,
+                    purchase_increment, scrape_result.get('error'), debug_info_json
+                ))
+                result_row = cur.fetchone()
+                if result_row and has_price:
+                    result_ids.append(result_row['id'])
+                    successful += 1
+                else:
+                    failed += 1
+            else:
+                cur.execute("""
+                    INSERT INTO monroe_search_results
+                    (parts_list_id, parts_list_line_id, base_part_number, searched_part_number,
+                     unit_price, inventory, minimum_order, purchase_increment, error_message, debug_info)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    list_id, line['id'], line['base_part_number'], part_number,
+                    scrape_result.get('unit_price'), inventory, minimum_order,
+                    purchase_increment, scrape_result.get('error'), debug_info_json
+                ))
+                if has_price:
+                    result_ids.append(cur.lastrowid)
+                    successful += 1
+                else:
+                    failed += 1
+
+            processed += 1
+            conn.commit()
+
+            # Small delay between requests
+            time.sleep(1)
+
+        # Auto-create supplier offer if enabled and we have results with prices
+        if auto_create_offer and result_ids:
+            try:
+                _auto_create_monroe_offer(cur, list_id, result_ids, user_id)
+                conn.commit()
+                logging.info(f"Monroe: Auto-created supplier offer for list {list_id} with {len(result_ids)} lines")
+            except Exception as e:
+                logging.exception(f"Failed to auto-create Monroe offer: {e}")
+
+        # Update final status
+        cur.execute("""
+            UPDATE supplier_scrape_status
+            SET status = 'completed',
+                processed_lines = ?,
+                successful_lines = ?,
+                failed_lines = ?,
+                completed_at = CURRENT_TIMESTAMP,
+                current_part_number = NULL
+            WHERE id = ?
+        """, (processed, successful, failed, status_id))
+        conn.commit()
+        conn.close()
+
+        logging.info(f"Monroe check completed for list {list_id}, status {status_id}: {successful} successful, {failed} failed")
+
+    except Exception as e:
+        logging.exception(f"Monroe check with status failed: {e}")
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE supplier_scrape_status
+                SET status = 'failed', error_message = ?, completed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (str(e), status_id))
+            conn.commit()
+            conn.close()
+        except:
+            pass
 
 
 def _scrape_monroe(product_name, headless=True):
@@ -1401,92 +1614,267 @@ def _scrape_monroe(product_name, headless=True):
         "inventory": None,
         "minimum_order": None,
         "purchase_increment": None,
-        "error": None
+        "error": None,
+        "debug_info": []
     }
 
+    screenshot_dir = "monroe_debug_screenshots"
+    os.makedirs(screenshot_dir, exist_ok=True)
+    timestamp = int(time.time())
+
     try:
+        logging.info(f"Monroe scrape starting for: {product_name}")
+        result["debug_info"].append(f"Starting scrape for: {product_name}")
+
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=headless)
             page = browser.new_page()
 
+            # Set viewport for consistent rendering
+            page.set_viewport_size({"width": 1920, "height": 1080})
+
+            # Navigate to Monroe
+            logging.info(f"Monroe: Navigating to catalog.monroeaerospace.com")
+            result["debug_info"].append("Navigating to Monroe catalog")
             page.goto("https://catalog.monroeaerospace.com/express",
                      wait_until="domcontentloaded", timeout=60000)
             time.sleep(2)
 
+            # Take screenshot after page load
+            page.screenshot(path=f"{screenshot_dir}/{timestamp}_01_pageload_{product_name.replace('/', '_')}.png")
+            result["debug_info"].append(f"Screenshot saved: 01_pageload")
+
             # Find and fill the Express Ordering search input
-            search_input = page.wait_for_selector('#plp-express-search-text', timeout=10000)
-            search_input.click()
-            search_input.fill(product_name)
+            logging.info(f"Monroe: Looking for search input")
+            result["debug_info"].append("Looking for search input #plp-express-search-text")
+
+            try:
+                search_input = page.wait_for_selector('#plp-express-search-text', timeout=10000)
+                logging.info(f"Monroe: Found search input, filling with '{product_name}'")
+                result["debug_info"].append(f"Found search input, filling with: {product_name}")
+                search_input.click()
+                search_input.fill(product_name)
+
+                # Screenshot after filling
+                page.screenshot(path=f"{screenshot_dir}/{timestamp}_02_search_filled_{product_name.replace('/', '_')}.png")
+                result["debug_info"].append(f"Screenshot saved: 02_search_filled")
+            except Exception as e:
+                logging.error(f"Monroe: Failed to find search input: {e}")
+                result["debug_info"].append(f"ERROR finding search input: {e}")
+                page.screenshot(path=f"{screenshot_dir}/{timestamp}_ERROR_no_search_input.png")
+                raise
 
             # Click the SEARCH button
-            search_button = page.wait_for_selector(
-                'button:has-text("SEARCH"), .plp-cadpart-search-button, button[class*="search"]',
-                timeout=10000
-            )
-            search_button.click()
+            logging.info(f"Monroe: Looking for search button")
+            result["debug_info"].append("Looking for search button")
+
+            try:
+                search_button = page.wait_for_selector(
+                    'button:has-text("SEARCH"), .plp-cadpart-search-button, button[class*="search"]',
+                    timeout=10000
+                )
+                logging.info(f"Monroe: Found search button, clicking")
+                result["debug_info"].append("Found search button, clicking")
+                search_button.click()
+            except Exception as e:
+                logging.error(f"Monroe: Failed to find search button: {e}")
+                result["debug_info"].append(f"ERROR finding search button: {e}")
+                page.screenshot(path=f"{screenshot_dir}/{timestamp}_ERROR_no_search_button.png")
+                raise
 
             # Wait for results
+            logging.info(f"Monroe: Waiting for search results")
+            result["debug_info"].append("Waiting 3 seconds for results to load")
             time.sleep(3)
 
-            # Try to find the product in results
-            product_link = page.query_selector(f'a:has-text("{product_name}")')
+            # Screenshot after search
+            page.screenshot(path=f"{screenshot_dir}/{timestamp}_03_search_results_{product_name.replace('/', '_')}.png")
+            result["debug_info"].append(f"Screenshot saved: 03_search_results")
+
+            # Debug: Get page content and search for part number
+            page_content = page.content()
+            logging.info(f"Monroe: Page title: {page.title()}")
+            result["debug_info"].append(f"Page title: {page.title()}")
+
+            # Check if part number appears anywhere on page
+            if product_name.upper() in page_content.upper():
+                logging.info(f"Monroe: Part number '{product_name}' found in page content")
+                result["debug_info"].append(f"Part number found in page content")
+            else:
+                logging.warning(f"Monroe: Part number '{product_name}' NOT found in page content")
+                result["debug_info"].append(f"WARNING: Part number NOT found in page content")
+
+            # Try multiple selectors to find the product link
+            product_link = None
+            selectors_to_try = [
+                f'a:has-text("{product_name}")',
+                f'a[href*="{product_name}"]',
+                '.plp-express-results a',
+                '.plp-product-link',
+                'a.product-link'
+            ]
+
+            for selector in selectors_to_try:
+                logging.info(f"Monroe: Trying selector: {selector}")
+                result["debug_info"].append(f"Trying selector: {selector}")
+
+                links = page.query_selector_all(selector)
+                logging.info(f"Monroe: Found {len(links)} links with selector '{selector}'")
+                result["debug_info"].append(f"Found {len(links)} links")
+
+                # Check each link for our part number
+                for link in links:
+                    link_text = link.text_content().strip()
+                    link_href = link.get_attribute('href') or ''
+                    logging.info(f"Monroe: Checking link text: '{link_text}', href: '{link_href}'")
+                    result["debug_info"].append(f"Link: text='{link_text}', href contains part={product_name in link_href}")
+
+                    if product_name.upper() in link_text.upper() or product_name in link_href:
+                        product_link = link
+                        logging.info(f"Monroe: MATCH FOUND! Link text: {link_text}")
+                        result["debug_info"].append(f"MATCH FOUND with text: {link_text}")
+                        break
+
+                if product_link:
+                    break
 
             if product_link:
-                # Extract price from the page
+                logging.info(f"Monroe: Product link found, extracting price from results page")
+                result["debug_info"].append("Product link found, extracting price")
+
+                # Extract price from the search results page
                 body = page.query_selector('body')
                 if body:
                     all_text = body.text_content()
                     prices = re.findall(r'\$(\d+\.?\d*)', all_text)
+                    logging.info(f"Monroe: Found {len(prices)} prices on page: {prices}")
+                    result["debug_info"].append(f"Found {len(prices)} prices: {prices}")
+
                     if prices:
                         try:
                             result["unit_price"] = float(prices[0])
-                        except ValueError:
-                            pass
+                            logging.info(f"Monroe: Set unit_price to ${result['unit_price']}")
+                            result["debug_info"].append(f"Set unit_price to ${result['unit_price']}")
+                        except ValueError as e:
+                            logging.error(f"Monroe: Failed to convert price '{prices[0]}': {e}")
+                            result["debug_info"].append(f"ERROR converting price: {e}")
 
                 # Click product for detailed info
+                logging.info(f"Monroe: Clicking product link for details")
+                result["debug_info"].append("Clicking product link for details")
+
                 try:
-                    with page.context.expect_page() as new_page_info:
+                    # Try to handle potential popup/new tab
+                    with page.context.expect_page(timeout=5000) as new_page_info:
                         product_link.click()
                     new_page = new_page_info.value
                     page = new_page
+                    logging.info(f"Monroe: New page opened")
+                    result["debug_info"].append("New page opened")
                     page.wait_for_load_state("domcontentloaded")
                     time.sleep(2)
-                except:
+                except Exception as e:
+                    # If no new page, continue on current page
+                    logging.info(f"Monroe: No new page, continuing on current: {e}")
+                    result["debug_info"].append(f"No new page opened, continuing on current")
                     page.wait_for_load_state("domcontentloaded")
                     time.sleep(2)
 
+                # Screenshot product detail page
+                page.screenshot(path=f"{screenshot_dir}/{timestamp}_04_product_details_{product_name.replace('/', '_')}.png")
+                result["debug_info"].append(f"Screenshot saved: 04_product_details")
+
+                # Try to extract price from detail page if not found yet
+                if not result["unit_price"]:
+                    logging.info(f"Monroe: No price found on search page, looking on detail page")
+                    result["debug_info"].append("No price on search page, checking detail page")
+
+                    detail_body = page.query_selector('body')
+                    if detail_body:
+                        detail_text = detail_body.text_content()
+                        detail_prices = re.findall(r'\$(\d+\.?\d*)', detail_text)
+                        logging.info(f"Monroe: Found {len(detail_prices)} prices on detail page: {detail_prices}")
+                        result["debug_info"].append(f"Found {len(detail_prices)} prices on detail page: {detail_prices}")
+
+                        if detail_prices:
+                            try:
+                                result["unit_price"] = float(detail_prices[0])
+                                logging.info(f"Monroe: Set unit_price to ${result['unit_price']} from detail page")
+                                result["debug_info"].append(f"Set unit_price to ${result['unit_price']} from detail page")
+                            except ValueError as e:
+                                logging.error(f"Monroe: Failed to convert detail price '{detail_prices[0]}': {e}")
+                                result["debug_info"].append(f"ERROR converting detail price: {e}")
+
                 # Scroll to see specifications
+                logging.info(f"Monroe: Scrolling to see specifications")
+                result["debug_info"].append("Scrolling to bottom for specifications")
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 time.sleep(1)
 
+                # Screenshot after scroll
+                page.screenshot(path=f"{screenshot_dir}/{timestamp}_05_after_scroll_{product_name.replace('/', '_')}.png")
+                result["debug_info"].append(f"Screenshot saved: 05_after_scroll")
+
                 # Extract from specifications table
+                logging.info(f"Monroe: Looking for specifications table")
+                result["debug_info"].append("Looking for specifications table .plp-table")
+
                 spec_rows = page.query_selector_all('.plp-table tbody tr')
-                for row in spec_rows:
+                logging.info(f"Monroe: Found {len(spec_rows)} specification rows")
+                result["debug_info"].append(f"Found {len(spec_rows)} specification rows")
+
+                for idx, row in enumerate(spec_rows):
                     cells = row.query_selector_all('td')
                     if len(cells) >= 2:
                         label = cells[0].text_content().strip().lower()
                         value = cells[1].text_content().strip()
+                        logging.info(f"Monroe: Spec row {idx}: label='{label}', value='{value}'")
+                        result["debug_info"].append(f"Spec row {idx}: {label} = {value}")
 
                         if 'inventory' in label and not result["inventory"]:
                             inv_match = re.search(r'\d+', value)
                             if inv_match:
                                 result["inventory"] = int(inv_match.group())
+                                logging.info(f"Monroe: Set inventory to {result['inventory']}")
+                                result["debug_info"].append(f"Set inventory to {result['inventory']}")
 
                         if 'minimum order' in label:
                             moq_match = re.search(r'\d+', value)
                             if moq_match:
                                 result["minimum_order"] = int(moq_match.group())
+                                logging.info(f"Monroe: Set minimum_order to {result['minimum_order']}")
+                                result["debug_info"].append(f"Set minimum_order to {result['minimum_order']}")
+
                         if 'increment' in label and not result["purchase_increment"]:
                             inc_match = re.search(r'\d+', value)
                             if inc_match:
                                 result["purchase_increment"] = int(inc_match.group())
+                                logging.info(f"Monroe: Set purchase_increment to {result['purchase_increment']}")
+                                result["debug_info"].append(f"Set purchase_increment to {result['purchase_increment']}")
             else:
-                result["error"] = f"Product '{product_name}' not found in Monroe catalog"
+                error_msg = f"Product '{product_name}' not found in Monroe catalog"
+                logging.warning(f"Monroe: {error_msg}")
+                result["error"] = error_msg
+                result["debug_info"].append(f"ERROR: {error_msg}")
+
+                # Save error screenshot
+                page.screenshot(path=f"{screenshot_dir}/{timestamp}_ERROR_product_not_found_{product_name.replace('/', '_')}.png")
+
+            # Final summary
+            logging.info(f"Monroe scrape complete for {product_name}: price=${result.get('unit_price')}, inventory={result.get('inventory')}, moq={result.get('minimum_order')}")
+            result["debug_info"].append(f"Scrape complete - Price: ${result.get('unit_price')}, Inventory: {result.get('inventory')}, MOQ: {result.get('minimum_order')}")
 
             browser.close()
 
     except Exception as e:
-        result["error"] = f"Error scraping Monroe: {str(e)}"
+        error_msg = f"Error scraping Monroe: {str(e)}"
+        logging.exception(f"Monroe: {error_msg}")
+        result["error"] = error_msg
+        result["debug_info"].append(f"EXCEPTION: {error_msg}")
+
+    # Log debug summary
+    debug_summary = "\n".join(result["debug_info"])
+    logging.info(f"Monroe scrape debug summary for {product_name}:\n{debug_summary}")
 
     return result
 

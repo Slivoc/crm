@@ -155,7 +155,7 @@
                                         {% if ticket.email_subject %}
                                             <i class="bi bi-envelope me-1 text-muted"></i>
                                         {% endif %}
-                                        {{ ticket.title }}
+                                        #{{ ticket.id }} {{ ticket.title }}
                                     </a>
                                     {% if is_subtask %}
                                         <div class="ticket-parent">

@@ -1335,6 +1335,7 @@ def _create_parts_list_from_triage(user_id, contact, message, body_text):
     if not extracted:
         extracted = _fallback_extract_tabular(clean_body)
 
+    created_line_ids = []
     with db_cursor(commit=True) as cur:
         list_row = _execute_with_cursor(
             cur,
@@ -1354,12 +1355,13 @@ def _create_parts_list_from_triage(user_id, contact, message, body_text):
             for idx, part in enumerate(extracted):
                 part_number = part.get("part_number") if isinstance(part, dict) else part[0]
                 quantity = part.get("quantity") if isinstance(part, dict) else part[1]
-                _execute_with_cursor(
+                line_row = _execute_with_cursor(
                     cur,
                     """
                     INSERT INTO parts_list_lines
                         (parts_list_id, line_number, customer_part_number, base_part_number, quantity)
                     VALUES (?, ?, ?, ?, ?)
+                    RETURNING id
                     """,
                     (
                         list_id,
@@ -1368,9 +1370,29 @@ def _create_parts_list_from_triage(user_id, contact, message, body_text):
                         create_base_part_number(part_number),
                         quantity or 1,
                     ),
+                    fetch="one",
                 )
+                if line_row:
+                    created_line_ids.append(line_row["id"] if isinstance(line_row, dict) else line_row[0])
 
     _log_parts_list_creation(list_id, list_name, customer_id, contact_id, salesperson_id)
+
+    # Trigger Monroe auto-check if enabled
+    if created_line_ids:
+        from routes.parts_list_ai import trigger_monroe_auto_check
+        # Get user_id from salesperson
+        user_id = None
+        if salesperson_id:
+            from models import get_db_connection
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT user_id FROM salesperson_user_link WHERE legacy_salesperson_id = ?", (salesperson_id,))
+            user_row = cur.fetchone()
+            if user_row:
+                user_id = user_row['user_id']
+            conn.close()
+        trigger_monroe_auto_check(list_id, created_line_ids, user_id=user_id)
+
     return {
         "list_id": list_id,
         "parts_count": len(extracted),

@@ -213,16 +213,16 @@
                 <div class="modal-header">
                     <h5 class="modal-title"><i class="fas fa-plane"></i> Check Monroe Aerospace</h5>
                     <div>
-                        <button type="button" class="btn btn-sm btn-outline-secondary me-2" onclick="showMonroeSettings()" title="Monroe Settings">
-                            <i class="fas fa-cog"></i>
-                        </button>
+                        <a href="{{ url_for('supplier_portal.supplier_portal_home') }}" class="btn btn-sm btn-outline-secondary me-2" title="Go to Supplier Portal" target="_blank">
+                            <i class="fas fa-external-link-alt"></i> Supplier Portal
+                        </a>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                 </div>
                 <div class="modal-body">
                     <div id="monroeNotConfigured" class="alert alert-warning" style="display: none;">
                         <i class="fas fa-exclamation-triangle"></i> Monroe supplier not configured.
-                        <button class="btn btn-sm btn-warning ms-2" onclick="showMonroeSettings()">Configure Now</button>
+                        <a href="{{ url_for('supplier_portal.supplier_portal_home') }}" class="btn btn-sm btn-warning ms-2" target="_blank">Configure in Supplier Portal</a>
                     </div>
                     <div id="monroeSuggestedSection">
                         <h6>Suggested Lines (with Monroe history)</h6>

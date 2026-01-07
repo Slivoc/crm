@@ -3924,7 +3924,8 @@ def add_lines(list_id):
 
         # Trigger Monroe auto-check in background if enabled
         if created_line_ids:
-            trigger_monroe_auto_check(list_id, created_line_ids)
+            user_id = current_user.id if current_user.is_authenticated else session.get('user_id')
+            trigger_monroe_auto_check(list_id, created_line_ids, user_id=user_id)
 
         return jsonify(success=True)
     except Exception as e:
@@ -4213,9 +4214,7 @@ def save_parts_list():
                 if row:
                     created_line_ids.append(row['id'] if isinstance(row, dict) else row[0])
 
-            # Trigger Monroe auto-check if enabled
-            if created_line_ids:
-                trigger_monroe_auto_check(parts_list_id, created_line_ids)
+        # Transaction commits when exiting the 'with db_cursor' block above
 
         _log_parts_list_creation_communication(
             parts_list_id,
@@ -4224,6 +4223,12 @@ def save_parts_list():
             contact_id,
             salesperson_id,
         )
+
+        # Trigger Monroe auto-check AFTER transaction commits
+        # This ensures the background thread can see the committed data
+        if created_line_ids:
+            user_id = current_user.id if current_user.is_authenticated else session.get('user_id')
+            trigger_monroe_auto_check(parts_list_id, created_line_ids, user_id=user_id)
 
         return jsonify(
             success=True,

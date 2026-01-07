@@ -74,6 +74,7 @@ from routes.news_email import send_news_email
 from routes.parts_list_ai import parts_list_ai_bp
 from routes.tickets import tickets_bp
 from routes.manufacturer_approvals import manufacturer_approvals_bp
+from routes.supplier_portal import supplier_portal_bp
 
 scheduler = APScheduler()
 
@@ -200,6 +201,7 @@ app.secret_key = 'your-secret-key-here'  # Required for sessions
 app.register_blueprint(portal_api_bp)
 app.register_blueprint(portal_admin_bp)
 app.register_blueprint(manufacturer_approvals_bp)
+app.register_blueprint(supplier_portal_bp, url_prefix='/supplier-portal')
 
 def bit_and(value, other):
     return value & other
