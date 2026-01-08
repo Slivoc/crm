@@ -175,5 +175,7 @@ yarn-error.log*
 *.tmp
 *.temp
 
+monroe_debug_screenshots/
+
 NUL
 nul

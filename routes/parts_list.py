@@ -5220,13 +5220,15 @@ def get_line_quotes(list_id, line_id):
                 cur,
                 """
                 SELECT
-                    id,
-                    parts_list_id,
-                    customer_part_number,
-                    base_part_number,
-                    parent_line_id
-                FROM parts_list_lines
-                WHERE id = ? AND parts_list_id = ?
+                    pll.id,
+                    pll.parts_list_id,
+                    pll.customer_part_number,
+                    pll.base_part_number,
+                    pll.parent_line_id,
+                    pn.pieces_per_pound
+                FROM parts_list_lines pll
+                LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
+                WHERE pll.id = ? AND pll.parts_list_id = ?
                 """,
                 (line_id, list_id),
             ).fetchone()
@@ -5344,7 +5346,8 @@ def get_line_quotes(list_id, line_id):
             success=True,
             quotes=[dict(q) for q in quotes or []],
             other_offers=[dict(o) for o in other_offers or []],
-            qpl_approvals=[dict(q) for q in qpl_approvals or []]
+            qpl_approvals=[dict(q) for q in qpl_approvals or []],
+            pieces_per_pound=line.get('pieces_per_pound') if line else None
         )
 
     except Exception as e:

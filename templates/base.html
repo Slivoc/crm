@@ -2358,6 +2358,135 @@ document.addEventListener('DOMContentLoaded', function() {
 <script src="{{ url_for('static', filename='js/universal_contact_preview.js') }}"></script>
 <script src="{{ url_for('static', filename='js/contact_search.js') }}"></script>
 
+<!-- Toast Notification Container -->
+<div id="notification-toast-container" style="position: fixed; top: 70px; right: 20px; z-index: 9999; min-width: 350px; max-width: 500px;"></div>
+
+<!-- Notification Polling Script -->
+<script>
+(function() {
+    let lastNotificationCheck = Date.now();
+    let checkInterval = 10000; // Check every 10 seconds
+
+    function checkForNotifications() {
+        fetch('/api/notifications/unread')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.notifications && data.notifications.length > 0) {
+                    // Show each notification
+                    data.notifications.forEach(notification => {
+                        showNotificationToast(notification);
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error checking notifications:', error);
+            });
+    }
+
+    function showNotificationToast(notification) {
+        const container = document.getElementById('notification-toast-container');
+        if (!container) return;
+
+        // Create toast element
+        const toast = document.createElement('div');
+        toast.className = 'toast show mb-2';
+        toast.setAttribute('role', 'alert');
+        toast.setAttribute('data-notification-id', notification.id);
+
+        // Determine color based on notification type
+        let headerBgClass = 'bg-primary';
+        let icon = 'bi-info-circle-fill';
+
+        if (notification.notification_type === 'scrape_complete') {
+            headerBgClass = 'bg-success';
+            icon = 'bi-check-circle-fill';
+        } else if (notification.notification_type === 'error') {
+            headerBgClass = 'bg-danger';
+            icon = 'bi-exclamation-circle-fill';
+        } else if (notification.notification_type === 'import_complete') {
+            headerBgClass = 'bg-info';
+            icon = 'bi-download';
+        }
+
+        // Build toast HTML
+        let html = `
+            <div class="toast-header ${headerBgClass} text-white">
+                <i class="bi ${icon} me-2"></i>
+                <strong class="me-auto">${escapeHtml(notification.title)}</strong>
+                <small class="text-white-50">Just now</small>
+                <button type="button" class="btn-close btn-close-white ms-2" onclick="dismissNotification(${notification.id}, this)"></button>
+            </div>
+            <div class="toast-body">
+                <div class="mb-2">${escapeHtml(notification.message)}</div>
+        `;
+
+        // Add link button if provided
+        if (notification.link_url) {
+            const linkText = notification.link_text || 'View';
+            html += `
+                <a href="${escapeHtml(notification.link_url)}" class="btn btn-sm btn-outline-primary" onclick="dismissNotification(${notification.id})">
+                    ${escapeHtml(linkText)} <i class="bi bi-arrow-right"></i>
+                </a>
+            `;
+        }
+
+        html += '</div>';
+        toast.innerHTML = html;
+
+        // Add to container
+        container.appendChild(toast);
+
+        // Auto-dismiss after 15 seconds
+        setTimeout(() => {
+            dismissNotification(notification.id, toast.querySelector('.btn-close'));
+        }, 15000);
+
+        // Play a subtle notification sound (optional - requires sound file)
+        // new Audio('/static/sounds/notification.mp3').play().catch(() => {});
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Global function to dismiss notification
+    window.dismissNotification = function(notificationId, buttonOrToast) {
+        // Mark as read in backend
+        fetch(`/api/notifications/${notificationId}/mark-read`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        // Remove toast from DOM
+        let toast;
+        if (buttonOrToast && buttonOrToast.classList && buttonOrToast.classList.contains('toast')) {
+            toast = buttonOrToast;
+        } else {
+            toast = document.querySelector(`.toast[data-notification-id="${notificationId}"]`);
+        }
+
+        if (toast) {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(100%)';
+            toast.style.transition = 'all 0.3s ease';
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 300);
+        }
+    };
+
+    // Start polling for notifications
+    checkForNotifications();
+    setInterval(checkForNotifications, checkInterval);
+})();
+</script>
+
 {% block extra_js %}{% endblock %}
 </body>
 </html>

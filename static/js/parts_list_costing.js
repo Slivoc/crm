@@ -678,6 +678,36 @@ function showQuotesModal(lineId, partNumber) {
     loadQuotesForLine(lineId);
 }
 
+/**
+ * Convert pound cost and weight to piece cost and quantity
+ * @param {number} lbCost - Cost per pound
+ * @param {number} lbQty - Quantity in pounds (weight)
+ * @param {number} ppp - Pieces per pound
+ * @returns {object} - {pieceCost: number, pieceQty: number}
+ */
+function convertLbToPieces(lbCost, lbQty, ppp) {
+    if (!ppp || ppp <= 0) return null;
+    return {
+        pieceCost: lbCost / ppp,
+        pieceQty: Math.round(lbQty * ppp)
+    };
+}
+
+/**
+ * Convert piece cost and quantity to pound cost and weight
+ * @param {number} pieceCost - Cost per piece
+ * @param {number} pieceQty - Quantity in pieces
+ * @param {number} ppp - Pieces per pound
+ * @returns {object} - {lbCost: number, lbQty: number}
+ */
+function convertPiecesToLb(pieceCost, pieceQty, ppp) {
+    if (!ppp || ppp <= 0) return null;
+    return {
+        lbCost: pieceCost * ppp,
+        lbQty: pieceQty / ppp
+    };
+}
+
 function loadQuotesForLine(lineId) {
     const listId = window.PARTS_LIST_ID;
     if (!listId) {
@@ -702,6 +732,9 @@ function loadQuotesForLine(lineId) {
             const content = document.getElementById('quotes-content');
             if (loading) loading.style.display = 'none';
             if (content) content.style.display = 'block';
+
+            // Store pieces_per_pound for this line
+            window._currentPiecesPerPound = data.pieces_per_pound;
 
             if (data.success && data.quotes && data.quotes.length > 0) {
                 displayQuotes(data.quotes, lineId, requiredQty);
@@ -779,6 +812,31 @@ function displayQuotes(quotes, lineId, requiredQty) {
         const quoteNotes = quote.line_notes || '';
         const encodedQuoteNotes = quoteNotes ? encodeURIComponent(quoteNotes) : '';
 
+        // Check if PPP conversion is available
+        const ppp = window._currentPiecesPerPound;
+        const hasPPP = ppp && ppp > 0;
+
+        // Store original (lb) values
+        const originalUnitPrice = unitPriceValue;
+        const originalQty = quotedQty;
+
+        // Default to showing piece values if PPP exists
+        let displayUnitPrice = unitPriceValue;
+        let displayQty = quotedQty;
+        let displayMode = 'piece'; // 'piece' or 'lb'
+
+        if (hasPPP && unitPriceValue !== null) {
+            // Assume supplier quote is in pounds, convert to pieces
+            const converted = convertLbToPieces(unitPriceValue, quotedQty, ppp);
+            if (converted) {
+                displayUnitPrice = converted.pieceCost;
+                displayQty = converted.pieceQty;
+                displayMode = 'piece';
+            }
+        }
+
+        const displayLineCost = displayUnitPrice !== null ? displayUnitPrice * displayQty : null;
+
         if (isCheapest) {
             row.style.background = '#f0f9f4';
         }
@@ -805,30 +863,43 @@ function displayQuotes(quotes, lineId, requiredQty) {
                     ${isQPLApproved ? '<span class="badge" style="background: #198754; font-size: 0.7rem; margin-left: 4px;" title="QPL Approved">QPL</span>' : ''}
                 ` : '<span style="color: #adb5bd;">-</span>'}
             </td>
-            <td style="padding: 0.75rem; text-align: right;">${quote.quantity_quoted || '-'}</td>
+            <td style="padding: 0.75rem; text-align: right;" class="quote-qty-cell">
+                ${hasPPP && !quote.is_no_bid ? `
+                    <button class="btn btn-sm ppp-toggle-btn" style="border: 1px solid #dee2e6; background: white; padding: 2px 6px; font-size: 0.75rem; margin-right: 4px;"
+                            data-mode="${displayMode}"
+                            data-original-qty="${originalQty}"
+                            data-original-price="${originalUnitPrice}"
+                            data-ppp="${ppp}"
+                            title="Toggle between pieces and pounds">
+                        <i class="bi ${displayMode === 'piece' ? 'bi-grid-3x3' : 'bi-box-seam'}"></i>
+                    </button>
+                ` : ''}
+                <span class="quote-qty-value">${displayQty}</span>
+            </td>
             <td style="padding: 0.75rem; text-align: right;">${quote.qty_available || '-'}</td>
             <td style="padding: 0.75rem; text-align: right;">${quote.purchase_increment || '-'}</td>
             <td style="padding: 0.75rem; text-align: right;">${quote.moq || '-'}</td>
-            <td style="padding: 0.75rem; text-align: right; font-weight: 500;">
-                ${quote.is_no_bid ? '-' : formatPrice(quote.unit_price, quote.currency_code)}
+            <td style="padding: 0.75rem; text-align: right; font-weight: 500;" class="quote-price-cell">
+                <span class="quote-price-value">${quote.is_no_bid ? '-' : formatPrice(displayUnitPrice, quote.currency_code)}</span>
+                ${hasPPP && !quote.is_no_bid ? `<span class="quote-unit-badge badge bg-secondary" style="font-size: 0.65rem; margin-left: 4px;">${displayMode === 'piece' ? 'ea' : 'lb'}</span>` : ''}
             </td>
-            <td style="padding: 0.75rem; text-align: right; font-weight: 600; color: #0d6efd;">
-                ${lineCost !== null && !quote.is_no_bid ? formatPrice(lineCost, quote.currency_code) : '-'}
+            <td style="padding: 0.75rem; text-align: right; font-weight: 600; color: #0d6efd;" class="quote-line-cost-cell">
+                ${displayLineCost !== null && !quote.is_no_bid ? formatPrice(displayLineCost, quote.currency_code) : '-'}
             </td>
             <td style="padding: 0.75rem; text-align: center;">${quote.lead_time_days ? `${quote.lead_time_days}d` : '-'}</td>
             <td style="padding: 0.75rem;">${quote.condition_code || '-'}</td>
             <td style="padding: 0.75rem; font-size: 0.8rem; max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${quote.certifications || ''}">${quote.certifications || '-'}</td>
             <td style="padding: 0.75rem; text-align: center;">
-                ${!quote.is_no_bid && unitPriceValue !== null ? `
+                ${!quote.is_no_bid && displayUnitPrice !== null ? `
                     <button class="btn btn-sm use-quote-btn" style="background: #0d6efd; color: white; border: none; padding: 0.25rem 0.75rem; font-size: 0.8rem;"
                             data-line-id="${lineId}"
                             data-quote-line-id="${quote.quote_line_id}"
                             data-supplier-id="${quote.supplier_id}"
                             data-supplier-name="${quote.supplier_name}"
-                            data-cost="${unitPriceValue}"
+                            data-cost="${displayUnitPrice}"
                             data-currency-id="${quote.currency_id}"
                             data-lead-days="${quote.lead_time_days || ''}"
-                            data-quoted-quantity="${quote.quantity_quoted || ''}"
+                            data-quoted-quantity="${displayQty}"
                             data-quote-notes="${encodedQuoteNotes}">
                         Use
                     </button>
@@ -853,6 +924,81 @@ function displayQuotes(quotes, lineId, requiredQty) {
                 this.dataset.quotedQuantity ? parseInt(this.dataset.quotedQuantity) : null,
                 this.dataset.quoteNotes ? decodeURIComponent(this.dataset.quoteNotes) : ''
             );
+        });
+    });
+
+    // Attach click handlers to PPP toggle buttons
+    tbody.querySelectorAll('.ppp-toggle-btn').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const row = this.closest('tr');
+            const currentMode = this.dataset.mode;
+            const originalQty = parseFloat(this.dataset.originalQty);
+            const originalPrice = parseFloat(this.dataset.originalPrice);
+            const ppp = parseFloat(this.dataset.ppp);
+
+            const qtyCell = row.querySelector('.quote-qty-value');
+            const priceCell = row.querySelector('.quote-price-value');
+            const lineCostCell = row.querySelector('.quote-line-cost-cell');
+            const unitBadge = row.querySelector('.quote-unit-badge');
+            const useBtn = row.querySelector('.use-quote-btn');
+            const iconEl = this.querySelector('i');
+
+            if (currentMode === 'piece') {
+                // Switch to lb view
+                const lbValues = convertPiecesToLb(
+                    originalPrice / ppp, // current displayed piece cost back to lb
+                    parseInt(qtyCell.textContent),
+                    ppp
+                );
+
+                if (lbValues) {
+                    qtyCell.textContent = lbValues.lbQty.toFixed(2);
+
+                    // Extract currency code from current display
+                    const currencyMatch = priceCell.textContent.match(/^([A-Z]{3})\s/);
+                    const currencyCode = currencyMatch ? currencyMatch[1] : '';
+                    priceCell.textContent = currencyCode ? `${currencyCode} ${originalPrice.toFixed(2)}` : originalPrice.toFixed(2);
+
+                    const lineCost = originalPrice * lbValues.lbQty;
+                    lineCostCell.textContent = currencyCode ? `${currencyCode} ${lineCost.toFixed(2)}` : lineCost.toFixed(2);
+
+                    if (unitBadge) unitBadge.textContent = 'lb';
+                    if (iconEl) iconEl.className = 'bi bi-box-seam';
+                    this.dataset.mode = 'lb';
+
+                    // Update Use button with lb values
+                    if (useBtn) {
+                        useBtn.dataset.cost = originalPrice;
+                        useBtn.dataset.quotedQuantity = lbValues.lbQty.toFixed(2);
+                    }
+                }
+            } else {
+                // Switch to piece view
+                const pieceValues = convertLbToPieces(originalPrice, originalQty, ppp);
+
+                if (pieceValues) {
+                    qtyCell.textContent = pieceValues.pieceQty;
+
+                    // Extract currency code from current display
+                    const currencyMatch = priceCell.textContent.match(/^([A-Z]{3})\s/);
+                    const currencyCode = currencyMatch ? currencyMatch[1] : '';
+                    priceCell.textContent = currencyCode ? `${currencyCode} ${pieceValues.pieceCost.toFixed(2)}` : pieceValues.pieceCost.toFixed(2);
+
+                    const lineCost = pieceValues.pieceCost * pieceValues.pieceQty;
+                    lineCostCell.textContent = currencyCode ? `${currencyCode} ${lineCost.toFixed(2)}` : lineCost.toFixed(2);
+
+                    if (unitBadge) unitBadge.textContent = 'ea';
+                    if (iconEl) iconEl.className = 'bi bi-grid-3x3';
+                    this.dataset.mode = 'piece';
+
+                    // Update Use button with piece values
+                    if (useBtn) {
+                        useBtn.dataset.cost = pieceValues.pieceCost;
+                        useBtn.dataset.quotedQuantity = pieceValues.pieceQty;
+                    }
+                }
+            }
         });
     });
 

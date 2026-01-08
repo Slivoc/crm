@@ -1111,6 +1111,8 @@ def _run_monroe_check_background(list_id, line_ids, user_id=None, auto_create_of
         return
 
     try:
+        from routes.notifications import create_notification
+
         conn = get_db_connection()
         cur = conn.cursor()
 
@@ -1228,8 +1230,41 @@ def _run_monroe_check_background(list_id, line_ids, user_id=None, auto_create_of
             except Exception as e:
                 logging.exception(f"Failed to auto-create Monroe offer: {e}")
 
+        # Get parts list name for notification
+        cur.execute("SELECT name FROM parts_lists WHERE id = ?", (list_id,))
+        pl_row = cur.fetchone()
+        parts_list_name = pl_row['name'] if pl_row else f"Parts List #{list_id}"
+
+        # Count successful and failed results
+        successful = len(result_ids)
+        failed = len(lines) - successful
+
         conn.close()
         logging.info(f"Monroe auto-check completed for list {list_id}, {len(lines)} lines")
+
+        # Create notification for the user if there were any results
+        if user_id and len(lines) > 0:
+            title = "Monroe Auto-Check Complete"
+            message = f"{parts_list_name} - {successful} prices found, {failed} not found"
+            link_url = f"/parts_list/{list_id}"
+            link_text = "View Parts List"
+
+            create_notification(
+                user_id=user_id,
+                notification_type='scrape_complete',
+                title=title,
+                message=message,
+                link_url=link_url,
+                link_text=link_text,
+                metadata={
+                    'supplier': 'monroe',
+                    'parts_list_id': list_id,
+                    'successful': successful,
+                    'failed': failed,
+                    'total': len(lines),
+                    'auto_check': True
+                }
+            )
 
     except Exception as e:
         logging.exception(f"Monroe auto-check failed: {e}")
@@ -1454,6 +1489,8 @@ def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer,
         return
 
     try:
+        from routes.notifications import create_notification
+
         conn = get_db_connection()
         cur = conn.cursor()
 
@@ -1562,6 +1599,11 @@ def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer,
             except Exception as e:
                 logging.exception(f"Failed to auto-create Monroe offer: {e}")
 
+        # Get parts list name for notification
+        cur.execute("SELECT name FROM parts_lists WHERE id = ?", (list_id,))
+        pl_row = cur.fetchone()
+        parts_list_name = pl_row['name'] if pl_row else f"Parts List #{list_id}"
+
         # Update final status
         cur.execute("""
             UPDATE supplier_scrape_status
@@ -1577,6 +1619,29 @@ def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer,
         conn.close()
 
         logging.info(f"Monroe check completed for list {list_id}, status {status_id}: {successful} successful, {failed} failed")
+
+        # Create notification for the user
+        if user_id:
+            title = "Monroe Scraping Complete"
+            message = f"{parts_list_name} scraped - {successful} prices found, {failed} not found"
+            link_url = f"/parts_list/{list_id}"
+            link_text = "View Parts List"
+
+            create_notification(
+                user_id=user_id,
+                notification_type='scrape_complete',
+                title=title,
+                message=message,
+                link_url=link_url,
+                link_text=link_text,
+                metadata={
+                    'supplier': 'monroe',
+                    'parts_list_id': list_id,
+                    'successful': successful,
+                    'failed': failed,
+                    'total': processed
+                }
+            )
 
     except Exception as e:
         logging.exception(f"Monroe check with status failed: {e}")
