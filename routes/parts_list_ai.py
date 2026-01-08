@@ -1230,10 +1230,16 @@ def _run_monroe_check_background(list_id, line_ids, user_id=None, auto_create_of
             except Exception as e:
                 logging.exception(f"Failed to auto-create Monroe offer: {e}")
 
-        # Get parts list name for notification
-        cur.execute("SELECT name FROM parts_lists WHERE id = ?", (list_id,))
+        # Get parts list name and customer for notification
+        cur.execute("""
+            SELECT pl.name, c.name as customer_name
+            FROM parts_lists pl
+            LEFT JOIN customers c ON c.id = pl.customer_id
+            WHERE pl.id = ?
+        """, (list_id,))
         pl_row = cur.fetchone()
         parts_list_name = pl_row['name'] if pl_row else f"Parts List #{list_id}"
+        customer_name = pl_row['customer_name'] if pl_row and pl_row['customer_name'] else None
 
         # Count successful and failed results
         successful = len(result_ids)
@@ -1245,8 +1251,12 @@ def _run_monroe_check_background(list_id, line_ids, user_id=None, auto_create_of
         # Create notification for the user if there were any results
         if user_id and len(lines) > 0:
             title = "Monroe Auto-Check Complete"
-            message = f"{parts_list_name} - {successful} prices found, {failed} not found"
-            link_url = f"/parts_list/{list_id}"
+            # Include customer name if available
+            if customer_name:
+                message = f"{customer_name} - {parts_list_name}: {successful} prices found, {failed} not found"
+            else:
+                message = f"{parts_list_name}: {successful} prices found, {failed} not found"
+            link_url = f"/parts_list/view/{list_id}"
             link_text = "View Parts List"
 
             create_notification(
@@ -1259,6 +1269,7 @@ def _run_monroe_check_background(list_id, line_ids, user_id=None, auto_create_of
                 metadata={
                     'supplier': 'monroe',
                     'parts_list_id': list_id,
+                    'customer_name': customer_name,
                     'successful': successful,
                     'failed': failed,
                     'total': len(lines),
@@ -1599,10 +1610,16 @@ def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer,
             except Exception as e:
                 logging.exception(f"Failed to auto-create Monroe offer: {e}")
 
-        # Get parts list name for notification
-        cur.execute("SELECT name FROM parts_lists WHERE id = ?", (list_id,))
+        # Get parts list name and customer for notification
+        cur.execute("""
+            SELECT pl.name, c.name as customer_name
+            FROM parts_lists pl
+            LEFT JOIN customers c ON c.id = pl.customer_id
+            WHERE pl.id = ?
+        """, (list_id,))
         pl_row = cur.fetchone()
         parts_list_name = pl_row['name'] if pl_row else f"Parts List #{list_id}"
+        customer_name = pl_row['customer_name'] if pl_row and pl_row['customer_name'] else None
 
         # Update final status
         cur.execute("""
@@ -1623,8 +1640,12 @@ def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer,
         # Create notification for the user
         if user_id:
             title = "Monroe Scraping Complete"
-            message = f"{parts_list_name} scraped - {successful} prices found, {failed} not found"
-            link_url = f"/parts_list/{list_id}"
+            # Include customer name if available
+            if customer_name:
+                message = f"{customer_name} - {parts_list_name}: {successful} prices found, {failed} not found"
+            else:
+                message = f"{parts_list_name}: {successful} prices found, {failed} not found"
+            link_url = f"/parts_list/view/{list_id}"
             link_text = "View Parts List"
 
             create_notification(
@@ -1637,6 +1658,7 @@ def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer,
                 metadata={
                     'supplier': 'monroe',
                     'parts_list_id': list_id,
+                    'customer_name': customer_name,
                     'successful': successful,
                     'failed': failed,
                     'total': processed

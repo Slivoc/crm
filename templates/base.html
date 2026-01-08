@@ -2408,12 +2408,31 @@ document.addEventListener('DOMContentLoaded', function() {
             icon = 'bi-download';
         }
 
+        // Format timestamp
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+
+            if (diffMins < 1) return 'Just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+
+            const diffHours = Math.floor(diffMins / 60);
+            if (diffHours < 24) return `${diffHours}h ago`;
+
+            // For older notifications, show time
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        const timeAgo = formatTimestamp(notification.created_at);
+
         // Build toast HTML
         let html = `
             <div class="toast-header ${headerBgClass} text-white">
                 <i class="bi ${icon} me-2"></i>
                 <strong class="me-auto">${escapeHtml(notification.title)}</strong>
-                <small class="text-white-50">Just now</small>
+                <small class="text-white-50">${timeAgo}</small>
                 <button type="button" class="btn-close btn-close-white ms-2" onclick="dismissNotification(${notification.id}, this)"></button>
             </div>
             <div class="toast-body">
