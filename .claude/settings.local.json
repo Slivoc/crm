@@ -5,7 +5,8 @@
       "Bash(find:*)",
       "Bash(cat:*)",
       "Bash(sqlite3:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(echo:*)"
     ]
   }
 }

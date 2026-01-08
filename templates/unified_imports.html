@@ -229,10 +229,17 @@ async function handleImport(formId, progressId, uploadUrl, includeCheckbox = fal
 
             // Check if successful (2xx status)
             if (response.ok || response.type === 'opaqueredirect') {
-                showSuccessMessage({
-                    success: true,
-                    message: 'Import completed successfully!'
-                });
+                // Try to parse JSON response for detailed results
+                try {
+                    const data = await response.json();
+                    showSuccessMessage(data);
+                } catch {
+                    // Fallback for non-JSON responses
+                    showSuccessMessage({
+                        success: true,
+                        message: 'Import completed successfully!'
+                    });
+                }
                 form.reset();
             } else {
                 // Try to get error message
@@ -333,6 +340,11 @@ function showSuccessMessage(data) {
     const content = document.getElementById('resultsContent');
 
     let html = '<div class="alert alert-success"><i class="bi bi-check-circle"></i> Import completed successfully!</div>';
+
+    // Show log file location if available
+    if (data.log_file) {
+        html += `<div class="alert alert-info mt-2"><i class="bi bi-file-text"></i> <strong>Log file:</strong> <code>${data.log_file}</code></div>`;
+    }
 
     // Show results for stock import
     if (data.results) {

@@ -3,8 +3,31 @@ from db import execute as db_execute, db_cursor, _using_postgres
 import pandas as pd
 import os
 from datetime import datetime
+import logging
 
 so_import_bp = Blueprint('so_import', __name__, url_prefix='/so-import')
+
+
+def setup_import_logger(log_path):
+    """Setup a dedicated logger for import operations"""
+    logger = logging.getLogger(f'so_import_{log_path}')
+    logger.setLevel(logging.DEBUG)
+
+    # Remove existing handlers
+    logger.handlers = []
+
+    # File handler
+    file_handler = logging.FileHandler(log_path, encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+
+    # Detailed formatter
+    formatter = logging.Formatter('%(asctime)s | %(levelname)-8s | %(message)s')
+    file_handler.setFormatter(formatter)
+
+    logger.addHandler(file_handler)
+    logger.propagate = False
+
+    return logger
 
 
 # -----------------------------
@@ -146,27 +169,50 @@ def upload_so_file():
             file.save(temp_file.name)
             temp_path = temp_file.name
 
+        # Setup log file with absolute path
+        log_filename = f"so_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs')
+        os.makedirs(logs_dir, exist_ok=True)
+        log_path = os.path.join(logs_dir, log_filename)
+
+        # Configure logger
+        logger = setup_import_logger(log_path)
+        logger.info("=" * 80)
+        logger.info(f"SALES ORDER IMPORT STARTED: {datetime.now().isoformat()}")
+        logger.info(f"Using PostgreSQL: {_using_postgres()}")
+        logger.info("=" * 80)
+
         # Read CSV
         df = pd.read_csv(temp_path, encoding='utf-8-sig')
+        logger.info(f"Read CSV: {len(df)} rows, {len(df.columns)} columns")
+        logger.info(f"Columns: {df.columns.tolist()}")
         print(f"Read CSV: {len(df)} rows, {len(df.columns)} columns")
         print(f"Columns: {df.columns.tolist()}")
 
         # Process the data
-        results = process_so_csv(df)
+        results = process_so_csv(df, logger)
+        results['log_file'] = log_path
+
+        logger.info("=" * 80)
+        logger.info(f"SALES ORDER IMPORT COMPLETED: {datetime.now().isoformat()}")
+        logger.info("=" * 80)
 
         # Clean up
         os.unlink(temp_path)
 
-        return jsonify(success=True, results=results)
+        return jsonify(success=True, results=results, log_file=log_path)
 
     except Exception as e:
         print(f"Error processing file: {e}")
         import traceback
         traceback.print_exc()
+        if 'logger' in locals():
+            logger.error(f"FATAL ERROR: {e}")
+            logger.error(traceback.format_exc())
         return jsonify(success=False, message=str(e)), 500
 
 
-def process_so_csv(df):
+def process_so_csv(df, logger):
     """
     Process sales order CSV with hardcoded column mappings
     Expected columns from ERP export:
@@ -218,92 +264,122 @@ def process_so_csv(df):
         'order_lines': {'processed': 0, 'created': 0, 'updated': 0, 'skipped': 0, 'errors': []}
     }
 
+    logger.info("Starting sales order import...")
+    logger.info(f"Total rows to process: {len(df)}")
     print("Starting sales order import...")
     print(f"Total rows to process: {len(df)}")
 
     # Step 1: Process parts
+    logger.info("\n" + "=" * 60)
+    logger.info("STEP 1: Processing Parts")
+    logger.info("=" * 60)
     print("\n" + "=" * 60)
     print("STEP 1: Processing Parts")
     print("=" * 60)
-    process_parts(df, results['parts'])
+    process_parts(df, results['parts'], logger)
 
     # Step 2: Process customers
+    logger.info("\n" + "=" * 60)
+    logger.info("STEP 2: Processing Customers")
+    logger.info("=" * 60)
     print("\n" + "=" * 60)
     print("STEP 2: Processing Customers")
     print("=" * 60)
-    process_customers(df, results['customers'])
+    process_customers(df, results['customers'], logger)
 
     # Step 3: Process sales orders
+    logger.info("\n" + "=" * 60)
+    logger.info("STEP 3: Processing Sales Orders")
+    logger.info("=" * 60)
     print("\n" + "=" * 60)
     print("STEP 3: Processing Sales Orders")
     print("=" * 60)
-    process_sales_orders(df, results['sales_orders'])
+    process_sales_orders(df, results['sales_orders'], logger)
 
     # Step 4: Process order lines
+    logger.info("\n" + "=" * 60)
+    logger.info("STEP 4: Processing Order Lines")
+    logger.info("=" * 60)
     print("\n" + "=" * 60)
     print("STEP 4: Processing Order Lines")
     print("=" * 60)
-    process_order_lines(df, results['order_lines'])
+    process_order_lines(df, results['order_lines'], logger)
 
     # Step 5: Calculate missing totals
+    logger.info("\n" + "=" * 60)
+    logger.info("STEP 5: Calculating Order Totals")
+    logger.info("=" * 60)
     print("\n" + "=" * 60)
     print("STEP 5: Calculating Order Totals")
     print("=" * 60)
-    calculate_order_totals(results)
+    calculate_order_totals(results, logger)
 
+    logger.info("\n" + "=" * 60)
+    logger.info("IMPORT COMPLETE")
+    logger.info("=" * 60)
     print("\n" + "=" * 60)
     print("IMPORT COMPLETE")
     print("=" * 60)
-    print_summary(results)
+    print_summary(results, logger)
 
     return results
 
 
-def process_parts(df, results):
-    """Process unique parts from the CSV"""
-    with db_cursor(commit=True) as cursor:
-        # Column 9: partNumber (use as both part_number and system_part_number)
-        unique_parts = df[df.iloc[:, 9].notna()].iloc[:, 9].unique()
+def process_parts(df, results, logger):
+    """Process unique parts from the CSV - each part in its own transaction"""
+    # Column 9: partNumber (use as both part_number and system_part_number)
+    unique_parts = df[df.iloc[:, 9].notna()].iloc[:, 9].unique()
 
-        print(f"Found {len(unique_parts)} unique parts")
+    logger.info(f"Found {len(unique_parts)} unique parts")
+    print(f"Found {len(unique_parts)} unique parts")
 
-        # Get existing parts
+    # Get existing parts
+    with db_cursor(commit=False) as cursor:
         _execute_with_cursor(cursor,"SELECT system_part_number, base_part_number FROM part_numbers")
         existing_parts = {row['system_part_number']: row['base_part_number'] for row in cursor.fetchall()}
 
-        for part_number in unique_parts:
-            part_number = str(part_number).strip()
-            if not part_number or part_number.lower() == 'nan':
+    for part_number in unique_parts:
+        part_number = str(part_number).strip()
+        if not part_number or part_number.lower() == 'nan':
+            continue
+
+        results['processed'] += 1
+
+        try:
+            if part_number in existing_parts:
+                results['skipped'] += 1
+                logger.debug(f"Part {part_number}: Already exists, skipped")
                 continue
 
-            results['processed'] += 1
-
-            try:
-                if part_number in existing_parts:
-                    results['skipped'] += 1
-                    continue
-
+            # Each part gets its own transaction to prevent cascading failures
+            with db_cursor(commit=True) as cursor:
                 # Use create_part_on_demand which handles base_part_number collisions
                 base_part_number = create_part_on_demand(cursor, part_number, part_number)
                 existing_parts[part_number] = base_part_number
                 results['created'] += 1
+                logger.info(f"Created part: {part_number} -> {base_part_number}")
                 print(f"Created part: {part_number} -> {base_part_number}")
 
-            except Exception as e:
-                results['errors'].append(f"Part {part_number}: {str(e)}")
-                print(f"Error creating part {part_number}: {e}")
-                import traceback
-                traceback.print_exc()
+        except Exception as e:
+            results['errors'].append(f"Part {part_number}: {str(e)}")
+            logger.error(f"Error creating part {part_number}: {e}")
+            print(f"Error creating part {part_number}: {e}")
+            import traceback
+            traceback.print_exc()
+            # Continue processing other parts even if one fails
 
-        print(f"Parts: Created={results['created']}, Skipped={results['skipped']}, Errors={len(results['errors'])}")
+    summary = f"Parts: Created={results['created']}, Skipped={results['skipped']}, Errors={len(results['errors'])}"
+    logger.info(summary)
+    print(summary)
 
 
-def process_customers(df, results):
+def process_customers(df, results, logger):
     """Process unique customers from the CSV, using salesperson from the first associated order line"""
     with db_cursor(commit=True) as cursor:
         # Get unique customers with their first associated salesperson (columns 6: companyId, 7: companyName, 27: salesPerson)
         unique_customers = df[[df.columns[6], df.columns[7], df.columns[27]]].drop_duplicates(subset=[df.columns[6]])
 
+        logger.info(f"Found {len(unique_customers)} unique customers")
         print(f"Found {len(unique_customers)} unique customers")
 
         # Get salesperson mapping
@@ -334,6 +410,7 @@ def process_customers(df, results):
                 if existing:
                     # Skip existing customers entirely - don't update anything
                     results['skipped'] += 1
+                    logger.debug(f"Customer {customer_code}: Already exists, skipped")
                 else:
                     # Create new customer with order's salesperson
                     _execute_with_cursor(cursor,"""
@@ -341,21 +418,26 @@ def process_customers(df, results):
                         VALUES (?, ?, ?, 3)
                     """, (customer_code, customer_name, sp_id))
                     results['created'] += 1
+                    logger.info(f"Created customer: {customer_code} - {customer_name} (SP: {salesperson_name or 'Default'})")
                     print(f"Created customer: {customer_code} - {customer_name} (SP: {salesperson_name or 'Default'})")
 
             except Exception as e:
                 results['errors'].append(f"Customer {customer_code}: {str(e)}")
+                logger.error(f"Error processing customer {customer_code}: {e}")
                 print(f"Error processing customer {customer_code}: {e}")
 
-        print(f"Customers: Created={results['created']}, Skipped={results['skipped']}")
+        summary = f"Customers: Created={results['created']}, Skipped={results['skipped']}"
+        logger.info(summary)
+        print(summary)
 
 
-def process_sales_orders(df, results):
+def process_sales_orders(df, results, logger):
     """Process unique sales orders from the CSV"""
     with db_cursor(commit=True) as db:
         # Get unique orders (column 4: transactionalNumber = SO number)
         unique_orders = df.drop_duplicates(subset=[df.columns[4]])
 
+        logger.info(f"Found {len(unique_orders)} unique sales orders")
         print(f"Found {len(unique_orders)} unique sales orders")
 
         cursor = db
@@ -385,6 +467,7 @@ def process_sales_orders(df, results):
 
                 if existing:
                     results['skipped'] += 1
+                    logger.debug(f"Sales Order {so_ref}: Already exists, skipped")
                     continue
 
                 # Get customer (created in previous step if new)
@@ -394,7 +477,9 @@ def process_sales_orders(df, results):
                 customer = cursor.fetchone()
 
                 if not customer:
-                    results['errors'].append(f"Order {so_ref}: Customer {customer_code} not found")
+                    error_msg = f"Order {so_ref}: Customer {customer_code} not found"
+                    results['errors'].append(error_msg)
+                    logger.error(error_msg)
                     continue
 
                 # Get salesperson ID for the order
@@ -418,17 +503,22 @@ def process_sales_orders(df, results):
                       customer['currency_id'] or 1, 1, salesperson_id))
 
                 results['created'] += 1
+                logger.info(f"Created order: {so_ref}")
                 print(f"Created order: {so_ref}")
 
             except Exception as e:
-                results['errors'].append(f"Order {so_ref}: {str(e)}")
+                error_msg = f"Order {so_ref}: {str(e)}"
+                results['errors'].append(error_msg)
+                logger.error(error_msg)
                 print(f"Error processing order {so_ref}: {e}")
 
         # Auto-committed by db_cursor
-        print(f"Sales Orders: Created={results['created']}, Skipped={results['skipped']}")
+        summary = f"Sales Orders: Created={results['created']}, Skipped={results['skipped']}"
+        logger.info(summary)
+        print(summary)
 
 
-def process_order_lines(df, results):
+def process_order_lines(df, results, logger):
     """Process order lines from the CSV with extensive debugging"""
     def _parse_quantity(value):
         if pd.isna(value):
@@ -462,6 +552,9 @@ def process_order_lines(df, results):
         _execute_with_cursor(cursor,"SELECT system_part_number, base_part_number FROM part_numbers")
         parts = {row['system_part_number']: row['base_part_number'] for row in cursor.fetchall()}
 
+        logger.info(f"Processing {len(df)} order lines")
+        logger.info(f"Loaded {len(orders)} orders, {len(parts)} parts")
+        logger.info(f"First 5 SO refs in lookup: {list(orders.keys())[:5]}")
         print(f"Processing {len(df)} order lines")
         print(f"Loaded {len(orders)} orders, {len(parts)} parts")
         print(f"\nFirst 5 SO refs in lookup: {list(orders.keys())[:5]}")
@@ -480,15 +573,19 @@ def process_order_lines(df, results):
             quantity = quantity_raw  # quantityOrdered
             unit_price = unit_price_raw  # unitPrice
 
-            print(f"\n--- DataFrame Row {idx} (Excel row {idx + 2}) ---")
-            print(f"  SO Ref: '{so_ref}' (raw: {so_ref_raw})")
-            print(f"  Line: {line_no} (raw: {line_no_raw})")
-            print(f"  Part: '{part_number}' (raw: {part_number_raw})")
-            print(f"  Qty: {quantity} (raw: {quantity_raw})")
-            print(f"  Price: {unit_price} (raw: {unit_price_raw})")
+            log_entry = f"\n--- DataFrame Row {idx} (Excel row {idx + 2}) ---"
+            log_entry += f"\n  SO Ref: '{so_ref}' (raw: {so_ref_raw})"
+            log_entry += f"\n  Line: {line_no} (raw: {line_no_raw})"
+            log_entry += f"\n  Part: '{part_number}' (raw: {part_number_raw})"
+            log_entry += f"\n  Qty: {quantity} (raw: {quantity_raw})"
+            log_entry += f"\n  Price: {unit_price} (raw: {unit_price_raw})"
+            logger.debug(log_entry)
+            print(log_entry)
 
             if not so_ref or so_ref.lower() == 'nan':
-                print(f"  ❌ SKIPPED: Invalid SO ref")
+                skip_msg = f"  ❌ SKIPPED: Invalid SO ref"
+                logger.warning(f"Row {idx}: {skip_msg}")
+                print(skip_msg)
                 results['skipped'] += 1
                 continue
 
@@ -500,54 +597,71 @@ def process_order_lines(df, results):
                 qty = _parse_quantity(quantity)
                 price = _parse_price(unit_price)
 
-                print(f"  Parsed: Line#{line_number}, Qty={qty}, Price={price}")
+                parsed_msg = f"  Parsed: Line#{line_number}, Qty={qty}, Price={price}"
+                logger.debug(parsed_msg)
+                print(parsed_msg)
 
                 # Get order and part
                 order_id = orders.get(so_ref)
                 base_part = parts.get(part_number)
 
                 if not order_id:
+                    error_msg = f"Row {idx} (Excel row {idx + 2}, Line {line_number}): Order {so_ref} not found"
+                    logger.error(error_msg)
+                    logger.error(f"  Available orders: {list(orders.keys())[:10]}")
                     print(f"  ❌ ERROR: Order '{so_ref}' not found in orders dict")
                     print(f"  Available orders: {list(orders.keys())[:10]}")
-                    results['errors'].append(
-                        f"Row {idx} (Excel row {idx + 2}, Line {line_number}): Order {so_ref} not found")
+                    results['errors'].append(error_msg)
                     results['skipped'] += 1
                     continue
 
+                logger.debug(f"  ✓ Found order_id: {order_id}")
                 print(f"  ✓ Found order_id: {order_id}")
 
                 if not base_part:
-                    # Try to create part on-demand
+                    # Try to create part on-demand in a separate transaction
+                    logger.info(f"  ⚠️  Creating missing part: {part_number}")
                     print(f"  ⚠️  Creating missing part: {part_number}")
                     try:
-                        base_part = create_part_on_demand(cursor, part_number, part_number)
+                        # Use a separate transaction for part creation to avoid aborting the main transaction
+                        with db_cursor(commit=True) as part_cursor:
+                            base_part = create_part_on_demand(part_cursor, part_number, part_number)
                         parts[part_number] = base_part
+                        logger.info(f"  ✓ Created/found base_part: {base_part}")
                         print(f"  ✓ Created/found base_part: {base_part}")
                     except Exception as e:
+                        error_msg = f"Row {idx} (Excel row {idx + 2}): Could not create part '{part_number}': {e}"
+                        logger.error(error_msg)
                         print(f"  ❌ ERROR creating part: {e}")
                         import traceback
                         traceback.print_exc()
-                        results['errors'].append(
-                            f"Row {idx} (Excel row {idx + 2}): Could not create part '{part_number}'")
+                        results['errors'].append(error_msg)
                         results['skipped'] += 1
                         continue
                 else:
+                    logger.debug(f"  ✓ Found base_part: {base_part}")
                     print(f"  ✓ Found base_part: {base_part}")
 
                 # Check if line exists
+                logger.debug(f"  Checking if line exists: order_id={order_id}, line_number={line_number}")
                 _execute_with_cursor(cursor,"""
-                    SELECT id FROM sales_order_lines 
+                    SELECT id FROM sales_order_lines
                     WHERE sales_order_id = ? AND line_number = ?
                 """, (order_id, line_number))
                 existing = cursor.fetchone()
 
+                logger.debug(f"  Query result: {existing}")
+
                 if existing:
                     existing_id = existing['id'] if isinstance(existing, dict) else existing[0]
+                    skip_msg = f"Row {idx} (SO: {so_ref}, Line {line_number}): Line already exists (id={existing_id})"
+                    logger.warning(skip_msg)
                     print(f"  ⏭️  SKIPPED: Line already exists (id={existing_id})")
                     results['skipped'] += 1
                     continue
 
                 # Create line
+                logger.info(f"  Inserting new line: order_id={order_id}, line={line_number}, part={base_part}, qty={qty}, price={price}")
                 _execute_with_cursor(cursor,"""
                     INSERT INTO sales_order_lines (
                         sales_order_id, line_number, base_part_number,
@@ -556,28 +670,36 @@ def process_order_lines(df, results):
                     ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """, (order_id, line_number, base_part, qty, price, 1))
 
+                success_msg = f"Row {idx} (SO: {so_ref}, Line {line_number}): ✅ CREATED"
+                logger.info(success_msg)
                 print(f"  ✅ CREATED: Line {line_number} for order {so_ref}")
                 results['created'] += 1
 
             except Exception as e:
                 error_msg = f"Row {idx} (Excel row {idx + 2}, Line {line_no}): {str(e)}"
                 results['errors'].append(error_msg)
+                logger.error(error_msg)
+                logger.error(traceback.format_exc())
                 print(f"  ❌ ERROR: {e}")
                 import traceback
                 traceback.print_exc()
 
         # Auto-committed by db_cursor
+        logger.info("=" * 60)
+        summary = f"Order Lines: Created={results['created']}, Skipped={results['skipped']}, Errors={len(results['errors'])}"
+        logger.info(summary)
         print(f"\n{'=' * 60}")
-        print(
-            f"Order Lines: Created={results['created']}, Skipped={results['skipped']}, Errors={len(results['errors'])}")
+        print(summary)
 
         if results['errors']:
+            logger.info("\nERRORS DETAIL:")
             print(f"\nERRORS DETAIL:")
             for error in results['errors']:
+                logger.error(f"  - {error}")
                 print(f"  - {error}")
 
 
-def calculate_order_totals(results):
+def calculate_order_totals(results, logger):
     """Calculate total_value for sales orders"""
     with db_cursor(commit=True) as db:
         cursor = db
@@ -590,12 +712,15 @@ def calculate_order_totals(results):
         """)
         orders_needing_totals = cursor.fetchall()
 
+        logger.info(f"Found {len(orders_needing_totals)} orders needing total calculation")
+
         calculated = 0
         for order in orders_needing_totals:
             order_id = order['id'] if isinstance(order, dict) else order[0]
+            order_ref = order['sales_order_ref'] if isinstance(order, dict) else order[1]
             _execute_with_cursor(cursor, """
                 SELECT COALESCE(SUM(quantity * COALESCE(price, 0)), 0) as total
-                FROM sales_order_lines 
+                FROM sales_order_lines
                 WHERE sales_order_id = ? AND price IS NOT NULL
             """, (order_id,))
             total = cursor.fetchone()
@@ -607,26 +732,32 @@ def calculate_order_totals(results):
                         UPDATE sales_orders SET total_value = ? WHERE id = ?
                     """, (total_value, order_id))
                     calculated += 1
+                    logger.info(f"  Calculated total for order {order_ref}: ${total_value:.2f}")
 
         if calculated > 0:
             # Auto-committed by db_cursor
+            logger.info(f"Calculated totals for {calculated} orders")
             print(f"Calculated totals for {calculated} orders")
             results['sales_orders']['totals_calculated'] = calculated
 
 
-def print_summary(results):
+def print_summary(results, logger):
     """Print import summary"""
+    logger.info("\nIMPORT SUMMARY:")
     print("\nIMPORT SUMMARY:")
     for step, data in results.items():
-        print(f"\n{step.upper()}:")
-        print(f"  Processed: {data['processed']}")
-        print(f"  Created: {data['created']}")
+        step_summary = f"\n{step.upper()}:"
+        step_summary += f"\n  Processed: {data['processed']}"
+        step_summary += f"\n  Created: {data['created']}"
         if data['updated'] > 0:
-            print(f"  Updated: {data['updated']}")
-        print(f"  Skipped: {data['skipped']}")
+            step_summary += f"\n  Updated: {data['updated']}"
+        step_summary += f"\n  Skipped: {data['skipped']}"
         if data['errors']:
-            print(f"  Errors: {len(data['errors'])}")
+            step_summary += f"\n  Errors: {len(data['errors'])}"
             for err in data['errors'][:5]:
-                print(f"    - {err}")
+                step_summary += f"\n    - {err}"
             if len(data['errors']) > 5:
-                print(f"    ... and {len(data['errors']) - 5} more")
+                step_summary += f"\n    ... and {len(data['errors']) - 5} more"
+
+        logger.info(step_summary)
+        print(step_summary)

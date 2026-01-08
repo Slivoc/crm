@@ -1831,12 +1831,25 @@ def _scrape_monroe(product_name, headless=True):
                         logging.info(f"Monroe: Spec row {idx}: label='{label}', value='{value}'")
                         result["debug_info"].append(f"Spec row {idx}: {label} = {value}")
 
-                        if 'inventory' in label and not result["inventory"]:
-                            inv_match = re.search(r'\d+', value)
-                            if inv_match:
-                                result["inventory"] = int(inv_match.group())
-                                logging.info(f"Monroe: Set inventory to {result['inventory']}")
-                                result["debug_info"].append(f"Set inventory to {result['inventory']}")
+                        if 'inventory' in label and result["inventory"] is None:
+                            # First check if the value is explicitly "0" or starts with "0"
+                            if value.strip() == '0' or value.strip().startswith('0 '):
+                                result["inventory"] = 0
+                                logging.info(f"Monroe: Set inventory to 0 (explicit zero)")
+                                result["debug_info"].append(f"Set inventory to 0 (explicit zero)")
+                            # Only extract number if it's NOT part of a phone number pattern
+                            # Avoid matching (877) or other phone-like patterns
+                            elif not re.search(r'\(\d{3}\)', value) and not re.search(r'call|phone|email', value.lower()):
+                                inv_match = re.search(r'\d+', value)
+                                if inv_match:
+                                    result["inventory"] = int(inv_match.group())
+                                    logging.info(f"Monroe: Set inventory to {result['inventory']}")
+                                    result["debug_info"].append(f"Set inventory to {result['inventory']}")
+                            else:
+                                # Value contains phone number or contact info, treat as zero inventory
+                                result["inventory"] = 0
+                                logging.info(f"Monroe: Set inventory to 0 (contact info detected in value: {value})")
+                                result["debug_info"].append(f"Set inventory to 0 (contact info detected)")
 
                         if 'minimum order' in label:
                             moq_match = re.search(r'\d+', value)
@@ -1851,6 +1864,14 @@ def _scrape_monroe(product_name, headless=True):
                                 result["purchase_increment"] = int(inc_match.group())
                                 logging.info(f"Monroe: Set purchase_increment to {result['purchase_increment']}")
                                 result["debug_info"].append(f"Set purchase_increment to {result['purchase_increment']}")
+
+                # Post-processing: If inventory is 0, clear the price
+                # Zero inventory means the product is not actually available
+                if result.get("inventory") == 0:
+                    if result.get("unit_price") is not None:
+                        logging.info(f"Monroe: Clearing unit_price because inventory is 0")
+                        result["debug_info"].append("Clearing unit_price because inventory is 0")
+                        result["unit_price"] = None
             else:
                 error_msg = f"Product '{product_name}' not found in Monroe catalog"
                 logging.warning(f"Monroe: {error_msg}")

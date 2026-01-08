@@ -1088,18 +1088,45 @@ def _standardize_certifications(raw_value, existing_notes=None):
 
 
 def _extract_quoted_part_number(text):
+    """
+    Extract quoted/alternative part number from text.
+    Looks for patterns like "Quoting: NAS9301B-5-10" or "Alt PN: AF3212-4-06"
+    """
     if not text:
         return None
 
+    # Try multiple patterns in order of specificity
+    patterns = [
+        r'\b(?:quoting|quoted|alt\s*pn?|alternate?\s*pn?)\s*[:#-]?\s*(?:p/?n\s*[:#-]?\s*)?([A-Z0-9][A-Z0-9\-\/\.]+)',
+        r'/\s*(?:quoting|quoted)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\-\/\.]+)',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+
+    return None
+
+
+def _extract_requested_part_number(text):
+    """
+    Extract the original/requested part number from notes.
+    Looks for patterns like "Requested PN: CR3212-4-04"
+    """
+    if not text:
+        return None
+
+    # Look for "Requested PN:" or similar patterns
     match = re.search(
-        r'\b(?:quoting|quoted)\s*[:#-]?\s*(?:p/?n\s*)?([A-Z0-9][A-Z0-9\-\/\.]+)',
+        r'\b(?:requested|original|req)\s*(?:pn?|part\s*number?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\-\/\.]+)',
         text,
         re.IGNORECASE
     )
-    if not match:
-        return None
+    if match:
+        return match.group(1).strip()
 
-    return match.group(1).strip()
+    return None
 
 
 _CURRENCY_CODE_PATTERN = re.compile(
@@ -1172,7 +1199,7 @@ Output ONLY a valid JSON array of objects with DOUBLE QUOTES for all keys and st
 Do NOT use markdown formatting like ```json or any wrappers. Output raw JSON only.
 
   Each object should have:
-  - part_number: The part number (clean, no extra text)
+  - part_number: The part number the supplier is quoting (clean, no extra text). CRITICAL: If the text includes "Quoting:", "Quoted:", "Quoting PN:", "Alt PN:", or similar followed by a part number, USE THAT part number as the part_number field, NOT the requested/original part number.
   - quantity: Quantity quoted (integer, default to 1 if not specified)
   - qty_available: Quantity available/in stock (integer, null if not specified)
   - purchase_increment: Purchasing/order increment (integer, null if not specified)
@@ -1183,15 +1210,14 @@ Do NOT use markdown formatting like ```json or any wrappers. Output raw JSON onl
 - certifications: Keep this concise. Prefer "OEM certs" if there is full trace to OEM/manufacturer. Use "EASA Form 1" or "8130-3" when those certificates are mentioned. Use "Dual release (8130/EASA)" if both are present. Use "no trace" ONLY when explicitly stated (e.g., "no certs", "no trace", "distributor C of C only"). If not mentioned, use null. Omit DFARS/ITAR/testing notes from this field.
 - is_no_bid: true if supplier declined to quote this part, false otherwise
 - manufacturer: Extract the manufacturer name if mentioned. Look for common aerospace hardware brands like "Cherry", "Alcoa", "Arconic", "Allfast", "SPS", "Monogram", "Fairchild", "Kaynar", "Huck", "Shur-Lok".
-- notes: Any additional relevant notes about this line. If DFARS/ITAR compliance, test reports, or other paperwork details are mentioned, put them here instead of certifications.
+- notes: Any additional relevant notes about this line. Include the originally requested part number here if it differs from what the supplier is quoting. If DFARS/ITAR compliance, test reports, or other paperwork details are mentioned, put them here instead of certifications.
 
 Look for common patterns:
 - "No quote", "Not available", "NQ", "N/A" = is_no_bid: true
 - Lead times like "3-4 weeks", "Stock", "ARO" should be converted to days (weeks * 7)
 - Condition codes are usually 2 letters
 - Prices might have currency symbols - extract just the number
-- Part numbers might be slightly different from requested - use what supplier provided
-- If a line includes "Quoting: <PN>" or "Quoted: <PN>", use that as the part_number
+- IMPORTANT: When suppliers quote alternative part numbers (e.g., "CR3212-4-04 / Quoting: NAS9301B-5-10"), the part_number field MUST be the alternative/quoted part (NAS9301B-5-10), NOT the requested part (CR3212-4-04)
 - If MOQ is present, the quoted quantity should be at least the MOQ"""
                 },
                 {
@@ -1204,7 +1230,9 @@ Parts we requested:
 Supplier's response:
 {quote_text}
 
-Extract all quoted items into a JSON array."""
+Extract all quoted items into a JSON array.
+
+CRITICAL REMINDER: If you see text like "CR3212-4-04 / Quoting: NAS9301B-5-10", the part_number field must be "NAS9301B-5-10" (the quoted/alternative part), and the notes field should mention "Requested PN: CR3212-4-04"."""
                 }
             ],
             max_tokens=5000,
@@ -1314,11 +1342,35 @@ Extract all quoted items into a JSON array."""
                     is_no_bid = bool(is_no_bid_raw)
 
                 notes = str(item.get('notes', '')).strip() or None
-                quoted_part_number = _extract_quoted_part_number(notes)
-                if quoted_part_number and quoted_part_number != part_number:
-                    if not notes or part_number not in notes:
-                        notes = f"{notes}; Requested PN: {part_number}" if notes else f"Requested PN: {part_number}"
-                    part_number = quoted_part_number
+
+                # First, check if the AI already put "Requested PN: XXX" in the notes
+                # This means the AI already identified the quoted vs requested part numbers
+                requested_pn_from_notes = _extract_requested_part_number(notes)
+
+                if requested_pn_from_notes:
+                    # AI already did the work: part_number is the quoted one, notes has the requested one
+                    match_part_number = requested_pn_from_notes
+                else:
+                    # AI didn't identify it, so we need to extract it ourselves
+                    # Keep the original part_number for matching purposes
+                    match_part_number = part_number
+
+                    # Try to extract quoted part number from notes first
+                    quoted_part_number = _extract_quoted_part_number(notes)
+
+                    # If not found in notes, try extracting from the part_number field itself
+                    # (in case AI included the full text there)
+                    if not quoted_part_number:
+                        quoted_part_number = _extract_quoted_part_number(part_number)
+
+                    # If we found a quoted part number different from what we have, update it
+                    if quoted_part_number and quoted_part_number != part_number:
+                        # Keep track of the original/requested part number for matching
+                        match_part_number = part_number
+                        # Keep track of the original/requested part number in notes
+                        if not notes or part_number not in notes:
+                            notes = f"{notes}; Requested PN: {part_number}" if notes else f"Requested PN: {part_number}"
+                        part_number = quoted_part_number
 
                 certifications, notes = _standardize_certifications(certifications, notes)
 
@@ -1327,6 +1379,7 @@ Extract all quoted items into a JSON array."""
 
                 cleaned_item = {
                     'part_number': part_number,
+                    'match_part_number': match_part_number,
                     'quantity': quantity,
                     'qty_available': qty_available,
                     'purchase_increment': purchase_increment,

@@ -982,8 +982,12 @@ function applyExtractedDataToTable(extractedLines) {
     const unmatched = [];
 
     extractedLines.forEach(extracted => {
-        const extractedPN = extracted.part_number || '';
-        if (!extractedPN) {
+        // Use match_part_number if available (the original/requested part number before substitution)
+        // Otherwise fall back to part_number
+        const matchPN = extracted.match_part_number || extracted.part_number || '';
+        const quotedPN = extracted.part_number || '';
+
+        if (!matchPN && !quotedPN) {
             unmatched.push('(no part number)');
             return;
         }
@@ -993,11 +997,12 @@ function applyExtractedDataToTable(extractedLines) {
 
         for (let i = 0; i < quoteLinesData.length; i++) {
             const line = quoteLinesData[i];
-            const candidatePN = line.quoted_part_number || line.customer_part_number || '';
+            const candidatePN = line.customer_part_number || '';
 
             if (!candidatePN) continue;
 
-            const score = pnSimilarity(candidatePN, extractedPN);
+            // Match against the original/requested part number, not the quoted one
+            const score = pnSimilarity(candidatePN, matchPN);
 
             if (score > bestScore) {
                 bestScore = score;
@@ -1008,7 +1013,7 @@ function applyExtractedDataToTable(extractedLines) {
         if (bestIndex !== -1 && bestScore >= AUTO_MATCH_THRESHOLD) {
             matchedCount++;
             console.log(
-                `Matched extracted PN "${extractedPN}" to row ${bestIndex} ` +
+                `Matched extracted PN "${matchPN}" (quoted as "${quotedPN}") to row ${bestIndex} ` +
                 `(score=${bestScore.toFixed(2)})`
             );
 
@@ -1027,8 +1032,8 @@ function applyExtractedDataToTable(extractedLines) {
                 [bestIndex, 14, extracted.notes]
             ]);
         } else {
-            console.warn(`No strong match for extracted PN "${extractedPN}", bestScore=${bestScore.toFixed(2)}`);
-            unmatched.push(extractedPN);
+            console.warn(`No strong match for extracted PN "${matchPN}", bestScore=${bestScore.toFixed(2)}`);
+            unmatched.push(quotedPN);
         }
     });
 
