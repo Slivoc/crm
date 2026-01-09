@@ -167,7 +167,20 @@
                 </div>
             </div>
 
-            <div class="card-body" style="padding: 0;">
+            <div class="card-body p-0">
+                <div id="analysis-deferred-banner"
+                     class="alert alert-info d-flex align-items-center justify-content-between m-3 mb-0"
+                     style="display: none;">
+                    <div>
+                        <div class="fw-semibold">Analysis paused for large lists</div>
+                        <div class="small text-muted">
+                            This list has <span id="analysis-deferred-count">0</span> lines. Run analysis when needed.
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-primary btn-sm" id="run-analysis-btn">
+                        <i class="bi bi-search me-1"></i>Run analysis
+                    </button>
+                </div>
                 {% include 'parts_results_table.html' %}
             </div>
         </div>
