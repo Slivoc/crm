@@ -1079,6 +1079,8 @@ CREATE TABLE public.customer_monthly_targets (
     target_amount numeric DEFAULT 0,
     is_locked integer DEFAULT 0,
     notes text,
+    comments text,
+    response text,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 

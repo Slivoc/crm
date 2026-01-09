@@ -637,6 +637,10 @@ CREATE TABLE customer_monthly_targets (
 
     notes TEXT,
 
+    comments TEXT,
+
+    response TEXT,
+
     upDATEd_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     UNIQUE(salesperson_id, customer_id, target_month)

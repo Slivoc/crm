@@ -2451,3 +2451,50 @@ document.getElementById('callListContent').addEventListener('click', function(e)
         modal.show();
     }
 });
+
+function saveNextActionResponse(input) {
+    const customerId = input.dataset.customerId;
+    const targetMonth = input.dataset.targetMonth;
+    if (!customerId || !targetMonth) {
+        return;
+    }
+
+    const urlParts = window.location.pathname.split('/');
+    const salespersonId = urlParts[urlParts.indexOf('salespeople') + 1];
+
+    input.classList.remove('is-valid', 'is-invalid');
+
+    fetch('/salespeople/save_monthly_target', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            salesperson_id: salespersonId,
+            customer_id: customerId,
+            month: targetMonth,
+            response: input.value
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            input.classList.add('is-valid');
+            setTimeout(() => input.classList.remove('is-valid'), 1500);
+        } else {
+            input.classList.add('is-invalid');
+        }
+    })
+    .catch(() => {
+        input.classList.add('is-invalid');
+    });
+}
+
+function handleNextActionResponseSave(event) {
+    const input = event.target.closest('.next-action-response-input');
+    if (!input) {
+        return;
+    }
+    saveNextActionResponse(input);
+}
+
+document.addEventListener('change', handleNextActionResponseSave);
+document.addEventListener('blur', handleNextActionResponseSave, true);
