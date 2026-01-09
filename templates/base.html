@@ -2433,7 +2433,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <i class="bi ${icon} me-2"></i>
                 <strong class="me-auto">${escapeHtml(notification.title)}</strong>
                 <small class="text-white-50">${timeAgo}</small>
-                <button type="button" class="btn-close btn-close-white ms-2" onclick="dismissNotification(${notification.id}, this)"></button>
+                <button type="button" class="btn-close btn-close-white ms-2" aria-label="Close"></button>
             </div>
             <div class="toast-body">
                 <div class="mb-2">${escapeHtml(notification.message)}</div>
@@ -2451,13 +2451,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
         html += '</div>';
         toast.innerHTML = html;
+        const closeButton = toast.querySelector('.btn-close');
+        if (closeButton) {
+            closeButton.addEventListener('click', () => {
+                dismissNotification(notification.id, toast);
+            });
+        }
 
         // Add to container
         container.appendChild(toast);
 
         // Auto-dismiss after 15 seconds
         setTimeout(() => {
-            dismissNotification(notification.id, toast.querySelector('.btn-close'));
+            dismissNotification(notification.id, toast);
         }, 15000);
 
         // Play a subtle notification sound (optional - requires sound file)
