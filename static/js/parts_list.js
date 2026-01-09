@@ -3,6 +3,7 @@ window.allResults = [];
 let currentListId = null;
 let selectedContact = null;
 let selectedCustomer = null;
+const VIEW_ANALYSIS_AUTO_LIMIT = 40;
 
 function setupStickyHeader() {
     const container = document.querySelector('.parts-table-container');
@@ -97,6 +98,48 @@ function displayResults(results) {
     if (viewAsTableBtn) {
         viewAsTableBtn.style.display = 'inline-block';
     }
+}
+
+function buildBasicResultsFromLines(lines) {
+    if (!Array.isArray(lines)) return [];
+    return lines.map((line, index) => ({
+        line_id: line.id || line.line_id || null,
+        line_number: line.line_number || index + 1,
+        input_part_number: line.customer_part_number || line.part_number || '',
+        base_part_number: line.base_part_number || null,
+        quantity: line.quantity || 1,
+        found: true,
+        global_alternatives: [],
+        stock_details: [],
+        vq_details: [],
+        so_details: [],
+        bom_details: [],
+        line_contacted_suppliers: [],
+        line_contacted_suppliers_count: 0,
+        line_supplier_quote_count: 0,
+        parts_list_quotes_unique_suppliers: 0,
+        excess_count: 0,
+        total_available_stock: 0,
+        stock_movement_count: 0,
+        ils_total_suppliers: 0,
+        ils_preferred_suppliers: 0,
+        ils_latest_search_date: null
+    }));
+}
+
+function showDeferredAnalysisBanner(lineCount, onRun) {
+    const banner = document.getElementById('analysis-deferred-banner');
+    const countEl = document.getElementById('analysis-deferred-count');
+    const runButton = document.getElementById('run-analysis-btn');
+    if (!banner || !runButton) return;
+    if (countEl) countEl.textContent = lineCount;
+    banner.style.display = 'flex';
+    runButton.disabled = false;
+    runButton.addEventListener('click', () => {
+        runButton.disabled = true;
+        banner.style.display = 'none';
+        onRun();
+    }, { once: true });
 }
 
 function createPartRow(part, displayIndex, isAlt, actualIndex) {
@@ -2102,7 +2145,13 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!partsInput && window.LOADED_LIST_DATA && window.LOADED_LIST_DATA.lines) {
         console.log('View page detected - auto-loading parts list');
         setTimeout(function() {
-            analyzePartsWithLineIds(window.LOADED_LIST_DATA.lines);
+            const lines = window.LOADED_LIST_DATA.lines;
+            if (lines.length > VIEW_ANALYSIS_AUTO_LIMIT) {
+                displayResults(buildBasicResultsFromLines(lines));
+                showDeferredAnalysisBanner(lines.length, () => analyzePartsWithLineIds(lines));
+            } else {
+                analyzePartsWithLineIds(lines);
+            }
         }, 100);
         return;
     }
