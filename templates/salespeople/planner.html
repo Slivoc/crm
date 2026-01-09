@@ -37,6 +37,20 @@
         border-color: #86b7fe;
         outline: 0;
     }
+    .planner-input-group {
+        margin-bottom: 6px;
+    }
+    .planner-input-group:last-child {
+        margin-bottom: 0;
+    }
+    .planner-input-label {
+        font-size: 0.65rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #6c757d;
+        display: block;
+        margin-bottom: 2px;
+    }
 
     /* Status Badges */
     .calc-badge {
@@ -197,7 +211,7 @@
         <th width="15%">Trend</th>
         <th width="15%">Calculation Logic</th>
         <th width="20%" class="text-end">Actual / Target (£)</th>
-        <th width="25%">Strategy</th>
+        <th width="25%">Next Action / Comments / Response</th>
     </tr>
 </thead>
                     <tbody id="opportunitiesTableBody"></tbody>
@@ -220,7 +234,7 @@
         <th width="15%">Recent Trend</th>
         <th width="15%">First Order</th>
         <th width="20%" class="text-end">Actual / Target (£)</th>
-        <th width="25%">Growth Strategy</th>
+        <th width="25%">Next Action / Comments / Response</th>
     </tr>
 </thead>
                     <tbody id="newCustomersTableBody"></tbody>
@@ -247,7 +261,7 @@
         <th width="15%">2-Year Trend</th>
         <th width="15%">Risk Factor</th>
         <th width="20%" class="text-end">Actual / Target (£)</th>
-        <th width="25%">Re-engagement Plan</th>
+        <th width="25%">Next Action / Comments / Response</th>
     </tr>
 </thead>
                     <tbody id="recoveryTableBody"></tbody>
@@ -546,7 +560,15 @@ function renderPlanner(data) {
 
     row.innerHTML = `
         <td>
-            <div class="fw-bold">${customer.name}</div>
+            <div class="d-flex align-items-center gap-2">
+                <span class="fw-bold">${customer.name}</span>
+                <button type="button"
+                        class="btn btn-sm btn-link p-0"
+                        title="Open customer modal"
+                        onclick="openCustomerOverview(${customer.id}); event.stopPropagation();">
+                    <i class="bi bi-box-arrow-up-right"></i>
+                </button>
+            </div>
             ${customer.associated_count > 1 ? '<small class="text-muted"><i class="bi bi-diagram-2"></i> Grouped</small>' : ''}
         </td>
         <td>
@@ -579,12 +601,33 @@ function renderPlanner(data) {
             <small class="save-status text-success d-block mt-1" id="status-amount-${customer.id}">Saved</small>
         </td>
         <td>
-            <input type="text"
-                   class="notes-input"
-                   placeholder="Plan..."
-                   value="${customer.notes}"
-                   data-customer-id="${customer.id}"
-                   onblur="handleSave(this, 'notes')">
+            <div class="planner-input-group">
+                <label class="planner-input-label">Next action</label>
+                <input type="text"
+                       class="notes-input"
+                       placeholder="Next action..."
+                       value="${customer.next_action || ''}"
+                       data-customer-id="${customer.id}"
+                       onblur="handleSave(this, 'next_action')">
+            </div>
+            <div class="planner-input-group">
+                <label class="planner-input-label">Comments</label>
+                <input type="text"
+                       class="notes-input"
+                       placeholder="Comments..."
+                       value="${customer.comments || ''}"
+                       data-customer-id="${customer.id}"
+                       onblur="handleSave(this, 'comments')">
+            </div>
+            <div class="planner-input-group">
+                <label class="planner-input-label">Response</label>
+                <input type="text"
+                       class="notes-input"
+                       placeholder="Response..."
+                       value="${customer.response || ''}"
+                       data-customer-id="${customer.id}"
+                       onblur="handleSave(this, 'response')">
+            </div>
         </td>
     `;
     return row;
@@ -653,7 +696,9 @@ function addManualCustomer() {
         actual_sales: 0,
         recent_average: 0,
         chart_data: Array(24).fill(0),
-        notes: '',
+        next_action: '',
+        comments: '',
+        response: '',
         calc_method: 'Manual Target', // Visual label
         is_locked: true,
         associated_count: 1,
@@ -695,7 +740,7 @@ function addManualCustomer() {
             customer_id: customerId,
             month: monthInput.value,
             amount: 0, // Default to 0
-            notes: 'Manual Addition' // Optional default note
+            next_action: 'Manual Addition' // Optional default note
         })
     })
     .then(res => res.json())
@@ -794,9 +839,9 @@ function addManualCustomer() {
             [type]: value
         };
 
-        // When saving notes only, also send the current target so the backend
+        // When saving next actions, also send the current target so the backend
         // doesn't overwrite it with 0 when no amount was provided.
-        if (type === 'notes') {
+        if (type === 'next_action') {
             const targetInput = document.querySelector(`.target-input[data-customer-id="${customerId}"]`);
             if (targetInput) {
                 payload.amount = targetInput.value;
@@ -815,6 +860,14 @@ function addManualCustomer() {
                 if (type === 'amount') updateLocalTotal();
             }
         });
+    }
+
+    function openCustomerOverview(customerId) {
+        if (window.customerOverviewModal) {
+            window.customerOverviewModal.show(customerId);
+            return;
+        }
+        window.location.href = `/customers/${customerId}`;
     }
 
     function updateLocalTotal() {

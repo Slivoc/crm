@@ -356,7 +356,7 @@ function createSalespersonSection(salesperson) {
                     <th class="text-end">Target</th>
                     <th class="text-end">Actual</th>
                     <th>Progress</th>
-                    <th>Notes</th>
+                    <th>Next Action</th>
                 </tr>
             </thead>
             <tbody></tbody>
@@ -403,7 +403,7 @@ function createCustomerRow(customer) {
             <small class="text-muted">${Math.round(progress)}%</small>
         </td>
         <td>
-            <small class="text-muted">${customer.notes || '—'}</small>
+            <small class="text-muted">${customer.next_action || '—'}</small>
         </td>
     `;
 

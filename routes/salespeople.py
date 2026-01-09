@@ -1236,6 +1236,29 @@ def activity(salesperson_id):
             print(f"DEBUG: Error loading top quoted lists: {e}")
             top_quoted_lists = []
 
+        next_action_customers = []
+        next_action_month = datetime.now().strftime('%Y-%m')
+        next_action_month_label = datetime.now().strftime('%B %Y')
+        try:
+            db = get_db_connection()
+            next_action_rows = db.execute(
+                """
+                SELECT c.id, c.name, t.notes, t.response, t.target_month
+                FROM customer_monthly_targets t
+                JOIN customers c ON c.id = t.customer_id
+                WHERE t.salesperson_id = ?
+                  AND t.target_month = ?
+                  AND t.notes IS NOT NULL
+                  AND TRIM(t.notes) <> ''
+                ORDER BY c.name
+                """,
+                (salesperson_id, next_action_month)
+            ).fetchall()
+            next_action_customers = [dict(row) for row in next_action_rows]
+            db.close()
+        except Exception as e:
+            print(f"DEBUG: Error loading next action customers: {e}")
+
         t_render = time.perf_counter()
         response = render_template(template,
                                salesperson=salesperson,
@@ -1246,7 +1269,9 @@ def activity(salesperson_id):
             quotes_by_day=quotes_by_day,
             top_quoted_lists=top_quoted_lists,
             parts_list_statuses=parts_list_statuses,
-            quoted_status_id=quoted_status_id
+            quoted_status_id=quoted_status_id,
+            next_action_customers=next_action_customers,
+            next_action_month_label=next_action_month_label
         )
         timings['render_template'] = time.perf_counter() - t_render
         return response
@@ -5607,7 +5632,11 @@ def get_planner_data(salesperson_id):
         user_defined_goal = float(goal_row['goal_amount'] or 0) if goal_row else 0
 
         # Saved targets
-        saved_targets_query = "SELECT customer_id, target_amount, notes, is_locked FROM customer_monthly_targets WHERE salesperson_id = ? AND target_month = ?"
+        saved_targets_query = """
+            SELECT customer_id, target_amount, notes, comments, response, is_locked
+            FROM customer_monthly_targets
+            WHERE salesperson_id = ? AND target_month = ?
+        """
         saved_targets = {
             str(row['customer_id']): dict(row)
             for row in db.execute(saved_targets_query, (salesperson_id, target_month_str)).fetchall()
@@ -5793,7 +5822,9 @@ def get_planner_data(salesperson_id):
                 'recent_average': round(recent_average),
                 'last_year_same_month': val_last_year,
                 'chart_data': chart_data,
-                'notes': saved_data.get('notes') or '',
+                'next_action': saved_data.get('notes') or '',
+                'comments': saved_data.get('comments') or '',
+                'response': saved_data.get('response') or '',
                 'calc_method': calc_method,
                 'is_locked': is_locked,
                 'associated_count': len(all_ids)
@@ -5847,7 +5878,9 @@ def get_planner_data(salesperson_id):
                     'actual_sales': c_map.get(target_month_str, 0),
                     'recent_average': 0,
                     'chart_data': c_data,
-                    'notes': s_data.get('notes', ''),
+                    'next_action': s_data.get('notes', ''),
+                    'comments': s_data.get('comments') or '',
+                    'response': s_data.get('response') or '',
                     'calc_method': 'Manual Target',
                     'is_locked': True,
                     'associated_count': 1
@@ -5898,42 +5931,67 @@ def save_monthly_target():
         customer_id = data.get('customer_id')
         target_month = data.get('month')
 
-        notes = data.get('notes', '')
-
         db = get_db_connection()
 
-        # Decide whether an amount was explicitly provided (e.g. updating the target input)
-        # or if we're only saving notes. If notes-only, keep the existing amount instead of
-        # overwriting it with 0.
+        next_action_provided = 'next_action' in data or 'notes' in data
+        comments_provided = 'comments' in data
+        response_provided = 'response' in data
+
+        raw_next_action = data.get('next_action', data.get('notes', None))
+        raw_comments = data.get('comments', None)
+        raw_response = data.get('response', None)
+
         amount_provided = 'amount' in data
         raw_amount = data.get('amount')
+
+        existing = None
+        if not (amount_provided and next_action_provided and comments_provided and response_provided):
+            existing = db.execute(
+                """
+                SELECT target_amount, notes, comments, response
+                FROM customer_monthly_targets
+                WHERE salesperson_id = ? AND customer_id = ? AND target_month = ?
+                """,
+                (salesperson_id, customer_id, target_month)
+            ).fetchone()
+
         if amount_provided:
             if raw_amount == '' or raw_amount is None:
                 amount = 0
             else:
                 amount = float(raw_amount)
         else:
-            existing = db.execute(
-                """
-                SELECT target_amount FROM customer_monthly_targets
-                WHERE salesperson_id = ? AND customer_id = ? AND target_month = ?
-                """,
-                (salesperson_id, customer_id, target_month)
-            ).fetchone()
             amount = existing['target_amount'] if existing else 0
+
+        if next_action_provided:
+            notes = raw_next_action or ''
+        else:
+            notes = existing['notes'] if existing else ''
+
+        if comments_provided:
+            comments = raw_comments or ''
+        else:
+            comments = existing['comments'] if existing else ''
+
+        if response_provided:
+            response = raw_response or ''
+        else:
+            response = existing['response'] if existing else ''
 
         query = """
             INSERT INTO customer_monthly_targets
-            (salesperson_id, customer_id, target_month, target_amount, notes, is_locked, updated_at)
-            VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+            (salesperson_id, customer_id, target_month, target_amount, notes, comments, response, is_locked, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
             ON CONFLICT(salesperson_id, customer_id, target_month)
             DO UPDATE SET 
                 target_amount = excluded.target_amount,
                 notes = excluded.notes,
+                comments = excluded.comments,
+                response = excluded.response,
                 is_locked = 1,
                 updated_at = CURRENT_TIMESTAMP
         """
-        db.execute(query, (salesperson_id, customer_id, target_month, amount, notes))
+        db.execute(query, (salesperson_id, customer_id, target_month, amount, notes, comments, response))
         db.commit()
         db.close()
 
@@ -6151,7 +6209,7 @@ def get_consolidated_planner_data():
             target_map = {
                 row['customer_id']: {
                     'amount': float(row['target_amount'] or 0),
-                    'notes': row['notes'] or '',
+                    'next_action': row['notes'] or '',
                     'is_locked': bool(row['is_locked'])
                 }
                 for row in saved_targets
@@ -6234,7 +6292,7 @@ def get_consolidated_planner_data():
                 # Calculate target (same logic as individual planner)
                 if is_saved:
                     suggested_target = saved_data.get('amount', 0)
-                    notes = saved_data.get('notes', '')
+                    next_action = saved_data.get('next_action', '')
                 else:
                     # Calculate target based on recent performance
                     if recent_average > 0:
@@ -6243,7 +6301,7 @@ def get_consolidated_planner_data():
                         suggested_target = round((previous_active_total / 9), -1)
                     else:
                         suggested_target = 0
-                    notes = ''
+                    next_action = ''
 
                 # Filter out very small customers (unless saved)
                 if not is_saved and suggested_target < 100 and actual_sales < 100 and previous_active_total < 500:
@@ -6254,7 +6312,7 @@ def get_consolidated_planner_data():
                     'name': group['main_customer_name'],
                     'target': suggested_target,
                     'actual': actual_sales,
-                    'notes': notes
+                    'next_action': next_action
                 })
 
             # Calculate totals
