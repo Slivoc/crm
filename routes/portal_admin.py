@@ -37,7 +37,7 @@ def _to_float(value):
     try:
         return float(value)
     except (TypeError, ValueError):
-        return value
+        return None
 
 
 def _extract_single_value(row):
@@ -143,7 +143,14 @@ def get_customer_margins(customer_id):
 def get_customer_pricing_agreement(customer_id, base_part_number):
     """Check if there's an active pricing agreement for this customer/part"""
     try:
+        from db import _using_postgres
         rate_column = get_currency_rate_column()
+
+        if _using_postgres():
+            date_condition = "AND (pcp.valid_from IS NULL OR pcp.valid_from <= NOW()) AND (pcp.valid_until IS NULL OR pcp.valid_until >= NOW())"
+        else:
+            date_condition = "AND (pcp.valid_from IS NULL OR pcp.valid_from <= date('now')) AND (pcp.valid_until IS NULL OR pcp.valid_until >= date('now'))"
+
         pricing = db_execute(f"""
             SELECT price, currency_id, c.{rate_column} as currency_rate
             FROM portal_customer_pricing pcp
@@ -151,8 +158,7 @@ def get_customer_pricing_agreement(customer_id, base_part_number):
             WHERE pcp.customer_id = ?
             AND pcp.base_part_number = ?
             AND pcp.is_active = TRUE
-            AND (pcp.valid_from IS NULL OR pcp.valid_from <= date('now'))
-            AND (pcp.valid_until IS NULL OR pcp.valid_until >= date('now'))
+            {date_condition}
             ORDER BY pcp.date_created DESC
             LIMIT 1
         """, (customer_id, base_part_number), fetch='one')
@@ -1168,12 +1174,19 @@ def add_customer_pricing(customer_id):
 
         base_part_number = create_base_part_number(part_number)
 
-        existing = db_execute("""
+        from db import _using_postgres
+
+        if _using_postgres():
+            date_check = "AND (valid_until IS NULL OR valid_until >= NOW())"
+        else:
+            date_check = "AND (valid_until IS NULL OR valid_until >= date('now'))"
+
+        existing = db_execute(f"""
             SELECT id FROM portal_customer_pricing
             WHERE customer_id = ?
             AND base_part_number = ?
             AND is_active = TRUE
-            AND (valid_until IS NULL OR valid_until >= date('now'))
+            {date_check}
         """, (customer_id, base_part_number), fetch='one')
 
         if existing:
@@ -1422,12 +1435,19 @@ def delete_suggested_part(customer_id, suggestion_id):
 @portal_admin_bp.route('/search-history')
 def view_search_history():
     """View customer portal search history"""
+    from db import _using_postgres
+
     customer_id = request.args.get('customer_id', type=int)
     search_type = request.args.get('search_type', '')
     days = request.args.get('days', 30, type=int)
 
-    sql = """
-        SELECT 
+    if _using_postgres():
+        date_filter = "psh.date_searched >= NOW() - INTERVAL '1 day' * %s"
+    else:
+        date_filter = "psh.date_searched >= date('now', '-' || ? || ' days')"
+
+    sql = f"""
+        SELECT
             psh.*,
             pu.email as user_email,
             pu.first_name,
@@ -1436,7 +1456,7 @@ def view_search_history():
         FROM portal_search_history psh
         JOIN portal_users pu ON pu.id = psh.portal_user_id
         JOIN customers c ON c.id = psh.customer_id
-        WHERE psh.date_searched >= date('now', '-' || ? || ' days')
+        WHERE {date_filter}
     """
     params = [days]
 
@@ -1459,25 +1479,35 @@ def view_search_history():
         ORDER BY c.name
     """, fetch='all') or []
 
-    stats = db_execute("""
-        SELECT 
+    if _using_postgres():
+        stats_date_filter = "date_searched >= NOW() - INTERVAL '1 day' * %s"
+    else:
+        stats_date_filter = "date_searched >= date('now', '-' || ? || ' days')"
+
+    stats = db_execute(f"""
+        SELECT
             search_type,
             COUNT(*) as search_count,
             COUNT(DISTINCT customer_id) as unique_customers,
             SUM(parts_count) as total_parts
         FROM portal_search_history
-        WHERE date_searched >= date('now', '-' || ? || ' days')
+        WHERE {stats_date_filter}
         GROUP BY search_type
     """, [days], fetch='all') or []
 
     import json
     most_searched_parts = []
 
-    part_searches = db_execute("""
+    if _using_postgres():
+        parts_date_filter = "date_searched >= NOW() - INTERVAL '1 day' * %s"
+    else:
+        parts_date_filter = "date_searched >= date('now', '-' || ? || ' days')"
+
+    part_searches = db_execute(f"""
         SELECT parts_searched
         FROM portal_search_history
         WHERE search_type = 'quote_analysis'
-        AND date_searched >= date('now', '-' || ? || ' days')
+        AND {parts_date_filter}
         AND parts_searched IS NOT NULL
     """, [days], fetch='all') or []
 

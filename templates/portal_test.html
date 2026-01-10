@@ -347,7 +347,7 @@ function createResultCard(result) {
     let priceDisplay = '<span class="no-data">Price not available</span>';
     let priceSourceText = 'No pricing data found';
 
-    if (result.estimated_price) {
+    if (result.estimated_price !== null && result.estimated_price !== undefined && typeof result.estimated_price === 'number') {
         priceDisplay = `${result.currency} £${result.estimated_price.toFixed(2)}`;
 
         // Strip parts_list_ prefix for comparison

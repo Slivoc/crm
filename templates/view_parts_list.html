@@ -22,12 +22,13 @@
     overflow: auto;
     border: 1px solid #dee2e6;
 }
-.parts-table { font-size: 0.9rem; width: 100%; margin-bottom: 0 !important; }
-.parts-table thead { position: sticky; top: 0; background: #f8f9fa; z-index: 100; }
-.parts-table thead th {
-    position: sticky; top: 0; background: #f8f9fa; color: #212529;
-    font-weight: 600; border-bottom: 2px solid #dee2e6; padding: 0.5rem;
+.parts-table { font-size: 0.9rem; width: 100%; margin-bottom: 0 !important; overflow: visible !important; }
+.table.parts-table thead { position: sticky !important; top: 0 !important; background: #f8f9fa; z-index: 100; }
+.table.parts-table thead th {
+    position: sticky !important; top: 0 !important; color: #212529 !important;
+    font-weight: 600 !important; border-bottom: 2px solid #dee2e6; padding: 0.5rem !important;
     box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+    background-clip: padding-box;
 }
 .parts-table tbody tr { border-bottom: 1px solid #dee2e6; }
 .parts-table tbody td { vertical-align: middle; padding: 0.5rem; }
@@ -169,8 +170,8 @@
 
             <div class="card-body p-0">
                 <div id="analysis-deferred-banner"
-                     class="alert alert-info d-flex align-items-center justify-content-between m-3 mb-0"
-                     style="display: none;">
+                     class="alert alert-info d-flex align-items-center justify-content-between mx-3 mt-3"
+                     style="display: none !important;">
                     <div>
                         <div class="fw-semibold">Analysis paused for large lists</div>
                         <div class="small text-muted">

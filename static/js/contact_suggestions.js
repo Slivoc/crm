@@ -100,6 +100,52 @@ document.addEventListener('DOMContentLoaded', () => {
     output.setAttribute('data-text', textBody);
   };
 
+  const renderEmailTimeline = (emails, container, onSelect) => {
+    if (!emails || !emails.length) {
+      container.innerHTML = '<div class="text-muted small">No emails found. Click "Scan" to search for older emails.</div>';
+      return;
+    }
+    const items = emails.map((email, idx) => {
+      const direction = email.direction === 'sent' ? 'Sent' : 'Received';
+      const badgeClass = email.direction === 'sent' ? 'bg-success' : 'bg-info';
+      const date = email.timestamp ? new Date(email.timestamp).toLocaleDateString() : '';
+      return `
+        <div class="email-timeline-item border-bottom py-1" data-index="${idx}">
+          <div class="d-flex justify-content-between align-items-center">
+            <span class="badge ${badgeClass} badge-sm">${direction}</span>
+            <small class="text-muted">${escapeHtml(date)}</small>
+          </div>
+          <div class="fw-semibold small mt-1 text-truncate">${escapeHtml(email.subject || '(No subject)')}</div>
+        </div>
+      `;
+    });
+    container.innerHTML = items.join('');
+
+    container.querySelectorAll('.email-timeline-item').forEach(item => {
+      item.style.cursor = 'pointer';
+      item.addEventListener('click', () => {
+        container.querySelectorAll('.email-timeline-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        const idx = parseInt(item.dataset.index, 10);
+        if (onSelect && emails[idx]) {
+          onSelect(emails[idx]);
+        }
+      });
+    });
+  };
+
+  const formatScanTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return 'Scanned today';
+    if (diffDays === 1) return 'Scanned yesterday';
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
+
   const formatNumber = (value) => {
     const num = Number(value || 0);
     if (!Number.isFinite(num)) return '0';
@@ -313,16 +359,19 @@ document.addEventListener('DOMContentLoaded', () => {
               ` : ''}
               ${selectedContact?.email ? `
                 <div class="mt-2">
-                  <button class="btn btn-sm btn-outline-secondary" data-load-graph-latest data-email="${escapeHtml(selectedContact.email)}" data-customer-id="${suggestion.customer_id}">
-                    Load latest Graph email
-                  </button>
-                  ${graphMessageId ? `
-                    <button class="btn btn-sm btn-outline-secondary ms-2" data-load-graph data-message-id="${escapeHtml(graphMessageId)}">
-                      Load cached Graph email
+                  <div class="d-flex gap-2 align-items-center mb-2">
+                    <button class="btn btn-sm btn-outline-secondary" data-load-timeline data-email="${escapeHtml(selectedContact.email)}" data-customer-id="${suggestion.customer_id}">
+                      <i class="bi bi-envelope"></i> Load
                     </button>
-                  ` : ''}
+                    <button class="btn btn-sm btn-outline-secondary" data-scan-emails data-email="${escapeHtml(selectedContact.email)}" data-customer-id="${suggestion.customer_id}" title="Scan for older emails">
+                      <i class="bi bi-arrow-repeat"></i> Scan
+                    </button>
+                    <small class="text-muted" data-scan-time></small>
+                  </div>
+                  <div class="email-timeline small" data-email-timeline style="max-height: 150px; overflow-y: auto;">
+                    <div class="text-muted small">Click "Load" to view emails.</div>
+                  </div>
                   <div class="graph-email-content small mt-2 d-none" data-graph-content></div>
-                  <div class="small text-muted mt-1">Load the latest email to guide the AI draft.</div>
                 </div>
               ` : ''}
             </div>
@@ -424,96 +473,147 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
 
-    container.querySelectorAll('[data-load-graph]').forEach((button) => {
+    // Email timeline handlers
+    container.querySelectorAll('[data-load-timeline]').forEach((button) => {
       button.addEventListener('click', async () => {
-        const messageId = button.getAttribute('data-message-id');
+        const email = button.getAttribute('data-email');
+        const customerId = button.getAttribute('data-customer-id');
         const wrapper = button.closest('.card-body');
-        const output = wrapper ? wrapper.querySelector('[data-graph-content]') : null;
-        if (!messageId || !output) return;
-
-        const isLoaded = output.getAttribute('data-loaded') === 'true';
-        if (isLoaded) {
-          const isHidden = output.classList.toggle('d-none');
-          button.textContent = isHidden ? 'Load full Graph email' : 'Hide full Graph email';
-          return;
-        }
+        const timelineContainer = wrapper ? wrapper.querySelector('[data-email-timeline]') : null;
+        const detailContainer = wrapper ? wrapper.querySelector('[data-graph-content]') : null;
+        const scanTimeEl = wrapper ? wrapper.querySelector('[data-scan-time]') : null;
+        if (!email || !timelineContainer) return;
 
         button.disabled = true;
         button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
+        timelineContainer.innerHTML = '<div class="text-muted small">Loading emails...</div>';
+        detailContainer?.classList.add('d-none');
 
         try {
-          const response = await fetch(`/emails/graph/message/${encodeURIComponent(messageId)}`);
-          if (!response.ok) {
-            throw new Error('Failed to load Graph email');
-          }
+          const response = await fetch(`/emails/graph/contact-timeline?email=${encodeURIComponent(email)}`);
           const data = await response.json();
-          if (!data?.success || !data?.message) {
-            throw new Error(data?.error?.message || 'Graph email unavailable');
+          if (!response.ok || !data.success) {
+            throw new Error(data?.error?.message || 'Unable to load emails');
           }
-          const message = data.message;
-          renderGraphMessage(message, output);
-          output.setAttribute('data-loaded', 'true');
-          output.classList.remove('d-none');
-          button.textContent = 'Hide full Graph email';
+
+          const emails = data.emails || [];
+          const suggestion = currentSuggestions.find((item) => String(item.customer_id) === String(customerId));
+
+          // Store emails for AI context
+          if (suggestion) {
+            suggestion._cachedEmails = emails;
+          }
+
+          const showEmailDetail = (emailItem) => {
+            if (!detailContainer) return;
+            detailContainer.classList.remove('d-none');
+
+            const subject = emailItem.subject || '';
+            const direction = emailItem.direction === 'sent' ? 'To' : 'From';
+            const timestamp = emailItem.timestamp ? new Date(emailItem.timestamp).toLocaleString() : '';
+
+            const rawBody = emailItem.body?.content || emailItem.preview || '';
+            const sanitized = sanitizeGraphHtml(rawBody);
+            const textBody = stripHtml(sanitized || rawBody);
+
+            const headerLines = [];
+            if (subject) headerLines.push(`Subject: ${subject}`);
+            headerLines.push(`${direction}: Contact`);
+            if (timestamp) headerLines.push(`Date: ${timestamp}`);
+
+            const headerHtml = `<div class="graph-email-meta">${escapeHtml(headerLines.join(' · '))}</div>`;
+            const bodyHtml = sanitized || escapeHtml(textBody).replace(/\n/g, '<br>');
+            detailContainer.innerHTML = `${headerHtml}<div class="graph-email-body">${bodyHtml}</div>`;
+            detailContainer.setAttribute('data-text', textBody);
+
+            // Update suggestion with selected email for AI context
+            if (suggestion) {
+              suggestion.last_graph_email_full = {
+                subject: subject,
+                body_html: sanitized || rawBody,
+                body_text: textBody
+              };
+            }
+          };
+
+          renderEmailTimeline(emails, timelineContainer, showEmailDetail);
+
+          if (data.scan_status && scanTimeEl) {
+            scanTimeEl.textContent = formatScanTime(data.scan_status.last_scan_at);
+          }
+
+          // Auto-select first email
+          if (emails.length > 0) {
+            const firstItem = timelineContainer.querySelector('.email-timeline-item');
+            if (firstItem) {
+              firstItem.classList.add('active');
+              showEmailDetail(emails[0]);
+            }
+          }
         } catch (error) {
-          output.textContent = error?.message || 'Unable to load Graph email';
-          output.classList.remove('d-none');
-          button.textContent = 'Retry Graph email';
+          timelineContainer.innerHTML = `<div class="text-muted small">${escapeHtml(error.message || 'Unable to load emails')}</div>`;
         } finally {
           button.disabled = false;
+          button.innerHTML = '<i class="bi bi-envelope"></i> Load';
         }
       });
     });
 
-    container.querySelectorAll('[data-load-graph-latest]').forEach((button) => {
+    container.querySelectorAll('[data-scan-emails]').forEach((button) => {
       button.addEventListener('click', async () => {
         const email = button.getAttribute('data-email');
+        const customerId = button.getAttribute('data-customer-id');
         const wrapper = button.closest('.card-body');
-        const output = wrapper ? wrapper.querySelector('[data-graph-content]') : null;
-        if (!email || !output) return;
+        const timelineContainer = wrapper ? wrapper.querySelector('[data-email-timeline]') : null;
+        const loadBtn = wrapper ? wrapper.querySelector('[data-load-timeline]') : null;
+        if (!email || !timelineContainer) return;
 
         button.disabled = true;
-        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning';
+        timelineContainer.innerHTML = '<div class="text-muted small">Scanning mailbox...</div>';
 
         try {
-          const response = await fetch(`/emails/graph/latest?email=${encodeURIComponent(email)}&days_back=730`);
-          if (!response.ok) {
-            throw new Error('Failed to load latest Graph email');
-          }
-          const data = await response.json();
-          if (!data?.success || !data?.message) {
-            throw new Error(data?.error?.message || 'Graph email unavailable');
-          }
-          const message = data.message;
-          const fromEmail = message.from?.emailAddress?.address || '';
-          renderGraphMessage(message, output);
-          output.classList.remove('d-none');
-          button.textContent = 'Refresh latest Graph email';
+          const response = await fetch('/emails/graph/scan-contact', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ email: email })
+          });
 
-          const customerId = button.getAttribute('data-customer-id');
-          const suggestion = currentSuggestions.find((item) => String(item.customer_id) === String(customerId));
-          if (suggestion) {
-            const rawBody = message.body?.content || message.bodyPreview || '';
-            const sanitized = sanitizeGraphHtml(rawBody);
-            suggestion.last_graph_email = {
-              message_id: message.id,
-              subject: message.subject || '',
-              preview: message.bodyPreview || '',
-              sender_email: fromEmail,
-              date: message.receivedDateTime || message.sentDateTime || null
-            };
-            suggestion.last_graph_email_full = {
-              subject: message.subject || '',
-              body_html: sanitized || rawBody,
-              body_text: stripHtml(sanitized || rawBody)
-            };
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const text = decoder.decode(value);
+            const lines = text.split('\n').filter(line => line.startsWith('data: '));
+
+            for (const line of lines) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.status === 'scanning') {
+                  timelineContainer.innerHTML = `<div class="text-muted small">Scanning ${data.folder}... Found ${data.found}</div>`;
+                } else if (data.status === 'completed') {
+                  timelineContainer.innerHTML = `<div class="text-muted small">Found ${data.total_found} emails.</div>`;
+                  // Trigger load to refresh timeline
+                  if (loadBtn) loadBtn.click();
+                } else if (data.status === 'error') {
+                  throw new Error(data.error || 'Scan failed');
+                }
+              } catch (parseError) {
+                // Ignore parse errors
+              }
+            }
           }
         } catch (error) {
-          output.textContent = error?.message || 'Unable to load Graph email';
-          output.classList.remove('d-none');
-          button.textContent = 'Retry latest Graph email';
+          timelineContainer.innerHTML = `<div class="text-muted small">${escapeHtml(error.message || 'Scan failed')}</div>`;
         } finally {
           button.disabled = false;
+          button.innerHTML = '<i class="bi bi-arrow-repeat"></i> Scan';
         }
       });
     });

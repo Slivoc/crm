@@ -368,6 +368,38 @@
     padding: 1rem;
     margin-top: 1rem;
 }
+
+/* Editable stat input styling */
+.editable-stat-input {
+    border: 1px solid transparent;
+    background: transparent;
+    transition: all 0.2s ease;
+}
+
+.editable-stat-input:hover {
+    border-color: #dee2e6;
+    background: #f8f9fa;
+}
+
+.editable-stat-input:focus {
+    border-color: #0d6efd;
+    background: white;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+}
+
+.editable-stat-input.is-valid {
+    border-color: #198754;
+    background: #d1e7dd;
+}
+
+.editable-stat-input.is-invalid {
+    border-color: #dc3545;
+    background: #f8d7da;
+}
+
+.editable-stat-input:disabled {
+    opacity: 0.6;
+}
 </style>
 {% endblock %}
 
@@ -430,6 +462,20 @@
             <div class="stat-icon"><i class="bi bi-patch-check"></i></div>
             <div class="stat-value">{{ manufacturer_approvals|length }}</div>
             <div class="stat-label">Approvals</div>
+        </div>
+        <div class="stat-card teal">
+            <div class="stat-icon"><i class="bi bi-speedometer2"></i></div>
+            <div class="stat-value editable-stat">
+                <input type="number"
+                       id="pieces-per-pound-input"
+                       class="form-control form-control-sm editable-stat-input"
+                       value="{{ part_number.pieces_per_pound or '' }}"
+                       placeholder="-"
+                       step="0.001"
+                       min="0"
+                       style="width: 100px; font-size: 1.25rem; font-weight: 700; text-align: center; padding: 0.25rem;">
+            </div>
+            <div class="stat-label">Pieces/Lb</div>
         </div>
     </div>
 
@@ -1081,6 +1127,63 @@ function renderOctopartData(data, container) {
 
     container.innerHTML = html;
 }
+
+function savePiecesPerPound(basePartNumber) {
+    const input = document.getElementById('pieces-per-pound-input');
+    if (!input) return;
+
+    const value = input.value.trim();
+    const piecesPerPound = value === '' ? null : parseFloat(value);
+
+    // Visual feedback - show saving state
+    input.classList.add('is-loading');
+    input.disabled = true;
+
+    fetch(`/parts/${encodeURIComponent(basePartNumber)}/pieces_per_pound`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({ pieces_per_pound: piecesPerPound })
+    })
+    .then(resp => resp.json())
+    .then(data => {
+        input.disabled = false;
+        input.classList.remove('is-loading');
+
+        if (!data.success) {
+            throw new Error(data.message || 'Unknown error');
+        }
+
+        // Brief success feedback
+        input.classList.add('is-valid');
+        setTimeout(() => input.classList.remove('is-valid'), 1500);
+    })
+    .catch(err => {
+        input.disabled = false;
+        input.classList.remove('is-loading');
+        input.classList.add('is-invalid');
+        setTimeout(() => input.classList.remove('is-invalid'), 2000);
+        console.error('Error saving pieces per pound:', err);
+        alert('Error saving: ' + err.message);
+    });
+}
+
+// Set up event listener for pieces per pound input
+document.addEventListener('DOMContentLoaded', function() {
+    const pppInput = document.getElementById('pieces-per-pound-input');
+    if (pppInput) {
+        let debounceTimer;
+        pppInput.addEventListener('change', function() {
+            savePiecesPerPound('{{ part_number.base_part_number }}');
+        });
+        // Also save on blur in case user tabs out
+        pppInput.addEventListener('blur', function() {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                savePiecesPerPound('{{ part_number.base_part_number }}');
+            }, 100);
+        });
+    }
+});
 
 function saveGlobalAlternatives(basePartNumber) {
     const textarea = document.getElementById('global-alts-input');

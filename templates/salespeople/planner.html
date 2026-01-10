@@ -602,15 +602,6 @@ function renderPlanner(data) {
         </td>
         <td>
             <div class="planner-input-group">
-                <label class="planner-input-label">Next action</label>
-                <input type="text"
-                       class="notes-input"
-                       placeholder="Next action..."
-                       value="${customer.next_action || ''}"
-                       data-customer-id="${customer.id}"
-                       onblur="handleSave(this, 'next_action')">
-            </div>
-            <div class="planner-input-group">
                 <label class="planner-input-label">Comments</label>
                 <input type="text"
                        class="notes-input"
@@ -618,6 +609,15 @@ function renderPlanner(data) {
                        value="${customer.comments || ''}"
                        data-customer-id="${customer.id}"
                        onblur="handleSave(this, 'comments')">
+            </div>
+            <div class="planner-input-group">
+                <label class="planner-input-label">Next action</label>
+                <input type="text"
+                       class="notes-input"
+                       placeholder="Next action..."
+                       value="${customer.next_action || ''}"
+                       data-customer-id="${customer.id}"
+                       onblur="handleSave(this, 'next_action')">
             </div>
             <div class="planner-input-group">
                 <label class="planner-input-label">Response</label>

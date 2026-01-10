@@ -189,64 +189,6 @@
     </div>
   </div>
 </div>
-<!-- Combined Call List and Recent Communications Section -->
-<div class="row mb-4">
-  <div class="col-12">
-    <div class="card border-primary">
-      <div class="card-header bg-light">
-        <div class="d-flex justify-content-between align-items-center">
-          <h5 class="card-title mb-0">
-            <i class="bi bi-chat-left-text text-primary me-2"></i>
-            Next Actions Awaiting Response
-          </h5>
-          <small class="text-muted">{{ next_action_month_label }}</small>
-        </div>
-      </div>
-      <div class="card-body p-0">
-        {% if next_action_customers %}
-          <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
-              <thead class="table-light">
-                <tr>
-                  <th>Customer</th>
-                  <th>Next Action</th>
-                  <th style="width: 220px;">Response</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for item in next_action_customers %}
-                  <tr>
-                    <td>
-                      <div class="fw-semibold">{{ item.name }}</div>
-                      <button type="button"
-                              class="btn btn-sm btn-link p-0"
-                              onclick="if (window.customerOverviewModal) { window.customerOverviewModal.show({{ item.id }}); }">
-                        View customer modal
-                      </button>
-                    </td>
-                    <td class="text-muted small">{{ item.notes }}</td>
-                    <td>
-                      <input type="text"
-                             class="form-control form-control-sm next-action-response-input"
-                             placeholder="Response..."
-                             value="{{ item.response or '' }}"
-                             data-customer-id="{{ item.id }}"
-                             data-target-month="{{ item.target_month }}">
-                    </td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% else %}
-          <div class="text-center text-muted py-4">
-            No next actions with comments for {{ next_action_month_label }}.
-          </div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-</div>
 
 <div class="row mb-4">
     <!-- Call List Column (Left Half) -->
@@ -688,56 +630,55 @@
     </div>
   </div>
 
+  <!-- Three Column Data Section: Quotes by Day, Top Quoted Parts, Next Actions -->
   <div class="row mb-4">
-    <div class="col-lg-6 mb-4 mb-lg-0">
-      <div class="card h-100">
-        <div class="card-header">
-          <h5 class="card-title mb-0">
-            <i class="bi bi-graph-up-arrow text-success me-2"></i>
-            Quotes by Day (Last 10)
-          </h5>
-        </div>
-        <div class="card-body p-0">
-          <div class="table-responsive">
-            <table class="table table-sm table-hover mb-0">
-              <thead class="table-light">
-                <tr>
-                  <th>Date</th>
-                  <th class="text-center">Lists Quoted</th>
-                  <th class="text-end">Value (GBP)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% if quotes_by_day and quotes_by_day|length > 0 %}
-                  {% for day in quotes_by_day %}
-                    <tr>
-                      <td>{{ day.quoted_date or '-' }}</td>
-                      <td class="text-center">{{ day.quoted_lists }}</td>
-                      <td class="text-end">{{ format_currency(day.quoted_value_gbp, '£') }}</td>
-                    </tr>
-                  {% endfor %}
-                {% else %}
-                  <tr>
-                    <td colspan="3" class="text-center text-muted py-3">No quotes in the last 10 days.</td>
-                  </tr>
-                {% endif %}
-              </tbody>
-            </table>
+    <!-- Quotes by Day Column -->
+    <div class="col-lg-4 mb-4 mb-lg-0">
+      <div class="card h-100 shadow-sm border-0">
+        <div class="card-header border-0 bg-white pb-0">
+          <div class="d-flex align-items-center">
+            <div class="icon-box bg-success bg-opacity-10 rounded-3 p-2 me-3">
+              <i class="bi bi-graph-up-arrow text-success fs-5"></i>
+            </div>
+            <h6 class="card-title mb-0 fw-semibold">Quotes by Day</h6>
           </div>
+        </div>
+        <div class="card-body pt-3">
+          {% if quotes_by_day and quotes_by_day|length > 0 %}
+            <div class="data-list">
+              {% for day in quotes_by_day %}
+                <div class="data-list-item d-flex justify-content-between align-items-center py-2 {% if not loop.last %}border-bottom{% endif %}">
+                  <div>
+                    <span class="fw-medium">{{ day.quoted_date or '-' }}</span>
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary ms-2">{{ day.quoted_lists }} lists</span>
+                  </div>
+                  <span class="fw-semibold text-success">{{ format_currency(day.quoted_value_gbp, '£') }}</span>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-center text-muted py-4">
+              <i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>
+              <small>No quotes in the last 10 days</small>
+            </div>
+          {% endif %}
         </div>
       </div>
     </div>
-    <div class="col-lg-6">
-      <div class="card h-100">
-        <div class="card-header">
-          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
-            <h5 class="card-title mb-0">
-              <i class="bi bi-trophy text-warning me-2"></i>
-              Top Quoted Parts Lists
-            </h5>
-            <form method="get" class="d-flex align-items-center gap-2">
-              <label for="quotedStatusFilter" class="small text-muted">Status</label>
-              <select id="quotedStatusFilter" name="quoted_status_id" class="form-select form-select-sm" onchange="this.form.submit()">
+
+    <!-- Top Quoted Parts Lists Column -->
+    <div class="col-lg-4 mb-4 mb-lg-0">
+      <div class="card h-100 shadow-sm border-0">
+        <div class="card-header border-0 bg-white pb-0">
+          <div class="d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center">
+              <div class="icon-box bg-warning bg-opacity-10 rounded-3 p-2 me-3">
+                <i class="bi bi-trophy text-warning fs-5"></i>
+              </div>
+              <h6 class="card-title mb-0 fw-semibold">Top Parts Lists</h6>
+            </div>
+            <form method="get" class="ms-2">
+              <select id="quotedStatusFilter" name="quoted_status_id" class="form-select form-select-sm" style="font-size: 0.75rem; padding: 0.2rem 1.5rem 0.2rem 0.5rem;" onchange="this.form.submit()">
                 <option value="">All</option>
                 {% for status in parts_list_statuses %}
                   <option value="{{ status.id }}" {% if quoted_status_id == status.id %}selected{% endif %}>
@@ -748,37 +689,78 @@
             </form>
           </div>
         </div>
-        <div class="card-body p-0">
-          <div class="table-responsive">
-            <table class="table table-sm table-hover mb-0">
-              <thead class="table-light">
-                <tr>
-                  <th>List</th>
-                  <th>Customer</th>
-                  <th>Status</th>
-                  <th class="text-end">Value (GBP)</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% if top_quoted_lists and top_quoted_lists|length > 0 %}
-                  {% for item in top_quoted_lists %}
-                    <tr>
-                      <td>{{ item.name or '-' }}</td>
-                      <td>{{ item.customer_name or '-' }}</td>
-                      <td>{{ item.status_name or '-' }}</td>
-                      <td class="text-end">{{ format_currency(item.quoted_value_gbp, '£') }}</td>
-                      <td>{{ item.date_modified or '-' }}</td>
-                    </tr>
-                  {% endfor %}
-                {% else %}
-                  <tr>
-                    <td colspan="5" class="text-center text-muted py-3">No quoted parts lists found.</td>
-                  </tr>
-                {% endif %}
-              </tbody>
-            </table>
+        <div class="card-body pt-3">
+          {% if top_quoted_lists and top_quoted_lists|length > 0 %}
+            <div class="data-list">
+              {% for item in top_quoted_lists %}
+                <div class="data-list-item py-2 {% if not loop.last %}border-bottom{% endif %}">
+                  <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
+                    <span class="fw-medium">{{ item.name or '-' }}</span>
+                    <span class="fw-semibold text-warning text-nowrap">{{ format_currency(item.quoted_value_gbp, '£') }}</span>
+                  </div>
+                  <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">{{ item.customer_name or '-' }}</small>
+                    <span class="badge bg-light text-dark" style="font-size: 0.65rem;">{{ item.status_name or '-' }}</span>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-center text-muted py-4">
+              <i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>
+              <small>No quoted parts lists found</small>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Next Actions Column -->
+    <div class="col-lg-4">
+      <div class="card h-100 shadow-sm border-0">
+        <div class="card-header border-0 bg-white pb-0">
+          <div class="d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center">
+              <div class="icon-box bg-primary bg-opacity-10 rounded-3 p-2 me-3">
+                <i class="bi bi-chat-left-text text-primary fs-5"></i>
+              </div>
+              <h6 class="card-title mb-0 fw-semibold">Next Actions</h6>
+            </div>
+            <small class="text-muted">{{ next_action_month_label }}</small>
           </div>
+        </div>
+        <div class="card-body pt-3">
+          {% if next_action_customers %}
+            <div class="data-list" style="max-height: 350px; overflow-y: auto;">
+              {% for item in next_action_customers %}
+                <div class="data-list-item py-2 {% if not loop.last %}border-bottom{% endif %}">
+                  <div class="d-flex justify-content-between align-items-start mb-1">
+                    <div>
+                      <span class="fw-medium">{{ item.name }}</span>
+                      <button type="button"
+                              class="btn btn-link btn-sm p-0 ms-1 text-muted"
+                              style="font-size: 0.7rem;"
+                              onclick="if (window.customerOverviewModal) { window.customerOverviewModal.show({{ item.id }}); }">
+                        <i class="bi bi-box-arrow-up-right"></i>
+                      </button>
+                    </div>
+                  </div>
+                  <p class="text-muted small mb-2" style="line-height: 1.3;">{{ item.notes[:80] }}{% if item.notes|length > 80 %}...{% endif %}</p>
+                  <input type="text"
+                         class="form-control form-control-sm next-action-response-input"
+                         placeholder="Enter response..."
+                         value="{{ item.response or '' }}"
+                         data-customer-id="{{ item.id }}"
+                         data-target-month="{{ item.target_month }}">
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-center text-muted py-4">
+              <i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>
+              <small>No next actions for {{ next_action_month_label }}</small>
+            </div>
+          {% endif %}
         </div>
       </div>
     </div>

@@ -358,6 +358,34 @@ def update_part():
         logging.error(f'Error updating part number: {e}')
         return jsonify(success=False, message=str(e))
 
+@parts_bp.route('/parts/<base_part_number>/pieces_per_pound', methods=['POST'])
+def update_pieces_per_pound(base_part_number):
+    """Update the pieces_per_pound value for a part number."""
+    data = request.json
+    pieces_per_pound = data.get('pieces_per_pound')
+
+    # Allow None/null to clear the value
+    if pieces_per_pound is not None:
+        try:
+            pieces_per_pound = float(pieces_per_pound)
+            if pieces_per_pound <= 0:
+                return jsonify(success=False, message='Pieces per pound must be a positive number'), 400
+        except (ValueError, TypeError):
+            return jsonify(success=False, message='Invalid pieces per pound value'), 400
+
+    try:
+        with db_cursor(commit=True) as cur:
+            _execute_with_cursor(
+                cur,
+                'UPDATE part_numbers SET pieces_per_pound = ? WHERE base_part_number = ?',
+                (pieces_per_pound, base_part_number),
+            )
+        return jsonify(success=True, pieces_per_pound=pieces_per_pound)
+    except Exception as e:
+        logging.error(f'Error updating pieces_per_pound: {e}')
+        return jsonify(success=False, message=str(e)), 500
+
+
 @parts_bp.route('/add_part', methods=['POST'])
 def add_part():
     part_number = request.form['part_number']

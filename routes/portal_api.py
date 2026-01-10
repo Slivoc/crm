@@ -39,7 +39,7 @@ def _to_float(value):
     try:
         return float(value)
     except (TypeError, ValueError):
-        return value
+        return None
 
 
 def _sort_date_key(value):

@@ -577,13 +577,19 @@
                 <div>{{ contact.customer_name }}</div>
                 {% if contact.customer_status_name %}
                   <div class="mt-1">
-                    <span class="badge bg-secondary" style="font-size: 0.7em;">
+                    <span class="badge bg-secondary clickable bump-customer-status-btn"
+                          style="font-size: 0.7em; cursor: pointer;"
+                          data-customer-id="{{ contact.customer_id }}"
+                          title="Click to change customer status">
                       {{ contact.customer_status_name }}
                     </span>
                   </div>
                 {% else %}
                   <div class="mt-1">
-                    <span class="badge bg-light text-dark" style="font-size: 0.7em;">
+                    <span class="badge bg-light text-dark clickable bump-customer-status-btn"
+                          style="font-size: 0.7em; cursor: pointer;"
+                          data-customer-id="{{ contact.customer_id }}"
+                          title="Click to set customer status">
                       No Status
                     </span>
                   </div>
@@ -1232,6 +1238,53 @@ document.addEventListener('DOMContentLoaded', function () {
     output.dataset.webLink = message.webLink || '';
   };
 
+  const renderEmailTimeline = (emails, container, onSelect) => {
+    if (!emails || !emails.length) {
+      container.innerHTML = '<div class="text-muted small">No emails found. Click "Scan" to search for older emails.</div>';
+      return;
+    }
+    const items = emails.map((email, idx) => {
+      const direction = email.direction === 'sent' ? 'Sent' : 'Received';
+      const badgeClass = email.direction === 'sent' ? 'bg-success' : 'bg-info';
+      const date = email.timestamp ? new Date(email.timestamp).toLocaleDateString() : '';
+      return `
+        <div class="email-timeline-item border-bottom py-2" data-index="${idx}">
+          <div class="d-flex justify-content-between align-items-center">
+            <span class="badge ${badgeClass}">${direction}</span>
+            <small class="text-muted">${escapeHtml(date)}</small>
+          </div>
+          <div class="fw-semibold small mt-1 text-truncate">${escapeHtml(email.subject || '(No subject)')}</div>
+          <div class="text-muted small text-truncate">${escapeHtml(email.preview || '')}</div>
+        </div>
+      `;
+    });
+    container.innerHTML = items.join('');
+
+    container.querySelectorAll('.email-timeline-item').forEach(item => {
+      item.style.cursor = 'pointer';
+      item.addEventListener('click', () => {
+        container.querySelectorAll('.email-timeline-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        const idx = parseInt(item.dataset.index, 10);
+        if (onSelect && emails[idx]) {
+          onSelect(emails[idx]);
+        }
+      });
+    });
+  };
+
+  const formatScanTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return 'Scanned today';
+    if (diffDays === 1) return 'Scanned yesterday';
+    if (diffDays < 7) return `Scanned ${diffDays} days ago`;
+    return `Scanned ${date.toLocaleDateString()}`;
+  };
+
   const renderNewsHints = (items, container) => {
     if (!items || !items.length) {
       container.innerHTML = '<div class="text-muted small">No recent news found.</div>';
@@ -1309,50 +1362,153 @@ document.addEventListener('DOMContentLoaded', function () {
       detailsCommunicationDate.value = today;
     }
 
-    const loadGraphEmailBtn = contactDetailsContent.querySelector('#loadGraphEmailBtn');
-    if (loadGraphEmailBtn) {
-      loadGraphEmailBtn.addEventListener('click', async () => {
-        const { contactEmail } = getContactDetailsInputs();
-        const output = contactDetailsContent.querySelector('#graphEmailContent');
-        const copyBtn = contactDetailsContent.querySelector('#graphEmailCopyBtn');
-        const openBtn = contactDetailsContent.querySelector('#graphEmailOpenBtn');
+    // Email timeline state
+    let currentEmails = [];
 
-        if (!contactEmail) {
-          output.innerHTML = '<div class="text-muted small">No email address on file.</div>';
-          return;
-        }
+    const timelineContainer = contactDetailsContent.querySelector('#emailTimelineContent');
+    const detailContainer = contactDetailsContent.querySelector('#emailDetailContent');
+    const copyBtn = contactDetailsContent.querySelector('#graphEmailCopyBtn');
+    const openBtn = contactDetailsContent.querySelector('#graphEmailOpenBtn');
+    const lastScanTimeEl = contactDetailsContent.querySelector('#lastScanTime');
 
-        copyBtn?.classList.add('d-none');
+    const showEmailDetail = (email) => {
+      if (!detailContainer) return;
+      detailContainer.classList.remove('d-none');
+
+      const subject = email.subject || '';
+      const direction = email.direction === 'sent' ? 'To' : 'From';
+      const timestamp = email.timestamp ? new Date(email.timestamp).toLocaleString() : '';
+
+      const rawBody = email.body?.content || email.preview || '';
+      const sanitized = sanitizeGraphHtml(rawBody);
+      const textBody = stripHtml(sanitized || rawBody);
+
+      const headerLines = [];
+      if (subject) headerLines.push(`Subject: ${subject}`);
+      headerLines.push(`${direction}: Contact`);
+      if (timestamp) headerLines.push(`Date: ${timestamp}`);
+
+      const headerHtml = `<div class="graph-email-meta">${escapeHtml(headerLines.join(' | '))}</div>`;
+      const bodyHtml = sanitized || escapeHtml(textBody).replace(/\n/g, '<br>');
+      detailContainer.innerHTML = `${headerHtml}<div class="graph-email-body">${bodyHtml}</div>`;
+      detailContainer.dataset.subject = subject;
+      detailContainer.dataset.bodyText = textBody;
+      detailContainer.dataset.webLink = email.webLink || '';
+
+      copyBtn?.classList.remove('d-none');
+      if (openBtn && email.webLink) {
+        openBtn.href = email.webLink;
+        openBtn.classList.remove('d-none');
+      } else {
         openBtn?.classList.add('d-none');
-        if (openBtn) {
-          openBtn.removeAttribute('href');
+      }
+    };
+
+    const loadEmailTimeline = async () => {
+      const { contactEmail } = getContactDetailsInputs();
+      if (!contactEmail || !timelineContainer) return;
+
+      const loadBtn = contactDetailsContent.querySelector('#loadEmailsBtn');
+      if (loadBtn) {
+        loadBtn.disabled = true;
+        loadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
+      }
+
+      copyBtn?.classList.add('d-none');
+      openBtn?.classList.add('d-none');
+      detailContainer?.classList.add('d-none');
+      timelineContainer.innerHTML = '<div class="text-muted small">Loading emails...</div>';
+
+      try {
+        const response = await fetch(`/emails/graph/contact-timeline?email=${encodeURIComponent(contactEmail)}`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data?.error?.message || 'Unable to load emails');
         }
 
-        loadGraphEmailBtn.disabled = true;
-        loadGraphEmailBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
-        output.innerHTML = '<div class="text-muted small">Loading latest email...</div>';
+        currentEmails = data.emails || [];
+        renderEmailTimeline(currentEmails, timelineContainer, showEmailDetail);
+
+        if (data.scan_status && lastScanTimeEl) {
+          lastScanTimeEl.textContent = formatScanTime(data.scan_status.last_scan_at);
+        }
+
+        // Auto-select first email if available
+        if (currentEmails.length > 0) {
+          const firstItem = timelineContainer.querySelector('.email-timeline-item');
+          if (firstItem) {
+            firstItem.classList.add('active');
+            showEmailDetail(currentEmails[0]);
+          }
+        }
+      } catch (error) {
+        timelineContainer.innerHTML = `<div class="text-muted small">${escapeHtml(error.message || 'Unable to load emails')}</div>`;
+      } finally {
+        if (loadBtn) {
+          loadBtn.disabled = false;
+          loadBtn.innerHTML = '<i class="bi bi-envelope"></i> Load';
+        }
+      }
+    };
+
+    const loadEmailsBtn = contactDetailsContent.querySelector('#loadEmailsBtn');
+    if (loadEmailsBtn) {
+      loadEmailsBtn.addEventListener('click', loadEmailTimeline);
+    }
+
+    const scanEmailsBtn = contactDetailsContent.querySelector('#scanEmailsBtn');
+    if (scanEmailsBtn) {
+      scanEmailsBtn.addEventListener('click', async () => {
+        const { contactEmail } = getContactDetailsInputs();
+        if (!contactEmail) return;
+
+        scanEmailsBtn.disabled = true;
+        scanEmailsBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning';
+        timelineContainer.innerHTML = '<div class="text-muted small">Scanning mailbox for emails...</div>';
 
         try {
-          const response = await fetch(`/emails/graph/latest?email=${encodeURIComponent(contactEmail)}&days_back=730`);
-          const data = await response.json();
-          if (!response.ok || !data.success) {
-            throw new Error(data?.error?.message || 'Unable to load Graph email');
-          }
-          renderGraphMessage(data.message || {}, output);
-          const textBody = output.dataset.bodyText || '';
-          if (textBody) {
-            copyBtn?.classList.remove('d-none');
-          }
-          const webLink = output.dataset.webLink || '';
-          if (openBtn && webLink) {
-            openBtn.href = webLink;
-            openBtn.classList.remove('d-none');
+          const response = await fetch('/emails/graph/scan-contact', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ email: contactEmail })
+          });
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const text = decoder.decode(value);
+            const lines = text.split('\n').filter(line => line.startsWith('data: '));
+
+            for (const line of lines) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.status === 'scanning') {
+                  timelineContainer.innerHTML = `<div class="text-muted small">Scanning ${data.folder}... Found ${data.found} emails</div>`;
+                } else if (data.status === 'completed') {
+                  timelineContainer.innerHTML = `<div class="text-muted small">Scan complete. Found ${data.total_found} emails.</div>`;
+                  // Reload the timeline after scan
+                  await loadEmailTimeline();
+                } else if (data.status === 'error') {
+                  throw new Error(data.error || 'Scan failed');
+                }
+              } catch (parseError) {
+                // Ignore parse errors for partial data
+              }
+            }
           }
         } catch (error) {
-          output.innerHTML = `<div class="text-muted small">${escapeHtml(error.message || 'Unable to load Graph email')}</div>`;
+          timelineContainer.innerHTML = `<div class="text-muted small">${escapeHtml(error.message || 'Scan failed')}</div>`;
+          showToast(error.message || 'Scan failed', 'error');
         } finally {
-          loadGraphEmailBtn.disabled = false;
-          loadGraphEmailBtn.innerHTML = '<i class="bi bi-envelope"></i> Load latest';
+          scanEmailsBtn.disabled = false;
+          scanEmailsBtn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Scan';
         }
       });
     }
@@ -1360,12 +1516,12 @@ document.addEventListener('DOMContentLoaded', function () {
     const graphEmailCopyBtn = contactDetailsContent.querySelector('#graphEmailCopyBtn');
     if (graphEmailCopyBtn) {
       graphEmailCopyBtn.addEventListener('click', async () => {
-        const output = contactDetailsContent.querySelector('#graphEmailContent');
+        const output = contactDetailsContent.querySelector('#emailDetailContent');
         const textBody = output?.dataset.bodyText || '';
         if (!textBody) return;
         try {
           await navigator.clipboard.writeText(textBody);
-          showToast('Graph email copied', 'success');
+          showToast('Email copied', 'success');
         } catch (error) {
           showToast('Unable to copy email text', 'error');
         }
@@ -1412,11 +1568,11 @@ document.addEventListener('DOMContentLoaded', function () {
         const subjectField = contactDetailsContent.querySelector('#aiSuggestedSubject');
         const bodyField = contactDetailsContent.querySelector('#aiSuggestedBody');
         const copyBtn = contactDetailsContent.querySelector('#copyAiEmailBtn');
-        const graphOutput = contactDetailsContent.querySelector('#graphEmailContent');
+        const emailDetailOutput = contactDetailsContent.querySelector('#emailDetailContent');
         const newsContainer = contactDetailsContent.querySelector('#newsHintsList');
 
-        const graphEmailSubject = graphOutput?.dataset.subject || '';
-        const graphEmailBody = graphOutput?.dataset.bodyText || '';
+        const graphEmailSubject = emailDetailOutput?.dataset.subject || '';
+        const graphEmailBody = emailDetailOutput?.dataset.bodyText || '';
 
         generateNextEmailBtn.disabled = true;
         generateNextEmailBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating';
@@ -1562,6 +1718,7 @@ document.addEventListener('DOMContentLoaded', function () {
         '.dropdown-item',
         '.copy-btn',
         '.bump-status-btn',
+        '.bump-customer-status-btn',
         '.quick-communication-btn',
         '.contact-details-btn',
         '.add-communication-btn',
@@ -2067,6 +2224,68 @@ document.addEventListener('click', function(e) {
         this.textContent = originalText;
         this.style.backgroundColor = originalColor;
         showToast('An error occurred while updating the status', 'error');
+      })
+      .finally(() => {
+        // Restore interactive state
+        this.style.opacity = '1';
+        this.style.pointerEvents = 'auto';
+      });
+    });
+  });
+
+  // Customer status bumping functionality
+  document.querySelectorAll('.bump-customer-status-btn').forEach(button => {
+    button.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const customerId = this.getAttribute('data-customer-id');
+      const originalText = this.textContent;
+
+      // Show loading state
+      this.textContent = 'Updating...';
+      this.style.opacity = '0.6';
+      this.style.pointerEvents = 'none';
+
+      // Send AJAX request to bump customer status
+      fetch('/customers/' + customerId + '/bump_status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success && data.new_status) {
+          // Update the badge with new status
+          this.textContent = data.new_status.name;
+
+          // IMPORTANT: Update the row's data attribute for filtering
+          const row = this.closest('tr');
+          if (row) {
+            row.setAttribute('data-customer-status', data.new_status.name.toLowerCase());
+          }
+
+          // Brief flash effect to show change
+          this.style.transform = 'scale(1.1)';
+          setTimeout(() => {
+            this.style.transform = 'scale(1)';
+          }, 200);
+
+          // Show success toast
+          showToast('Customer status updated successfully', 'success');
+        } else {
+          // Revert on error
+          this.textContent = originalText;
+          showToast('Error updating customer status: ' + (data.error || 'Unknown error'), 'error');
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        // Revert on error
+        this.textContent = originalText;
+        showToast('An error occurred while updating the customer status', 'error');
       })
       .finally(() => {
         // Restore interactive state

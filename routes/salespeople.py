@@ -1153,7 +1153,7 @@ def activity(salesperson_id):
             print(f"DEBUG: Error loading quotes by day: {e}")
             quotes_by_day = []
 
-        quoted_status_id = request.args.get('quoted_status_id', type=int)
+        quoted_status_id = request.args.get('quoted_status_id', default=3, type=int)
         parts_list_statuses = []
         try:
             status_rows = db_execute(

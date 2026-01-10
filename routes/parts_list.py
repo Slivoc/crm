@@ -4489,6 +4489,16 @@ def record_supplier_email(list_id, line_id):
                 (supplier_id,)
             ).fetchone()
 
+            # Auto-update status to "Sent to Suppliers" if not already "Quoted"
+            _execute_with_cursor(cur, """
+                UPDATE parts_lists
+                SET status_id = (SELECT id FROM parts_list_statuses WHERE name = 'Sent to Suppliers'),
+                    date_modified = CURRENT_TIMESTAMP
+                WHERE id = ?
+                  AND (SELECT name FROM parts_list_statuses WHERE id = parts_lists.status_id) != 'Quoted'
+                  AND EXISTS (SELECT 1 FROM parts_list_statuses WHERE name = 'Sent to Suppliers')
+            """, (list_id,))
+
         return jsonify(
             success=True,
             message=f"Recorded email to {supplier['name'] if supplier else 'supplier'}",
@@ -4560,14 +4570,16 @@ def record_bulk_supplier_emails():
         recorded_count = 0
 
         with db_cursor(commit=True) as cur:
+            parts_list_ids = set()
             for email_data in emails:
+                line_id = email_data.get('parts_list_line_id')
                 _execute_with_cursor(cur, """
-                    INSERT INTO parts_list_line_supplier_emails 
+                    INSERT INTO parts_list_line_supplier_emails
                     (parts_list_line_id, supplier_id, email_subject, email_body,
                      recipient_email, recipient_name, sent_by_user_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    email_data.get('parts_list_line_id'),
+                    line_id,
                     email_data.get('supplier_id'),
                     email_data.get('email_subject'),
                     email_data.get('email_body'),
@@ -4576,6 +4588,27 @@ def record_bulk_supplier_emails():
                     sent_by_user_id
                 ))
                 recorded_count += 1
+
+                # Collect the parts list ID for this line
+                if line_id:
+                    line_row = _execute_with_cursor(cur,
+                        "SELECT parts_list_id FROM parts_list_lines WHERE id = ?",
+                        (line_id,)
+                    ).fetchone()
+                    if line_row:
+                        parts_list_ids.add(line_row['parts_list_id'])
+
+            # Auto-update status to "Sent to Suppliers" for all affected parts lists
+            # (only if not already "Quoted")
+            for list_id in parts_list_ids:
+                _execute_with_cursor(cur, """
+                    UPDATE parts_lists
+                    SET status_id = (SELECT id FROM parts_list_statuses WHERE name = 'Sent to Suppliers'),
+                        date_modified = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                      AND (SELECT name FROM parts_list_statuses WHERE id = parts_lists.status_id) != 'Quoted'
+                      AND EXISTS (SELECT 1 FROM parts_list_statuses WHERE name = 'Sent to Suppliers')
+                """, (list_id,))
 
         return jsonify(
             success=True,

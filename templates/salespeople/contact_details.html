@@ -68,22 +68,31 @@
   <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="card-title mb-0">Latest Email (Graph)</h5>
+        <h5 class="card-title mb-0">Email Timeline</h5>
         {% if contact.email %}
-        <button type="button" class="btn btn-sm btn-outline-secondary" id="loadGraphEmailBtn">
-          <i class="bi bi-envelope"></i> Load latest
-        </button>
+        <div class="d-flex gap-2 align-items-center">
+          <small class="text-muted" id="lastScanTime"></small>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="scanEmailsBtn" title="Scan for older emails">
+            <i class="bi bi-arrow-repeat"></i> Scan
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="loadEmailsBtn">
+            <i class="bi bi-envelope"></i> Load
+          </button>
+        </div>
         {% else %}
         <span class="text-muted small">No email on file</span>
         {% endif %}
       </div>
       <div class="card-body">
-        <div class="graph-email-content small" id="graphEmailContent">
+        <div id="emailTimelineContent" class="email-timeline">
           {% if contact.email %}
-            <div class="text-muted">No email loaded yet.</div>
+            <div class="text-muted small">Click "Load" to view recent emails.</div>
           {% else %}
-            <div class="text-muted">Add an email address to load Graph activity.</div>
+            <div class="text-muted small">Add an email address to load email activity.</div>
           {% endif %}
+        </div>
+        <div id="emailDetailContent" class="graph-email-content small mt-3 d-none">
+          <!-- Selected email detail appears here -->
         </div>
         <div class="mt-2 d-flex gap-2">
           <a class="btn btn-sm btn-outline-primary d-none" id="graphEmailOpenBtn" href="#" target="_blank" rel="noopener">

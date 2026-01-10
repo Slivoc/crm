@@ -12,20 +12,26 @@
 .costing-table {
     font-size: 0.9rem;
     margin-bottom: 0 !important;
+    overflow: visible !important;
 }
 
-.costing-table thead {
-    position: sticky;
-    top: 0;
+.table.costing-table thead {
+    position: sticky !important;
+    top: 0 !important;
     background: #f8f9fa;
     z-index: 100;
 }
 
-.costing-table thead th {
+.table.costing-table thead th {
+    position: sticky !important;
+    top: 0 !important;
+    background: #f8f9fa !important;
     font-weight: 600;
     border-bottom: 2px solid #dee2e6;
     padding: 0.75rem;
     white-space: nowrap;
+    box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+    background-clip: padding-box;
 }
 
 .costing-table tbody td {

@@ -9,6 +9,19 @@
     font-size: .9rem;
     border-collapse: separate;
     border-spacing: 0;
+    overflow: visible !important;
+}
+.table.sourcing-table thead {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 100;
+}
+.table.sourcing-table thead th {
+    position: sticky !important;
+    top: 0 !important;
+    background: #f8f9fa !important;
+    box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+    background-clip: padding-box;
 }
 .sourcing-table th,
 .sourcing-table td {
@@ -316,7 +329,7 @@
     </div>
     <div class="card-body" style="padding: 0;">
 
-            <div class="table-responsive">
+            <div class="table-responsive" style="max-height: calc(100vh - 300px); overflow: auto;">
                 <!-- ONE TABLE ONLY -->
                 <table class="table table-striped sourcing-table mb-0">
                     <thead>
