@@ -341,7 +341,7 @@
                                        data-ils-quantity="{{ part.ils_quantity }}"
                                        data-condition="{{ part.condition or '' }}"
                                        data-line-id="{{ part.line_id or '' }}"
-                                       {% if mode != 'ils' or (part.ils_quantity is not none and part.ils_quantity >= part.quantity) %}checked{% endif %}>
+                                       {% if mode != 'ils' or (part.ils_quantity is not none and (part.ils_quantity|float) >= (part.quantity|float)) %}checked{% endif %}>
                             </td>
                             <td><strong>{{ part.part_number }}</strong></td>
                             <td class="text-center"><span class="badge bg-primary">{{ part.quantity }}</span></td>
