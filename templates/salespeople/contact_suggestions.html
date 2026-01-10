@@ -91,9 +91,40 @@
       <a href="{{ url_for('salespeople.customers', salesperson_id=salesperson.id) }}" class="btn btn-outline-secondary">
         <i class="bi bi-arrow-left"></i> Back to Customers
       </a>
+      <button class="btn btn-outline-secondary" id="scanAllEmails" title="Scan emails for all contacts on this page">
+        <i class="bi bi-inbox"></i> Scan All Emails
+      </button>
       <button class="btn btn-primary" id="refreshSuggestions">
         <i class="bi bi-stars"></i> Refresh Suggestions
       </button>
+    </div>
+  </div>
+
+  <!-- Scan All Progress Modal -->
+  <div class="modal fade" id="scanAllModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Scanning Emails</h5>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <div class="d-flex justify-content-between mb-1">
+              <span id="scanAllStatus">Preparing...</span>
+              <span id="scanAllProgress">0 / 0</span>
+            </div>
+            <div class="progress">
+              <div class="progress-bar" id="scanAllProgressBar" role="progressbar" style="width: 0%"></div>
+            </div>
+          </div>
+          <div class="small text-muted" id="scanAllCurrentContact"></div>
+          <div class="small text-muted mt-2" id="scanAllStats"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary d-none" id="scanAllClose" data-bs-dismiss="modal">Close</button>
+          <button type="button" class="btn btn-danger" id="scanAllCancel">Cancel</button>
+        </div>
+      </div>
     </div>
   </div>
 

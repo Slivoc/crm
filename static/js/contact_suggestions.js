@@ -764,4 +764,131 @@ document.addEventListener('DOMContentLoaded', () => {
   loadSuggestions();
 
   loadMoreBtn?.addEventListener('click', loadMoreSuggestions);
+
+  // Scan All Emails functionality
+  const scanAllBtn = document.getElementById('scanAllEmails');
+  const scanAllModal = document.getElementById('scanAllModal');
+  const scanAllStatus = document.getElementById('scanAllStatus');
+  const scanAllProgress = document.getElementById('scanAllProgress');
+  const scanAllProgressBar = document.getElementById('scanAllProgressBar');
+  const scanAllCurrentContact = document.getElementById('scanAllCurrentContact');
+  const scanAllStats = document.getElementById('scanAllStats');
+  const scanAllClose = document.getElementById('scanAllClose');
+  const scanAllCancel = document.getElementById('scanAllCancel');
+
+  let scanAllAbortController = null;
+
+  if (scanAllBtn && scanAllModal) {
+    const modal = new bootstrap.Modal(scanAllModal);
+
+    scanAllBtn.addEventListener('click', async () => {
+      // Collect all unique contact emails from current suggestions
+      const emails = [];
+      currentSuggestions.forEach(suggestion => {
+        const contacts = suggestion.contacts || [];
+        contacts.forEach(contact => {
+          if (contact.email) {
+            emails.push(contact.email);
+          }
+        });
+      });
+
+      if (!emails.length) {
+        alert('No contact emails found to scan.');
+        return;
+      }
+
+      // Reset modal state
+      scanAllStatus.textContent = 'Starting...';
+      scanAllProgress.textContent = `0 / ${emails.length}`;
+      scanAllProgressBar.style.width = '0%';
+      scanAllCurrentContact.textContent = '';
+      scanAllStats.textContent = '';
+      scanAllClose.classList.add('d-none');
+      scanAllCancel.classList.remove('d-none');
+      scanAllCancel.disabled = false;
+
+      modal.show();
+
+      scanAllAbortController = new AbortController();
+
+      try {
+        const response = await fetch('/emails/graph/scan-contacts-bulk', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: JSON.stringify({ emails: emails }),
+          signal: scanAllAbortController.signal
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const text = decoder.decode(value);
+          const lines = text.split('\n').filter(line => line.startsWith('data: '));
+
+          for (const line of lines) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              if (data.status === 'starting') {
+                scanAllStatus.textContent = 'Scanning...';
+                scanAllProgress.textContent = `0 / ${data.total}`;
+              } else if (data.status === 'scanning') {
+                scanAllCurrentContact.textContent = `Scanning ${data.folder} for ${data.current_email}`;
+              } else if (data.status === 'progress') {
+                const pct = Math.round((data.processed / data.total) * 100);
+                scanAllProgress.textContent = `${data.processed} / ${data.total}`;
+                scanAllProgressBar.style.width = `${pct}%`;
+                scanAllStats.textContent = `Found ${data.total_emails_found} total emails`;
+              } else if (data.status === 'completed') {
+                scanAllStatus.textContent = 'Completed!';
+                scanAllProgress.textContent = `${data.processed} / ${data.total}`;
+                scanAllProgressBar.style.width = '100%';
+                scanAllProgressBar.classList.remove('progress-bar-animated');
+                scanAllCurrentContact.textContent = '';
+                scanAllStats.textContent = `Found ${data.total_emails_found} emails across ${data.processed} contacts`;
+                if (data.errors && data.errors.length) {
+                  scanAllStats.textContent += ` (${data.errors.length} errors)`;
+                }
+                scanAllClose.classList.remove('d-none');
+                scanAllCancel.classList.add('d-none');
+              } else if (data.status === 'error') {
+                scanAllStatus.textContent = 'Error';
+                scanAllCurrentContact.textContent = data.error || 'An error occurred';
+                scanAllClose.classList.remove('d-none');
+                scanAllCancel.classList.add('d-none');
+              }
+            } catch (parseError) {
+              // Ignore parse errors
+            }
+          }
+        }
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          scanAllStatus.textContent = 'Cancelled';
+          scanAllCurrentContact.textContent = 'Scan was cancelled by user';
+        } else {
+          scanAllStatus.textContent = 'Error';
+          scanAllCurrentContact.textContent = error.message || 'An error occurred';
+        }
+        scanAllClose.classList.remove('d-none');
+        scanAllCancel.classList.add('d-none');
+      }
+    });
+
+    scanAllCancel.addEventListener('click', () => {
+      if (scanAllAbortController) {
+        scanAllAbortController.abort();
+        scanAllCancel.disabled = true;
+        scanAllCancel.textContent = 'Cancelling...';
+      }
+    });
+  }
 });

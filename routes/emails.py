@@ -3368,6 +3368,225 @@ def scan_contact_emails():
     return Response(generate(), mimetype='text/event-stream')
 
 
+@emails_bp.route('/emails/graph/scan-contacts-bulk', methods=['POST'])
+def scan_contacts_bulk():
+    """Scan Graph API for emails to/from multiple contacts. Returns SSE stream with progress."""
+    data = request.get_json() or {}
+    contact_emails = data.get("emails") or []
+    if not contact_emails:
+        return jsonify({
+            "success": False,
+            "error": {"message": "No email addresses provided."},
+        }), 400
+
+    # Deduplicate and normalize
+    contact_emails = list(set(email.strip().lower() for email in contact_emails if email and email.strip()))
+    if not contact_emails:
+        return jsonify({
+            "success": False,
+            "error": {"message": "No valid email addresses provided."},
+        }), 400
+
+    days_back = data.get("days_back", 730)
+    try:
+        days_back = int(days_back)
+    except (TypeError, ValueError):
+        days_back = 730
+    days_back = max(1, min(days_back, 1825))
+
+    settings = _get_graph_settings(include_secret=True)
+    cache, user_id = _load_graph_cache_for_request()
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "error": {"message": "No Graph account connected."},
+        }), 400
+
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {"message": "No Graph account connected. Click Connect with Microsoft first."},
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache_for_request(user_id, cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {"message": "Failed to refresh access token"},
+        }), 400
+
+    flask_app = current_app._get_current_object()
+    cutoff = datetime.utcnow() - timedelta(days=days_back)
+
+    def generate():
+        with flask_app.app_context():
+            total_contacts = len(contact_emails)
+            total_emails_found = 0
+            processed = 0
+            errors = []
+
+            try:
+                yield f"data: {json.dumps({'status': 'starting', 'total': total_contacts, 'processed': 0})}\n\n"
+
+                headers = {
+                    "Authorization": f"Bearer {token['access_token']}",
+                    "ConsistencyLevel": "eventual",
+                }
+                select_fields = (
+                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
+                    "body,bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
+                )
+
+                for contact_email in contact_emails:
+                    needle = contact_email.lower()
+                    contact_messages = []
+
+                    yield f"data: {json.dumps({'status': 'scanning', 'total': total_contacts, 'processed': processed, 'current_email': contact_email, 'folder': 'Inbox'})}\n\n"
+
+                    def _matches_email(message):
+                        from_addr = (
+                            message.get("from", {})
+                            .get("emailAddress", {})
+                            .get("address", "")
+                        )
+                        if from_addr and from_addr.lower() == needle:
+                            return True
+                        for recipient in message.get("toRecipients", []) or []:
+                            addr = recipient.get("emailAddress", {}).get("address", "")
+                            if addr and addr.lower() == needle:
+                                return True
+                        for recipient in message.get("ccRecipients", []) or []:
+                            addr = recipient.get("emailAddress", {}).get("address", "")
+                            if addr and addr.lower() == needle:
+                                return True
+                        return False
+
+                    try:
+                        # Scan Inbox
+                        params = {
+                            "$top": "50",
+                            "$select": select_fields,
+                            "$orderby": "receivedDateTime desc",
+                        }
+                        next_link = None
+                        for _ in range(10):  # Limit iterations per contact
+                            if next_link:
+                                resp = requests.get(next_link, headers=headers, timeout=30)
+                            else:
+                                resp = requests.get(
+                                    "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages",
+                                    headers=headers,
+                                    params=params,
+                                    timeout=30,
+                                )
+
+                            if resp.status_code >= 400:
+                                break
+
+                            body = resp.json() if resp.content else {}
+                            messages = body.get("value", [])
+
+                            for msg in messages:
+                                if isinstance(msg, dict) and _matches_email(msg):
+                                    contact_messages.append(msg)
+
+                            oldest_seen = None
+                            for msg in messages:
+                                recv_value = msg.get("receivedDateTime") or msg.get("sentDateTime")
+                                if recv_value:
+                                    try:
+                                        recv_dt = parser.parse(recv_value)
+                                        if recv_dt.tzinfo:
+                                            recv_dt = recv_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                                        if oldest_seen is None or recv_dt < oldest_seen:
+                                            oldest_seen = recv_dt
+                                    except (TypeError, ValueError):
+                                        pass
+
+                            if oldest_seen and oldest_seen < cutoff:
+                                break
+
+                            next_link = body.get("@odata.nextLink")
+                            if not next_link:
+                                break
+
+                        yield f"data: {json.dumps({'status': 'scanning', 'total': total_contacts, 'processed': processed, 'current_email': contact_email, 'folder': 'SentItems'})}\n\n"
+
+                        # Scan SentItems
+                        params = {
+                            "$top": "50",
+                            "$select": select_fields,
+                            "$orderby": "sentDateTime desc",
+                        }
+                        next_link = None
+                        for _ in range(10):
+                            if next_link:
+                                resp = requests.get(next_link, headers=headers, timeout=30)
+                            else:
+                                resp = requests.get(
+                                    "https://graph.microsoft.com/v1.0/me/mailFolders/SentItems/messages",
+                                    headers=headers,
+                                    params=params,
+                                    timeout=30,
+                                )
+
+                            if resp.status_code >= 400:
+                                break
+
+                            body = resp.json() if resp.content else {}
+                            messages = body.get("value", [])
+
+                            for msg in messages:
+                                if isinstance(msg, dict) and _matches_email(msg):
+                                    contact_messages.append(msg)
+
+                            oldest_seen = None
+                            for msg in messages:
+                                sent_value = msg.get("sentDateTime") or msg.get("receivedDateTime")
+                                if sent_value:
+                                    try:
+                                        sent_dt = parser.parse(sent_value)
+                                        if sent_dt.tzinfo:
+                                            sent_dt = sent_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                                        if oldest_seen is None or sent_dt < oldest_seen:
+                                            oldest_seen = sent_dt
+                                    except (TypeError, ValueError):
+                                        pass
+
+                            if oldest_seen and oldest_seen < cutoff:
+                                break
+
+                            next_link = body.get("@odata.nextLink")
+                            if not next_link:
+                                break
+
+                        # Cache messages for this contact
+                        if contact_messages:
+                            _cache_email_messages(user_id, contact_messages)
+                            total_emails_found += len(contact_messages)
+
+                        _update_contact_scan_status(user_id, contact_email, success=True, total_found=len(contact_messages))
+
+                    except Exception as e:
+                        errors.append({"email": contact_email, "error": str(e)})
+                        _update_contact_scan_status(user_id, contact_email, success=False, error=str(e))
+
+                    processed += 1
+                    yield f"data: {json.dumps({'status': 'progress', 'total': total_contacts, 'processed': processed, 'current_email': contact_email, 'emails_found': len(contact_messages), 'total_emails_found': total_emails_found})}\n\n"
+
+                yield f"data: {json.dumps({'status': 'completed', 'total': total_contacts, 'processed': processed, 'total_emails_found': total_emails_found, 'errors': errors})}\n\n"
+
+            except Exception as e:
+                current_app.logger.error(f"Error in bulk contact scan: {e}")
+                yield f"data: {json.dumps({'status': 'error', 'error': str(e)})}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream')
+
+
 @emails_bp.route('/emails/graph/message/<path:message_id>/inline-attachments', methods=['GET'])
 def graph_message_inline_attachments(message_id):
     cached = _get_inline_attachment_cache(message_id)
