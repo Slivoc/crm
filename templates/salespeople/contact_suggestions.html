@@ -142,12 +142,25 @@
       <div class="fw-semibold mb-1">How we rank suggestions</div>
       <ul class="mb-0 ps-3">
         <li>Only customers with zero historical spend are included.</li>
-        <li>Suggestions require at least one contact email.</li>
+        <li>Suggestions require at least one contact email; no-contact targets are listed separately.</li>
         <li>Higher estimated revenue and larger fleets increase the score.</li>
         <li>More stale communications rise to the top.</li>
         <li>Load the latest Graph email to give AI the right context for follow-ups.</li>
         <li>Generate AI drafts per customer to pull news and draft an opening email.</li>
       </ul>
+    </div>
+  </div>
+
+  <div class="card mb-3" id="noContactTargetsCard">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+        <div>
+          <h5 class="mb-1">High-value targets without contacts</h5>
+          <div class="text-muted small">These customers have no contacts on file. Use Lead Finder to add prospects.</div>
+        </div>
+        <span class="badge bg-light text-dark border" id="noContactTargetsCount"></span>
+      </div>
+      <div id="noContactTargets" class="row g-2"></div>
     </div>
   </div>
 

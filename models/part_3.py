@@ -1543,18 +1543,27 @@ def get_all_company_types():
     finally:
         db.close()
 
-def get_company_types_by_customer_id(customer_id):
-    """Get all company types for a specific customer"""
+def get_company_types_by_customer_id(customer_id, include_ids=False):
+    """Get all company types for a specific customer
+
+    Args:
+        customer_id: The customer ID
+        include_ids: If True, returns list of dicts with id and type. If False, returns list of type strings.
+    """
     conn = get_db_connection()
     types = conn.execute('''
-        SELECT company_types.type 
+        SELECT company_types.id, company_types.type
         FROM company_types
         JOIN customer_company_types ON company_types.id = customer_company_types.company_type_id
         WHERE customer_company_types.customer_id = ?
     ''', (customer_id,)).fetchall()
     conn.close()
+
+    if include_ids:
+        return [{'id': t['id'], 'type': t['type']} for t in types]
+
     type_list = [type_item['type'] for type_item in types]
-    print(f"Retrieved company types for customer {customer_id}: {type_list}")  # Debug print
+    print(f"Retrieved company types for customer {customer_id}: {type_list}")
     return type_list
 
 

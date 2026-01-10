@@ -8,8 +8,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const loadingState = document.getElementById('suggestionsLoading');
   const refreshBtn = document.getElementById('refreshSuggestions');
   const loadMoreBtn = document.getElementById('loadMoreSuggestions');
+  const noContactTargets = document.getElementById('noContactTargets');
+  const noContactTargetsCard = document.getElementById('noContactTargetsCard');
+  const noContactTargetsCount = document.getElementById('noContactTargetsCount');
 
   let currentSuggestions = [];
+  let currentNoContactTargets = [];
   let templates = [];
   let templatesLoaded = false;
   let totalAvailable = null;
@@ -246,6 +250,56 @@ document.addEventListener('DOMContentLoaded', () => {
       if (match) return match;
     }
     return contacts[0];
+  };
+
+  const renderNoContactTargets = (targets) => {
+    if (!noContactTargets || !noContactTargetsCard) return;
+
+    if (!targets || !targets.length) {
+      noContactTargetsCard.classList.add('d-none');
+      noContactTargets.innerHTML = '';
+      if (noContactTargetsCount) noContactTargetsCount.textContent = '';
+      return;
+    }
+
+    noContactTargetsCard.classList.remove('d-none');
+    if (noContactTargetsCount) {
+      noContactTargetsCount.textContent = `${targets.length} target${targets.length === 1 ? '' : 's'}`;
+    }
+
+    noContactTargets.innerHTML = targets.map((target) => `
+      <div class="col-12 col-md-6 col-lg-4">
+        <div class="border rounded p-3 h-100 d-flex flex-column">
+          <div class="fw-semibold">${escapeHtml(target.customer_name || 'Customer')}</div>
+          <div class="text-muted small mb-2">${escapeHtml(target.status || 'No spend')}${target.country ? ` | ${escapeHtml(target.country)}` : ''}</div>
+          <div class="d-flex flex-wrap gap-2 mb-2">
+            <span class="metric-pill"><i class="bi bi-cash-stack"></i> ${formatCurrency(target.estimated_revenue)}</span>
+            <span class="metric-pill"><i class="bi bi-truck"></i> Fleet ${formatNumber(target.fleet_size)}</span>
+          </div>
+          <div class="text-muted small mb-3">Score ${escapeHtml(target.score ?? '-')}</div>
+          <div class="mt-auto d-flex gap-2">
+            <button class="btn btn-sm btn-primary" data-open-lead-finder="${escapeHtml(target.customer_id)}" data-edit-url="/customers/${escapeHtml(target.customer_id)}/edit">
+              <i class="bi bi-person-plus"></i> Find leads
+            </button>
+            <a class="btn btn-sm btn-outline-secondary" href="/customers/${escapeHtml(target.customer_id)}/edit">Edit</a>
+          </div>
+        </div>
+      </div>
+    `).join('');
+
+    noContactTargets.querySelectorAll('[data-open-lead-finder]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const customerId = button.getAttribute('data-open-lead-finder');
+        const editUrl = button.getAttribute('data-edit-url');
+        if (window.showApolloLeadFinder && customerId) {
+          window.showApolloLeadFinder(customerId);
+          return;
+        }
+        if (editUrl) {
+          window.location.href = editUrl;
+        }
+      });
+    });
   };
 
   const renderSuggestionCard = (suggestion) => {
@@ -710,9 +764,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       const data = await response.json();
       currentSuggestions = data.suggestions || [];
+      currentNoContactTargets = data.targets_without_contacts || [];
       totalAvailable = Number.isFinite(data.total_available) ? data.total_available : null;
       renderSummary(data);
       renderSuggestions(currentSuggestions);
+      renderNoContactTargets(currentNoContactTargets);
       if (loadMoreBtn) {
         if (totalAvailable !== null && currentSuggestions.length < totalAvailable) {
           loadMoreBtn.classList.remove('d-none');
@@ -745,6 +801,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       const data = await response.json();
       const newSuggestions = data.suggestions || [];
+      if (Array.isArray(data.targets_without_contacts)) {
+        currentNoContactTargets = data.targets_without_contacts;
+        renderNoContactTargets(currentNoContactTargets);
+      }
       totalAvailable = Number.isFinite(data.total_available) ? data.total_available : totalAvailable;
       currentSuggestions = currentSuggestions.concat(newSuggestions);
       renderSummary(data);

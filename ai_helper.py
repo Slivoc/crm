@@ -702,6 +702,306 @@ def start_bulk_enrichment(batch_size=20):
         db.close()
 
 
+# =============================================================================
+# Perplexity-based Customer Enrichment (with live data)
+# =============================================================================
+
+PERPLEXITY_API_KEY = "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"
+
+def enrich_customer_with_perplexity(customer, available_tags, company_types):
+    """
+    Enrich customer data using Perplexity AI with live web search.
+
+    This replaces the OpenAI-based enrichment to get accurate, up-to-date information.
+    Returns enrichment data including company type detection and MRO scoring.
+    """
+    try:
+        client = OpenAI(
+            api_key=PERPLEXITY_API_KEY,
+            base_url="https://api.perplexity.ai"
+        )
+
+        # Build context about the customer
+        company_name = customer.get('name', '')
+        description = customer.get('description', '') or ''
+        website = customer.get('website', '') or ''
+
+        # Format available tags and company types for the prompt (include IDs)
+        tags_list = ", ".join([f"{t['id']}:{t['name']}" for t in available_tags[:30]])  # Limit to avoid token overflow
+        types_list = ", ".join([f"{t['id']}:{t['name']}" for t in company_types])
+
+        system_message = f"""You are a business intelligence analyst specializing in the aviation industry.
+Research the company and provide accurate, factual information based on current web data.
+
+Available industry tags to choose from: {tags_list}
+Available company types: {types_list}
+
+IMPORTANT DEFINITIONS:
+- Operator: Airlines, helicopter operators, charter companies, corporate flight departments, air ambulance/HEMS, cargo operators - companies that FLY aircraft
+- MRO: Maintenance, Repair & Overhaul facilities that SERVICE aircraft/engines/components for other companies
+- OEM: Original Equipment Manufacturers like Boeing, Airbus, Pratt & Whitney, Rolls-Royce
+- Distributor: Parts distributors, brokers, aviation supply chain companies
+- Parts Manufacturer: PMA manufacturers, hardware manufacturers, component makers (not OEMs)
+
+A company can be MULTIPLE types (e.g., CHC Helicopter is both Operator and MRO via Heli-One).
+
+For MRO companies, calculate an MRO_SCORE (1-100) based on:
+- Facility size and locations (global presence = higher score)
+- Range of capabilities (engines, airframes, components, avionics)
+- Certifications (EASA, FAA, CAAC, etc.)
+- Major customer base
+- Specializations
+
+For Operators, estimate FLEET_SIZE as the number of aircraft they operate.
+
+Return ONLY a valid JSON object with these fields:
+{{
+  "estimated_revenue": <number in USD, be accurate based on available data>,
+  "country_code": "<ISO alpha-2 country code of headquarters>",
+  "company_type_ids": [<array of NUMERIC IDs from the company types list above, e.g. [1, 2]>],
+  "matched_tag_ids": [<array of NUMERIC IDs from the industry tags list above, e.g. [5, 12]>],
+  "suggested_new_tags": [<array of new tag names if no existing tags match>],
+  "fleet_size": <integer or null if not an operator>,
+  "mro_score": <integer 1-100 or null if not an MRO>,
+  "summary": "<brief 1-2 sentence company description>"
+}}
+
+IMPORTANT: For company_type_ids and matched_tag_ids, use the NUMERIC ID numbers from the lists provided (the number before the colon), NOT the names.
+
+Be accurate. If you cannot find reliable information, use null rather than guessing."""
+
+        user_prompt = f"""Research this aviation industry company and provide enrichment data:
+
+Company Name: {company_name}
+Description: {description}
+Website: {website}
+
+Find accurate information about their business type, revenue, fleet size (if operator), MRO capabilities (if MRO), and relevant industry classifications."""
+
+        response = client.chat.completions.create(
+            model="sonar-pro",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.1
+        )
+
+        response_text = response.choices[0].message.content.strip()
+
+        # Remove thinking tags if present (Perplexity sometimes includes these)
+        response_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
+        response_text = response_text.strip()
+
+        # Extract JSON from response (handle markdown code blocks)
+        if '```json' in response_text:
+            response_text = response_text.split('```json')[1].split('```')[0].strip()
+        elif '```' in response_text:
+            response_text = response_text.split('```')[1].split('```')[0].strip()
+
+        enrichment_data = json.loads(response_text)
+
+        # Validate and normalize the response
+        validated_data = {
+            'estimated_revenue': enrichment_data.get('estimated_revenue'),
+            'country_code': enrichment_data.get('country_code', '').upper()[:2] if enrichment_data.get('country_code') else None,
+            'matched_company_type_ids': enrichment_data.get('company_type_ids', []),
+            'matched_tag_ids': enrichment_data.get('matched_tag_ids', []),
+            'suggested_new_tags': enrichment_data.get('suggested_new_tags', []),
+            'fleet_size': enrichment_data.get('fleet_size'),
+            'mro_score': enrichment_data.get('mro_score'),
+            'summary': enrichment_data.get('summary', '')
+        }
+
+        # Ensure revenue is a number
+        if validated_data['estimated_revenue']:
+            try:
+                validated_data['estimated_revenue'] = float(validated_data['estimated_revenue'])
+            except (ValueError, TypeError):
+                validated_data['estimated_revenue'] = None
+
+        # Ensure fleet_size and mro_score are integers
+        for field in ['fleet_size', 'mro_score']:
+            if validated_data[field] is not None:
+                try:
+                    validated_data[field] = int(validated_data[field])
+                except (ValueError, TypeError):
+                    validated_data[field] = None
+
+        # Convert company type names to IDs if AI returned names instead of IDs
+        type_name_to_id = {t['name'].lower(): t['id'] for t in company_types}
+        resolved_type_ids = []
+        for item in validated_data['matched_company_type_ids']:
+            if isinstance(item, int):
+                resolved_type_ids.append(item)
+            elif isinstance(item, str):
+                # Try to find by name (case-insensitive)
+                type_id = type_name_to_id.get(item.lower())
+                if type_id:
+                    resolved_type_ids.append(type_id)
+        validated_data['matched_company_type_ids'] = resolved_type_ids
+
+        # Convert tag names to IDs if AI returned names instead of IDs
+        tag_name_to_id = {t['name'].lower(): t['id'] for t in available_tags}
+        resolved_tag_ids = []
+        new_tags = list(validated_data.get('suggested_new_tags', []))
+        for item in validated_data['matched_tag_ids']:
+            if isinstance(item, int):
+                resolved_tag_ids.append(item)
+            elif isinstance(item, str):
+                # Try to find by name (case-insensitive)
+                tag_id = tag_name_to_id.get(item.lower())
+                if tag_id:
+                    resolved_tag_ids.append(tag_id)
+                else:
+                    # Tag doesn't exist, add to suggested new tags
+                    if item not in new_tags:
+                        new_tags.append(item)
+        validated_data['matched_tag_ids'] = resolved_tag_ids
+        validated_data['suggested_new_tags'] = new_tags
+
+        logging.info(f"Perplexity enrichment for {company_name}: {validated_data}")
+        return validated_data
+
+    except json.JSONDecodeError as e:
+        logging.error(f"JSON parsing error in Perplexity enrichment for {customer.get('name')}: {e}")
+        logging.error(f"Response was: {response_text[:500] if 'response_text' in locals() else 'N/A'}")
+        raise ValueError(f"Failed to parse Perplexity response: {e}")
+    except Exception as e:
+        error_str = str(e)
+        # Check for authentication errors
+        if '401' in error_str or 'Authorization' in error_str or 'Unauthorized' in error_str:
+            logging.error(f"Perplexity API authentication failed - API key may be invalid or expired")
+            raise ValueError("Perplexity API key is invalid or expired. Please update the API key.")
+        logging.error(f"Perplexity enrichment error for {customer.get('name')}: {e}")
+        raise
+
+
+def apply_perplexity_enrichment(customer_id, enrichment_data):
+    """Apply Perplexity enrichment results to the customer record"""
+    from db import execute as db_execute, _using_postgres
+
+    db = get_db_connection()
+    try:
+        # Build update query dynamically based on available data
+        updates = []
+        params = []
+
+        # Use %s for Postgres, ? for SQLite
+        placeholder = '%s' if _using_postgres() else '?'
+
+        if enrichment_data.get('estimated_revenue') is not None:
+            updates.append(f"estimated_revenue = {placeholder}")
+            params.append(enrichment_data['estimated_revenue'])
+
+        if enrichment_data.get('country_code'):
+            updates.append(f"country = {placeholder}")
+            params.append(enrichment_data['country_code'])
+
+        if enrichment_data.get('fleet_size') is not None:
+            updates.append(f"fleet_size = {placeholder}")
+            params.append(enrichment_data['fleet_size'])
+
+        if enrichment_data.get('mro_score') is not None:
+            updates.append(f"mro_score = {placeholder}")
+            params.append(enrichment_data['mro_score'])
+
+        if enrichment_data.get('summary'):
+            # Only update description if it's currently empty
+            updates.append(f"description = COALESCE(NULLIF(description, ''), {placeholder})")
+            params.append(enrichment_data['summary'])
+
+        if updates:
+            params.append(customer_id)
+            query = f"UPDATE customers SET {', '.join(updates)} WHERE id = {placeholder}"
+            db.execute(query, params)
+
+        # Update company types
+        if enrichment_data.get('matched_company_type_ids'):
+            # Clear existing and add new
+            db.execute(f'DELETE FROM customer_company_types WHERE customer_id = {placeholder}', (customer_id,))
+            for type_id in enrichment_data['matched_company_type_ids']:
+                try:
+                    db.execute(
+                        f'INSERT INTO customer_company_types (customer_id, company_type_id) VALUES ({placeholder}, {placeholder})',
+                        (customer_id, type_id)
+                    )
+                except Exception:
+                    pass  # Ignore duplicates or invalid IDs
+
+        # Update industry tags
+        if enrichment_data.get('matched_tag_ids'):
+            db.execute(f'DELETE FROM customer_industry_tags WHERE customer_id = {placeholder}', (customer_id,))
+            for tag_id in enrichment_data['matched_tag_ids']:
+                try:
+                    db.execute(
+                        f'INSERT INTO customer_industry_tags (customer_id, tag_id) VALUES ({placeholder}, {placeholder})',
+                        (customer_id, tag_id)
+                    )
+                except Exception:
+                    pass
+
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        raise e
+    finally:
+        db.close()
+
+
+def start_perplexity_enrichment(batch_size=20):
+    """Main controller for Perplexity-based bulk enrichment process"""
+    db = get_db_connection()
+    try:
+        # Get pending customers
+        customers = db.execute('''
+            SELECT c.id, c.name, c.description, c.website
+            FROM customers c
+            LEFT JOIN customer_enrichment_status ces ON c.id = ces.customer_id
+            WHERE ces.status IS NULL
+               OR ces.status = 'pending'
+            ORDER BY c.id
+            LIMIT ?
+        ''', (batch_size,)).fetchall()
+
+        # Get all existing tags and company types once
+        tags = db.execute('SELECT id, tag as name, description FROM industry_tags').fetchall()
+        company_types = db.execute('SELECT id, type as name FROM company_types').fetchall()
+
+        # Convert to list of dicts
+        tags = [dict(t) for t in tags]
+        company_types = [dict(ct) for ct in company_types]
+
+        for customer in customers:
+            customer_dict = dict(customer)
+            try:
+                # Update status to processing
+                update_enrichment_status(customer_dict['id'], 'processing')
+
+                # Process customer with Perplexity
+                enrichment_data = enrich_customer_with_perplexity(customer_dict, tags, company_types)
+
+                # Apply updates
+                apply_perplexity_enrichment(customer_dict['id'], enrichment_data)
+
+                # Store new tag suggestions
+                if enrichment_data.get('suggested_new_tags'):
+                    store_tag_suggestions(customer_dict['id'], enrichment_data['suggested_new_tags'])
+
+                # Mark as completed
+                update_enrichment_status(customer_dict['id'], 'completed')
+
+                # Delay to respect API rate limits (Perplexity is more rate-limited)
+                time.sleep(2)
+
+            except Exception as e:
+                logging.error(f"Error processing customer {customer_dict['id']}: {str(e)}")
+                update_enrichment_status(customer_dict['id'], 'failed', error_message=str(e))
+                continue
+
+    finally:
+        db.close()
 
 
 def extract_quote_info_with_examples(text, examples):

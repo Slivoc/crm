@@ -10,9 +10,77 @@
       {% endif %}
     </div>
     <div class="col-md-6 text-md-end">
+      <button type="button" class="btn btn-outline-success btn-sm me-1" id="enrichCustomerBtn"
+              onclick="enrichCustomer({{ customer.id }})" title="Enrich with AI (uses Perplexity)">
+        <i class="bi bi-magic"></i> Enrich
+      </button>
       <a href="{{ url_for('customers.edit_customer', customer_id=customer.id) }}" class="btn btn-primary btn-sm">
         <i class="bi bi-eye"></i> View Full Details
       </a>
+    </div>
+  </div>
+
+  <!-- Company Types Section -->
+  <div class="row mt-3">
+    <div class="col-12">
+      <div class="d-flex align-items-center flex-wrap gap-2">
+        <span class="text-muted me-2"><i class="bi bi-building me-1"></i>Company Type:</span>
+        <div id="companyTypeBadges" class="d-flex flex-wrap gap-1">
+          {% if company_types %}
+            {% for ct in company_types %}
+              <span class="badge bg-secondary company-type-badge" data-type-id="{{ ct.id }}">
+                {{ ct.type }}
+                <button type="button" class="btn-close btn-close-white ms-1"
+                        style="font-size: 0.5rem;"
+                        onclick="removeCompanyType({{ customer.id }}, {{ ct.id }})"
+                        aria-label="Remove"></button>
+              </span>
+            {% endfor %}
+          {% else %}
+            <span class="text-muted fst-italic" id="noCompanyTypes">Not set</span>
+          {% endif %}
+        </div>
+        <div class="dropdown">
+          <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"
+                  id="addCompanyTypeBtn" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-plus"></i> Add
+          </button>
+          <ul class="dropdown-menu" id="companyTypeDropdown" aria-labelledby="addCompanyTypeBtn">
+            <!-- Will be populated via JS -->
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MRO Score / Fleet Size Display -->
+  <div class="row mt-2">
+    <div class="col-12">
+      <div class="d-flex align-items-center gap-4">
+        {% set is_mro = company_types and company_types|selectattr('type', 'equalto', 'MRO')|list|length > 0 %}
+        {% set is_operator = company_types and company_types|selectattr('type', 'equalto', 'Operator')|list|length > 0 %}
+
+        {% if is_operator and customer.fleet_size %}
+          <span class="text-muted">
+            <i class="bi bi-airplane me-1"></i>Fleet Size:
+            <strong class="text-primary">{{ customer.fleet_size }}</strong>
+          </span>
+        {% endif %}
+
+        {% if is_mro and customer.mro_score %}
+          <span class="text-muted">
+            <i class="bi bi-tools me-1"></i>MRO Score:
+            <strong class="text-success">{{ customer.mro_score }}/100</strong>
+          </span>
+        {% endif %}
+
+        {% if customer.estimated_revenue %}
+          <span class="text-muted">
+            <i class="bi bi-currency-pound me-1"></i>Est. Revenue:
+            <strong class="text-info">{{ "${:,.0f}".format(customer.estimated_revenue) }}</strong>
+          </span>
+        {% endif %}
+      </div>
     </div>
   </div>
 
@@ -670,4 +738,5 @@
 
 <!-- Include marked.js library -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+<!-- Note: Company type and enrichment functions are defined in the main customers.html page -->
 

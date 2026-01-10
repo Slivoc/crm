@@ -888,7 +888,7 @@ window.ChartUtils = ChartUtils;
       {% endif %}
     </th>
     <th class="sortable-header" data-sort="fleet_size">
-      Fleet Size
+      Fleet/MRO
       {% if current_sort == 'fleet_size' %}
         <i class="bi bi-arrow-{{ 'up' if current_order == 'asc' else 'down' }} sort-icon active"></i>
       {% else %}
@@ -1091,30 +1091,47 @@ window.ChartUtils = ChartUtils;
                       </form>
                     </td>
                     <td>
+                      {% set company_type_names = customer.company_types|map(attribute='type')|list if customer.company_types else [] %}
+                      {% set is_mro = 'MRO' in company_type_names %}
+                      {% set is_operator = 'Operator' in company_type_names %}
                       {% set fleet = customer.fleet_size or 0 %}
-                      <div class="editable-field fleet-size"
-                           data-field="fleet_size"
-                           data-value="{{ fleet }}"
-                           data-customer-id="{{ customer.id }}">
-                        {% if fleet == 0 %}
-                          <span class="fleet-size zero display-value">-</span>
-                        {% elif fleet > 100 %}
-                          <span class="fleet-size large display-value">{{ "{:,}".format(fleet) }}</span>
-                        {% else %}
-                          <span class="fleet-size display-value">{{ "{:,}".format(fleet) }}</span>
-                        {% endif %}
-                      </div>
-                      <form class="edit-form" method="post" action="{{ url_for('salespeople.update_customer_field') }}">
-                        <input type="hidden" name="customer_id" value="{{ customer.id }}">
-                        <input type="hidden" name="field" value="fleet_size">
-                        <input type="number" name="value" class="form-control form-control-sm" min="0" required>
-                        <button type="submit" class="btn btn-success btn-sm">
-                          <i class="bi bi-check"></i>
-                        </button>
-                        <button type="button" class="btn btn-secondary btn-sm cancel-edit">
-                          <i class="bi bi-x"></i>
-                        </button>
-                      </form>
+                      {% set mro = customer.mro_score or 0 %}
+
+                      {% if is_mro and mro > 0 %}
+                        {# Show MRO Score for MRO companies #}
+                        <div class="mro-score-display" title="MRO Score">
+                          <i class="bi bi-tools text-success me-1"></i>
+                          <span class="badge bg-success">{{ mro }}/100</span>
+                        </div>
+                      {% elif is_operator or fleet > 0 %}
+                        {# Show Fleet Size for Operators or if fleet size is set #}
+                        <div class="editable-field fleet-size"
+                             data-field="fleet_size"
+                             data-value="{{ fleet }}"
+                             data-customer-id="{{ customer.id }}">
+                          {% if fleet == 0 %}
+                            <span class="fleet-size zero display-value">-</span>
+                          {% elif fleet > 100 %}
+                            <span class="fleet-size large display-value"><i class="bi bi-airplane me-1"></i>{{ "{:,}".format(fleet) }}</span>
+                          {% else %}
+                            <span class="fleet-size display-value"><i class="bi bi-airplane me-1"></i>{{ "{:,}".format(fleet) }}</span>
+                          {% endif %}
+                        </div>
+                        <form class="edit-form" method="post" action="{{ url_for('salespeople.update_customer_field') }}">
+                          <input type="hidden" name="customer_id" value="{{ customer.id }}">
+                          <input type="hidden" name="field" value="fleet_size">
+                          <input type="number" name="value" class="form-control form-control-sm" min="0" required>
+                          <button type="submit" class="btn btn-success btn-sm">
+                            <i class="bi bi-check"></i>
+                          </button>
+                          <button type="button" class="btn btn-secondary btn-sm cancel-edit">
+                            <i class="bi bi-x"></i>
+                          </button>
+                        </form>
+                      {% else %}
+                        {# No company type or score set #}
+                        <span class="text-muted">-</span>
+                      {% endif %}
                     </td>
                     <td>
                       {% if customer.latest_update %}
@@ -2694,6 +2711,11 @@ function refreshTableContent() {
     }
 
     setupNotesHandling();
+
+    // Initialize company type dropdown
+    if (typeof initializeCompanyTypeDropdown === 'function') {
+      initializeCompanyTypeDropdown();
+    }
   }
 
   // Quick update modal handling
@@ -3734,6 +3756,184 @@ function getIconForCommType(type) {
       console.error('Error refreshing table:', error);
       window.location.href = currentUrl;
     });
+  };
+
+  // ==========================================================================
+  // Company Type Management Functions (for customer details offcanvas)
+  // ==========================================================================
+
+  // Make functions globally available since they're called from dynamically loaded content
+  window.addCompanyType = async function(customerId, typeId, typeName) {
+    try {
+      const response = await fetch(`/customers/${customerId}/company-type/${typeId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        // Remove "Not set" placeholder if present
+        document.getElementById('noCompanyTypes')?.remove();
+
+        // Add new badge
+        const badgesContainer = document.getElementById('companyTypeBadges');
+        const newBadge = document.createElement('span');
+        newBadge.className = 'badge bg-secondary company-type-badge';
+        newBadge.dataset.typeId = typeId;
+        newBadge.innerHTML = `
+          ${typeName}
+          <button type="button" class="btn-close btn-close-white ms-1"
+                  style="font-size: 0.5rem;"
+                  onclick="removeCompanyType(${customerId}, ${typeId})"
+                  aria-label="Remove"></button>
+        `;
+        badgesContainer.appendChild(newBadge);
+      } else {
+        alert('Error adding company type: ' + (data.error || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error adding company type:', error);
+      alert('Error adding company type');
+    }
+  };
+
+  window.removeCompanyType = async function(customerId, typeId) {
+    try {
+      const response = await fetch(`/customers/${customerId}/company-type/${typeId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        // Remove the badge
+        const badge = document.querySelector(`.company-type-badge[data-type-id="${typeId}"]`);
+        badge?.remove();
+
+        // Add "Not set" if no types remain
+        const remaining = document.querySelectorAll('.company-type-badge');
+        if (remaining.length === 0) {
+          const placeholder = document.createElement('span');
+          placeholder.className = 'text-muted fst-italic';
+          placeholder.id = 'noCompanyTypes';
+          placeholder.textContent = 'Not set';
+          document.getElementById('companyTypeBadges').appendChild(placeholder);
+        }
+      } else {
+        alert('Error removing company type: ' + (data.error || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error removing company type:', error);
+      alert('Error removing company type');
+    }
+  };
+
+  window.enrichCustomer = async function(customerId) {
+    const btn = document.getElementById('enrichCustomerBtn');
+    const originalContent = btn.innerHTML;
+
+    try {
+      // Show loading state
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Enriching...';
+
+      const response = await fetch(`/customers/${customerId}/enrich-single`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        btn.innerHTML = '<i class="bi bi-check-circle me-1"></i> Done!';
+        btn.classList.remove('btn-outline-success');
+        btn.classList.add('btn-success');
+
+        // Show summary of what was enriched
+        let summary = 'Customer enriched successfully!';
+        if (data.enrichment) {
+          const parts = [];
+          if (data.enrichment.company_types?.length) {
+            parts.push(`Types: ${data.enrichment.company_types.join(', ')}`);
+          }
+          if (data.enrichment.fleet_size) {
+            parts.push(`Fleet: ${data.enrichment.fleet_size}`);
+          }
+          if (data.enrichment.mro_score) {
+            parts.push(`MRO Score: ${data.enrichment.mro_score}/100`);
+          }
+          if (data.enrichment.estimated_revenue) {
+            parts.push(`Revenue: $${data.enrichment.estimated_revenue.toLocaleString()}`);
+          }
+          if (parts.length) {
+            summary += '\n\n' + parts.join('\n');
+          }
+        }
+
+        alert(summary);
+
+        // Refresh the page to show updated data
+        // Using reload to ensure all data is fresh
+        window.location.reload();
+      } else {
+        throw new Error(data.error || 'Enrichment failed');
+      }
+    } catch (error) {
+      console.error('Error enriching customer:', error);
+      btn.innerHTML = '<i class="bi bi-x-circle me-1"></i> Failed';
+      btn.classList.remove('btn-outline-success');
+      btn.classList.add('btn-outline-danger');
+      alert('Error enriching customer: ' + error.message);
+
+      // Reset button after delay
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.innerHTML = originalContent;
+        btn.classList.remove('btn-outline-danger');
+        btn.classList.add('btn-outline-success');
+      }, 2000);
+    }
+  };
+
+  // Initialize company type dropdown when customer details are loaded
+  window.initializeCompanyTypeDropdown = function() {
+    const addBtn = document.getElementById('addCompanyTypeBtn');
+    if (addBtn) {
+      addBtn.addEventListener('show.bs.dropdown', async function() {
+        const dropdown = document.getElementById('companyTypeDropdown');
+        const customerId = document.getElementById('customerIdInput').value;
+
+        try {
+          const response = await fetch('/customers/api/company-types');
+          const data = await response.json();
+
+          if (data.success) {
+            // Get currently assigned type IDs
+            const assignedIds = Array.from(document.querySelectorAll('.company-type-badge'))
+              .map(badge => parseInt(badge.dataset.typeId));
+
+            // Build dropdown items
+            dropdown.innerHTML = data.types
+              .filter(type => !assignedIds.includes(type.id))
+              .map(type => `
+                <li>
+                  <a class="dropdown-item" href="#" onclick="addCompanyType(${customerId}, ${type.id}, '${type.type}'); return false;">
+                    ${type.type}
+                    ${type.description ? `<small class="text-muted d-block">${type.description}</small>` : ''}
+                  </a>
+                </li>
+              `).join('');
+
+            if (dropdown.innerHTML === '') {
+              dropdown.innerHTML = '<li><span class="dropdown-item text-muted">All types assigned</span></li>';
+            }
+          }
+        } catch (error) {
+          console.error('Error loading company types:', error);
+          dropdown.innerHTML = '<li><span class="dropdown-item text-danger">Error loading types</span></li>';
+        }
+      });
+    }
   };
 });
 </script>

@@ -66,6 +66,16 @@
   flex-shrink: 0;
 }
 
+/* Next actions panel: let list fill card height */
+.next-actions-body {
+  min-height: 0;
+}
+
+.next-actions-list {
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* Card shadow hover effect */
 .card.shadow-sm {
   transition: box-shadow 0.2s ease;

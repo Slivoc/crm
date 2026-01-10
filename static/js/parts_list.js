@@ -2723,9 +2723,15 @@ if (viewAsTableBtn) {
 
 function parsePartNumbers(text) {
     if (!text || text.trim() === '') return [];
-    const lines = text.split(/[\n\t]+/);
+    const lines = text.split(/\r?\n/);
     const parts = [];
     const seenParts = new Set();
+
+    const parseQuantity = (value) => {
+        const qty = parseInt(value, 10);
+        if (Number.isNaN(qty) || qty < 1) return 1;
+        return qty;
+    };
 
     for (let line of lines) {
         line = line.trim();
@@ -2737,16 +2743,19 @@ function parsePartNumbers(text) {
             const commaParts = line.split(',');
             if (commaParts.length >= 2) {
                 partNumber = commaParts[0].trim();
-                const qtyStr = commaParts[1].trim();
-                try {
-                    quantity = parseInt(qtyStr);
-                    if (isNaN(quantity) || quantity < 1) quantity = 1;
-                } catch { quantity = 1; }
+                const qtyStr = (commaParts[1] || '').trim();
+                quantity = parseQuantity(qtyStr);
             } else {
                 partNumber = line; quantity = 1;
             }
         } else {
-            partNumber = line; quantity = 1;
+            const tokens = line.split(/\s+/);
+            if (tokens.length >= 2 && /^\d+$/.test(tokens[1])) {
+                partNumber = tokens[0].trim();
+                quantity = parseQuantity(tokens[1]);
+            } else {
+                partNumber = line; quantity = 1;
+            }
         }
 
         const partKey = partNumber.toUpperCase();

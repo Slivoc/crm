@@ -706,13 +706,14 @@ def get_salesperson_customers(salesperson_id, search_term='', status_filter='', 
         FROM sales_orders
     )
 
-    SELECT 
-    c.id, 
-    c.name, 
-    c.payment_terms, 
+    SELECT
+    c.id,
+    c.name,
+    c.payment_terms,
     c.incoterms,
     c.estimated_revenue,
     c.fleet_size,
+    c.mro_score,
     c.logo_url,
     c.website,
     c.country,
@@ -987,6 +988,16 @@ def get_salesperson_customers_with_spend(salesperson_id, search_term='', status_
 
             # Add tags to the main customer
             customer_dict['tags'] = get_tags_by_customer_id(customer_id)
+
+            # Add company types to the main customer
+            company_types_query = """
+                SELECT ct.id, ct.type
+                FROM company_types ct
+                JOIN customer_company_types cct ON ct.id = cct.company_type_id
+                WHERE cct.customer_id = ?
+            """
+            company_types_result = db_execute(company_types_query, (customer_id,), fetch="all")
+            customer_dict['company_types'] = [dict(ct) for ct in company_types_result] if company_types_result else []
 
             # Add child company information for frontend
             customer_dict['child_companies'] = child_companies

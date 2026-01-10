@@ -3245,12 +3245,13 @@ def scan_contact_emails():
 
                 # Scan Inbox (received from contact)
                 params = {
-                    "$top": "50",
+                    "$top": "100",
                     "$select": select_fields,
                     "$orderby": "receivedDateTime desc",
                 }
                 next_link = None
-                for _ in range(20):
+                oldest_date_seen = None
+                for _ in range(50):  # 50 iterations × 100 = 5000 emails max
                     if next_link:
                         resp = requests.get(next_link, headers=headers, timeout=30)
                     else:
@@ -3287,6 +3288,9 @@ def scan_contact_emails():
                         except (TypeError, ValueError):
                             pass
 
+                    if oldest_seen:
+                        oldest_date_seen = oldest_seen.strftime('%Y-%m-%d')
+
                     if oldest_seen and oldest_seen < cutoff:
                         break
 
@@ -3294,18 +3298,19 @@ def scan_contact_emails():
                     if not next_link:
                         break
 
-                    yield f"data: {json.dumps({'status': 'scanning', 'folder': 'Inbox', 'found': len(all_messages)})}\n\n"
+                    yield f"data: {json.dumps({'status': 'scanning', 'folder': 'Inbox', 'found': len(all_messages), 'oldest_date': oldest_date_seen})}\n\n"
 
                 yield f"data: {json.dumps({'status': 'scanning', 'folder': 'SentItems', 'found': len(all_messages)})}\n\n"
 
                 # Scan SentItems (sent to contact)
                 params = {
-                    "$top": "50",
+                    "$top": "100",
                     "$select": select_fields,
                     "$orderby": "sentDateTime desc",
                 }
                 next_link = None
-                for _ in range(20):
+                oldest_date_seen = None
+                for _ in range(50):  # 50 iterations × 100 = 5000 emails max
                     if next_link:
                         resp = requests.get(next_link, headers=headers, timeout=30)
                     else:
@@ -3468,12 +3473,12 @@ def scan_contacts_bulk():
                     try:
                         # Scan Inbox
                         params = {
-                            "$top": "50",
+                            "$top": "100",
                             "$select": select_fields,
                             "$orderby": "receivedDateTime desc",
                         }
                         next_link = None
-                        for _ in range(10):  # Limit iterations per contact
+                        for _ in range(30):  # 30 iterations × 100 = 3000 emails max per folder
                             if next_link:
                                 resp = requests.get(next_link, headers=headers, timeout=30)
                             else:
@@ -3518,12 +3523,12 @@ def scan_contacts_bulk():
 
                         # Scan SentItems
                         params = {
-                            "$top": "50",
+                            "$top": "100",
                             "$select": select_fields,
                             "$orderby": "sentDateTime desc",
                         }
                         next_link = None
-                        for _ in range(10):
+                        for _ in range(30):  # 30 iterations × 100 = 3000 emails max per folder
                             if next_link:
                                 resp = requests.get(next_link, headers=headers, timeout=30)
                             else:

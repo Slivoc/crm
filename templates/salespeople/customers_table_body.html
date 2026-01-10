@@ -112,32 +112,49 @@
       </form>
     </td>
 
-    <!-- Fleet Size -->
+    <!-- Fleet Size / MRO Score -->
     <td>
+      {% set company_type_names = customer.company_types|map(attribute='type')|list if customer.company_types else [] %}
+      {% set is_mro = 'MRO' in company_type_names %}
+      {% set is_operator = 'Operator' in company_type_names %}
       {% set fleet = customer.fleet_size or 0 %}
-      <div class="editable-field fleet-size"
-           data-field="fleet_size"
-           data-value="{{ fleet }}"
-           data-customer-id="{{ customer.id }}">
-        {% if fleet == 0 %}
-          <span class="fleet-size zero display-value">-</span>
-        {% elif fleet > 100 %}
-          <span class="fleet-size large display-value">{{ "{:,}".format(fleet) }}</span>
-        {% else %}
-          <span class="fleet-size display-value">{{ "{:,}".format(fleet) }}</span>
-        {% endif %}
-      </div>
-      <form class="edit-form" method="post" action="{{ url_for('salespeople.update_customer_field') }}">
-        <input type="hidden" name="customer_id" value="{{ customer.id }}">
-        <input type="hidden" name="field" value="fleet_size">
-        <input type="number" name="value" class="form-control form-control-sm" min="0" required>
-        <button type="submit" class="btn btn-success btn-sm">
-          <i class="bi bi-check"></i>
-        </button>
-        <button type="button" class="btn btn-secondary btn-sm cancel-edit">
-          <i class="bi bi-x"></i>
-        </button>
-      </form>
+      {% set mro = customer.mro_score or 0 %}
+
+      {% if is_mro and mro > 0 %}
+        {# Show MRO Score for MRO companies #}
+        <div class="mro-score-display" title="MRO Score">
+          <i class="bi bi-tools text-success me-1"></i>
+          <span class="badge bg-success">{{ mro }}/100</span>
+        </div>
+      {% elif is_operator or fleet > 0 %}
+        {# Show Fleet Size for Operators or if fleet size is set #}
+        <div class="editable-field fleet-size"
+             data-field="fleet_size"
+             data-value="{{ fleet }}"
+             data-customer-id="{{ customer.id }}">
+          {% if fleet == 0 %}
+            <span class="fleet-size zero display-value">-</span>
+          {% elif fleet > 100 %}
+            <span class="fleet-size large display-value"><i class="bi bi-airplane me-1"></i>{{ "{:,}".format(fleet) }}</span>
+          {% else %}
+            <span class="fleet-size display-value"><i class="bi bi-airplane me-1"></i>{{ "{:,}".format(fleet) }}</span>
+          {% endif %}
+        </div>
+        <form class="edit-form" method="post" action="{{ url_for('salespeople.update_customer_field') }}">
+          <input type="hidden" name="customer_id" value="{{ customer.id }}">
+          <input type="hidden" name="field" value="fleet_size">
+          <input type="number" name="value" class="form-control form-control-sm" min="0" required>
+          <button type="submit" class="btn btn-success btn-sm">
+            <i class="bi bi-check"></i>
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm cancel-edit">
+            <i class="bi bi-x"></i>
+          </button>
+        </form>
+      {% else %}
+        {# No company type or score set #}
+        <span class="text-muted">-</span>
+      {% endif %}
     </td>
 
     <!-- Latest Update -->

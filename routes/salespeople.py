@@ -13,7 +13,8 @@ from models import (get_salespeople, get_all_salespeople_with_contact_counts, ge
                     update_salesperson, delete_salesperson, get_template_by_id,
                     get_customers_with_status_and_updates, get_customer_status_options, get_consolidated_customer_orders, get_consolidated_customer_ids,
                     add_customer_status_update, get_customer_updates, get_customer_rfqs, get_customer_rfqs_by_date_range, get_customer_orders_by_date_range, get_customer_active_rfqs_count, get_customer_active_orders_count,
-                    get_customer_orders, Permission, get_salespeople_with_stats, get_total_customers, get_total_orders, get_total_active_orders, get_total_active_rfqs, get_salesperson_recent_activities, get_salesperson_active_rfqs, get_salesperson_customers, get_salesperson_pending_orders, get_customer_by_id)
+                    get_customer_orders, Permission, get_salespeople_with_stats, get_total_customers, get_total_orders, get_total_active_orders, get_total_active_rfqs, get_salesperson_recent_activities, get_salesperson_active_rfqs, get_salesperson_customers, get_salesperson_pending_orders, get_customer_by_id,
+                    get_company_types_by_customer_id)
 from db import get_db_connection, execute as db_execute, db_cursor, _using_postgres, _execute_with_cursor
 
 from dateutil.relativedelta import relativedelta
@@ -354,6 +355,43 @@ def _get_contact_emails_for_customers(customer_groups):
         })
 
     return contacts_by_main
+
+
+def _get_contact_counts_for_customers(customer_groups):
+    """Return total contact counts keyed by main customer id."""
+    if not customer_groups:
+        return {}
+
+    child_to_main = {}
+    all_customer_ids = []
+    for main_id, related_ids in customer_groups.items():
+        for cid in related_ids:
+            child_to_main[cid] = main_id
+            all_customer_ids.append(cid)
+
+    if not all_customer_ids:
+        return {}
+
+    placeholders = ','.join('?' for _ in all_customer_ids)
+    rows = db_execute(
+        f"""
+        SELECT customer_id, COUNT(*) AS contact_count
+        FROM contacts
+        WHERE customer_id IN ({placeholders})
+        GROUP BY customer_id
+        """,
+        all_customer_ids,
+        fetch='all'
+    ) or []
+
+    counts_by_main = defaultdict(int)
+    for row in (dict(r) for r in rows if r):
+        main_id = child_to_main.get(row.get('customer_id'))
+        if not main_id:
+            continue
+        counts_by_main[main_id] += int(row.get('contact_count') or 0)
+
+    return dict(counts_by_main)
 
 
 def _filter_customers_with_contact_emails(customers):
@@ -804,10 +842,28 @@ def _get_zero_spend_customers(salesperson_id):
 def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8, offset=0):
     """Aggregate data for the contact suggestions page."""
     customers = [customer for customer in _get_zero_spend_customers(salesperson_id) if customer]
-    customers, customer_groups, contacts_by_main = _filter_customers_with_contact_emails(customers)
+    customer_groups = {
+        customer['id']: customer.get('related_customer_ids') or [customer['id']]
+        for customer in customers
+        if customer.get('id')
+    }
+    contact_counts = _get_contact_counts_for_customers(customer_groups)
+    customers_with_contacts = [
+        customer for customer in customers
+        if contact_counts.get(customer.get('id'), 0) > 0
+    ]
+    customers_without_contacts = [
+        customer for customer in customers
+        if contact_counts.get(customer.get('id'), 0) <= 0
+    ]
+
+    customers, customer_groups, contacts_by_main = _filter_customers_with_contact_emails(customers_with_contacts)
 
     if not customers:
-        return [], False, 0
+        customers = []
+        customer_groups = {}
+        contacts_by_main = {}
+
     comm_snapshots = _get_customer_communication_snapshots(customer_groups, salesperson_id)
     graph_email_map = _get_latest_graph_emails_for_customers(customer_groups, graph_user_id)
 
@@ -830,6 +886,29 @@ def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8, offset=0)
     scored.sort(key=lambda x: x['score'], reverse=True)
     total_available = len(scored)
     top_candidates = scored[offset:offset + limit]
+
+    targets = []
+    if customers_without_contacts:
+        target_scored = []
+        for customer in customers_without_contacts:
+            if not customer.get('id'):
+                continue
+            score, breakdown = _compute_suggestion_score(customer, {})
+            target_scored.append({
+                'customer_id': customer['id'],
+                'customer_name': customer.get('name'),
+                'status': customer.get('customer_status'),
+                'country': customer.get('country'),
+                'estimated_revenue': customer.get('estimated_revenue', 0),
+                'fleet_size': customer.get('fleet_size', 0),
+                'latest_update': customer.get('latest_update'),
+                'score': score,
+                'score_breakdown': breakdown,
+                'related_customers': customer.get('related_customer_ids', []),
+                'has_associated_companies': customer.get('has_associated_companies', False)
+            })
+        target_scored.sort(key=lambda x: x['score'], reverse=True)
+        targets = target_scored[:6]
 
     suggestions = []
     for entry in top_candidates:
@@ -877,7 +956,7 @@ def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8, offset=0)
             'priority_name': customer.get('priority_name')
         })
 
-    return suggestions, False, total_available
+    return suggestions, False, total_available, targets
 
 @salespeople_bp.route('/')
 @login_required
@@ -1414,7 +1493,7 @@ def contact_suggestions_data(salesperson_id):
     offset = request.args.get('offset', 0, type=int) or 0
     try:
         graph_user_id = getattr(current_user, 'id', None)
-        suggestions, cached_news_used, total_available = _build_contact_suggestions(
+        suggestions, cached_news_used, total_available, no_contact_targets = _build_contact_suggestions(
             salesperson_id,
             graph_user_id,
             limit=limit,
@@ -1423,6 +1502,7 @@ def contact_suggestions_data(salesperson_id):
         return jsonify({
             'success': True,
             'suggestions': suggestions,
+            'targets_without_contacts': no_contact_targets,
             'total_available': total_available,
             'next_offset': offset + len(suggestions),
             'generated_at': datetime.utcnow().isoformat() + 'Z',
@@ -1594,6 +1674,10 @@ def customer_details(customer_id):
         customer_tags = get_tags_by_customer_id(customer_id)
         print(f"DEBUG: Retrieved {len(customer_tags)} tags for customer {customer_id}")
 
+        # Get company types for the customer
+        company_types = get_company_types_by_customer_id(customer_id, include_ids=True)
+        print(f"DEBUG: Retrieved {len(company_types)} company types for customer {customer_id}")
+
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             # For AJAX requests, render a partial template
             html = render_template(
@@ -1603,7 +1687,8 @@ def customer_details(customer_id):
                 rfqs=customer_rfqs,
                 orders=customer_orders,
                 tags=customer_tags,
-                contacts=contacts
+                contacts=contacts,
+                company_types=company_types
             )
             return html
 
@@ -1615,7 +1700,8 @@ def customer_details(customer_id):
             rfqs=customer_rfqs,
             orders=customer_orders,
             tags=customer_tags,
-            contacts=contacts
+            contacts=contacts,
+            company_types=company_types
         )
     except Exception as e:
         print(f"DEBUG: Exception in customer_details: {str(e)}")

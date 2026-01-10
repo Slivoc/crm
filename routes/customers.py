@@ -3,7 +3,7 @@ import logging
 from db import execute as db_execute, db_cursor
 from models import get_contact_status_by_id, get_contact_communications, get_customer_development_plan, update_customer_development_answer, delete_customer_development_answer, update_contact_status, add_contact_ajax, get_all_contacts_by_status, get_all_contact_statuses, get_all_contact_status_counts, get_customer_contacts, get_all_contacts_filtered, get_all_contact_lists, create_contact_list, delete_contact_list, get_contact_list_by_id, add_contacts_to_list, remove_contacts_from_list, get_lists_by_contact_id, update_contact_list_name, remove_contacts_from_list, get_contacts_by_ids, get_customer_domains, get_tag_description, Permission, get_all_company_types, get_available_company_types, abort, get_company_types_by_customer_id, remove_customer_company_type, insert_customer_company_type, get_rfqs_by_customer_id, get_sales_orders_by_customer_id, update_customer_apollo_id, get_customer_tags, get_templates_by_tags, update_contact, update_customer_enrichment, get_customer, get_customer_data, get_available_tags, get_customers_by_country, get_nested_tags, get_child_tags, get_customers_by_tag, get_customers_by_tags, get_customers_by_continent, get_available_countries, get_countries_by_continent, get_customer_statuses, get_continents, get_status_name, insert_customer_tag, get_all_customers, get_all_tags, get_customers_by_tag, get_latest_activity, get_customers_with_status_and_updates,  get_tag_description, insert_customer_tags, insert_customer_industry, delete_customer_industries, get_industries, get_customer_industry, update_customer_industry, delete_customer_tags, get_tags_by_customer_id, get_updates_by_customer_id, get_addresses_by_customer, insert_update, get_contact_by_id, get_customers, get_salespeople, get_currencies, get_salesperson_by_id, get_customer_by_id, get_contacts_by_customer, insert_customer, update_customer, insert_contact
 from jinja2 import TemplateNotFound
-from ai_helper import start_bulk_enrichment, generate_industry_insights, generate_preview_prompt, enrich_customer_data, validate_enrichment_data, generate_industry_insights_with_custom_prompt
+from ai_helper import start_bulk_enrichment, start_perplexity_enrichment, enrich_customer_with_perplexity, apply_perplexity_enrichment, generate_industry_insights, generate_preview_prompt, enrich_customer_data, validate_enrichment_data, generate_industry_insights_with_custom_prompt
 from http import HTTPStatus
 import requests
 from routes.auth import login_required, current_user
@@ -3506,16 +3506,17 @@ def enrich_dashboard():
 
 @customers_bp.route('/enrich/start', methods=['POST'])
 def start_enrichment():
-    """Start the enrichment process"""
+    """Start the enrichment process using Perplexity AI for live data"""
     try:
         # Start in a separate thread to not block
-        thread = threading.Thread(target=start_bulk_enrichment, args=(20,))
+        # Using Perplexity-based enrichment for accurate, live data
+        thread = threading.Thread(target=start_perplexity_enrichment, args=(20,))
         thread.daemon = True
         thread.start()
 
         return jsonify({
             'status': 'success',
-            'message': 'Enrichment process started'
+            'message': 'Enrichment process started (using Perplexity AI)'
         })
     except Exception as e:
         return jsonify({
@@ -7084,3 +7085,97 @@ def customer_overview(customer_id):
             'success': False,
             'error': str(e)
         }), 500
+
+
+# =============================================================================
+# Company Type Management API
+# =============================================================================
+
+@customers_bp.route('/api/company-types', methods=['GET'])
+@login_required
+def get_company_types_api():
+    """Get all available company types"""
+    try:
+        types = get_all_company_types()
+        return jsonify({
+            'success': True,
+            'types': [{'id': t['id'], 'type': t['name'], 'description': t.get('description')} for t in types]
+        })
+    except Exception as e:
+        logger.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@customers_bp.route('/<int:customer_id>/company-type/<int:type_id>', methods=['POST'])
+@login_required
+def add_customer_company_type(customer_id, type_id):
+    """Add a company type to a customer"""
+    try:
+        insert_customer_company_type(customer_id, type_id)
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@customers_bp.route('/<int:customer_id>/company-type/<int:type_id>', methods=['DELETE'])
+@login_required
+def delete_customer_company_type(customer_id, type_id):
+    """Remove a company type from a customer"""
+    try:
+        remove_customer_company_type(customer_id, type_id)
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@customers_bp.route('/<int:customer_id>/enrich-single', methods=['POST'])
+@login_required
+def enrich_single_customer(customer_id):
+    """Enrich a single customer using Perplexity AI"""
+    try:
+        # Get customer data
+        customer = get_customer_by_id(customer_id)
+        if not customer:
+            return jsonify({'success': False, 'error': 'Customer not found'}), 404
+
+        customer_dict = dict(customer)
+
+        # Get available tags and company types
+        tags_rows = db_execute('SELECT id, tag as name, description FROM industry_tags', fetch='all') or []
+        tags = [dict(row) for row in tags_rows]
+
+        types_rows = db_execute('SELECT id, type as name FROM company_types', fetch='all') or []
+        company_types = [dict(row) for row in types_rows]
+
+        # Run Perplexity enrichment
+        enrichment_data = enrich_customer_with_perplexity(customer_dict, tags, company_types)
+
+        # Apply the enrichment
+        apply_perplexity_enrichment(customer_id, enrichment_data)
+
+        # Build response with enrichment summary
+        response_data = {
+            'success': True,
+            'enrichment': {
+                'estimated_revenue': enrichment_data.get('estimated_revenue'),
+                'fleet_size': enrichment_data.get('fleet_size'),
+                'mro_score': enrichment_data.get('mro_score'),
+                'country_code': enrichment_data.get('country_code'),
+                'company_types': [],
+                'summary': enrichment_data.get('summary', '')
+            }
+        }
+
+        # Get company type names for the response
+        if enrichment_data.get('matched_company_type_ids'):
+            type_names = [ct['name'] for ct in company_types
+                         if ct['id'] in enrichment_data['matched_company_type_ids']]
+            response_data['enrichment']['company_types'] = type_names
+
+        return jsonify(response_data)
+
+    except Exception as e:
+        logger.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
