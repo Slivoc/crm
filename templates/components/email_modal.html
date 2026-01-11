@@ -96,13 +96,16 @@
                             <div class="mb-3 ai-draft-section d-none" id="aiDraftSection">
                                 <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
                                     <label class="form-label mb-0 fw-semibold">AI Draft</label>
-                                    <select class="form-select form-select-sm w-auto" id="ai_template_id">
-                                        <option value="">No template</option>
-                                    </select>
                                     <button type="button" class="btn btn-sm btn-outline-primary" id="ai_generate_btn">
                                         <i class="bi bi-stars"></i> Generate Draft
                                     </button>
                                     <span class="text-muted small" id="aiDraftStatus"></span>
+                                </div>
+                                <div class="form-check form-check-sm mb-2">
+                                    <input class="form-check-input" type="checkbox" id="ai_use_news" checked>
+                                    <label class="form-check-label small" for="ai_use_news">
+                                        Use recent news (optional)
+                                    </label>
                                 </div>
                                 <div id="aiDraftNews" class="small"></div>
                             </div>

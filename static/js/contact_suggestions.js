@@ -236,7 +236,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return newsItems.slice(0, 2).map((item) => `
       <div class="news-chip mb-1">
         <i class="bi bi-newspaper"></i>
-        <span>${escapeHtml(item.headline || 'News item')}</span>
+        <span>${escapeHtml(item.headline || 'News item')}${item.published_date || item.published_at || item.date ? ` (${escapeHtml(item.published_date || item.published_at || item.date)})` : ''}</span>
       </div>
     `).join('');
   };
@@ -328,6 +328,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="col-12 col-lg-6">
         <div class="card shadow-sm suggestion-card">
           <div class="card-body d-flex flex-column h-100">
+            <!-- Header: Name, status, score -->
             <div class="d-flex justify-content-between align-items-start mb-2">
               <div>
                 <h5 class="mb-0">${escapeHtml(suggestion.customer_name || 'Customer')}</h5>
@@ -336,7 +337,8 @@ document.addEventListener('DOMContentLoaded', () => {
               <span class="badge ${scoreBadgeClass} suggestion-score">${suggestion.score}</span>
             </div>
 
-            <div class="d-flex flex-wrap gap-2 mb-2">
+            <!-- Metrics row -->
+            <div class="d-flex flex-wrap gap-2 mb-3">
               <span class="metric-pill"><i class="bi bi-cash-stack"></i> ${formatCurrency(suggestion.estimated_revenue)}</span>
               ${suggestion.fleet_size > 0 ? `<span class="metric-pill"><i class="bi bi-airplane"></i> Fleet ${formatNumber(suggestion.fleet_size)}</span>` : ''}
               ${suggestion.mro_score > 0 ? `<span class="metric-pill"><i class="bi bi-tools text-success"></i> MRO ${suggestion.mro_score}/100</span>` : ''}
@@ -348,8 +350,9 @@ document.addEventListener('DOMContentLoaded', () => {
               }</span>
             </div>
 
-            <div class="mb-2">
-              <label class="form-label small fw-semibold" for="contact-${suggestion.customer_id}">Contact to email</label>
+            <!-- Contact selection -->
+            <div class="mb-3">
+              <label class="form-label small fw-semibold mb-1" for="contact-${suggestion.customer_id}">Contact</label>
               ${contacts.length ? `
                 <select class="form-select form-select-sm" id="contact-${suggestion.customer_id}" data-contact-select data-customer-id="${suggestion.customer_id}">
                   ${contacts.map((contact) => {
@@ -361,78 +364,65 @@ document.addEventListener('DOMContentLoaded', () => {
                 </select>
                 ${selectedContact?.email ? `
                   <div class="small text-muted mt-1">
-                    ${escapeHtml(selectedContact.email)}
-                    <a class="ms-2" href="mailto:${escapeHtml(selectedContact.email)}">Open email</a>
+                    <a href="mailto:${escapeHtml(selectedContact.email)}">${escapeHtml(selectedContact.email)}</a>
                     <button class="btn btn-sm btn-link p-0 ms-2" data-copy-email="${escapeHtml(selectedContact.email)}">Copy</button>
                   </div>
                 ` : ''}
               ` : '<div class="text-muted small">No contacts with email</div>'}
             </div>
-            <div class="mb-2">
-              <button class="btn btn-sm btn-outline-success w-100"
-                      data-email-single
-                      data-customer-id="${suggestion.customer_id}">
-                <i class="bi bi-envelope"></i> Email Contact
-              </button>
+
+            <!-- Email history section -->
+            <div class="mb-3">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <span class="small fw-semibold">Email History</span>
+                ${selectedContact?.email ? `
+                  <button class="btn btn-sm btn-outline-secondary" data-scan-emails data-email="${escapeHtml(selectedContact.email)}" data-customer-id="${suggestion.customer_id}" title="Scan for older emails">
+                    <i class="bi bi-arrow-repeat"></i> Scan
+                  </button>
+                ` : ''}
+              </div>
+              <small class="text-muted" data-scan-time></small>
+              ${selectedContact?.email ? `
+                <div class="email-timeline small mt-2" data-email-timeline data-email="${escapeHtml(selectedContact.email)}" data-customer-id="${suggestion.customer_id}" style="max-height: 120px; overflow-y: auto;">
+                  <div class="text-muted small">Loading...</div>
+                </div>
+                <div class="graph-email-content small mt-2 d-none" data-graph-content></div>
+              ` : '<div class="text-muted small">No contact email</div>'}
             </div>
 
-            <div class="mb-2">
-              <div class="fw-semibold">Latest update</div>
-              ${latestUpdate
-                ? `<div class="small">${escapeHtml(latestUpdate)}</div>`
-                : '<div class="text-muted small">No updates yet</div>'}
-            </div>
-            <div class="mb-2">
-              <label class="form-label small fw-semibold" for="customer-notes-${suggestion.customer_id}">Customer Notes</label>
-              <textarea class="form-control form-control-sm" rows="3"
-                        id="customer-notes-${suggestion.customer_id}"
-                        data-customer-notes-input
-                        data-customer-id="${suggestion.customer_id}">${escapeHtml(suggestion.customer_notes || '')}</textarea>
-              <div class="d-flex justify-content-end mt-2">
-                <button class="btn btn-sm btn-outline-primary"
+            <!-- Notes section -->
+            <div class="mb-3 flex-grow-1 d-flex flex-column">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label small fw-semibold mb-0" for="customer-notes-${suggestion.customer_id}">Notes</label>
+                <button class="btn btn-sm btn-outline-secondary"
                         data-save-customer-notes
                         data-customer-id="${suggestion.customer_id}">
-                  Save Notes
+                  <i class="bi bi-check-lg"></i> Save
                 </button>
               </div>
+              <textarea class="form-control form-control-sm flex-grow-1"
+                        id="customer-notes-${suggestion.customer_id}"
+                        data-customer-notes-input
+                        placeholder="Add notes..."
+                        style="min-height: 60px; resize: none;"
+                        data-customer-id="${suggestion.customer_id}">${escapeHtml(suggestion.customer_notes || '')}</textarea>
+              ${latestUpdate ? `<div class="small text-muted mt-1"><i class="bi bi-info-circle"></i> ${escapeHtml(latestUpdate)}</div>` : ''}
             </div>
 
-            <div class="mb-2">
-              <div class="fw-semibold">Latest email</div>
-              ${lastEmail
-                ? `<div class="small text-muted">${escapeHtml(lastEmailSubject || 'Email captured')}</div>
-                   ${lastEmailPreview ? `<div class="small">${escapeHtml(lastEmailPreview)}</div>` : ''}`
-                : '<div class="text-muted small">No email captured yet</div>'}
-              ${graphEmail ? `
-                <div class="small mt-2"><span class="fw-semibold">Graph:</span> ${escapeHtml(graphEmail.subject || 'Email')} ${graphEmailAge ? `<span class="text-muted">(${escapeHtml(graphEmailAge)})</span>` : ''}</div>
-                ${graphEmail.preview ? `<div class="small">${escapeHtml(graphEmail.preview)}</div>` : ''}
-              ` : ''}
-              ${selectedContact?.email ? `
-                <div class="mt-2">
-                  <div class="d-flex gap-2 align-items-center mb-2">
-                    <button class="btn btn-sm btn-outline-secondary" data-load-timeline data-email="${escapeHtml(selectedContact.email)}" data-customer-id="${suggestion.customer_id}">
-                      <i class="bi bi-envelope"></i> Load
-                    </button>
-                    <button class="btn btn-sm btn-outline-secondary" data-scan-emails data-email="${escapeHtml(selectedContact.email)}" data-customer-id="${suggestion.customer_id}" title="Scan for older emails">
-                      <i class="bi bi-arrow-repeat"></i> Scan
-                    </button>
-                    <small class="text-muted" data-scan-time></small>
-                  </div>
-                  <div class="email-timeline small" data-email-timeline style="max-height: 150px; overflow-y: auto;">
-                    <div class="text-muted small">Click "Load" to view emails.</div>
-                  </div>
-                  <div class="graph-email-content small mt-2 d-none" data-graph-content></div>
-                </div>
-              ` : ''}
-            </div>
-
-            <div class="mt-auto d-flex justify-content-between align-items-center text-muted small">
-              <span></span>
-              <span>Score: rev ${escapeHtml(suggestion.score_breakdown?.revenue_component ?? '-')}, ${
-                suggestion.score_breakdown?.mro_component > 0
-                  ? `mro ${escapeHtml(suggestion.score_breakdown?.mro_component ?? '-')}`
-                  : `fleet ${escapeHtml(suggestion.score_breakdown?.fleet_component ?? '-')}`
-              }, recency ${escapeHtml(suggestion.score_breakdown?.recency_component ?? '-')}</span>
+            <!-- Actions footer -->
+            <div class="mt-auto pt-2 border-top">
+              <div class="d-flex justify-content-between align-items-center">
+                <button class="btn btn-sm btn-success"
+                        data-email-single
+                        data-customer-id="${suggestion.customer_id}">
+                  <i class="bi bi-envelope-fill"></i> Email Contact
+                </button>
+                <span class="text-muted small">rev ${escapeHtml(suggestion.score_breakdown?.revenue_component ?? '-')}, ${
+                  suggestion.score_breakdown?.mro_component > 0
+                    ? `mro ${escapeHtml(suggestion.score_breakdown?.mro_component ?? '-')}`
+                    : `fleet ${escapeHtml(suggestion.score_breakdown?.fleet_component ?? '-')}`
+                }, recency ${escapeHtml(suggestion.score_breakdown?.recency_component ?? '-')}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -518,90 +508,87 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
 
-    // Email timeline handlers
-    container.querySelectorAll('[data-load-timeline]').forEach((button) => {
-      button.addEventListener('click', async () => {
-        const email = button.getAttribute('data-email');
-        const customerId = button.getAttribute('data-customer-id');
-        const wrapper = button.closest('.card-body');
-        const timelineContainer = wrapper ? wrapper.querySelector('[data-email-timeline]') : null;
-        const detailContainer = wrapper ? wrapper.querySelector('[data-graph-content]') : null;
-        const scanTimeEl = wrapper ? wrapper.querySelector('[data-scan-time]') : null;
-        if (!email || !timelineContainer) return;
+    // Load email timeline for a card
+    const loadEmailTimeline = async (timelineContainer) => {
+      const email = timelineContainer.getAttribute('data-email');
+      const customerId = timelineContainer.getAttribute('data-customer-id');
+      const wrapper = timelineContainer.closest('.card-body');
+      const detailContainer = wrapper ? wrapper.querySelector('[data-graph-content]') : null;
+      const scanTimeEl = wrapper ? wrapper.querySelector('[data-scan-time]') : null;
+      if (!email) return;
 
-        button.disabled = true;
-        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
-        timelineContainer.innerHTML = '<div class="text-muted small">Loading emails...</div>';
-        detailContainer?.classList.add('d-none');
+      timelineContainer.innerHTML = '<div class="text-muted small">Loading...</div>';
+      detailContainer?.classList.add('d-none');
 
-        try {
-          const response = await fetch(`/emails/graph/contact-timeline?email=${encodeURIComponent(email)}`);
-          const data = await response.json();
-          if (!response.ok || !data.success) {
-            throw new Error(data?.error?.message || 'Unable to load emails');
-          }
-
-          const emails = data.emails || [];
-          const suggestion = currentSuggestions.find((item) => String(item.customer_id) === String(customerId));
-
-          // Store emails for AI context
-          if (suggestion) {
-            suggestion._cachedEmails = emails;
-          }
-
-          const showEmailDetail = (emailItem) => {
-            if (!detailContainer) return;
-            detailContainer.classList.remove('d-none');
-
-            const subject = emailItem.subject || '';
-            const direction = emailItem.direction === 'sent' ? 'To' : 'From';
-            const timestamp = emailItem.timestamp ? new Date(emailItem.timestamp).toLocaleString() : '';
-
-            const rawBody = emailItem.body?.content || emailItem.preview || '';
-            const sanitized = sanitizeGraphHtml(rawBody);
-            const textBody = stripHtml(sanitized || rawBody);
-
-            const headerLines = [];
-            if (subject) headerLines.push(`Subject: ${subject}`);
-            headerLines.push(`${direction}: Contact`);
-            if (timestamp) headerLines.push(`Date: ${timestamp}`);
-
-            const headerHtml = `<div class="graph-email-meta">${escapeHtml(headerLines.join(' · '))}</div>`;
-            const bodyHtml = sanitized || escapeHtml(textBody).replace(/\n/g, '<br>');
-            detailContainer.innerHTML = `${headerHtml}<div class="graph-email-body">${bodyHtml}</div>`;
-            detailContainer.setAttribute('data-text', textBody);
-
-            // Update suggestion with selected email for AI context
-            if (suggestion) {
-              suggestion.last_graph_email_full = {
-                subject: subject,
-                body_html: sanitized || rawBody,
-                body_text: textBody
-              };
-            }
-          };
-
-          renderEmailTimeline(emails, timelineContainer, showEmailDetail);
-
-          if (data.scan_status && scanTimeEl) {
-            scanTimeEl.textContent = formatScanTime(data.scan_status.last_scan_at);
-          }
-
-          // Auto-select first email
-          if (emails.length > 0) {
-            const firstItem = timelineContainer.querySelector('.email-timeline-item');
-            if (firstItem) {
-              firstItem.classList.add('active');
-              showEmailDetail(emails[0]);
-            }
-          }
-        } catch (error) {
-          timelineContainer.innerHTML = `<div class="text-muted small">${escapeHtml(error.message || 'Unable to load emails')}</div>`;
-        } finally {
-          button.disabled = false;
-          button.innerHTML = '<i class="bi bi-envelope"></i> Load';
+      try {
+        const response = await fetch(`/emails/graph/contact-timeline?email=${encodeURIComponent(email)}`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data?.error?.message || 'Unable to load emails');
         }
-      });
+
+        const emails = data.emails || [];
+        const suggestion = currentSuggestions.find((item) => String(item.customer_id) === String(customerId));
+
+        // Store emails for AI context
+        if (suggestion) {
+          suggestion._cachedEmails = emails;
+        }
+
+        const showEmailDetail = (emailItem) => {
+          if (!detailContainer) return;
+          detailContainer.classList.remove('d-none');
+
+          const subject = emailItem.subject || '';
+          const direction = emailItem.direction === 'sent' ? 'To' : 'From';
+          const timestamp = emailItem.timestamp ? new Date(emailItem.timestamp).toLocaleString() : '';
+
+          const rawBody = emailItem.body?.content || emailItem.preview || '';
+          const sanitized = sanitizeGraphHtml(rawBody);
+          const textBody = stripHtml(sanitized || rawBody);
+
+          const headerLines = [];
+          if (subject) headerLines.push(`Subject: ${subject}`);
+          headerLines.push(`${direction}: Contact`);
+          if (timestamp) headerLines.push(`Date: ${timestamp}`);
+
+          const headerHtml = `<div class="graph-email-meta">${escapeHtml(headerLines.join(' · '))}</div>`;
+          const bodyHtml = sanitized || escapeHtml(textBody).replace(/\n/g, '<br>');
+          detailContainer.innerHTML = `${headerHtml}<div class="graph-email-body">${bodyHtml}</div>`;
+          detailContainer.setAttribute('data-text', textBody);
+
+          // Update suggestion with selected email for AI context
+          if (suggestion) {
+            suggestion.last_graph_email_full = {
+              subject: subject,
+              body_html: sanitized || rawBody,
+              body_text: textBody
+            };
+          }
+        };
+
+        renderEmailTimeline(emails, timelineContainer, showEmailDetail);
+
+        if (data.scan_status && scanTimeEl) {
+          scanTimeEl.textContent = formatScanTime(data.scan_status.last_scan_at);
+        }
+
+        // Auto-select first email
+        if (emails.length > 0) {
+          const firstItem = timelineContainer.querySelector('.email-timeline-item');
+          if (firstItem) {
+            firstItem.classList.add('active');
+            showEmailDetail(emails[0]);
+          }
+        }
+      } catch (error) {
+        timelineContainer.innerHTML = `<div class="text-muted small">${escapeHtml(error.message || 'No emails found')}</div>`;
+      }
+    };
+
+    // Auto-load email timelines for all cards
+    container.querySelectorAll('[data-email-timeline]').forEach((timelineContainer) => {
+      loadEmailTimeline(timelineContainer);
     });
 
     container.querySelectorAll('[data-scan-emails]').forEach((button) => {
@@ -610,7 +597,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const customerId = button.getAttribute('data-customer-id');
         const wrapper = button.closest('.card-body');
         const timelineContainer = wrapper ? wrapper.querySelector('[data-email-timeline]') : null;
-        const loadBtn = wrapper ? wrapper.querySelector('[data-load-timeline]') : null;
         if (!email || !timelineContainer) return;
 
         button.disabled = true;
@@ -643,9 +629,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (data.status === 'scanning') {
                   timelineContainer.innerHTML = `<div class="text-muted small">Scanning ${data.folder}... Found ${data.found}</div>`;
                 } else if (data.status === 'completed') {
-                  timelineContainer.innerHTML = `<div class="text-muted small">Found ${data.total_found} emails.</div>`;
-                  // Trigger load to refresh timeline
-                  if (loadBtn) loadBtn.click();
+                  // Reload the timeline after scan completes
+                  loadEmailTimeline(timelineContainer);
                 } else if (data.status === 'error') {
                   throw new Error(data.error || 'Scan failed');
                 }

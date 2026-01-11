@@ -46,10 +46,10 @@ class EmailModal {
         this.manualSubjectValue = '';
         this.context = this.modal.dataset.context || '';
         this.aiSection = this.modal.querySelector('#aiDraftSection');
-        this.aiTemplateSelect = this.modal.querySelector('#ai_template_id');
         this.aiGenerateBtn = this.modal.querySelector('#ai_generate_btn');
         this.aiStatus = this.modal.querySelector('#aiDraftStatus');
         this.aiNews = this.modal.querySelector('#aiDraftNews');
+        this.aiUseNews = this.modal.querySelector('#ai_use_news');
 
         // Recipients elements
         this.recipientsList = this.modal.querySelector('.recipients-list');
@@ -336,25 +336,7 @@ class EmailModal {
             return;
         }
         this.aiSection.classList.remove('d-none');
-        this.populateAiTemplates();
         this.applyAiPrefillFromDataset();
-    }
-
-    populateAiTemplates() {
-        if (!this.aiTemplateSelect || !this.templateSelect) {
-            return;
-        }
-        if (this.aiTemplateSelect.dataset.loaded === '1') {
-            return;
-        }
-        const options = [];
-        this.templateSelect.querySelectorAll('option').forEach((opt) => {
-            const clone = opt.cloneNode(true);
-            options.push(clone);
-        });
-        this.aiTemplateSelect.innerHTML = '';
-        options.forEach((opt) => this.aiTemplateSelect.appendChild(opt));
-        this.aiTemplateSelect.dataset.loaded = '1';
     }
 
     applyAiPrefillFromDataset() {
@@ -386,9 +368,15 @@ class EmailModal {
             this.aiNews.innerHTML = '';
             return;
         }
+        const formatDate = (value) => {
+            if (!value) return '';
+            const raw = String(value).trim();
+            return raw ? ` (${this.escapeHtml(raw)})` : '';
+        };
         const html = items.slice(0, 3).map((item) => {
             const headline = item?.headline || 'News item';
-            return `<div class="badge bg-light text-dark border me-2 mb-1">${this.escapeHtml(headline)}</div>`;
+            const date = formatDate(item?.published_date || item?.published_at || item?.date);
+            return `<div class="badge bg-light text-dark border me-2 mb-1">${this.escapeHtml(headline)}${date}</div>`;
         }).join('');
         this.aiNews.innerHTML = html;
     }
@@ -403,10 +391,8 @@ class EmailModal {
         const payload = { customer_id: customerId };
         const recipient = this.recipients.length ? this.recipients[0] : null;
         const contactId = recipient && recipient.id ? String(recipient.id) : '';
-        const templateId = this.aiTemplateSelect ? this.aiTemplateSelect.value : '';
-        if (templateId) {
-            payload.template_id = templateId;
-        }
+        const includeNews = this.aiUseNews ? this.aiUseNews.checked : true;
+        payload.include_news = includeNews;
         const replySubject = this.replyMessageId ? (this.replyPreviewSubjectText || '') : '';
         const replyBody = this.replyMessageId ? (this.replyPreviewText || '') : '';
         const graphSubject = replySubject || this.modal.dataset.graphEmailSubject || '';
@@ -445,7 +431,11 @@ class EmailModal {
             if (suggested.body) {
                 this.setCustomBodyValue(suggested.body);
             }
-            this.renderAiNews(data.news_items || []);
+            if (includeNews) {
+                this.renderAiNews(data.news_items || []);
+            } else {
+                this.renderAiNews([]);
+            }
             if (this.aiStatus) {
                 this.aiStatus.textContent = 'Draft ready';
             }
@@ -1679,7 +1669,6 @@ class EmailModal {
             }
 
             this.templatesLoaded = true;
-            this.populateAiTemplates();
         } catch (error) {
             console.error('Error loading templates:', error);
             this.templateSelect.innerHTML = '<option value="">Error loading templates</option>';

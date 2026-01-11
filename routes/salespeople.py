@@ -528,13 +528,25 @@ def _generate_email_suggestion(customer, comm_info, news_items, last_email_previ
     }
 
     system_prompt = (
-        "You are a warm, helpful account manager. "
-        "Suggest the next email for a zero-spend customer. "
+        "You are a warm, helpful account manager writing like a real person. "
+        "We supply approved, traceable fasteners/consumables/hardware that operators, OEMs, and MROs need. "
+        "Suggest the next email for a customer. "
         "Return ONLY valid JSON with keys 'subject' and 'body'. "
         "If last_email.body is provided, treat it as the most recent email thread "
         "and draft a relevant follow-up that references prior context. "
+        "Write as if you already know the person: friendly, calm, and familiar, not salesy. "
         "Keep the body under 120 words, use plain language, and propose a clear next step. "
         "Avoid salesy buzzwords, hype, or exaggerated claims. "
+        "Avoid stiff opener cliches like \"I hope this message finds you well\". "
+        "Avoid em dashes (—) and double hyphens (--). Use commas or full stops instead. "
+        "Do not overpraise or gush. "
+        "If you mention news, keep it short and casual, avoid long place names or exact locations, "
+        "and avoid using the full formal company name if it feels unnatural. "
+        "Avoid email cliches like \"touch base\", \"circle back\", \"reach out\", "
+        "\"see how things are going\", or \"hope you're well\". "
+        "Never use filler or jargon like \"synergy\", \"synergies\", \"venture\", \"ventures\", "
+        "\"leverage\", \"unlock\", \"optimize\", \"streamline\", \"world-class\", "
+        "\"cutting-edge\", or \"value proposition\". "
         "Do not include placeholders like [Your Name], [Your Company], or bracketed fields. "
         "If no contact name is available, use a neutral greeting like \"Hi there\" "
         "or \"Hi {customer_name} team\". "
@@ -544,14 +556,19 @@ def _generate_email_suggestion(customer, comm_info, news_items, last_email_previ
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5.2-chat-latest",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload, default=str)}
             ],
             temperature=0.4,
-            max_tokens=320
+            max_tokens=320,
+
+            # Optional (only if you want extra control and your SDK supports these params):
+            # verbosity="low",
+            # reasoning_effort="minimal",
         )
+
         content = response.choices[0].message.content.strip()
         if content.startswith('```'):
             parts = content.split('```')
@@ -581,6 +598,7 @@ def _generate_email_suggestion(customer, comm_info, news_items, last_email_previ
             'body': fallback_body,
             'source': 'fallback'
         }
+
 
 
 def _build_contact_comm_snapshot(communications):
@@ -672,14 +690,25 @@ def _generate_contact_email_suggestion(contact, customer, comm_info, news_items,
     }
 
     system_prompt = (
-        "You are a warm, helpful account manager. "
+        "You are a warm, helpful account manager writing like a real person. "
+        "We supply approved, traceable hardware that operators, OEMs, and MROs need. "
         "Draft the next email to a specific contact using the provided context. "
         "Return ONLY valid JSON with keys 'subject' and 'body'. "
         "If last_email.body is provided, treat it as the most recent email thread "
         "and draft a relevant follow-up that references prior context. "
         "Address the contact by first name when available. "
+        "Write as if you already know the person: friendly, calm, and familiar, not salesy. "
         "Keep the body under 120 words, use plain language, and propose a clear next step. "
         "Avoid salesy buzzwords, hype, or exaggerated claims. "
+        "Avoid stiff opener cliches like \"I hope this message finds you well\". "
+        "Avoid em dashes. Do not overpraise or gush. "
+        "If you mention news, keep it short and casual, avoid long place names or exact locations, "
+        "and avoid using the full formal company name if it feels unnatural. "
+        "Avoid email cliches like \"touch base\", \"circle back\", \"reach out\", "
+        "\"see how things are going\", or \"hope you're well\". "
+        "Never use filler or jargon like \"synergy\", \"synergies\", \"venture\", \"ventures\", "
+        "\"leverage\", \"unlock\", \"optimize\", \"streamline\", \"world-class\", "
+        "\"cutting-edge\", or \"value proposition\". "
         "Do not include placeholders like [Your Name], [Your Company], or bracketed fields. "
         "Use a simple sign-off (e.g., \"Thanks,\" or \"Best,\") with no contact details."
     )
@@ -1619,6 +1648,13 @@ def contact_suggestions_ai(salesperson_id):
     seed_template = _build_seed_template(template_id)
     graph_email_subject = payload.get('graph_email_subject')
     graph_email_body = payload.get('graph_email_body')
+    include_news = payload.get('include_news')
+    if include_news is None:
+        include_news = True
+    elif isinstance(include_news, str):
+        include_news = include_news.strip().lower() in ('1', 'true', 'yes', 'on')
+    else:
+        include_news = bool(include_news)
 
     customers = _get_zero_spend_customers(salesperson_id)
     customer = next((c for c in customers if c and c.get('id') == customer_id), None)
@@ -1652,9 +1688,13 @@ def contact_suggestions_ai(salesperson_id):
             'preview': graph_email_body_clean[:1200]
         }
 
-    news_map, cached_news_used = _build_news_lookup_for_customers(salesperson_id)
-    _hydrate_news_for_customers([customer], news_map)
-    news_items = news_map.get((customer.get('name') or '').lower(), [])
+    if include_news:
+        news_map, cached_news_used = _build_news_lookup_for_customers(salesperson_id)
+        _hydrate_news_for_customers([customer], news_map)
+        news_items = news_map.get((customer.get('name') or '').lower(), [])
+    else:
+        news_items = []
+        cached_news_used = False
 
     suggested_email = _generate_email_suggestion(
         customer,
@@ -2930,6 +2970,13 @@ def contact_details_next_email(contact_id):
 
     graph_email_subject = payload.get('graph_email_subject')
     graph_email_body = payload.get('graph_email_body')
+    include_news = payload.get('include_news')
+    if include_news is None:
+        include_news = True
+    elif isinstance(include_news, str):
+        include_news = include_news.strip().lower() in ('1', 'true', 'yes', 'on')
+    else:
+        include_news = bool(include_news)
 
     last_email_preview = None
     graph_email_body_clean = None
@@ -2950,9 +2997,13 @@ def contact_details_next_email(contact_id):
                 graph_user_id
             )
 
-    news_map, cached_news_used = _build_news_lookup_for_customers(customer.get('salesperson_id'))
-    _hydrate_news_for_customers([customer], news_map, max_fetch=1)
-    news_items = news_map.get((customer.get('name') or '').lower(), [])
+    if include_news:
+        news_map, cached_news_used = _build_news_lookup_for_customers(customer.get('salesperson_id'))
+        _hydrate_news_for_customers([customer], news_map, max_fetch=1)
+        news_items = news_map.get((customer.get('name') or '').lower(), [])
+    else:
+        news_items = []
+        cached_news_used = False
 
     suggested_email = _generate_contact_email_suggestion(
         contact,
