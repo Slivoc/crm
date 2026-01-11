@@ -1097,21 +1097,14 @@ window.ChartUtils = ChartUtils;
                       {% set fleet = customer.fleet_size or 0 %}
                       {% set mro = customer.mro_score or 0 %}
 
-                      {% if is_mro and mro > 0 %}
-                        {# Show MRO Score for MRO companies #}
-                        <div class="mro-score-display" title="MRO Score">
-                          <i class="bi bi-tools text-success me-1"></i>
-                          <span class="badge bg-success">{{ mro }}/100</span>
-                        </div>
-                      {% elif is_operator or fleet > 0 %}
-                        {# Show Fleet Size for Operators or if fleet size is set #}
+                      {% if fleet > 0 or mro > 0 %}
+                        {# Show Fleet Size if populated #}
+                        {% if fleet > 0 %}
                         <div class="editable-field fleet-size"
                              data-field="fleet_size"
                              data-value="{{ fleet }}"
                              data-customer-id="{{ customer.id }}">
-                          {% if fleet == 0 %}
-                            <span class="fleet-size zero display-value">-</span>
-                          {% elif fleet > 100 %}
+                          {% if fleet > 100 %}
                             <span class="fleet-size large display-value"><i class="bi bi-airplane me-1"></i>{{ "{:,}".format(fleet) }}</span>
                           {% else %}
                             <span class="fleet-size display-value"><i class="bi bi-airplane me-1"></i>{{ "{:,}".format(fleet) }}</span>
@@ -1128,8 +1121,16 @@ window.ChartUtils = ChartUtils;
                             <i class="bi bi-x"></i>
                           </button>
                         </form>
+                        {% endif %}
+                        {# Show MRO Score if populated #}
+                        {% if mro > 0 %}
+                        <div class="mro-score-display" title="MRO Score">
+                          <i class="bi bi-tools text-success me-1"></i>
+                          <span class="badge bg-success">{{ mro }}/100</span>
+                        </div>
+                        {% endif %}
                       {% else %}
-                        {# No company type or score set #}
+                        {# No fleet size or MRO score set #}
                         <span class="text-muted">-</span>
                       {% endif %}
                     </td>
