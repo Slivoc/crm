@@ -3144,31 +3144,21 @@ def generate_supplier_email():
         else:
             subject = f"Parts Availability Request - {datetime.now().strftime('%d/%m/%Y')}"
 
-        body_html = f'''
-            <p>{greeting}</p>
-
-            <br>
-
-            <p>Please can you quote for the following:</p>
-
-            <br>
-
-            <table style="border-collapse: collapse; max-width: 500px;">
-                <thead>
-                    <tr>
-                        <th style="padding: 4px 8px; border: 1px solid #dee2e6; text-align: left;">Part Number</th>
-                        <th style="padding: 4px 8px; border: 1px solid #dee2e6; text-align: center;">Quantity</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {table_rows}
-                </tbody>
-            </table>
-
-            <br>
-
-            <p>Thanks,<br><br>{sender_name}</p>
-        '''
+        body_html = f'''<p>{greeting}</p>
+<p>Please can you quote for the following:</p>
+<table style="border-collapse: collapse; max-width: 500px;">
+    <thead>
+        <tr style="background-color: #f8f9fa;">
+            <th style="padding: 4px 8px; border: 1px solid #dee2e6; text-align: left;">Part Number</th>
+            <th style="padding: 4px 8px; border: 1px solid #dee2e6; text-align: center;">Quantity</th>
+        </tr>
+    </thead>
+    <tbody>
+        {table_rows}
+    </tbody>
+</table>
+<p>Thanks,</p>
+<p>{sender_name}</p>'''
 
         body_html_without_signature = body_html
 
