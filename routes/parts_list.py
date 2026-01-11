@@ -3122,8 +3122,8 @@ def generate_supplier_email():
         for part in parts:
             table_rows += f'''
                 <tr>
-                    <td style="padding: 8px; border: 1px solid #dee2e6;">{part['part_number']}</td>
-                    <td style="padding: 8px; border: 1px solid #dee2e6; text-align: center;">{part['quantity']}</td>
+                    <td style="padding: 4px 8px; border: 1px solid #dee2e6;">{part['part_number']}</td>
+                    <td style="padding: 4px 8px; border: 1px solid #dee2e6; text-align: center;">{part['quantity']}</td>
                 </tr>
             '''
 
@@ -3153,11 +3153,11 @@ def generate_supplier_email():
 
             <br>
 
-            <table style="border-collapse: collapse; width: 100%; max-width: 500px; margin: 20px 0;">
+            <table style="border-collapse: collapse; max-width: 500px;">
                 <thead>
-                    <tr style="background-color: #f8f9fa;">
-                        <th style="padding: 8px; border: 1px solid #dee2e6; text-align: left;">Part Number</th>
-                        <th style="padding: 8px; border: 1px solid #dee2e6; text-align: center;">Quantity</th>
+                    <tr>
+                        <th style="padding: 4px 8px; border: 1px solid #dee2e6; text-align: left;">Part Number</th>
+                        <th style="padding: 4px 8px; border: 1px solid #dee2e6; text-align: center;">Quantity</th>
                     </tr>
                 </thead>
                 <tbody>
