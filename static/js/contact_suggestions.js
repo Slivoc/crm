@@ -274,7 +274,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="text-muted small mb-2">${escapeHtml(target.status || 'No spend')}${target.country ? ` | ${escapeHtml(target.country)}` : ''}</div>
           <div class="d-flex flex-wrap gap-2 mb-2">
             <span class="metric-pill"><i class="bi bi-cash-stack"></i> ${formatCurrency(target.estimated_revenue)}</span>
-            <span class="metric-pill"><i class="bi bi-truck"></i> Fleet ${formatNumber(target.fleet_size)}</span>
+            ${target.fleet_size > 0 ? `<span class="metric-pill"><i class="bi bi-airplane"></i> Fleet ${formatNumber(target.fleet_size)}</span>` : ''}
+            ${target.mro_score > 0 ? `<span class="metric-pill"><i class="bi bi-tools text-success"></i> MRO ${target.mro_score}/100</span>` : ''}
           </div>
           <div class="text-muted small mb-3">Score ${escapeHtml(target.score ?? '-')}</div>
           <div class="mt-auto d-flex gap-2">
@@ -343,7 +344,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             <div class="d-flex flex-wrap gap-2 mb-2">
               <span class="metric-pill"><i class="bi bi-cash-stack"></i> ${formatCurrency(suggestion.estimated_revenue)}</span>
-              <span class="metric-pill"><i class="bi bi-truck"></i> Fleet ${formatNumber(suggestion.fleet_size)}</span>
+              ${suggestion.fleet_size > 0 ? `<span class="metric-pill"><i class="bi bi-airplane"></i> Fleet ${formatNumber(suggestion.fleet_size)}</span>` : ''}
+              ${suggestion.mro_score > 0 ? `<span class="metric-pill"><i class="bi bi-tools text-success"></i> MRO ${suggestion.mro_score}/100</span>` : ''}
+              ${suggestion.fleet_size === 0 && suggestion.mro_score === 0 ? `<span class="metric-pill text-muted"><i class="bi bi-dash"></i> No fleet/MRO</span>` : ''}
               <span class="metric-pill"><i class="bi bi-clock-history"></i> ${
                 Number.isFinite(suggestion.score_breakdown?.days_since_contact)
                   ? `${suggestion.score_breakdown.days_since_contact} days stale`
@@ -452,7 +455,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             <div class="mt-auto d-flex justify-content-between align-items-center text-muted small">
               <span>${hasSuggestedEmail ? `Draft source: ${escapeHtml(suggestedEmail.source || 'openai')}` : ''}</span>
-              <span>Score drivers: rev ${escapeHtml(suggestion.score_breakdown?.revenue_component ?? '-')}, fleet ${escapeHtml(suggestion.score_breakdown?.fleet_component ?? '-')}, recency ${escapeHtml(suggestion.score_breakdown?.recency_component ?? '-')}</span>
+              <span>Score: rev ${escapeHtml(suggestion.score_breakdown?.revenue_component ?? '-')}, ${
+                suggestion.score_breakdown?.mro_component > 0
+                  ? `mro ${escapeHtml(suggestion.score_breakdown?.mro_component ?? '-')}`
+                  : `fleet ${escapeHtml(suggestion.score_breakdown?.fleet_component ?? '-')}`
+              }, recency ${escapeHtml(suggestion.score_breakdown?.recency_component ?? '-')}</span>
             </div>
           </div>
         </div>

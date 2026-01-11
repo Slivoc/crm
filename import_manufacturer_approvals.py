@@ -40,6 +40,9 @@ RAW_COLUMN_MAP = {
     "P Status Text": "p_status_text",
     "Change date Status P": "status_change_date",
     "Counter of QIR": "qir_count",
+    "Manufacturer Part Number (MPN)": "manufacturer_part_number",
+    "Manufacturer name": "manufacturer_name",
+    "AH Manufacturer code": "manufacturer_code",
 }
 
 UPSERT_COLUMNS: Sequence[str] = (
@@ -375,7 +378,7 @@ def main() -> None:
             xlsx_path=args.xlsx_path,
             batch_size=args.batch_size,
             limit=args.limit,
-            truncate_first=True,
+            truncate_first=args.truncate_first,
             dry_run=args.dry_run,
         )
     finally:

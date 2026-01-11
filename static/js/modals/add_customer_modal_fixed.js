@@ -605,7 +605,10 @@ function showCustomerSuccessState(customerId, customerName) {
             <p class="text-muted">${customerName}</p>
         </div>
         <div class="d-grid gap-2">
-            <button type="button" class="btn btn-primary btn-lg" id="findLeadsBtn">
+            <button type="button" class="btn btn-success btn-lg" id="enrichCustomerBtn">
+                <i class="bi bi-magic me-2"></i>Enrich with AI (Perplexity)
+            </button>
+            <button type="button" class="btn btn-primary" id="findLeadsBtn">
                 <i class="bi bi-search me-2"></i>Find Leads for This Customer
             </button>
             <button type="button" class="btn btn-outline-secondary" id="viewCustomerBtn">
@@ -620,6 +623,81 @@ function showCustomerSuccessState(customerId, customerName) {
     modalBody.appendChild(successDiv);
 
     // Add event listeners for new buttons
+    document.getElementById('enrichCustomerBtn').addEventListener('click', async function() {
+        const btn = this;
+        const originalContent = btn.innerHTML;
+
+        // Show loading state
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Enriching...';
+        btn.disabled = true;
+
+        try {
+            const response = await fetch(`/customers/${customerId}/enrich-single`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                // Update button to show success
+                btn.innerHTML = '<i class="bi bi-check-circle me-2"></i>Enriched!';
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-outline-success');
+
+                // Show enrichment summary
+                let summary = 'Customer enriched successfully!';
+                if (result.enrichment) {
+                    const e = result.enrichment;
+                    const parts = [];
+                    if (e.company_types && e.company_types.length > 0) parts.push(`Type: ${e.company_types.join(', ')}`);
+                    if (e.country_code) parts.push(`Country: ${e.country_code}`);
+                    if (e.fleet_size) parts.push(`Fleet: ${e.fleet_size}`);
+                    if (e.mro_score) parts.push(`MRO Score: ${e.mro_score}/100`);
+                    if (parts.length > 0) summary = parts.join(' | ');
+                }
+
+                // Show toast with summary
+                const toastContainer = document.getElementById('toastContainer');
+                if (toastContainer) {
+                    const toastHTML = `
+                        <div class="toast align-items-center text-white bg-success border-0" role="alert">
+                            <div class="d-flex">
+                                <div class="toast-body"><strong>Enriched:</strong> ${summary}</div>
+                                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                            </div>
+                        </div>`;
+                    toastContainer.insertAdjacentHTML('beforeend', toastHTML);
+                    const toastElement = toastContainer.lastElementChild;
+                    const toast = new bootstrap.Toast(toastElement, { autohide: true, delay: 5000 });
+                    toast.show();
+                }
+            } else {
+                throw new Error(result.error || 'Enrichment failed');
+            }
+        } catch (error) {
+            console.error('Enrichment error:', error);
+            btn.innerHTML = originalContent;
+            btn.disabled = false;
+
+            // Show error toast
+            const toastContainer = document.getElementById('toastContainer');
+            if (toastContainer) {
+                const toastHTML = `
+                    <div class="toast align-items-center text-white bg-danger border-0" role="alert">
+                        <div class="d-flex">
+                            <div class="toast-body"><strong>Error:</strong> ${error.message}</div>
+                            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                        </div>
+                    </div>`;
+                toastContainer.insertAdjacentHTML('beforeend', toastHTML);
+                const toastElement = toastContainer.lastElementChild;
+                const toast = new bootstrap.Toast(toastElement, { autohide: true, delay: 5000 });
+                toast.show();
+            }
+        }
+    });
+
     document.getElementById('findLeadsBtn').addEventListener('click', function() {
         // Close the modal
         const modal = getModalInstance('addCustomerModal');
@@ -633,7 +711,20 @@ function showCustomerSuccessState(customerId, customerName) {
                 window.showApolloLeadFinder(customerId);
             } else {
                 console.error('Apollo Lead Finder not available');
-                showToast('Error', 'Apollo Lead Finder is not available', 'error');
+                const toastContainer = document.getElementById('toastContainer');
+                if (toastContainer) {
+                    const toastHTML = `
+                        <div class="toast align-items-center text-white bg-danger border-0" role="alert">
+                            <div class="d-flex">
+                                <div class="toast-body"><strong>Error:</strong> Apollo Lead Finder is not available</div>
+                                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                            </div>
+                        </div>`;
+                    toastContainer.insertAdjacentHTML('beforeend', toastHTML);
+                    const toastElement = toastContainer.lastElementChild;
+                    const toast = new bootstrap.Toast(toastElement, { autohide: true, delay: 3000 });
+                    toast.show();
+                }
             }
         }, 300);
     });

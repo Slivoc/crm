@@ -454,9 +454,14 @@ def _hydrate_news_for_customers(customers, news_map, max_fetch=3):
 
 
 def _compute_suggestion_score(customer, comm_info):
-    """Weighted score to prioritize high-value, stale zero-spend customers."""
+    """Weighted score to prioritize high-value, stale zero-spend customers.
+
+    For MRO companies, mro_score (1-100) is used instead of fleet_size.
+    For operators or companies with both, both metrics contribute.
+    """
     est_revenue = float(customer.get('estimated_revenue') or 0)
     fleet_size = float(customer.get('fleet_size') or 0)
+    mro_score = float(customer.get('mro_score') or 0)
 
     last_contact_dt = None
     if comm_info and comm_info.get('last_contact', {}).get('datetime'):
@@ -467,10 +472,17 @@ def _compute_suggestion_score(customer, comm_info):
 
     revenue_component = min(log1p(est_revenue) / log1p(500000 + 1), 1.0)
     fleet_component = min(log1p(fleet_size) / log1p(400 + 1), 1.0)
+    # MRO score is already 0-100, normalize to 0-1
+    mro_component = min(mro_score / 100, 1.0)
     recency_component = 1.0 if days_since_contact is None else min(days_since_contact, 180) / 180
+
+    # Use the higher of fleet_component or mro_component for the "capability" score
+    # This ensures MRO companies get proper weighting even without a fleet
+    capability_component = max(fleet_component, mro_component)
+
     raw_score = (
         revenue_component * 0.45 +
-        fleet_component * 0.2 +
+        capability_component * 0.2 +
         recency_component * 0.35
     )
 
@@ -478,6 +490,8 @@ def _compute_suggestion_score(customer, comm_info):
     return score, {
         'revenue_component': round(revenue_component, 3),
         'fleet_component': round(fleet_component, 3),
+        'mro_component': round(mro_component, 3),
+        'capability_component': round(capability_component, 3),
         'recency_component': round(recency_component, 3),
         'days_since_contact': days_since_contact
     }
@@ -901,6 +915,7 @@ def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8, offset=0)
                 'country': customer.get('country'),
                 'estimated_revenue': customer.get('estimated_revenue', 0),
                 'fleet_size': customer.get('fleet_size', 0),
+                'mro_score': customer.get('mro_score', 0),
                 'latest_update': customer.get('latest_update'),
                 'score': score,
                 'score_breakdown': breakdown,
@@ -941,6 +956,7 @@ def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8, offset=0)
             'historical_spend': customer.get('historical_spend', 0),
             'estimated_revenue': customer.get('estimated_revenue', 0),
             'fleet_size': customer.get('fleet_size', 0),
+            'mro_score': customer.get('mro_score', 0),
             'latest_update': customer.get('latest_update'),
             'most_recent_order': customer.get('most_recent_order_date'),
             'score': entry['score'],
