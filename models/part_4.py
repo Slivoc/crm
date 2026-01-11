@@ -2445,10 +2445,68 @@ def toggle_salesperson_active(salesperson_id, is_active):
         return False
 
 
+def _parse_date_value(date_value):
+    """
+    Parse a date value that could be a string or datetime object.
+    Returns a date object or None if parsing fails.
+    Handles PostgreSQL and SQLite date formats.
+    """
+    from datetime import datetime, date
+
+    if date_value is None:
+        return None
+
+    # Already a date object
+    if isinstance(date_value, date) and not isinstance(date_value, datetime):
+        return date_value
+
+    # Already a datetime object
+    if isinstance(date_value, datetime):
+        return date_value.date()
+
+    # String - try various formats
+    if isinstance(date_value, str):
+        date_str = date_value.strip()
+        if not date_str:
+            return None
+
+        # Try common formats
+        formats = [
+            '%Y-%m-%d %H:%M:%S.%f%z',  # PostgreSQL with timezone and microseconds
+            '%Y-%m-%d %H:%M:%S.%f',     # PostgreSQL with microseconds
+            '%Y-%m-%d %H:%M:%S%z',      # PostgreSQL with timezone
+            '%Y-%m-%d %H:%M:%S',        # Standard datetime
+            '%Y-%m-%d',                  # Date only
+        ]
+
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt).date()
+            except ValueError:
+                continue
+
+        # Try parsing just the date part if there's a space
+        if ' ' in date_str:
+            try:
+                date_part = date_str.split(' ')[0]
+                return datetime.strptime(date_part, '%Y-%m-%d').date()
+            except ValueError:
+                pass
+
+        # Try parsing with timezone offset like +00
+        if '+' in date_str or (date_str.count('-') > 2):
+            try:
+                # Remove timezone for simpler parsing
+                clean_str = date_str.split('+')[0].split('.')[0]
+                return datetime.strptime(clean_str, '%Y-%m-%d %H:%M:%S').date()
+            except ValueError:
+                pass
+
+    return None
+
+
 def get_last_contact_date(salesperson_id, customer_status_filter=None, contact_status_filter=None):
     """Get the most recent contact date for a salesperson"""
-    db = get_db_connection()
-
     # Base query
     query = '''
         SELECT MAX(cc.date) as last_contact_date
@@ -2469,15 +2527,12 @@ def get_last_contact_date(salesperson_id, customer_status_filter=None, contact_s
         params.extend(contact_status_filter)
 
     result = db_execute(query, params, fetch="one")
-    db.close()
 
     return result['last_contact_date'] if result and result['last_contact_date'] else None
 
 
 def get_average_contact_frequency(salesperson_id, customer_status_filter=None, contact_status_filter=None):
     """Calculate average days between contacts for a salesperson"""
-    db = get_db_connection()
-
     # Get all contact dates for this salesperson, ordered by date
     query = '''
         SELECT cc.date
@@ -2500,24 +2555,16 @@ def get_average_contact_frequency(salesperson_id, customer_status_filter=None, c
     query += ' ORDER BY cc.date'
 
     results = db_execute(query, params, fetch="all")
-    db.close()
 
-    if len(results) < 2:
+    if not results or len(results) < 2:
         return None
 
     # Calculate differences between consecutive dates
-    from datetime import datetime
     dates = []
     for row in results:
-        try:
-            # Handle both datetime strings and date-only strings
-            if len(row['date'].split(' ')) > 1:
-                date_obj = datetime.strptime(row['date'], '%Y-%m-%d %H:%M:%S').date()
-            else:
-                date_obj = datetime.strptime(row['date'], '%Y-%m-%d').date()
+        date_obj = _parse_date_value(row['date'])
+        if date_obj:
             dates.append(date_obj)
-        except ValueError:
-            continue
 
     if len(dates) < 2:
         return None
@@ -2540,8 +2587,7 @@ def get_overdue_contacts_count(salesperson_id, threshold_days=14, customer_statu
     """Count contacts that haven't been contacted in threshold_days"""
     from datetime import datetime, timedelta
 
-    db = get_db_connection()
-    threshold_date = (datetime.now().date() - timedelta(days=threshold_days)).strftime('%Y-%m-%d')
+    threshold_date = datetime.now().date() - timedelta(days=threshold_days)
 
     # Get unique contacts for this salesperson and their last contact date
     query = '''
@@ -2567,13 +2613,16 @@ def get_overdue_contacts_count(salesperson_id, threshold_days=14, customer_statu
     query += ' GROUP BY c.id'
 
     results = db_execute(query, params, fetch="all")
-    db.close()
 
     overdue_count = 0
     for row in results:
         last_contact = row['last_contact_date']
-        if not last_contact or last_contact < threshold_date:
+        if not last_contact:
             overdue_count += 1
+        else:
+            last_contact_date = _parse_date_value(last_contact)
+            if last_contact_date and last_contact_date < threshold_date:
+                overdue_count += 1
 
     return overdue_count
 
@@ -2587,15 +2636,14 @@ def get_contacts_this_week_count(salesperson_id, customer_status_filter=None, co
     days_since_monday = today.weekday()
     start_of_week = today - timedelta(days=days_since_monday)
 
-    db = get_db_connection()
-
+    # Use CAST for PostgreSQL compatibility - cc.date is TEXT so compare as text
     query = '''
         SELECT COUNT(*) as count
         FROM contact_communications cc
         JOIN contacts c ON cc.contact_id = c.id
         JOIN customers cu ON cc.customer_id = cu.id
         WHERE cc.salesperson_id = ?
-        AND DATE(cc.date) >= ?
+        AND cc.date >= ?
     '''
     params = [salesperson_id, start_of_week.strftime('%Y-%m-%d')]
 
@@ -2609,15 +2657,12 @@ def get_contacts_this_week_count(salesperson_id, customer_status_filter=None, co
         params.extend(contact_status_filter)
 
     result = db_execute(query, params, fetch="one")
-    db.close()
 
     return result['count'] if result else 0
 
 
 def get_salesperson_customer_count(salesperson_id, customer_status_filter=None):
     """Get count of customers assigned to salesperson"""
-    db = get_db_connection()
-
     query = '''
         SELECT COUNT(*) as count
         FROM customers
@@ -2631,17 +2676,14 @@ def get_salesperson_customer_count(salesperson_id, customer_status_filter=None):
         params.extend(customer_status_filter)
 
     result = db_execute(query, params, fetch="one")
-    db.close()
 
     return result['count'] if result else 0
 
 
 def get_recent_contact_timeline(salesperson_id, limit=5, customer_status_filter=None, contact_status_filter=None):
     """Get recent contact timeline for salesperson"""
-    db = get_db_connection()
-
     query = '''
-        SELECT cc.date, c.name as contact_name, cu.name as customer_name, 
+        SELECT cc.date, c.name as contact_name, cu.name as customer_name,
                cc.communication_type, cc.notes
         FROM contact_communications cc
         JOIN contacts c ON cc.contact_id = c.id
@@ -2663,7 +2705,6 @@ def get_recent_contact_timeline(salesperson_id, limit=5, customer_status_filter=
     params.append(limit)
 
     results = db_execute(query, params, fetch="all")
-    db.close()
 
     return results
 
@@ -2686,15 +2727,9 @@ def get_engagement_metrics(salesperson_id, customer_status_filter=None, contact_
     last_contact_date = get_last_contact_date(salesperson_id, customer_status_filter, contact_status_filter)
     days_since_last = None
     if last_contact_date:
-        try:
-            # Handle both datetime strings and date-only strings
-            if len(last_contact_date.split(' ')) > 1:
-                last_date = datetime.strptime(last_contact_date, '%Y-%m-%d %H:%M:%S').date()
-            else:
-                last_date = datetime.strptime(last_contact_date, '%Y-%m-%d').date()
+        last_date = _parse_date_value(last_contact_date)
+        if last_date:
             days_since_last = (datetime.now().date() - last_date).days
-        except ValueError:
-            days_since_last = None
 
     # Get other metrics
     avg_frequency = get_average_contact_frequency(salesperson_id, customer_status_filter, contact_status_filter)
@@ -2727,22 +2762,18 @@ def get_overdue_contacts_list(salesperson_id, threshold_days=14, customer_status
     """Get list of contacts that haven't been contacted in threshold_days, ordered by oldest contact first"""
     from datetime import datetime, timedelta
 
-    db = get_db_connection()
     threshold_date = (datetime.now().date() - timedelta(days=threshold_days)).strftime('%Y-%m-%d')
 
     # Get contacts with their last contact date, ordered by oldest first
+    # PostgreSQL requires all non-aggregated columns in GROUP BY
     query = '''
-        SELECT DISTINCT c.id,
+        SELECT c.id,
                c.name as contact_name,
                c.email,
                c.phone,
                cu.name as customer_name,
                cu.id as customer_id,
-               MAX(cc.date) as last_contact_date,
-               CASE 
-                   WHEN MAX(cc.date) IS NULL THEN 999999
-                   ELSE 999999  -- Days calculated in Python
-               END as days_since_contact
+               MAX(cc.date) as last_contact_date
         FROM contacts c
         JOIN customers cu ON c.customer_id = cu.id
         LEFT JOIN contact_communications cc ON c.id = cc.contact_id AND cc.salesperson_id = ?
@@ -2760,29 +2791,25 @@ def get_overdue_contacts_list(salesperson_id, threshold_days=14, customer_status
         params.extend(contact_status_filter)
 
     query += '''
-        GROUP BY c.id
+        GROUP BY c.id, c.name, c.email, c.phone, cu.name, cu.id
         HAVING MAX(cc.date) IS NULL OR MAX(cc.date) < ?
-        ORDER BY days_since_contact DESC, c.name ASC
+        ORDER BY last_contact_date ASC NULLS FIRST, c.name ASC
         LIMIT ?
     '''
     params.extend([threshold_date, limit])
 
     results = db_execute(query, params, fetch="all")
-    db.close()
 
     # Format the results
     overdue_contacts = []
     for row in results:
         last_contact = row['last_contact_date']
         if last_contact:
-            try:
-                if len(last_contact.split(' ')) > 1:
-                    last_date = datetime.strptime(last_contact, '%Y-%m-%d %H:%M:%S').date()
-                else:
-                    last_date = datetime.strptime(last_contact, '%Y-%m-%d').date()
+            last_date = _parse_date_value(last_contact)
+            if last_date:
                 days_ago = (datetime.now().date() - last_date).days
                 formatted_date = last_date.strftime('%m/%d/%Y')
-            except ValueError:
+            else:
                 days_ago = None
                 formatted_date = "Invalid date"
         else:
@@ -2805,27 +2832,11 @@ def get_overdue_contacts_list(salesperson_id, threshold_days=14, customer_status
 
 def get_engagement_settings(salesperson_id):
     """Get persistent engagement settings for a salesperson"""
-    db = get_db_connection()
-
-    # Create settings table if it doesn't exist
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS salesperson_engagement_settings (
-            salesperson_id INTEGER PRIMARY KEY,
-            overdue_threshold_days INTEGER DEFAULT 14,
-            customer_status_filter TEXT,  -- JSON array of status IDs
-            contact_status_filter TEXT,   -- JSON array of status IDs
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-
     result = db_execute('''
         SELECT overdue_threshold_days, customer_status_filter, contact_status_filter
         FROM salesperson_engagement_settings
         WHERE salesperson_id = ?
     ''', [salesperson_id], fetch="one")
-
-    db.close()
 
     if result:
         import json
@@ -2849,8 +2860,6 @@ def save_engagement_settings(salesperson_id, overdue_threshold_days, customer_st
                              contact_status_filter=None):
     """Save persistent engagement settings for a salesperson"""
     import json
-
-    db = get_db_connection()
 
     # Convert filters to JSON
     customer_filter_json = json.dumps(customer_status_filter) if customer_status_filter else None

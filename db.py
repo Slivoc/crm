@@ -1,33 +1,27 @@
 import os
-import sqlite3
 from contextlib import contextmanager
 from typing import Iterator, Optional
 
-# Default SQLite path; override with SQLITE_PATH or a DATABASE_URL for Postgres.
-DATABASE = os.getenv('SQLITE_PATH', 'database.db')
-
 
 def _database_url() -> str:
-    return os.getenv('DATABASE_URL', '')  # e.g. postgresql://user:pass@host:5432/dbname
+    url = os.getenv('DATABASE_URL', '')
+    if not url:
+        raise RuntimeError("DATABASE_URL environment variable is required for PostgreSQL connection.")
+    return url
 
 
 def _using_postgres() -> bool:
-    database_url = _database_url()
-    return bool(database_url and database_url.startswith(('postgres://', 'postgresql://')))
+    """Always returns True since we're using PostgreSQL exclusively."""
+    return True
+
+
+# Currency rate column for PostgreSQL
+CURRENCY_RATE_COLUMN = 'exchange_rate_to_base'
 
 
 def get_currency_rate_column() -> str:
-    return 'exchange_rate_to_base' if _using_postgres() else 'exchange_rate_to_eur'
-
-
-CURRENCY_RATE_COLUMN = get_currency_rate_column()
-
-def _get_sqlite_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row  # Return rows that behave like dicts
-    # Keep some sensible defaults on for consistency
-    conn.execute('PRAGMA foreign_keys = ON')
-    return conn
+    """Returns the currency rate column name for PostgreSQL."""
+    return CURRENCY_RATE_COLUMN
 
 
 def _get_postgres_connection():
@@ -169,24 +163,19 @@ class PostgresCursorWrapper:
 
 
 def get_db_connection():
-    """Return a database connection, SQLite by default, Postgres when DATABASE_URL is set.
-    
-    For PostgreSQL, returns a wrapper that auto-translates '?' placeholders to '%s',
+    """Return a PostgreSQL database connection.
+
+    Returns a wrapper that auto-translates '?' placeholders to '%s',
     so existing code using SQLite-style queries works unchanged.
     """
-    if _using_postgres():
-        raw_conn, pool = _get_postgres_connection()
-        return PostgresConnectionWrapper(raw_conn, pool=pool)
-    return _get_sqlite_connection()
+    raw_conn, pool = _get_postgres_connection()
+    return PostgresConnectionWrapper(raw_conn, pool=pool)
 
 
-def _prepare_query(query: str, is_pg: bool) -> str:
+def _prepare_query(query: str) -> str:
     """
-    Translate SQLite-style '?' placeholders to psycopg2 '%s' placeholders for Postgres.
-    Leaves queries untouched for SQLite.
+    Translate SQLite-style '?' placeholders to psycopg2 '%s' placeholders.
     """
-    if not is_pg:
-        return query
     return query.replace('?', '%s')
 
 
@@ -196,8 +185,7 @@ def _execute_base(query: str, params=None, many: bool = False, fetch: Optional[s
     fetch: None (no fetch), 'one', or 'all'
     many: if True, use executemany
     """
-    is_pg = _using_postgres()
-    prepared_query = _prepare_query(query, is_pg)
+    prepared_query = _prepare_query(query)
     with db_cursor(commit=commit) as cur:
         if many:
             cur.executemany(prepared_query, params or [])
@@ -226,8 +214,7 @@ def _execute_with_cursor(cursor, query: str, params=None):
     Execute a query using an existing cursor with automatic placeholder translation.
     Used when you already have a cursor from db_cursor() context manager.
     """
-    is_pg = _using_postgres()
-    prepared_query = _prepare_query(query, is_pg)
+    prepared_query = _prepare_query(query)
     if params is None:
         cursor.execute(prepared_query)
     else:
@@ -239,7 +226,7 @@ def _execute_with_cursor(cursor, query: str, params=None):
 def db_cursor(commit: bool = False) -> Iterator:
     """
     Context manager that yields a cursor and handles commit/rollback.
-    Works for both SQLite and Postgres connections provided by get_db_connection().
+    Works with PostgreSQL connections provided by get_db_connection().
     """
     conn = get_db_connection()
     cur = conn.cursor()
@@ -255,171 +242,11 @@ def db_cursor(commit: bool = False) -> Iterator:
         conn.close()
 
 def create_tables():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        # Create customers table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS customers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                primary_contact_id INTEGER,
-                payment_terms TEXT,
-                incoterms TEXT,
-                FOREIGN KEY (primary_contact_id) REFERENCES contacts(id)
-            )
-        ''')
-
-        # Create contacts table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS contacts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_id INTEGER,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL,
-                FOREIGN KEY (customer_id) REFERENCES customers(id)
-            )
-        ''')
-
-        # Create salespeople table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS salespeople (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT
-            )
-        ''')
-
-        # Create RFQs table with email column included
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS rfqs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                entered_date TEXT NOT NULL,
-                customer_id INTEGER NOT NULL,
-                contact_id INTEGER,
-                customer_ref TEXT DEFAULT '',
-                currency TEXT DEFAULT 'EUR',
-                status TEXT DEFAULT 'new',
-                email TEXT,
-                salesperson_id INTEGER,
-                FOREIGN KEY (customer_id) REFERENCES customers(id),
-                FOREIGN KEY (contact_id) REFERENCES contacts(id),
-                FOREIGN KEY (salesperson_id) REFERENCES salespeople(id)
-            )
-        ''')
-
-        # Create suppliers table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS suppliers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                contact_name TEXT,
-                contact_email TEXT,
-                contact_phone TEXT,
-                buffer INTEGER DEFAULT 0,
-                currency TEXT DEFAULT 'EUR'
-            )
-        ''')
-
-        # Create RFQ lines table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS rfq_lines (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                rfq_id INTEGER,
-                line_number TEXT NOT NULL,
-                part_number TEXT NOT NULL,
-                quantity INTEGER NOT NULL,
-                manufacturer TEXT,
-                suggested_suppliers TEXT,
-                chosen_supplier INTEGER,
-                cost REAL,
-                supplier_lead_time INTEGER,
-                margin REAL,
-                price REAL,
-                lead_time INTEGER,
-                line_value REAL,
-                note TEXT,
-                internal_notes TEXT,
-                FOREIGN KEY (rfq_id) REFERENCES rfqs(id),
-                FOREIGN KEY (chosen_supplier) REFERENCES suppliers(id)
-            )
-        ''')
-
-        # Create part_numbers table with composite unique constraint
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS part_numbers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                part_number TEXT NOT NULL,
-                base_part_number TEXT NOT NULL,
-                system_part_number TEXT,
-                manufacturer TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(part_number, manufacturer)
-            )
-        ''')
-
-        # Create alternative_part_numbers table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS alternative_part_numbers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                part_number_id INTEGER NOT NULL,
-                customer TEXT NOT NULL,
-                customer_part_number TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (part_number_id) REFERENCES part_numbers(id) ON DELETE CASCADE
-            )
-        ''')
-
-        # Create manufacturers table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS manufacturers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL
-            )
-        ''')
-
-        # Create part_manufacturers table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS part_manufacturers (
-                part_id INTEGER,
-                manufacturer_id INTEGER,
-                FOREIGN KEY (part_id) REFERENCES part_numbers(id),
-                FOREIGN KEY (manufacturer_id) REFERENCES manufacturers(id),
-                PRIMARY KEY (part_id, manufacturer_id)
-            )
-        ''')
-
-        # Create requisitions table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS requisitions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                rfq_id INTEGER,
-                supplier_id INTEGER,
-                date TEXT,
-                base_part_number TEXT,
-                quantity INTEGER,
-                FOREIGN KEY (rfq_id) REFERENCES rfqs(id),
-                FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
-            )
-        ''')
-
-        # Create customer_part_numbers table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS customer_part_numbers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                base_part_number TEXT NOT NULL,
-                customer_part_number TEXT NOT NULL,
-                customer_id INTEGER NOT NULL,
-                FOREIGN KEY (customer_id) REFERENCES customers(id)
-            )
-        ''')
-
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"An error occurred: {e}")
-    finally:
-        if conn:
-            conn.close()
-
-if __name__ == '__main__':
-    create_tables()
+    """
+    Legacy function for SQLite table creation.
+    For PostgreSQL, use schema.sql instead.
+    """
+    raise NotImplementedError(
+        "Table creation is handled by schema.sql for PostgreSQL. "
+        "Run: psql $DATABASE_URL -f schema.sql"
+    )

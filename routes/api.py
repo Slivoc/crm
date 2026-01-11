@@ -47,9 +47,11 @@ def _get_inserted_id(row, cur):
         return getattr(cur, 'lastrowid', None)
 
 
-def _get_default_signature():
+def _get_default_signature(user_id=None):
     signature = None
-    if current_user and getattr(current_user, "is_authenticated", False):
+    if user_id:
+        signature = get_user_default_signature(user_id)
+    if not signature and current_user and getattr(current_user, "is_authenticated", False):
         signature = get_user_default_signature(current_user.id)
     if signature:
         return signature
@@ -310,8 +312,10 @@ def preview_email():
         body_html = body.replace('\n', '<br>')
         body_without_signature = body_html
 
+        graph_user_id = data.get('graph_user_id') or getattr(current_user, "id", None)
+
         # Add email signature
-        email_signature = _get_default_signature()
+        email_signature = _get_default_signature(graph_user_id)
         if email_signature:
             signature_html = email_signature.get('signature_html', '')
             # Convert CID references to actual image URLs for preview
@@ -421,7 +425,7 @@ def send_email():
             body = body.replace(placeholder, value)
 
         # Fetch and attach the email signature
-        email_signature = _get_default_signature()
+        email_signature = _get_default_signature(graph_user_id)
         if email_signature:
             signature_html = email_signature['signature_html']
             body += signature_html
@@ -1231,7 +1235,7 @@ def send_custom_email():
             body = body.replace(placeholder, value)
 
         # Add signature if needed
-        email_signature = _get_default_signature()
+        email_signature = _get_default_signature(graph_user_id)
         if email_signature:
             signature_html = email_signature.get('signature_html', '')
             body += signature_html

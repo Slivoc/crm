@@ -528,13 +528,17 @@ def _generate_email_suggestion(customer, comm_info, news_items, last_email_previ
     }
 
     system_prompt = (
-        "You are a concise B2B sales assistant. "
+        "You are a warm, helpful account manager. "
         "Suggest the next email for a zero-spend customer. "
         "Return ONLY valid JSON with keys 'subject' and 'body'. "
         "If last_email.body is provided, treat it as the most recent email thread "
-        "and draft a relevant follow-up that references prior context (e.g., quotes). "
-        "Keep the body under 150 words, personalize with any news snippets, "
-        "and propose a clear next step. "
+        "and draft a relevant follow-up that references prior context. "
+        "Keep the body under 120 words, use plain language, and propose a clear next step. "
+        "Avoid salesy buzzwords, hype, or exaggerated claims. "
+        "Do not include placeholders like [Your Name], [Your Company], or bracketed fields. "
+        "If no contact name is available, use a neutral greeting like \"Hi there\" "
+        "or \"Hi {customer_name} team\". "
+        "Use a simple sign-off (e.g., \"Thanks,\" or \"Best,\") with no contact details. "
         "If a seed_template is provided, use it as the base structure and tone."
     )
 
@@ -555,9 +559,11 @@ def _generate_email_suggestion(customer, comm_info, news_items, last_email_previ
             if content.startswith('json'):
                 content = content[4:]
         suggestion = json.loads(content)
+        subject = suggestion.get('subject', '').strip()
+        body = _strip_ai_placeholders(suggestion.get('body', '').strip())
         return {
-            'subject': suggestion.get('subject', '').strip(),
-            'body': suggestion.get('body', '').strip(),
+            'subject': subject,
+            'body': body,
             'source': 'openai'
         }
     except Exception as exc:
@@ -666,14 +672,16 @@ def _generate_contact_email_suggestion(contact, customer, comm_info, news_items,
     }
 
     system_prompt = (
-        "You are a concise B2B sales assistant. "
+        "You are a warm, helpful account manager. "
         "Draft the next email to a specific contact using the provided context. "
         "Return ONLY valid JSON with keys 'subject' and 'body'. "
         "If last_email.body is provided, treat it as the most recent email thread "
         "and draft a relevant follow-up that references prior context. "
-        "Address the contact by name when available. "
-        "Keep the body under 150 words, personalize with any news snippets, "
-        "and propose a clear next step."
+        "Address the contact by first name when available. "
+        "Keep the body under 120 words, use plain language, and propose a clear next step. "
+        "Avoid salesy buzzwords, hype, or exaggerated claims. "
+        "Do not include placeholders like [Your Name], [Your Company], or bracketed fields. "
+        "Use a simple sign-off (e.g., \"Thanks,\" or \"Best,\") with no contact details."
     )
 
     try:
@@ -693,9 +701,11 @@ def _generate_contact_email_suggestion(contact, customer, comm_info, news_items,
             if content.startswith('json'):
                 content = content[4:]
         suggestion = json.loads(content)
+        subject = suggestion.get('subject', '').strip()
+        body = _strip_ai_placeholders(suggestion.get('body', '').strip())
         return {
-            'subject': suggestion.get('subject', '').strip(),
-            'body': suggestion.get('body', '').strip(),
+            'subject': subject,
+            'body': body,
             'source': 'openai'
         }
     except Exception as exc:
@@ -740,26 +750,59 @@ def _build_seed_template(template_id):
     return subject or body
 
 
-def _get_zero_spend_customers(salesperson_id):
-    """Fetch zero-spend parent customers with light aggregates in one query."""
+def _strip_ai_placeholders(text):
+    """Remove bracketed placeholder lines from AI output."""
+    if not text:
+        return text
+    cleaned_lines = []
+    placeholder_pattern = re.compile(
+        r'\[(your|your name|your position|your company|your contact|company|phone|email)\b',
+        re.IGNORECASE
+    )
+    for line in text.splitlines():
+        if placeholder_pattern.search(line):
+            continue
+        cleaned_lines.append(line)
+    return '\n'.join(cleaned_lines).strip()
+
+
+def _get_zero_spend_customers(salesperson_id, max_spend=0, statuses=None):
+    """Fetch low-spend parent customers with light aggregates in one query.
+
+    Args:
+        salesperson_id: The salesperson to filter by
+        max_spend: Maximum historical spend to include (default 0 for zero-spend only)
+        statuses: Optional list of customer status strings to filter by
+    """
     try:
-        query = """
+        params = [salesperson_id]
+
+        # Build status filter if provided
+        status_filter = ""
+        if statuses and isinstance(statuses, list) and len(statuses) > 0:
+            placeholders = ','.join('?' for _ in statuses)
+            status_filter = f"AND cs.status IN ({placeholders})"
+            params.extend(statuses)
+
+        query = f"""
             WITH child_map AS (
                 SELECT main_customer_id, associated_customer_id
                 FROM customer_associations
             ),
             main_customers AS (
-                SELECT 
+                SELECT
                     c.id,
                     c.name,
                     c.country,
                     c.estimated_revenue,
                     c.fleet_size,
+                    c.notes,
                     cs.status AS customer_status
                 FROM customers c
                 LEFT JOIN customer_status cs ON c.status_id = cs.id
                 WHERE c.salesperson_id = ?
                   AND c.id NOT IN (SELECT associated_customer_id FROM child_map)
+                  {status_filter}
             ),
             related AS (
                 SELECT m.id AS main_id, m.id AS related_id
@@ -770,7 +813,7 @@ def _get_zero_spend_customers(salesperson_id):
                 JOIN main_customers m ON m.id = cm.main_customer_id
             ),
             spend AS (
-                SELECT 
+                SELECT
                     r.main_id,
                     COALESCE(SUM(CASE
                         WHEN so.total_value IS NULL OR CAST(so.total_value AS TEXT) = '' THEN 0
@@ -781,7 +824,7 @@ def _get_zero_spend_customers(salesperson_id):
                 GROUP BY r.main_id
             ),
             latest_update AS (
-                SELECT 
+                SELECT
                     r.main_id,
                     cu.update_text,
                     cu.date,
@@ -789,12 +832,13 @@ def _get_zero_spend_customers(salesperson_id):
                 FROM related r
                 JOIN customer_updates cu ON cu.customer_id = r.related_id
             )
-            SELECT 
+            SELECT
                 m.id,
                 m.name,
                 m.country,
                 m.estimated_revenue,
                 m.fleet_size,
+                m.notes,
                 m.customer_status,
                 s.historical_spend,
                 lu.update_text AS latest_update,
@@ -802,10 +846,11 @@ def _get_zero_spend_customers(salesperson_id):
             FROM main_customers m
             JOIN spend s ON s.main_id = m.id
             LEFT JOIN latest_update lu ON lu.main_id = m.id AND lu.rn = 1
-            WHERE s.historical_spend <= 0
+            WHERE s.historical_spend <= ?
         """
+        params.append(max_spend)
 
-        rows = db_execute(query, (salesperson_id,), fetch='all') or []
+        rows = db_execute(query, params, fetch='all') or []
         rows = [dict(row) for row in rows if row]
         main_ids = [row.get('id') for row in rows if row.get('id')]
         related_map = {main_id: [main_id] for main_id in main_ids}
@@ -853,9 +898,9 @@ def _get_zero_spend_customers(salesperson_id):
         return filtered
 
 
-def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8, offset=0):
+def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8, offset=0, max_spend=0, statuses=None):
     """Aggregate data for the contact suggestions page."""
-    customers = [customer for customer in _get_zero_spend_customers(salesperson_id) if customer]
+    customers = [customer for customer in _get_zero_spend_customers(salesperson_id, max_spend=max_spend, statuses=statuses) if customer]
     customer_groups = {
         customer['id']: customer.get('related_customer_ids') or [customer['id']]
         for customer in customers
@@ -959,6 +1004,7 @@ def _build_contact_suggestions(salesperson_id, graph_user_id, limit=8, offset=0)
             'mro_score': customer.get('mro_score', 0),
             'latest_update': customer.get('latest_update'),
             'most_recent_order': customer.get('most_recent_order_date'),
+            'customer_notes': customer.get('notes') or '',
             'score': entry['score'],
             'score_breakdown': entry['breakdown'],
             'last_contact': last_contact_serialized,
@@ -1476,7 +1522,7 @@ def customers(salesperson_id):
 @salespeople_bp.route('/<int:salesperson_id>/contact-suggestions')
 @login_required
 def contact_suggestions_page(salesperson_id):
-    """Render the next-contact suggestions page for zero-spend customers."""
+    """Render the next-contact suggestions page for low-spend customers."""
     salesperson = get_salesperson_by_id(salesperson_id)
     if not salesperson:
         flash('Salesperson not found!', 'error')
@@ -1490,30 +1536,47 @@ def contact_suggestions_page(salesperson_id):
         ('Next Contact Suggestions', url_for('salespeople.contact_suggestions_page', salesperson_id=salesperson_id))
     )
 
+    try:
+        customer_statuses = get_customer_status_options() or []
+        # Convert Row objects to dicts if needed
+        if customer_statuses and hasattr(customer_statuses[0], 'keys'):
+            customer_statuses = [dict(row) for row in customer_statuses]
+    except Exception as e:
+        print(f"Error loading customer statuses: {e}")
+        import traceback
+        traceback.print_exc()
+        customer_statuses = []
+
     return render_template(
         'salespeople/contact_suggestions.html',
         salesperson=salesperson,
-        breadcrumbs=breadcrumbs
+        breadcrumbs=breadcrumbs,
+        customer_statuses=customer_statuses
     )
 
 
 @salespeople_bp.route('/<int:salesperson_id>/contact-suggestions/data')
 @login_required
 def contact_suggestions_data(salesperson_id):
-    """API endpoint that assembles zero-spend customer outreach suggestions."""
+    """API endpoint that assembles low-spend customer outreach suggestions."""
     salesperson = get_salesperson_by_id(salesperson_id)
     if not salesperson:
         return jsonify({'success': False, 'error': 'Salesperson not found'}), 404
 
     limit = request.args.get('limit', 8, type=int) or 8
     offset = request.args.get('offset', 0, type=int) or 0
+    max_spend = request.args.get('max_spend', 0, type=float) or 0
+    statuses_param = request.args.get('statuses', '')
+    statuses = [s.strip() for s in statuses_param.split(',') if s.strip()] if statuses_param else None
     try:
         graph_user_id = getattr(current_user, 'id', None)
         suggestions, cached_news_used, total_available, no_contact_targets = _build_contact_suggestions(
             salesperson_id,
             graph_user_id,
             limit=limit,
-            offset=offset
+            offset=offset,
+            max_spend=max_spend,
+            statuses=statuses
         )
         return jsonify({
             'success': True,

@@ -31,6 +31,26 @@ class EmailModal {
         this.sendSystemBtn = this.modal.querySelector('.send-system-btn');
         this.loadingSpinner = this.modal.querySelector('.loading-spinner');
 
+        // Reply context elements (optional)
+        this.replySection = this.modal.querySelector('.reply-section');
+        this.replySelect = this.modal.querySelector('#reply_message_id');
+        this.replyPreview = this.modal.querySelector('#replyPreview');
+        this.replyPreviewSubject = this.modal.querySelector('#replyPreviewSubject');
+        this.replyPreviewMeta = this.modal.querySelector('#replyPreviewMeta');
+        this.replyPreviewBody = this.modal.querySelector('#replyPreviewBody');
+        this.replyPreviewText = '';
+        this.replyPreviewSubjectText = '';
+        this.replyMessageId = '';
+        this.replySubject = '';
+        this.replyOptionsEmail = '';
+        this.manualSubjectValue = '';
+        this.context = this.modal.dataset.context || '';
+        this.aiSection = this.modal.querySelector('#aiDraftSection');
+        this.aiTemplateSelect = this.modal.querySelector('#ai_template_id');
+        this.aiGenerateBtn = this.modal.querySelector('#ai_generate_btn');
+        this.aiStatus = this.modal.querySelector('#aiDraftStatus');
+        this.aiNews = this.modal.querySelector('#aiDraftNews');
+
         // Recipients elements
         this.recipientsList = this.modal.querySelector('.recipients-list');
         this.recipientCount = this.modal.querySelector('.recipient-count');
@@ -251,6 +271,317 @@ class EmailModal {
         console.log(`Inserted "${placeholder}" at position ${start}`);
     }
 
+    isReplyEnabled() {
+        return this.context === 'contact_suggestions';
+    }
+
+    sanitizeHtml(html) {
+        if (!html) return '';
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        ['script', 'style', 'meta', 'link', 'head', 'title'].forEach((tag) => {
+            doc.querySelectorAll(tag).forEach((node) => node.remove());
+        });
+        return doc.body ? doc.body.innerHTML : '';
+    }
+
+    escapeHtml(value) {
+        if (value === undefined || value === null) return '';
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    getCustomBodyValue() {
+        if (window.tinymce && tinymce.get('custom_body')) {
+            return tinymce.get('custom_body').getContent();
+        }
+        return this.customBodyEditor ? this.customBodyEditor.value : '';
+    }
+
+    setCustomBodyValue(value) {
+        if (window.tinymce && tinymce.get('custom_body')) {
+            tinymce.get('custom_body').setContent(value || '');
+            return;
+        }
+        if (this.customBodyEditor) {
+            this.customBodyEditor.value = value || '';
+        }
+    }
+
+    applyContactSuggestionsDefaults() {
+        if (!this.isReplyEnabled() || !this.isCustomEmail) {
+            return;
+        }
+        const currentBody = (this.getCustomBodyValue() || '').trim();
+        if (currentBody) {
+            return;
+        }
+        const defaultBody = 'Hi {{contact_first_name}}\\n\\nplease see our quote below\\n\\nThanks\\n{{sender_name}}';
+        this.setCustomBodyValue(defaultBody);
+    }
+
+    updateAiPanelVisibility() {
+        if (!this.aiSection) {
+            return;
+        }
+        const customerId = this.modal.dataset.customerId || '';
+        const isSingleRecipient = this.recipients.length === 1;
+        const shouldShow = this.context === 'contact_suggestions' && this.isCustomEmail && isSingleRecipient && customerId;
+        if (!shouldShow) {
+            this.aiSection.classList.add('d-none');
+            return;
+        }
+        this.aiSection.classList.remove('d-none');
+        this.populateAiTemplates();
+        this.applyAiPrefillFromDataset();
+    }
+
+    populateAiTemplates() {
+        if (!this.aiTemplateSelect || !this.templateSelect) {
+            return;
+        }
+        if (this.aiTemplateSelect.dataset.loaded === '1') {
+            return;
+        }
+        const options = [];
+        this.templateSelect.querySelectorAll('option').forEach((opt) => {
+            const clone = opt.cloneNode(true);
+            options.push(clone);
+        });
+        this.aiTemplateSelect.innerHTML = '';
+        options.forEach((opt) => this.aiTemplateSelect.appendChild(opt));
+        this.aiTemplateSelect.dataset.loaded = '1';
+    }
+
+    applyAiPrefillFromDataset() {
+        const aiSubject = this.modal.dataset.aiSubject || '';
+        const aiBody = this.modal.dataset.aiBody || '';
+        const aiNewsRaw = this.modal.dataset.aiNews || '';
+        let aiNews = [];
+        if (aiNewsRaw) {
+            try {
+                aiNews = JSON.parse(aiNewsRaw);
+            } catch (err) {
+                aiNews = [];
+            }
+        }
+        if (aiSubject && this.customSubjectInput && !this.customSubjectInput.value) {
+            this.customSubjectInput.value = aiSubject;
+        }
+        if (aiBody && !this.getCustomBodyValue().trim()) {
+            this.setCustomBodyValue(aiBody);
+        }
+        this.renderAiNews(aiNews);
+    }
+
+    renderAiNews(items) {
+        if (!this.aiNews) {
+            return;
+        }
+        if (!items || !items.length) {
+            this.aiNews.innerHTML = '';
+            return;
+        }
+        const html = items.slice(0, 3).map((item) => {
+            const headline = item?.headline || 'News item';
+            return `<div class="badge bg-light text-dark border me-2 mb-1">${this.escapeHtml(headline)}</div>`;
+        }).join('');
+        this.aiNews.innerHTML = html;
+    }
+
+    async generateAiDraftFromModal() {
+        const salespersonId = this.modal.dataset.salespersonId || '';
+        const customerId = this.modal.dataset.customerId || '';
+        if (!salespersonId || !customerId) {
+            this.showToast('Customer context is required for AI drafts.', 'warning');
+            return;
+        }
+        const payload = { customer_id: customerId };
+        const recipient = this.recipients.length ? this.recipients[0] : null;
+        const contactId = recipient && recipient.id ? String(recipient.id) : '';
+        const templateId = this.aiTemplateSelect ? this.aiTemplateSelect.value : '';
+        if (templateId) {
+            payload.template_id = templateId;
+        }
+        const replySubject = this.replyMessageId ? (this.replyPreviewSubjectText || '') : '';
+        const replyBody = this.replyMessageId ? (this.replyPreviewText || '') : '';
+        const graphSubject = replySubject || this.modal.dataset.graphEmailSubject || '';
+        const graphBody = replyBody || this.modal.dataset.graphEmailBody || '';
+        if (graphSubject) {
+            payload.graph_email_subject = graphSubject;
+        }
+        if (graphBody) {
+            payload.graph_email_body = graphBody;
+        }
+
+        if (this.aiStatus) {
+            this.aiStatus.textContent = 'Generating...';
+        }
+        if (this.aiGenerateBtn) {
+            this.aiGenerateBtn.disabled = true;
+        }
+
+        try {
+            const endpoint = contactId
+                ? `/salespeople/contact_details/${encodeURIComponent(contactId)}/next-email`
+                : `/salespeople/${salespersonId}/contact-suggestions/ai`;
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            if (!response.ok || !data.suggested_email) {
+                throw new Error(data.error || 'AI draft failed');
+            }
+            const suggested = data.suggested_email || {};
+            if (!this.replyMessageId && suggested.subject && this.customSubjectInput) {
+                this.customSubjectInput.value = suggested.subject;
+            }
+            if (suggested.body) {
+                this.setCustomBodyValue(suggested.body);
+            }
+            this.renderAiNews(data.news_items || []);
+            if (this.aiStatus) {
+                this.aiStatus.textContent = 'Draft ready';
+            }
+        } catch (error) {
+            if (this.aiStatus) {
+                this.aiStatus.textContent = 'AI draft failed';
+            }
+            this.showToast(error.message || 'AI draft failed', 'error');
+        } finally {
+            if (this.aiGenerateBtn) {
+                this.aiGenerateBtn.disabled = false;
+            }
+        }
+    }
+
+    async loadReplyOptionsForRecipient(email) {
+        if (!this.replySelect || !email) {
+            return;
+        }
+        if (this.replyOptionsEmail === email) {
+            return;
+        }
+        this.replyOptionsEmail = email;
+        this.replySelect.innerHTML = '<option value="">Send new email (no reply)</option>';
+        this.replySelect.value = '';
+        this.replyMessageId = '';
+        this.loadReplyPreview('');
+        try {
+            const response = await fetch(`/emails/graph/contact-timeline?email=${encodeURIComponent(email)}&limit=8`);
+            const result = await response.json();
+            if (!response.ok || !result.success) {
+                return;
+            }
+            const emails = result.emails || [];
+            emails.forEach((item) => {
+                if (!item.id) {
+                    return;
+                }
+                const direction = item.direction === 'sent' ? 'Sent' : 'Received';
+                const dateLabel = item.timestamp ? new Date(item.timestamp).toLocaleDateString() : '';
+                const subjectLabel = item.subject || '(No subject)';
+                const option = document.createElement('option');
+                option.value = item.id;
+                option.textContent = `${direction}: ${subjectLabel}${dateLabel ? ` (${dateLabel})` : ''}`;
+                this.replySelect.appendChild(option);
+            });
+        } catch (error) {
+            console.warn('Failed to load reply options', error);
+        }
+    }
+
+    async loadReplyPreview(messageId) {
+        if (!this.replyPreview || !this.replyPreviewSubject || !this.replyPreviewMeta || !this.replyPreviewBody) {
+            return;
+        }
+        if (!messageId) {
+            this.replyPreview.classList.add('d-none');
+            this.replyPreviewSubject.textContent = '';
+            this.replyPreviewMeta.textContent = '';
+            this.replyPreviewBody.textContent = '';
+            this.replyPreviewSubjectText = '';
+            this.replyPreviewText = '';
+            return;
+        }
+        this.replyPreview.classList.remove('d-none');
+        this.replyPreviewSubject.textContent = 'Loading preview...';
+        this.replyPreviewMeta.textContent = '';
+        this.replyPreviewBody.textContent = '';
+        try {
+            const response = await fetch(`/emails/graph/message/${encodeURIComponent(messageId)}`);
+            const result = await response.json();
+            if (!response.ok || !result.success || !result.message) {
+                throw new Error('Unable to load message');
+            }
+            const msg = result.message || {};
+            const fromAddr = msg.from?.emailAddress?.address || 'Unknown';
+            const fromName = msg.from?.emailAddress?.name || '';
+            const received = msg.receivedDateTime ? new Date(msg.receivedDateTime).toLocaleString() : 'Unknown date';
+            const subject = msg.subject || '(No subject)';
+            const bodyHtml = this.sanitizeHtml(msg.body?.content || msg.bodyPreview || '');
+
+            this.replyPreviewSubject.textContent = subject;
+            this.replyPreviewMeta.textContent = `From: ${fromName ? `${fromName} <${fromAddr}>` : fromAddr} | Received: ${received}`;
+            this.replyPreviewBody.innerHTML = bodyHtml || '';
+            this.replySubject = subject;
+            this.replyPreviewSubjectText = subject;
+            this.replyPreviewText = this.htmlToPlainText(bodyHtml || msg.bodyPreview || '');
+            if (this.customSubjectInput) {
+                this.customSubjectInput.value = subject;
+            }
+        } catch (error) {
+            this.replyPreviewSubject.textContent = 'Unable to load preview';
+            this.replyPreviewSubjectText = '';
+            this.replyPreviewText = '';
+        }
+    }
+
+    updateReplyModeState() {
+        if (!this.isReplyEnabled() || !this.replySection || !this.isCustomEmail) {
+            if (this.replySection) {
+                this.replySection.classList.add('d-none');
+            }
+            return;
+        }
+        if (this.recipients.length !== 1) {
+            this.replySection.classList.add('d-none');
+            this.replyMessageId = '';
+            return;
+        }
+        this.replySection.classList.remove('d-none');
+        const recipient = this.recipients[0];
+        this.loadReplyOptionsForRecipient(recipient.email);
+
+        const isReply = this.replySelect && this.replySelect.value;
+        if (isReply && !this.isCustomEmail && this.customEmailCheckbox) {
+            this.customEmailCheckbox.checked = true;
+            this.isCustomEmail = true;
+            this.toggleEmailMode();
+        }
+        if (this.customSubjectInput) {
+            if (isReply) {
+                if (!this.customSubjectInput.disabled) {
+                    this.manualSubjectValue = this.customSubjectInput.value;
+                }
+                this.customSubjectInput.disabled = true;
+            } else {
+                this.customSubjectInput.disabled = false;
+                if (!this.customSubjectInput.value) {
+                    this.customSubjectInput.value = this.manualSubjectValue || '';
+                }
+            }
+        }
+        this.replyMessageId = isReply || '';
+        this.loadReplyPreview(this.replyMessageId);
+    }
+
     // Enhanced methods for recipient management
     updateRecipientsDisplay() {
         if (!this.recipientsList || !this.recipientCount) return;
@@ -290,6 +621,10 @@ class EmailModal {
 
         // Update button states based on recipient count
         this.updateButtonVisibility();
+
+        this.applyContactSuggestionsDefaults();
+        this.updateReplyModeState();
+        this.updateAiPanelVisibility();
     }
 
     createRecipientItem(recipient, index) {
@@ -630,6 +965,17 @@ class EmailModal {
             });
         }
 
+        if (this.replySelect) {
+            this.replySelect.addEventListener('change', () => {
+                this.updateReplyModeState();
+            });
+        }
+        if (this.aiGenerateBtn) {
+            this.aiGenerateBtn.addEventListener('click', () => {
+                this.generateAiDraftFromModal();
+            });
+        }
+
         this.createClickablePlaceholders();
 
         // Modal show event - UPDATED
@@ -646,6 +992,9 @@ class EmailModal {
             this.isCustomEmail = this.customEmailCheckbox ? this.customEmailCheckbox.checked : true;
             this.toggleEmailMode();
             this.updateButtonVisibility();
+            this.applyContactSuggestionsDefaults();
+            this.updateReplyModeState();
+            this.updateAiPanelVisibility();
         });
 
         // Modal shown event - NEW - this fires after the modal is fully displayed
@@ -1173,10 +1522,12 @@ class EmailModal {
             setTimeout(() => {
                 this.createClickablePlaceholders();
             }, 100);
+            this.updateAiPanelVisibility();
         } else {
             // Switch to template mode
             this.templateSection.classList.remove('d-none');
             this.customSection.classList.add('d-none');
+            this.updateAiPanelVisibility();
         }
 
         // Reset preview section and update buttons
@@ -1328,6 +1679,7 @@ class EmailModal {
             }
 
             this.templatesLoaded = true;
+            this.populateAiTemplates();
         } catch (error) {
             console.error('Error loading templates:', error);
             this.templateSelect.innerHTML = '<option value="">Error loading templates</option>';
@@ -2325,6 +2677,16 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
             const baseSubject = emailSubject.textContent;
             const baseBodyHtml = emailBody.innerHTML;
             const templateId = this.templateSelect ? this.templateSelect.value : '';
+            const replyMessageId = this.replyMessageId || '';
+
+            if (replyMessageId && this.recipients.length !== 1) {
+                this.showToast('Replying is only available for a single recipient', 'warning');
+                return;
+            }
+            if (replyMessageId && !this.isCustomEmail) {
+                this.showToast('Replying requires a custom email body', 'warning');
+                return;
+            }
 
             if (!this.isCustomEmail && !templateId) {
                 this.showToast('Please select a template first', 'warning');
@@ -2360,7 +2722,13 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
                     let endpoint = '';
                     let payload = {};
 
-                    if (this.isCustomEmail) {
+                    if (replyMessageId) {
+                        endpoint = '/emails/graph/reply';
+                        payload = {
+                            message_id: replyMessageId,
+                            html_body: personalizedContent.bodyHtml
+                        };
+                    } else if (this.isCustomEmail) {
                         endpoint = '/api/send-custom-email';
                         payload = {
                             contact_id: recipient.id,
@@ -2387,7 +2755,7 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
 
                     const result = await response.json();
                     if (!response.ok || !result.success) {
-                        throw new Error(result.error || `Send failed (${response.status})`);
+                        throw new Error(result.error || result.message || `Send failed (${response.status})`);
                     }
 
                     await this.logCustomerUpdate(recipient, personalizedContent.subject);

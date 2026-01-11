@@ -187,6 +187,54 @@ suggestTimezoneForCountry: async function(countryCode) {
             this.openEditModal();
         });
 
+        // Email button in preview modal
+        $(document).on('click', '#contact-modal-email-btn', (e) => {
+            e.preventDefault();
+            const contact = this.currentContact || {};
+            if (!contact.email) {
+                alert('No email address available for this contact.');
+                return;
+            }
+            const showEmailModal = () => {
+                const modalEl = document.getElementById('emailModal');
+                if (!modalEl || !window.emailModalInstance) {
+                    alert('Email modal not available. Please refresh and try again.');
+                    return;
+                }
+                modalEl.dataset.customerId = contact.customer_id || '';
+                const contactName = contact.full_name || [contact.name, contact.second_name].filter(Boolean).join(' ').trim();
+                const recipients = [{
+                    id: contact.id || '',
+                    name: contactName || contact.email,
+                    email: contact.email,
+                    title: contact.job_title || '',
+                    company: contact.customer_name || '',
+                    customerId: contact.customer_id || ''
+                }];
+                window.emailModalInstance.clearRecipients();
+                window.emailModalInstance.addMultipleRecipients(recipients);
+                const emailModal = new bootstrap.Modal(modalEl);
+                emailModal.show();
+            };
+
+            const previewEl = document.getElementById('contactPreviewModal');
+            if (previewEl && previewEl.classList.contains('show')) {
+                const handleHidden = () => {
+                    previewEl.removeEventListener('hidden.bs.modal', handleHidden);
+                    showEmailModal();
+                };
+                previewEl.addEventListener('hidden.bs.modal', handleHidden);
+                const instance = bootstrap.Modal.getInstance(previewEl);
+                if (instance) {
+                    instance.hide();
+                } else {
+                    handleHidden();
+                }
+            } else {
+                showEmailModal();
+            }
+        });
+
         // Save button in edit modal
         $(document).on('click', '#save-preview-contact-btn', () => {
             this.saveContact();
@@ -503,8 +551,13 @@ refreshContactData: async function() {
         if (contact.email) {
             $('#contact-modal-email').text(contact.email).attr('href', `mailto:${contact.email}`);
             $('#contact-email-container').show();
+            $('#contact-modal-email-btn')
+                .removeClass('d-none')
+                .attr('data-contact-id', contact.id)
+                .attr('data-contact-email', contact.email);
         } else {
             $('#contact-email-container').hide();
+            $('#contact-modal-email-btn').addClass('d-none');
         }
 
         if (contact.phone) {

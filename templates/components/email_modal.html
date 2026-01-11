@@ -1,5 +1,7 @@
 {# templates/components/email_modal.html #}
-<div class="modal fade" id="emailModal" tabindex="-1" aria-labelledby="emailModalLabel" aria-hidden="true">
+<div class="modal fade" id="emailModal" tabindex="-1" aria-labelledby="emailModalLabel" aria-hidden="true"
+     data-context="{{ email_modal_context or '' }}"
+     data-salesperson-id="{{ email_modal_salesperson_id or '' }}">
     <div class="modal-dialog modal-xl">
         <div class="modal-content">
             <div class="modal-header">
@@ -60,6 +62,18 @@
                                 <label for="custom_subject" class="form-label">Subject</label>
                                 <input type="text" class="form-control" id="custom_subject" placeholder="Email subject">
                             </div>
+                            <div class="mb-3 reply-section d-none">
+                                <label for="reply_message_id" class="form-label">Reply to</label>
+                                <select class="form-select" id="reply_message_id">
+                                    <option value="">Send new email (no reply)</option>
+                                </select>
+                                <div class="form-text">Select a recent email to reply to. Subject will stay unchanged.</div>
+                                <div class="border rounded bg-light mt-2 p-2 d-none" id="replyPreview">
+                                    <div class="fw-semibold mb-1" id="replyPreviewSubject"></div>
+                                    <div class="text-muted small mb-2" id="replyPreviewMeta"></div>
+                                    <div class="small" id="replyPreviewBody"></div>
+                                </div>
+                            </div>
                             <div class="mb-3">
                                 <label for="custom_body" class="form-label">Message</label>
                                 <textarea class="form-control" id="custom_body" rows="10" placeholder="Type your email message here..."></textarea>
@@ -78,6 +92,19 @@
                                         Click any placeholder above to insert it at your cursor position in the subject or message.
                                     </small>
                                 </div>
+                            </div>
+                            <div class="mb-3 ai-draft-section d-none" id="aiDraftSection">
+                                <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                                    <label class="form-label mb-0 fw-semibold">AI Draft</label>
+                                    <select class="form-select form-select-sm w-auto" id="ai_template_id">
+                                        <option value="">No template</option>
+                                    </select>
+                                    <button type="button" class="btn btn-sm btn-outline-primary" id="ai_generate_btn">
+                                        <i class="bi bi-stars"></i> Generate Draft
+                                    </button>
+                                    <span class="text-muted small" id="aiDraftStatus"></span>
+                                </div>
+                                <div id="aiDraftNews" class="small"></div>
                             </div>
                         </div>
 
@@ -353,8 +380,20 @@
 }
 
 /* Layout improvements for wider modal */
-.modal-xl .modal-dialog {
-    max-width: 1200px;
+.modal-dialog.modal-xl {
+    max-width: 1400px;
+    width: 95vw;
+}
+
+/* Keep previews readable on long emails */
+.preview-section .email-body {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+#replyPreviewBody {
+    max-height: 200px;
+    overflow-y: auto;
 }
 
 /* Adjust recipient section for sidebar layout */

@@ -29,7 +29,7 @@ import re
 import mimetypes
 from datetime import date, datetime
 from urllib.parse import quote, unquote, urlparse
-from collections import defaultdict
+from collections import defaultdict, Counter
 import json
 from functools import wraps
 import time
@@ -883,6 +883,374 @@ def _inline_signature_images(html_body):
     return html_body, attachments
 
 
+_SIGNATURE_SIGNOFFS = (
+    "thanks",
+    "thank you",
+    "regards",
+    "best",
+    "sincerely",
+    "cheers",
+    "kind regards",
+    "respectfully",
+)
+_SIGNATURE_MAX_LINES = 12
+_SIGNATURE_MIN_LENGTH = 20
+_SIGNATURE_EMAIL_RE = re.compile(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", re.IGNORECASE)
+_SIGNATURE_PHONE_RE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
+_SIGNATURE_URL_RE = re.compile(r"(https?://|www\.)", re.IGNORECASE)
+_SIGNATURE_REPLY_MARKERS = [
+    re.compile(r"^[-_]{2,}\s*original message", re.IGNORECASE),
+    re.compile(r"^from:\s", re.IGNORECASE),
+    re.compile(r"^sent:\s", re.IGNORECASE),
+    re.compile(r"^on .+ wrote:", re.IGNORECASE),
+    re.compile(r"^>+"),
+]
+
+
+def _trim_reply_section(lines):
+    for idx, line in enumerate(lines):
+        for marker in _SIGNATURE_REPLY_MARKERS:
+            if marker.search(line or ""):
+                return lines[:idx]
+    return lines
+
+
+def _looks_like_signature_line(line):
+    if not line:
+        return False
+    if _SIGNATURE_EMAIL_RE.search(line):
+        return True
+    if _SIGNATURE_PHONE_RE.search(line):
+        return True
+    if _SIGNATURE_URL_RE.search(line):
+        return True
+    return False
+
+
+def _extract_signature_text_block(text):
+    if not text:
+        return None
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.rstrip() for line in text.split("\n")]
+    lines = _trim_reply_section(lines)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return None
+
+    start_idx = None
+    for idx in range(len(lines) - 1, -1, -1):
+        line = lines[idx].strip()
+        if not line:
+            continue
+        lower = line.lower()
+        if re.match(r"^--\s*$", line) or re.match(r"^[-_]{2,}\s*$", line):
+            start_idx = idx
+            break
+        for signoff in _SIGNATURE_SIGNOFFS:
+            if lower.startswith(signoff) and len(line) <= 40:
+                start_idx = idx
+                break
+        if start_idx is not None:
+            break
+
+    if start_idx is None:
+        tail_start = max(len(lines) - 8, 0)
+        for idx in range(tail_start, len(lines)):
+            if _looks_like_signature_line(lines[idx]):
+                start_idx = idx
+                break
+
+    if start_idx is None:
+        return None
+
+    signature_lines = [line.strip() for line in lines[start_idx:] if line.strip() or line == ""]
+    while signature_lines and not signature_lines[0]:
+        signature_lines.pop(0)
+    if not signature_lines:
+        return None
+    if len(signature_lines) > _SIGNATURE_MAX_LINES:
+        signature_lines = signature_lines[:_SIGNATURE_MAX_LINES]
+
+    signature_text = "\n".join(signature_lines).strip()
+    if len(signature_text) < _SIGNATURE_MIN_LENGTH:
+        return None
+    if len(signature_lines) == 1 and not _looks_like_signature_line(signature_lines[0]):
+        return None
+    return signature_text
+
+
+def _signature_text_to_html(signature_text):
+    if not signature_text:
+        return ""
+    lines = signature_text.split("\n")
+    escaped = [html.escape(line) for line in lines]
+    return "<br>".join(escaped)
+
+
+def _normalize_signature_for_compare(signature_html):
+    if not signature_html:
+        return ""
+    soup = BeautifulSoup(signature_html, "html.parser")
+    text = soup.get_text("\n")
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    return text
+
+
+def _extract_signature_html_from_html_body(html_body):
+    if not html_body:
+        return None
+    soup = BeautifulSoup(html_body, "html.parser")
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    for block in soup.find_all("blockquote"):
+        block.decompose()
+    for tag in soup.find_all(attrs={"class": re.compile(r"(gmail_quote|gmail_extra|yahoo_quoted|OutlookMessageHeader)", re.IGNORECASE)}):
+        tag.decompose()
+    for tag in soup.find_all(id=re.compile(r"(divRplyFwdMsg|reply|forward)", re.IGNORECASE)):
+        tag.decompose()
+
+    signature_candidates = []
+    for tag in soup.find_all(True):
+        tag_id = (tag.get("id") or "").lower()
+        if "signature" in tag_id:
+            signature_candidates.append(tag)
+            continue
+        tag_class = tag.get("class")
+        if isinstance(tag_class, list):
+            tag_class = " ".join(tag_class)
+        tag_class = (tag_class or "").lower()
+        if "signature" in tag_class:
+            signature_candidates.append(tag)
+
+    if signature_candidates:
+        signature_html = str(signature_candidates[-1]).strip()
+        if signature_html:
+            return signature_html
+
+    body = soup.body or soup
+    tags = body.find_all(True)
+    if tags:
+        best_tag = None
+        best_score = 0
+        best_idx = -1
+        tag_count = len(tags)
+        for idx, tag in enumerate(tags):
+            if tag.name not in ("table", "div", "p"):
+                continue
+            text = " ".join(tag.stripped_strings)
+            if not text:
+                continue
+            if any(marker.search(text) for marker in _SIGNATURE_REPLY_MARKERS):
+                continue
+            score = 0
+            if tag.find("img"):
+                score += 4
+            if tag.find("a"):
+                score += 2
+            if _SIGNATURE_EMAIL_RE.search(text):
+                score += 2
+            if _SIGNATURE_PHONE_RE.search(text):
+                score += 1
+            if _SIGNATURE_URL_RE.search(text):
+                score += 1
+            if len(text) < 20:
+                score -= 1
+            if len(text) > 2000:
+                score -= 2
+            position_ratio = idx / max(tag_count - 1, 1)
+            if position_ratio > 0.6:
+                score += 1
+            if position_ratio > 0.8:
+                score += 2
+            if score > best_score:
+                best_score = score
+                best_tag = tag
+                best_idx = idx
+            elif score == best_score and best_tag is not None and idx > best_idx:
+                best_tag = tag
+                best_idx = idx
+
+        if best_tag is not None and best_score >= 3:
+            signature_html = str(best_tag).strip()
+            if signature_html:
+                return signature_html
+
+    text = soup.get_text("\n")
+    signature_text = _extract_signature_text_block(text)
+    if signature_text:
+        return _signature_text_to_html(signature_text)
+    return None
+
+
+def _extract_signature_candidate_from_graph_message(message):
+    if not isinstance(message, dict):
+        return None
+    body = message.get("body") if isinstance(message.get("body"), dict) else {}
+    content = body.get("content") or ""
+    content_type = (body.get("contentType") or "").lower()
+
+    if not content:
+        content = message.get("bodyPreview") or ""
+        content_type = content_type or "text"
+
+    signature_html = None
+    if content:
+        if content_type == "html":
+            signature_html = _extract_signature_html_from_html_body(content)
+        else:
+            signature_text = _extract_signature_text_block(content)
+            if signature_text:
+                signature_html = _signature_text_to_html(signature_text)
+
+    if not signature_html:
+        return None
+    normalized = _normalize_signature_for_compare(signature_html)
+    if not normalized or len(normalized) < _SIGNATURE_MIN_LENGTH:
+        return None
+
+    return {
+        "signature_html": signature_html,
+        "normalized": normalized,
+        "message_id": message.get("id"),
+        "subject": message.get("subject"),
+    }
+
+
+def _fetch_graph_inline_attachments(headers, message_id):
+    if not message_id:
+        return []
+    safe_message_id = quote(message_id, safe="")
+    resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments",
+        headers=headers,
+        params={"$select": "id,name,contentType,isInline"},
+        timeout=20,
+    )
+    try:
+        body = resp.json() if resp.content else None
+    except ValueError:
+        body = None
+
+    if resp.status_code >= 400 or not isinstance(body, dict):
+        return []
+
+    attachments = []
+    for item in body.get("value", []) if isinstance(body, dict) else []:
+        if not item.get("isInline"):
+            continue
+        attachment_id = item.get("id")
+        if not attachment_id:
+            continue
+        safe_attachment_id = quote(attachment_id, safe="")
+        detail_resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments/{safe_attachment_id}",
+            headers=headers,
+            timeout=20,
+        )
+        try:
+            detail_body = detail_resp.json() if detail_resp.content else None
+        except ValueError:
+            detail_body = None
+        if detail_resp.status_code >= 400 or not isinstance(detail_body, dict):
+            continue
+        content_id = detail_body.get("contentId")
+        content_bytes = detail_body.get("contentBytes")
+        if not content_id or not content_bytes:
+            continue
+        content_type = detail_body.get("contentType") or item.get("contentType") or "application/octet-stream"
+        attachments.append({
+            "content_id": content_id,
+            "content_id_key": _normalize_content_id(content_id),
+            "data_url": f"data:{content_type};base64,{content_bytes}",
+        })
+
+    return attachments
+
+
+def _replace_cid_sources(html_body, attachments):
+    if not html_body or not attachments:
+        return html_body
+    data_by_cid = {}
+    for attachment in attachments:
+        key = attachment.get("content_id_key")
+        if key:
+            data_by_cid[key] = attachment.get("data_url")
+
+    if not data_by_cid:
+        return html_body
+
+    def _cid_replacer(match):
+        cid_value = match.group(1)
+        normalized = _normalize_content_id(cid_value)
+        data_url = data_by_cid.get(normalized)
+        if not data_url:
+            return match.group(0)
+        return data_url
+
+    return re.sub(r"cid:([^\"'\s>]+)", _cid_replacer, html_body, flags=re.IGNORECASE)
+
+
+def _fetch_graph_sent_messages(headers, max_messages):
+    url = "https://graph.microsoft.com/v1.0/me/mailFolders/SentItems/messages"
+    params = {
+        "$top": str(min(max_messages, 50)),
+        "$select": "id,subject,from,sentDateTime,body,bodyPreview",
+        "$orderby": "sentDateTime desc",
+    }
+    messages = []
+    next_link = url
+    first = True
+
+    while next_link and len(messages) < max_messages:
+        resp = requests.get(
+            next_link,
+            headers=headers,
+            params=params if first else None,
+            timeout=20,
+        )
+        first = False
+        try:
+            body = resp.json() if resp.content else {}
+        except ValueError:
+            body = {}
+
+        if resp.status_code >= 400:
+            error_text = None
+            if isinstance(body, dict):
+                error_text = (body.get("error") or {}).get("message")
+            return None, error_text or resp.text or "Graph request failed."
+
+        batch = body.get("value", []) if isinstance(body, dict) else []
+        messages.extend(msg for msg in batch if isinstance(msg, dict))
+        next_link = body.get("@odata.nextLink") if isinstance(body, dict) else None
+
+    return messages[:max_messages], None
+
+
+def _choose_signature_candidate(candidates):
+    if not candidates:
+        return None
+    counts = Counter()
+    for candidate in candidates:
+        normalized = candidate.get("normalized")
+        if normalized:
+            counts[normalized] += 1
+
+    best = None
+    best_count = -1
+    best_len = -1
+    for candidate in candidates:
+        normalized = candidate.get("normalized") or ""
+        count = counts.get(normalized, 0)
+        norm_len = len(normalized)
+        if count > best_count or (count == best_count and norm_len > best_len):
+            best = candidate
+            best_count = count
+            best_len = norm_len
+    return best
+
+
 def send_graph_email(subject, html_body, to_emails, *, cc_emails=None, bcc_emails=None, attachments=None, user_id=None):
     settings = _get_graph_settings(include_secret=True)
     if not settings.get("client_id") or not settings.get("tenant_id") or not settings.get("client_secret"):
@@ -949,6 +1317,84 @@ def send_graph_email(subject, html_body, to_emails, *, cc_emails=None, bcc_email
         graph_error = error_body.get("error", {}) if isinstance(error_body, dict) else {}
         message_text = graph_error.get("message") or resp.text or "Graph send failed."
         return {"success": False, "error": message_text, "status_code": resp.status_code}
+
+    return {"success": True}
+
+
+def send_graph_reply(message_id, html_body, *, reply_all=False, user_id=None):
+    if not message_id:
+        return {"success": False, "error": "Message ID is required for reply."}
+    settings = _get_graph_settings(include_secret=True)
+    if not settings.get("client_id") or not settings.get("tenant_id") or not settings.get("client_secret"):
+        return {"success": False, "error": "Graph settings are incomplete."}
+
+    cache = _load_graph_cache_for_user(user_id) if user_id else _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+    if not accounts:
+        return {"success": False, "error": "Graph mailbox is not connected for this user."}
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    if user_id:
+        _save_graph_cache_for_user(user_id, cache)
+    else:
+        _save_graph_cache(cache)
+    if not token or "access_token" not in token:
+        return {"success": False, "error": token.get("error_description") or "Unable to get Graph access token."}
+
+    html_body = html_body or ""
+    html_body, signature_attachments = _inline_signature_images(html_body)
+
+    headers = {
+        "Authorization": f"Bearer {token['access_token']}",
+        "Content-Type": "application/json",
+    }
+    safe_message_id = quote(message_id, safe="")
+    reply_endpoint = "createReplyAll" if reply_all else "createReply"
+    draft_resp = requests.post(
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/{reply_endpoint}",
+        headers=headers,
+        json={},
+        timeout=20,
+    )
+    try:
+        draft_body = draft_resp.json() if draft_resp.content else {}
+    except ValueError:
+        draft_body = {}
+    if draft_resp.status_code >= 400:
+        error_text = (draft_body.get("error") or {}).get("message") if isinstance(draft_body, dict) else None
+        return {"success": False, "error": error_text or "Failed to create reply draft."}
+
+    draft_id = draft_body.get("id")
+    if not draft_id:
+        return {"success": False, "error": "Reply draft was not created."}
+
+    safe_draft_id = quote(draft_id, safe="")
+    patch_resp = requests.patch(
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_draft_id}",
+        headers=headers,
+        json={"body": {"contentType": "HTML", "content": html_body}},
+        timeout=20,
+    )
+    if patch_resp.status_code >= 400:
+        return {"success": False, "error": "Failed to update reply draft body."}
+
+    if signature_attachments:
+        for attachment in signature_attachments:
+            requests.post(
+                f"https://graph.microsoft.com/v1.0/me/messages/{safe_draft_id}/attachments",
+                headers=headers,
+                json=attachment,
+                timeout=20,
+            )
+
+    send_resp = requests.post(
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_draft_id}/send",
+        headers=headers,
+        timeout=20,
+    )
+    if send_resp.status_code >= 400:
+        return {"success": False, "error": "Failed to send reply."}
 
     return {"success": True}
 
@@ -3125,6 +3571,176 @@ def graph_latest_message():
     return jsonify({
         "success": True,
         "message": message,
+    })
+
+
+@emails_bp.route('/emails/graph/reply', methods=['POST'])
+def graph_reply_message():
+    if not current_user or not getattr(current_user, "is_authenticated", False):
+        return jsonify({
+            "success": False,
+            "error": "You must be logged in to send replies.",
+        }), 401
+
+    payload = request.get_json(silent=True) or {}
+    message_id = (payload.get("message_id") or "").strip()
+    html_body = payload.get("html_body") or ""
+    reply_all = bool(payload.get("reply_all"))
+
+    if not message_id or not html_body:
+        return jsonify({
+            "success": False,
+            "error": "message_id and html_body are required.",
+        }), 400
+
+    signature = _get_default_signature(current_user.id)
+    if signature and signature.get("signature_html"):
+        html_body = f"{html_body}{signature['signature_html']}"
+
+    result = send_graph_reply(
+        message_id,
+        html_body,
+        reply_all=reply_all,
+        user_id=current_user.id,
+    )
+    if not result.get("success"):
+        return jsonify({
+            "success": False,
+            "error": result.get("error", "Graph reply failed."),
+        }), 500
+
+    return jsonify({"success": True})
+
+
+@emails_bp.route('/emails/graph/detect-signature', methods=['POST'])
+def graph_detect_signature():
+    if not current_user or not getattr(current_user, "is_authenticated", False):
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "You must be logged in to detect signatures.",
+            },
+        }), 401
+
+    payload = request.get_json(silent=True) or {}
+    max_messages = payload.get("max_messages", 25)
+    try:
+        max_messages = int(max_messages)
+    except (TypeError, ValueError):
+        max_messages = 25
+    max_messages = max(5, min(max_messages, 50))
+
+    settings = _get_graph_settings(include_secret=True)
+    cache, user_id = _load_graph_cache_for_request()
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph user ID available for signature detection.",
+            },
+        }), 400
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache_for_request(user_id, cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token.",
+            },
+            "debug": token,
+        }), 400
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    messages, error = _fetch_graph_sent_messages(headers, max_messages)
+    if error:
+        return jsonify({
+            "success": False,
+            "error": {"message": error},
+        }), 400
+
+    candidates = []
+    for message in messages or []:
+        candidate = _extract_signature_candidate_from_graph_message(message)
+        if candidate:
+            candidates.append(candidate)
+
+    best = _choose_signature_candidate(candidates)
+    if not best:
+        return jsonify({
+            "success": False,
+            "error": {"message": "No signature candidates found in recent sent mail."},
+        }), 404
+
+    if best.get("message_id") and "cid:" in (best.get("signature_html") or "").lower():
+        attachments = _fetch_graph_inline_attachments(headers, best["message_id"])
+        if attachments:
+            best["signature_html"] = _replace_cid_sources(best["signature_html"], attachments)
+            best["normalized"] = _normalize_signature_for_compare(best["signature_html"])
+
+    normalized = best.get("normalized") or ""
+    existing_rows = db_execute(
+        "SELECT id, signature_html FROM email_signatures WHERE user_id = ?",
+        (user_id,),
+        fetch="all",
+    ) or []
+    for row in existing_rows:
+        row_data = dict(row) if not isinstance(row, dict) else row
+        existing_html = row_data.get("signature_html") or ""
+        if _normalize_signature_for_compare(existing_html) == normalized:
+            return jsonify({
+                "success": True,
+                "already_exists": True,
+                "signature_id": row_data.get("id"),
+                "signature_html": existing_html,
+            })
+
+    name = (payload.get("name") or "").strip()
+    if not name:
+        name = f"Auto-detected {datetime.utcnow().strftime('%Y-%m-%d')}"
+
+    signature_id = None
+    with db_cursor(commit=True) as cur:
+        params = (
+            name,
+            best["signature_html"],
+            user_id,
+            datetime.utcnow(),
+            False,
+        )
+        if _using_postgres():
+            row = _execute_with_cursor(cur, """
+                INSERT INTO email_signatures (name, signature_html, user_id, created_at, is_default)
+                VALUES (?, ?, ?, ?, ?)
+                RETURNING id
+            """, params, fetch="one")
+            if row:
+                signature_id = row.get("id") if isinstance(row, dict) else row[0]
+        else:
+            _execute_with_cursor(cur, """
+                INSERT INTO email_signatures (name, signature_html, user_id, created_at, is_default)
+                VALUES (?, ?, ?, ?, ?)
+            """, params)
+            signature_id = getattr(cur, "lastrowid", None)
+
+    return jsonify({
+        "success": True,
+        "signature_id": signature_id,
+        "signature_html": best["signature_html"],
+        "source_message_id": best.get("message_id"),
+        "scanned_messages": len(messages or []),
+        "candidates_found": len(candidates),
     })
 
 

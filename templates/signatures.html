@@ -32,9 +32,55 @@
 .signature-actions .btn {
     margin-bottom: 4px;
 }
+.signature-detect-preview {
+    border: 1px solid #ddd;
+    padding: 12px;
+    background: #fff;
+    min-height: 160px;
+    border-radius: 5px;
+}
+.signature-detect-preview iframe {
+    width: 100%;
+    height: 180px;
+    border: 0;
+}
 </style>
 <div class="container mt-4">
     <h1><i class="fas fa-signature"></i> Email Signatures</h1>
+
+    <!-- Detect Signature -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="fas fa-magic me-2"></i>Detect From Sent Mail (Graph)</h5>
+            <small class="text-muted">Attempts to preserve HTML + images</small>
+        </div>
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="detect_signature_name" class="form-label">Signature Name</label>
+                    <input type="text" class="form-control" id="detect_signature_name" placeholder="Auto-detected Signature">
+                </div>
+                <div class="col-md-3">
+                    <label for="detect_signature_limit" class="form-label">Messages To Scan</label>
+                    <input type="number" class="form-control" id="detect_signature_limit" min="5" max="50" value="25">
+                </div>
+                <div class="col-md-5 d-flex gap-2">
+                    <button type="button" class="btn btn-primary" id="detect_signature_btn">
+                        <i class="fas fa-search"></i> Detect Signature
+                    </button>
+                    <button type="button" class="btn btn-outline-success d-none" id="use_detected_signature_btn">
+                        <i class="fas fa-check"></i> Use This Signature
+                    </button>
+                </div>
+            </div>
+            <div class="mt-3">
+                <div id="detect_signature_status" class="text-muted small"></div>
+                <div id="detect_signature_preview" class="signature-detect-preview d-none mt-2">
+                    <iframe id="detectSignaturePreviewFrame"></iframe>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Add/Edit Form -->
     <div class="card mb-4">
@@ -283,6 +329,23 @@ function updatePreview() {
     frame.srcdoc = html ? normalizeSignatureHtml(html) : placeholder;
 }
 
+function updateDetectPreview(html) {
+    const frame = document.getElementById('detectSignaturePreviewFrame');
+    const container = document.getElementById('detect_signature_preview');
+    if (!frame || !container) {
+        return;
+    }
+    const placeholder = `
+        <!doctype html>
+        <html>
+          <head><meta charset="utf-8"></head>
+          <body><em class="text-muted">No preview</em></body>
+        </html>
+    `;
+    frame.srcdoc = html ? normalizeSignatureHtml(html) : placeholder;
+    container.classList.toggle('d-none', !html);
+}
+
 function editSignature(id, name, html, isDefault) {
     document.getElementById('signature_id').value = id;
     document.getElementById('name').value = name;
@@ -374,5 +437,81 @@ document.querySelectorAll('.insert-image-html-btn').forEach(btn => {
         insertAtCursor(textarea, html);
     });
 });
+
+const detectBtn = document.getElementById('detect_signature_btn');
+const useDetectedBtn = document.getElementById('use_detected_signature_btn');
+const detectStatus = document.getElementById('detect_signature_status');
+let detectedSignatureHtml = '';
+let detectedSignatureName = '';
+
+function setDetectStatus(message, tone) {
+    if (!detectStatus) {
+        return;
+    }
+    detectStatus.textContent = message || '';
+    detectStatus.className = `small ${tone || 'text-muted'}`;
+}
+
+if (detectBtn) {
+    detectBtn.addEventListener('click', async () => {
+        detectBtn.disabled = true;
+        setDetectStatus('Scanning recent sent mail...', 'text-muted');
+        updateDetectPreview('');
+        if (useDetectedBtn) {
+            useDetectedBtn.classList.add('d-none');
+        }
+
+        const name = document.getElementById('detect_signature_name')?.value || '';
+        const limitValue = document.getElementById('detect_signature_limit')?.value || '25';
+        const maxMessages = Math.min(50, Math.max(5, parseInt(limitValue, 10) || 25));
+
+        try {
+            const resp = await fetch('{{ url_for("emails.graph_detect_signature") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, max_messages: maxMessages })
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                const message = data?.error?.message || 'Signature detection failed.';
+                setDetectStatus(message, 'text-danger');
+                detectBtn.disabled = false;
+                return;
+            }
+
+            detectedSignatureHtml = data.signature_html || '';
+            detectedSignatureName = name || `Auto-detected ${new Date().toISOString().slice(0, 10)}`;
+            updateDetectPreview(detectedSignatureHtml);
+            if (useDetectedBtn) {
+                useDetectedBtn.classList.toggle('d-none', !detectedSignatureHtml);
+            }
+            setDetectStatus(
+                data.already_exists
+                    ? 'Signature already exists. You can still load it into the editor.'
+                    : 'Signature detected. Review below.',
+                data.already_exists ? 'text-warning' : 'text-success'
+            );
+        } catch (error) {
+            setDetectStatus('Signature detection failed.', 'text-danger');
+        } finally {
+            detectBtn.disabled = false;
+        }
+    });
+}
+
+if (useDetectedBtn) {
+    useDetectedBtn.addEventListener('click', () => {
+        if (!detectedSignatureHtml) {
+            return;
+        }
+        document.getElementById('signature_id').value = '';
+        document.getElementById('name').value = detectedSignatureName || '';
+        document.getElementById('signature_html').value = detectedSignatureHtml;
+        document.getElementById('is_default').checked = false;
+        document.getElementById('form-title').textContent = 'Add New Signature';
+        updatePreview();
+        document.getElementById('signature-form').scrollIntoView({ behavior: 'smooth' });
+    });
+}
 </script>
 {% endblock %}

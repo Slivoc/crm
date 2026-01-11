@@ -27,9 +27,7 @@ document.addEventListener('DOMContentLoaded', function() {
             updateSummaryDisplay();
             const emailBody = document.getElementById('emailQuoteBody');
             if (emailBody) {
-                const customerIdValue = (typeof CUSTOMER_SYSTEM_CODE !== 'undefined' && CUSTOMER_SYSTEM_CODE) ? CUSTOMER_SYSTEM_CODE : '';
-                const customerIdHtml = customerIdValue ? `<p><strong>Customer ID:</strong> ${customerIdValue}</p>` : '';
-                emailBody.innerHTML = `${customerIdHtml}${buildEmailQuoteTable()}<p></p>`;
+                emailBody.innerHTML = `${buildEmailBodyHtml()}<p></p>`;
             }
         });
     }
@@ -967,8 +965,149 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Email Quote
    // --- REFACTORED EMAIL QUOTE LOGIC ---
+    let relatedEmailsLoaded = false;
+
+    async function loadRelatedEmailsForReply() {
+        if (relatedEmailsLoaded) {
+            return;
+        }
+        const replySelect = document.getElementById('emailQuoteReplySelect');
+        if (!replySelect) {
+            return;
+        }
+        replySelect.innerHTML = '<option value="">Send new email (no reply)</option>';
+        try {
+            const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/related-emails/data`);
+            const result = await response.json();
+            if (!response.ok || !result.success) {
+                return;
+            }
+            const emails = result.emails || [];
+            emails.forEach(email => {
+                if (!email.id) {
+                    return;
+                }
+                const fromLabel = email.from_name ? `${email.from_name} <${email.from_address || ''}>` : (email.from_address || 'Unknown');
+                const dateLabel = email.receivedDateTime_display || '';
+                const subjectLabel = email.subject || '(No subject)';
+                const option = document.createElement('option');
+                option.value = email.id;
+                option.textContent = `${subjectLabel} - ${fromLabel}${dateLabel ? ` (${dateLabel})` : ''}`;
+                if (email.is_source) {
+                    option.textContent = `[Source] ${option.textContent}`;
+                }
+                replySelect.appendChild(option);
+            });
+            relatedEmailsLoaded = true;
+        } catch (error) {
+            console.warn('Failed to load related emails for reply.', error);
+        }
+    }
+
+    let manualSubjectValue = '';
+
+    async function loadReplyEmailPreview(messageId) {
+        const previewBox = document.getElementById('emailQuoteReplyPreview');
+        const previewSubject = document.getElementById('emailQuoteReplyPreviewSubject');
+        const previewMeta = document.getElementById('emailQuoteReplyPreviewMeta');
+        const previewBody = document.getElementById('emailQuoteReplyPreviewBody');
+        const subjectInput = document.getElementById('emailQuoteSubjectInput');
+        if (!previewBox || !previewSubject || !previewMeta || !previewBody) {
+            return;
+        }
+
+        if (!messageId) {
+            previewBox.classList.add('d-none');
+            previewSubject.textContent = '';
+            previewMeta.textContent = '';
+            previewBody.textContent = '';
+            return;
+        }
+
+        previewSubject.textContent = 'Loading reply preview...';
+        previewMeta.textContent = '';
+        previewBody.textContent = '';
+        previewBox.classList.remove('d-none');
+
+        try {
+            const response = await fetch(`/emails/graph/message/${encodeURIComponent(messageId)}`);
+            const result = await response.json();
+            if (!response.ok || !result.success || !result.message) {
+                previewSubject.textContent = 'Unable to load reply preview.';
+                return;
+            }
+            const msg = result.message || {};
+            const fromAddr = msg.from?.emailAddress?.address || 'Unknown';
+            const fromName = msg.from?.emailAddress?.name || '';
+            const received = msg.receivedDateTime ? new Date(msg.receivedDateTime).toLocaleString() : 'Unknown date';
+            previewSubject.textContent = msg.subject || '(No subject)';
+            previewMeta.textContent = `From: ${fromName ? `${fromName} <${fromAddr}>` : fromAddr} | Received: ${received}`;
+            previewBody.innerHTML = msg.body?.content || msg.bodyPreview || '';
+            if (subjectInput) {
+                subjectInput.value = msg.subject || '(No subject)';
+            }
+        } catch (error) {
+            previewSubject.textContent = 'Unable to load reply preview.';
+        }
+    }
+
+    function updateReplyModeState() {
+        const replySelect = document.getElementById('emailQuoteReplySelect');
+        const toInput = document.getElementById('emailQuoteTo');
+        const ccInput = document.getElementById('emailQuoteCc');
+        const subjectInput = document.getElementById('emailQuoteSubjectInput');
+        const isReply = replySelect && replySelect.value;
+        if (toInput) {
+            toInput.disabled = Boolean(isReply);
+        }
+        if (ccInput) {
+            ccInput.disabled = Boolean(isReply);
+        }
+        if (subjectInput) {
+            if (isReply) {
+                if (!subjectInput.disabled) {
+                    manualSubjectValue = subjectInput.value;
+                }
+                subjectInput.disabled = true;
+            } else {
+                subjectInput.disabled = false;
+                if (!subjectInput.value || subjectInput.value === '(No subject)') {
+                    subjectInput.value = manualSubjectValue || getDefaultSubject();
+                }
+            }
+        }
+        loadReplyEmailPreview(isReply ? replySelect.value : '');
+    }
 
     // 1. Core Function
+    function getDefaultSubject() {
+        return `Quotation - Parts List ${LIST_ID}`;
+    }
+
+    function getDefaultMessageText() {
+        const firstName = (typeof CONTACT_FIRST_NAME !== 'undefined' && CONTACT_FIRST_NAME) ? CONTACT_FIRST_NAME : 'there';
+        const userName = (typeof CURRENT_USER_NAME !== 'undefined' && CURRENT_USER_NAME) ? CURRENT_USER_NAME : 'your team';
+        return `Hi ${firstName}\n\nPlease see our quote below.\n\nThanks\n${userName}`;
+    }
+
+    function escapeHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = value || '';
+        return div.innerHTML;
+    }
+
+    function formatMessageToHtml(messageText) {
+        const escaped = escapeHtml(messageText || '');
+        return escaped.replace(/\n/g, '<br>');
+    }
+
+    function buildEmailBodyHtml() {
+        const messageText = document.getElementById('emailQuoteMessage')?.value || '';
+        const messageHtml = formatMessageToHtml(messageText);
+        const tableHtml = buildEmailQuoteTable();
+        return `${messageHtml}<br><br>${tableHtml}`;
+    }
+
     async function executeEmailQuote(statusId = null, statusName = null) {
         const mainBtn = document.getElementById('email-quote-btn');
         const originalHtml = mainBtn.innerHTML;
@@ -1036,13 +1175,27 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             // E. Generate Table & Show Modal
-            const customerIdValue = (typeof CUSTOMER_SYSTEM_CODE !== 'undefined' && CUSTOMER_SYSTEM_CODE) ? CUSTOMER_SYSTEM_CODE : '';
-            const subject = customerIdValue ? `Quotation - Customer ${customerIdValue} - Parts List ${LIST_ID}` : `Quotation - Parts List ${LIST_ID}`;
+            const subject = getDefaultSubject();
             autoSelectDiffColumns();
-            const tableHtml = buildEmailQuoteTable();
-            document.getElementById('emailQuoteSubject').textContent = subject;
-
-            document.getElementById('emailQuoteBody').innerHTML = `${tableHtml}<p></p>`;
+            const subjectInput = document.getElementById('emailQuoteSubjectInput');
+            if (subjectInput) {
+                subjectInput.value = subject;
+                subjectInput.disabled = false;
+            }
+            const messageInput = document.getElementById('emailQuoteMessage');
+            if (messageInput && !messageInput.value) {
+                messageInput.value = getDefaultMessageText();
+            }
+            const toInput = document.getElementById('emailQuoteTo');
+            if (toInput && !toInput.value) {
+                const contactEmail = (typeof CONTACT_EMAIL !== 'undefined' && CONTACT_EMAIL) ? CONTACT_EMAIL : '';
+                if (contactEmail) {
+                    toInput.value = contactEmail;
+                }
+            }
+            document.getElementById('emailQuoteBody').innerHTML = `${buildEmailBodyHtml()}<p></p>`;
+            loadRelatedEmailsForReply();
+            updateReplyModeState();
             new bootstrap.Modal(document.getElementById('emailQuoteModal')).show();
 
         } catch (error) {
@@ -1075,7 +1228,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('refreshPreviewBtn').addEventListener('click', function() {
         autoSelectDiffColumns();
-        document.getElementById('emailQuoteBody').innerHTML = `${buildEmailQuoteTable()}<p></p>`;
+        document.getElementById('emailQuoteBody').innerHTML = `${buildEmailBodyHtml()}<p></p>`;
     });
 
     document.getElementById('copyEmailQuoteBtn').addEventListener('click', async function() {
@@ -1092,6 +1245,68 @@ document.addEventListener('DOMContentLoaded', function() {
             setTimeout(() => { btn.innerHTML = originalHtml; btn.className = 'btn btn-primary'; }, 1500);
         } catch (e) { alert('Copy failed'); }
     });
+
+    const replySelect = document.getElementById('emailQuoteReplySelect');
+    if (replySelect) {
+        replySelect.addEventListener('change', updateReplyModeState);
+    }
+
+    const messageInput = document.getElementById('emailQuoteMessage');
+    if (messageInput) {
+        messageInput.addEventListener('input', () => {
+            const emailBody = document.getElementById('emailQuoteBody');
+            if (emailBody) {
+                emailBody.innerHTML = `${buildEmailBodyHtml()}<p></p>`;
+            }
+        });
+    }
+
+    const sendEmailBtn = document.getElementById('sendEmailQuoteBtn');
+    if (sendEmailBtn) {
+        sendEmailBtn.addEventListener('click', async function() {
+            const btn = this;
+            const subject = document.getElementById('emailQuoteSubjectInput')?.value || '';
+            const bodyHtml = document.getElementById('emailQuoteBody')?.innerHTML || '';
+            const replyToMessageId = document.getElementById('emailQuoteReplySelect')?.value || '';
+            const toEmails = document.getElementById('emailQuoteTo')?.value || '';
+            const ccEmails = document.getElementById('emailQuoteCc')?.value || '';
+
+            btn.disabled = true;
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending...';
+
+            try {
+                const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/send-email`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        subject: subject,
+                        body_html: bodyHtml,
+                        to_emails: toEmails,
+                        cc_emails: ccEmails,
+                        reply_to_message_id: replyToMessageId
+                    })
+                });
+                const result = await response.json();
+                if (!response.ok || !result.success) {
+                    throw new Error(result.message || 'Failed to send email');
+                }
+                btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Sent!';
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-outline-success');
+                setTimeout(() => {
+                    btn.innerHTML = originalHtml;
+                    btn.classList.remove('btn-outline-success');
+                    btn.classList.add('btn-success');
+                    btn.disabled = false;
+                }, 2000);
+            } catch (error) {
+                alert(error.message || 'Failed to send email');
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+            }
+        });
+    }
 
     // Recalculate Base Costs
     document.getElementById('calculate-base-costs-btn').addEventListener('click', async function() {

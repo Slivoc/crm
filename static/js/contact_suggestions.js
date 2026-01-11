@@ -14,18 +14,42 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let currentSuggestions = [];
   let currentNoContactTargets = [];
-  let templates = [];
-  let templatesLoaded = false;
   let totalAvailable = null;
   const pageSize = 8;
 
-  const countryTemplateKey = 'contactSuggestionsTemplateByCountry';
-  let countryTemplateDefaults = {};
-  try {
-    countryTemplateDefaults = JSON.parse(localStorage.getItem(countryTemplateKey) || '{}');
-  } catch (err) {
-    countryTemplateDefaults = {};
-  }
+  // Filter elements
+  const filterMaxSpendInput = document.getElementById('filterMaxSpend');
+  const filterStatusesSelect = document.getElementById('filterStatuses');
+  const applyFiltersBtn = document.getElementById('applyFilters');
+
+  // Current filter state
+  let currentFilters = {
+    maxSpend: 0,
+    statuses: []
+  };
+
+  // Get current filter values from UI
+  const getFilterValues = () => {
+    const maxSpend = parseFloat(filterMaxSpendInput?.value) || 0;
+    const statuses = filterStatusesSelect
+      ? Array.from(filterStatusesSelect.selectedOptions).map(opt => opt.value)
+      : [];
+    return { maxSpend, statuses };
+  };
+
+  // Apply filters button handler
+  applyFiltersBtn?.addEventListener('click', () => {
+    currentFilters = getFilterValues();
+    loadSuggestions();
+  });
+
+  // Also apply filters on Enter key in the max spend input
+  filterMaxSpendInput?.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      currentFilters = getFilterValues();
+      loadSuggestions();
+    }
+  });
 
   refreshBtn?.addEventListener('click', () => {
     refreshBtn.disabled = true;
@@ -187,14 +211,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
-  const getTemplateIdForSuggestion = (suggestion) => {
-    const explicit = suggestion.template_id || '';
-    if (explicit) return explicit;
-    const country = (suggestion.country || '').trim();
-    if (!country) return '';
-    return countryTemplateDefaults[country] || '';
-  };
-
   const renderSummary = (data) => {
     if (!currentSuggestions.length) {
       summary.innerHTML = '';
@@ -223,22 +239,6 @@ document.addEventListener('DOMContentLoaded', () => {
         <span>${escapeHtml(item.headline || 'News item')}</span>
       </div>
     `).join('');
-  };
-
-  const renderTemplateOptions = (selectedId) => {
-    const options = [`<option value="">No template</option>`];
-    if (!templatesLoaded) {
-      options.push('<option value="" disabled>Loading templates...</option>');
-    } else if (!templates.length) {
-      options.push('<option value="" disabled>No templates available</option>');
-    } else {
-      templates.forEach((template) => {
-        const id = String(template.id || '');
-        const selected = id && id === String(selectedId) ? 'selected' : '';
-        options.push(`<option value="${escapeHtml(id)}" ${selected}>${escapeHtml(template.name || 'Unnamed template')}</option>`);
-      });
-    }
-    return options.join('');
   };
 
   const getSelectedContact = (suggestion) => {
@@ -307,20 +307,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const lastContact = suggestion.last_contact;
     const lastEmail = suggestion.last_email;
     const graphEmail = suggestion.last_graph_email;
-    const suggestedEmail = suggestion.suggested_email || {};
-    const newsItems = suggestion.news_items || [];
     const contacts = suggestion.contacts || [];
     const selectedContact = getSelectedContact(suggestion);
-    const hasSuggestedEmail = Boolean(suggestedEmail?.subject || suggestedEmail?.body);
-    const aiGenerated = Boolean(suggestion.ai_generated || hasSuggestedEmail || newsItems.length);
-    const aiError = suggestion.ai_error || '';
     const contactAge = lastContact?.date ? relativeDate(lastContact.date) : 'No contact recorded';
     const lastEmailSubject = lastEmail?.subject || lastEmail?.notes || '';
     const lastEmailPreview = lastEmail?.preview || '';
     const latestUpdate = suggestion.latest_update || '';
     const statusLabel = suggestion.status || 'No spend';
     const countryLabel = suggestion.country ? ` | ${suggestion.country}` : '';
-    const templateId = getTemplateIdForSuggestion(suggestion);
     const graphEmailAge = graphEmail?.date ? relativeDate(graphEmail.date) : '';
     const graphMessageId = graphEmail?.message_id;
 
@@ -374,27 +368,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 ` : ''}
               ` : '<div class="text-muted small">No contacts with email</div>'}
             </div>
-
             <div class="mb-2">
-              <label class="form-label small fw-semibold" for="template-${suggestion.customer_id}">AI template</label>
-              <select class="form-select form-select-sm" id="template-${suggestion.customer_id}" data-template-select data-customer-id="${suggestion.customer_id}">
-                ${renderTemplateOptions(templateId)}
-              </select>
-            </div>
-
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <button class="btn btn-sm btn-outline-primary" data-generate-ai data-customer-id="${suggestion.customer_id}">
-                ${hasSuggestedEmail ? 'Regenerate AI draft' : 'Generate AI draft'}
+              <button class="btn btn-sm btn-outline-success w-100"
+                      data-email-single
+                      data-customer-id="${suggestion.customer_id}">
+                <i class="bi bi-envelope"></i> Email Contact
               </button>
-              <span class="text-muted small">${aiGenerated ? 'AI draft ready' : 'AI draft not generated'}</span>
-            </div>
-
-            ${aiError ? `<div class="alert alert-warning py-1 mb-2 small">${escapeHtml(aiError)}</div>` : ''}
-
-            <div class="mb-2">
-              ${aiGenerated
-                ? renderNews(newsItems)
-                : '<div class="text-muted small">Generate AI draft to pull news.</div>'}
             </div>
 
             <div class="mb-2">
@@ -402,6 +381,20 @@ document.addEventListener('DOMContentLoaded', () => {
               ${latestUpdate
                 ? `<div class="small">${escapeHtml(latestUpdate)}</div>`
                 : '<div class="text-muted small">No updates yet</div>'}
+            </div>
+            <div class="mb-2">
+              <label class="form-label small fw-semibold" for="customer-notes-${suggestion.customer_id}">Customer Notes</label>
+              <textarea class="form-control form-control-sm" rows="3"
+                        id="customer-notes-${suggestion.customer_id}"
+                        data-customer-notes-input
+                        data-customer-id="${suggestion.customer_id}">${escapeHtml(suggestion.customer_notes || '')}</textarea>
+              <div class="d-flex justify-content-end mt-2">
+                <button class="btn btn-sm btn-outline-primary"
+                        data-save-customer-notes
+                        data-customer-id="${suggestion.customer_id}">
+                  Save Notes
+                </button>
+              </div>
             </div>
 
             <div class="mb-2">
@@ -433,28 +426,8 @@ document.addEventListener('DOMContentLoaded', () => {
               ` : ''}
             </div>
 
-            ${hasSuggestedEmail ? `
-              <div class="mb-2">
-                <div class="fw-semibold d-flex justify-content-between align-items-center">
-                  <span>Suggested subject</span>
-                  <button class="btn btn-sm btn-outline-secondary" data-copy-subject>Copy</button>
-                </div>
-                <div class="form-control bg-white">${escapeHtml(suggestedEmail.subject || 'Subject not available')}</div>
-              </div>
-
-              <div class="mb-3">
-                <div class="fw-semibold d-flex justify-content-between align-items-center">
-                  <span>Suggested body</span>
-                  <button class="btn btn-sm btn-outline-secondary" data-copy-body>Copy</button>
-                </div>
-                <div class="suggestion-body">${escapeHtml(suggestedEmail.body || 'No draft available').replace(/\n/g, '<br>')}</div>
-              </div>
-            ` : `
-              <div class="text-muted small mb-3">No AI draft yet.</div>
-            `}
-
             <div class="mt-auto d-flex justify-content-between align-items-center text-muted small">
-              <span>${hasSuggestedEmail ? `Draft source: ${escapeHtml(suggestedEmail.source || 'openai')}` : ''}</span>
+              <span></span>
               <span>Score: rev ${escapeHtml(suggestion.score_breakdown?.revenue_component ?? '-')}, ${
                 suggestion.score_breakdown?.mro_component > 0
                   ? `mro ${escapeHtml(suggestion.score_breakdown?.mro_component ?? '-')}`
@@ -483,38 +456,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     container.innerHTML = suggestions.map(renderSuggestionCard).join('');
 
-    container.querySelectorAll('[data-copy-subject]').forEach((button) => {
-      button.addEventListener('click', () => {
-        const subject = button.closest('.card-body').querySelector('.form-control')?.textContent || '';
-        copyToClipboard(subject.trim(), button);
-      });
-    });
-
-    container.querySelectorAll('[data-copy-body]').forEach((button) => {
-      button.addEventListener('click', () => {
-        const bodyHtml = button.closest('.card-body').querySelector('.suggestion-body')?.innerHTML || '';
-        const text = bodyHtml.replace(/<br>/g, '\\n');
-        copyToClipboard(text.trim(), button);
-      });
-    });
-
-    container.querySelectorAll('[data-template-select]').forEach((select) => {
-      select.addEventListener('change', () => {
-        const customerId = select.getAttribute('data-customer-id');
-        const selected = select.value || '';
-        const suggestion = currentSuggestions.find((item) => String(item.customer_id) === String(customerId));
-        if (suggestion) {
-          suggestion.template_id = selected || null;
-          const country = (suggestion.country || '').trim();
-          if (country && selected) {
-            countryTemplateDefaults[country] = selected;
-            localStorage.setItem(countryTemplateKey, JSON.stringify(countryTemplateDefaults));
-          }
-        }
-        renderSuggestions(currentSuggestions);
-      });
-    });
-
     container.querySelectorAll('[data-contact-select]').forEach((select) => {
       select.addEventListener('change', () => {
         const customerId = select.getAttribute('data-customer-id');
@@ -531,6 +472,49 @@ document.addEventListener('DOMContentLoaded', () => {
       button.addEventListener('click', () => {
         const email = button.getAttribute('data-copy-email') || '';
         copyToClipboard(email, button);
+      });
+    });
+
+    container.querySelectorAll('[data-email-single]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const customerId = button.getAttribute('data-customer-id');
+        if (!customerId) return;
+        const suggestion = currentSuggestions.find((item) => String(item.customer_id) === String(customerId));
+        if (!suggestion) return;
+        const selectedContact = getSelectedContact(suggestion);
+        if (!selectedContact || !selectedContact.email) {
+          alert('No contact email available for this customer.');
+          return;
+        }
+        const recipients = [{
+          id: selectedContact.id || '',
+          name: selectedContact.name || '',
+          email: selectedContact.email,
+          title: selectedContact.title || selectedContact.job_title || '',
+          company: suggestion.customer_name || '',
+          customerId: suggestion.customer_id || ''
+        }];
+
+        const modalEl = document.getElementById('emailModal');
+        if (modalEl) {
+          modalEl.dataset.customerId = suggestion.customer_id || '';
+          modalEl.dataset.aiSubject = (suggestion.suggested_email || {}).subject || '';
+          modalEl.dataset.aiBody = (suggestion.suggested_email || {}).body || '';
+          modalEl.dataset.aiNews = JSON.stringify(suggestion.news_items || []);
+          modalEl.dataset.graphEmailSubject = (suggestion.last_graph_email_full || {}).subject || '';
+          modalEl.dataset.graphEmailBody = (suggestion.last_graph_email_full || {}).body_text
+            || (suggestion.last_graph_email_full || {}).body_html
+            || '';
+        }
+
+        if (window.emailModalInstance) {
+          window.emailModalInstance.clearRecipients();
+          window.emailModalInstance.addMultipleRecipients(recipients);
+          const emailModal = new bootstrap.Modal(document.getElementById('emailModal'));
+          emailModal.show();
+        } else {
+          alert('Email modal not available. Please refresh and try again.');
+        }
       });
     });
 
@@ -679,80 +663,61 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
 
-    container.querySelectorAll('[data-generate-ai]').forEach((button) => {
-      button.addEventListener('click', () => {
+    // AI draft moved into the email modal.
+
+    container.querySelectorAll('[data-save-customer-notes]').forEach((button) => {
+      button.addEventListener('click', async () => {
         const customerId = button.getAttribute('data-customer-id');
-        generateAiDraft(customerId, button);
+        const textarea = container.querySelector(`[data-customer-notes-input][data-customer-id="${customerId}"]`);
+        const notes = textarea ? textarea.value : '';
+        if (!customerId) return;
+
+        button.disabled = true;
+        const originalText = button.textContent;
+        button.textContent = 'Saving...';
+
+        try {
+          const response = await fetch('/salespeople/save_customer_notes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customer_id: customerId, notes: notes })
+          });
+          const result = await response.json();
+          if (!response.ok || !result.success) {
+            throw new Error(result.error || 'Failed to save notes');
+          }
+          const suggestion = currentSuggestions.find((item) => String(item.customer_id) === String(customerId));
+          if (suggestion) {
+            suggestion.customer_notes = notes;
+          }
+          button.textContent = 'Saved';
+          setTimeout(() => {
+            button.textContent = originalText;
+          }, 1200);
+        } catch (error) {
+          console.error(error);
+          button.textContent = originalText;
+          alert(error.message || 'Failed to save notes');
+        } finally {
+          button.disabled = false;
+        }
       });
     });
   };
 
-  const loadTemplates = async () => {
-    try {
-      const response = await fetch('/api/email-templates');
-      if (!response.ok) {
-        throw new Error('Failed to load templates');
-      }
-      const result = await response.json();
-      templates = Array.isArray(result) ? result : (result.templates || result.data || []);
-      templatesLoaded = true;
-    } catch (error) {
-      console.error(error);
-      templates = [];
-      templatesLoaded = true;
-    }
-    renderSuggestions(currentSuggestions);
-  };
 
-  const generateAiDraft = async (customerId, button) => {
-    if (!customerId) return;
-    if (button) {
-      button.disabled = true;
-      button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating';
-    }
 
-    const suggestion = currentSuggestions.find((item) => String(item.customer_id) === String(customerId));
-    const templateId = suggestion ? getTemplateIdForSuggestion(suggestion) : '';
-
-    const payload = { customer_id: customerId };
-    if (templateId) payload.template_id = templateId;
-    if (suggestion?.last_graph_email_full?.body_text || suggestion?.last_graph_email_full?.body_html) {
-      payload.graph_email_subject = suggestion.last_graph_email_full.subject || '';
-      payload.graph_email_body = suggestion.last_graph_email_full.body_text || suggestion.last_graph_email_full.body_html;
+  const buildFilterParams = () => {
+    const params = new URLSearchParams();
+    params.set('limit', pageSize);
+    params.set('offset', 0);
+    if (currentFilters.maxSpend > 0) {
+      params.set('max_spend', currentFilters.maxSpend);
     }
-
-    try {
-      const response = await fetch(`/salespeople/${salespersonId}/contact-suggestions/ai`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!response.ok) {
-        throw new Error('Failed to generate AI draft');
-      }
-      const data = await response.json();
-      const index = currentSuggestions.findIndex((item) => String(item.customer_id) === String(customerId));
-      if (index > -1) {
-        currentSuggestions[index] = {
-          ...currentSuggestions[index],
-          suggested_email: data.suggested_email || null,
-          news_items: data.news_items || [],
-          ai_generated: true,
-          ai_error: null
-        };
-      }
-      renderSuggestions(currentSuggestions);
-    } catch (error) {
-      console.error(error);
-      const index = currentSuggestions.findIndex((item) => String(item.customer_id) === String(customerId));
-      if (index > -1) {
-        currentSuggestions[index] = {
-          ...currentSuggestions[index],
-          ai_error: error?.message || 'Failed to generate AI draft'
-        };
-      }
-      renderSuggestions(currentSuggestions);
+    if (currentFilters.statuses && currentFilters.statuses.length > 0) {
+      params.set('statuses', currentFilters.statuses.join(','));
     }
+    return params.toString();
   };
 
   const loadSuggestions = async () => {
@@ -765,7 +730,7 @@ document.addEventListener('DOMContentLoaded', () => {
       container.innerHTML = '';
     }
     try {
-      const response = await fetch(`/salespeople/${salespersonId}/contact-suggestions/data?limit=${pageSize}&offset=0`);
+      const response = await fetch(`/salespeople/${salespersonId}/contact-suggestions/data?${buildFilterParams()}`);
       if (!response.ok) {
         throw new Error('Failed to load suggestions');
       }
@@ -802,7 +767,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const offset = currentSuggestions.length;
-      const response = await fetch(`/salespeople/${salespersonId}/contact-suggestions/data?limit=${pageSize}&offset=${offset}`);
+      const params = new URLSearchParams();
+      params.set('limit', pageSize);
+      params.set('offset', offset);
+      if (currentFilters.maxSpend > 0) {
+        params.set('max_spend', currentFilters.maxSpend);
+      }
+      if (currentFilters.statuses && currentFilters.statuses.length > 0) {
+        params.set('statuses', currentFilters.statuses.join(','));
+      }
+      const response = await fetch(`/salespeople/${salespersonId}/contact-suggestions/data?${params.toString()}`);
       if (!response.ok) {
         throw new Error('Failed to load more suggestions');
       }
@@ -826,11 +800,55 @@ document.addEventListener('DOMContentLoaded', () => {
       loadMoreBtn.textContent = 'Load more suggestions';
     }
   };
-
-  loadTemplates();
   loadSuggestions();
 
   loadMoreBtn?.addEventListener('click', loadMoreSuggestions);
+
+  // Email All Contacts functionality
+  const emailAllBtn = document.getElementById('emailAllContacts');
+  if (emailAllBtn) {
+    emailAllBtn.addEventListener('click', () => {
+      const modalEl = document.getElementById('emailModal');
+      if (modalEl) {
+        modalEl.dataset.customerId = '';
+        modalEl.dataset.aiSubject = '';
+        modalEl.dataset.aiBody = '';
+        modalEl.dataset.aiNews = '';
+        modalEl.dataset.graphEmailSubject = '';
+        modalEl.dataset.graphEmailBody = '';
+      }
+      const recipients = [];
+
+      currentSuggestions.forEach(suggestion => {
+        const selectedContact = getSelectedContact(suggestion);
+        if (selectedContact && selectedContact.email) {
+          recipients.push({
+            id: selectedContact.id || '',
+            name: selectedContact.name || '',
+            email: selectedContact.email,
+            title: selectedContact.title || selectedContact.job_title || '',
+            company: suggestion.customer_name || '',
+            customerId: suggestion.customer_id || ''
+          });
+        }
+      });
+
+      if (recipients.length === 0) {
+        alert('No contacts with email addresses found in the current suggestions.');
+        return;
+      }
+
+      if (window.emailModalInstance) {
+        window.emailModalInstance.clearRecipients();
+        window.emailModalInstance.addMultipleRecipients(recipients);
+
+        const emailModal = new bootstrap.Modal(document.getElementById('emailModal'));
+        emailModal.show();
+      } else {
+        alert('Email modal not available. Please refresh the page and try again.');
+      }
+    });
+  }
 
   // Scan All Emails functionality
   const scanAllBtn = document.getElementById('scanAllEmails');

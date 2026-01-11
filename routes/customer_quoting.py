@@ -1,4 +1,8 @@
 from flask import Blueprint, render_template, request, jsonify, url_for, session
+from flask_login import current_user
+from routes.emails import send_graph_email, send_graph_reply
+from routes.email_signatures import get_user_default_signature
+from models import get_email_signature_by_id
 from db import db_cursor, execute as db_execute
 import logging
 from datetime import datetime
@@ -55,6 +59,30 @@ def _parse_decimal(value):
         return Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return None
+
+
+def _get_default_signature(user_id=None):
+    signature = get_user_default_signature(user_id) if user_id else None
+    if not signature and current_user and getattr(current_user, "is_authenticated", False):
+        signature = get_user_default_signature(current_user.id)
+    if signature:
+        return signature
+    return get_email_signature_by_id(1)
+
+
+def _parse_recipient_list(value):
+    if not value:
+        return []
+    if isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = str(value).replace(";", ",").split(",")
+    cleaned = []
+    for item in raw_items:
+        email_value = (item or "").strip()
+        if email_value:
+            cleaned.append(email_value)
+    return cleaned
 
 
 def _to_decimal(value, default):
@@ -118,10 +146,17 @@ def customer_quote(list_id):
         with db_cursor() as cur:
                 # Get list header
                 header = _execute_with_cursor(cur, """
-                    SELECT pl.*, c.name as customer_name, c.system_code as customer_system_code, c.currency_id as customer_currency_id, s.name as status_name
+                    SELECT pl.*,
+                           c.name as customer_name,
+                           c.system_code as customer_system_code,
+                           c.currency_id as customer_currency_id,
+                           s.name as status_name,
+                           ct.name as contact_name,
+                           ct.email as contact_email
                     FROM parts_lists pl
                     LEFT JOIN customers c ON c.id = pl.customer_id
                     LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+                    LEFT JOIN contacts ct ON ct.id = pl.contact_id
                     WHERE pl.id = ?
                 """, (list_id,)).fetchone()
 
@@ -300,6 +335,13 @@ def customer_quote(list_id):
             ('Customer Quote', None)
         ]
 
+        contact_name = header.get('contact_name') if isinstance(header, dict) else None
+        contact_email = header.get('contact_email') if isinstance(header, dict) else None
+        contact_first_name = contact_name.split()[0] if contact_name else ''
+        current_user_name = None
+        if current_user and getattr(current_user, "is_authenticated", False):
+            current_user_name = (getattr(current_user, "username", "") or "").replace('_', ' ').title()
+
         return render_template('customer_quote.html',
                                list_id=list_id,
                                list_name=header['name'],
@@ -308,6 +350,10 @@ def customer_quote(list_id):
                                status_name=header.get('status_name'),
                                customer_system_code=header.get('customer_system_code'),
                                customer_currency_id=header.get('customer_currency_id'),
+                               contact_name=contact_name,
+                               contact_email=contact_email,
+                               contact_first_name=contact_first_name,
+                               current_user_name=current_user_name,
                                lines=lines_with_bom,
                                currencies=[dict(c) for c in currencies],
                                total_lines=total_lines,
@@ -1083,6 +1129,60 @@ def mark_as_quoted(list_id):
         return jsonify(success=False, message=str(e)), 500
 
 
+@customer_quoting_bp.route('/parts-lists/<int:list_id>/customer-quote/send-email', methods=['POST'])
+def send_customer_quote_email(list_id):
+    """
+    Send customer quote email via Graph, optionally replying to a selected message.
+    """
+    try:
+        if not current_user or not getattr(current_user, "is_authenticated", False):
+            return jsonify(success=False, message="You must be logged in to send emails"), 401
+
+        data = request.get_json(force=True) or {}
+        subject = (data.get("subject") or "").strip()
+        body_html = data.get("body_html") or ""
+        to_emails = _parse_recipient_list(data.get("to_emails"))
+        cc_emails = _parse_recipient_list(data.get("cc_emails"))
+        reply_to_message_id = (data.get("reply_to_message_id") or "").strip() or None
+
+        if not body_html:
+            return jsonify(success=False, message="Email body is required"), 400
+
+        if not reply_to_message_id and not to_emails:
+            return jsonify(success=False, message="Recipient email is required"), 400
+        if not reply_to_message_id and not subject:
+            return jsonify(success=False, message="Subject is required"), 400
+
+        signature = _get_default_signature(current_user.id)
+        if signature and signature.get("signature_html"):
+            body_html = f"{body_html}{signature['signature_html']}"
+
+        if reply_to_message_id:
+            result = send_graph_reply(
+                reply_to_message_id,
+                body_html,
+                reply_all=False,
+                user_id=current_user.id,
+            )
+        else:
+            result = send_graph_email(
+                subject=subject,
+                html_body=body_html,
+                to_emails=to_emails,
+                cc_emails=cc_emails or None,
+                user_id=current_user.id,
+            )
+
+        if not result.get("success"):
+            return jsonify(success=False, message=result.get("error", "Graph send failed")), 500
+
+        return jsonify(success=True)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
 @customer_quoting_bp.route('/parts-lists/<int:list_id>/customer-quote/bulk-apply-margin', methods=['POST'])
 def bulk_apply_margin(list_id):
     """
@@ -1599,10 +1699,17 @@ def customer_quote_simple(list_id):
         lines_with_bom = []
         with db_cursor() as cur:
             header = _execute_with_cursor(cur, """
-                SELECT pl.*, c.name as customer_name, c.system_code as customer_system_code, c.currency_id as customer_currency_id, s.name as status_name
+                SELECT pl.*,
+                       c.name as customer_name,
+                       c.system_code as customer_system_code,
+                       c.currency_id as customer_currency_id,
+                       s.name as status_name,
+                       ct.name as contact_name,
+                       ct.email as contact_email
                 FROM parts_lists pl
                 LEFT JOIN customers c ON c.id = pl.customer_id
                 LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+                LEFT JOIN contacts ct ON ct.id = pl.contact_id
                 WHERE pl.id = ?
             """, (list_id,)).fetchone()
 
@@ -1780,6 +1887,13 @@ def customer_quote_simple(list_id):
             ('Customer Quote (Simple)', None)
         ]
 
+        contact_name = header.get('contact_name') if isinstance(header, dict) else None
+        contact_email = header.get('contact_email') if isinstance(header, dict) else None
+        contact_first_name = contact_name.split()[0] if contact_name else ''
+        current_user_name = None
+        if current_user and getattr(current_user, "is_authenticated", False):
+            current_user_name = (getattr(current_user, "username", "") or "").replace('_', ' ').title()
+
         return render_template('customer_quote_simple.html',
                                list_id=list_id,
                                list_name=header['name'],
@@ -1788,6 +1902,10 @@ def customer_quote_simple(list_id):
                                status_name=header.get('status_name'),
                                customer_system_code=header.get('customer_system_code'),
                                customer_currency_id=header.get('customer_currency_id'),
+                               contact_name=contact_name,
+                               contact_email=contact_email,
+                               contact_first_name=contact_first_name,
+                               current_user_name=current_user_name,
                                lines=lines_with_bom,
                                currencies=[dict(c) for c in currencies],
 

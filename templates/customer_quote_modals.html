@@ -81,10 +81,55 @@
             </div>
             <div class="modal-body">
                 <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold" for="emailQuoteTo">To:</label>
+                        <input type="text" class="form-control" id="emailQuoteTo" placeholder="customer@example.com">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold" for="emailQuoteCc">CC:</label>
+                        <input type="text" class="form-control" id="emailQuoteCc" placeholder="optional@example.com">
+                    </div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-12">
+                        <label class="form-label fw-bold" for="emailQuoteSubjectInput">Subject:</label>
+                        <input type="text" class="form-control" id="emailQuoteSubjectInput">
+                    </div>
+                </div>
+                <div class="row mb-3 align-items-end">
+                    <div class="col-md-8">
+                        <label class="form-label fw-bold" for="emailQuoteReplySelect">Reply to:</label>
+                        <select class="form-select" id="emailQuoteReplySelect">
+                            <option value="">Send new email (no reply)</option>
+                        </select>
+                        <div class="form-text">Select a related email to reply to with this quote.</div>
+                    </div>
+                    <div class="col-md-4 d-grid">
+                        <button type="button" class="btn btn-success" id="sendEmailQuoteBtn">
+                            <i class="bi bi-send me-1"></i>Send via Graph
+                        </button>
+                    </div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-12">
+                        <div id="emailQuoteReplyPreview" class="border rounded p-3 bg-light d-none">
+                            <div class="fw-bold mb-1" id="emailQuoteReplyPreviewSubject"></div>
+                            <div class="small text-muted mb-2" id="emailQuoteReplyPreviewMeta"></div>
+                            <div class="small" id="emailQuoteReplyPreviewBody"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-12">
+                        <label class="form-label fw-bold" for="emailQuoteMessage">Message:</label>
+                        <textarea class="form-control" id="emailQuoteMessage" rows="6"></textarea>
+                        <div class="form-text">This text appears above the quote table.</div>
+                    </div>
+                </div>
+                <div class="row mb-3">
                     <div class="col-md-8">
                         <div class="mb-3">
-                            <label class="form-label fw-bold">Subject:</label>
-                            <div id="emailQuoteSubject"></div>
+                            <label class="form-label fw-bold">Preview:</label>
                         </div>
                     </div>
                     <div class="col-md-4">
@@ -153,7 +198,7 @@
                     <div id="emailQuoteBody" class="border rounded p-3 bg-light" style="overflow-x: auto;"></div>
                 </div>
                 <div class="alert alert-info small mb-0">
-                    This text is for pasting into your email body. Recipients are not filled in automatically.
+                    You can still copy the table, or send directly through Graph above.
                 </div>
             </div>
             <div class="modal-footer">

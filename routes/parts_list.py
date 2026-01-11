@@ -7328,3 +7328,143 @@ def get_related_emails(list_id):
         logging.exception(f"Error fetching related emails for parts list {list_id}: {e}")
         flash('Error loading related emails', 'error')
         return redirect(url_for('parts_list.view_parts_list', list_id=list_id))
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/related-emails/data', methods=['GET'])
+def get_related_emails_data(list_id):
+    """
+    Return related email metadata for a parts list (used for reply selection).
+    """
+    try:
+        parts_list = db_execute(
+            """
+            SELECT id, email_message_id, email_conversation_id
+            FROM parts_lists
+            WHERE id = ?
+            """,
+            (list_id,),
+            fetch='one',
+        )
+        if not parts_list:
+            return jsonify(success=False, message="Parts list not found"), 404
+
+        conversation_id = parts_list.get('email_conversation_id') if isinstance(parts_list, dict) else parts_list['email_conversation_id']
+        source_message_id = parts_list.get('email_message_id') if isinstance(parts_list, dict) else parts_list['email_message_id']
+
+        conversation_ids = set()
+        if conversation_id:
+            conversation_ids.add(conversation_id)
+        message_ids = set()
+        if source_message_id:
+            message_ids.add(source_message_id)
+
+        if not conversation_ids and not message_ids:
+            return jsonify(success=True, emails=[], source_message_id=None, graph_connected=True)
+
+        from routes.emails import (
+            _get_graph_settings, _load_graph_cache, _build_msal_app, _save_graph_cache
+        )
+        import requests
+        from urllib.parse import quote as url_quote
+        from dateutil import parser as date_parser
+        from datetime import timezone
+
+        settings = _get_graph_settings(include_secret=True)
+        cache = _load_graph_cache()
+        app = _build_msal_app(settings, cache=cache)
+        accounts = app.get_accounts()
+
+        if not accounts:
+            return jsonify(success=False, message="No Graph account connected"), 400
+
+        token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+        _save_graph_cache(cache)
+
+        if not token or "access_token" not in token:
+            return jsonify(success=False, message="Failed to refresh access token"), 400
+
+        headers = {"Authorization": f"Bearer {token['access_token']}"}
+        all_emails = []
+
+        for conv_id in conversation_ids:
+            params = {
+                "$filter": f"conversationId eq '{conv_id}'",
+                "$select": "id,subject,from,receivedDateTime,bodyPreview,conversationId",
+                "$orderby": "receivedDateTime desc",
+                "$top": 50
+            }
+            resp = requests.get(
+                "https://graph.microsoft.com/v1.0/me/messages",
+                headers=headers,
+                params=params,
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                messages = data.get("value", [])
+                for msg in messages:
+                    msg['_is_source'] = False
+                    all_emails.append(msg)
+
+        for msg_id in message_ids:
+            resp = requests.get(
+                f"https://graph.microsoft.com/v1.0/me/messages/{url_quote(msg_id)}",
+                headers=headers,
+                params={"$select": "id,subject,from,receivedDateTime,bodyPreview,conversationId"},
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                msg = resp.json()
+                msg['_is_source'] = (msg_id == source_message_id)
+                all_emails.append(msg)
+
+        seen_ids = set()
+        unique_emails = []
+        for email_msg in all_emails:
+            msg_id = email_msg.get('id')
+            if msg_id and msg_id not in seen_ids:
+                seen_ids.add(msg_id)
+                unique_emails.append(email_msg)
+
+        unique_emails.sort(
+            key=lambda x: x.get('receivedDateTime', ''),
+            reverse=True
+        )
+
+        def _format_graph_datetime_display(value):
+            if not value:
+                return None
+            try:
+                parsed = date_parser.isoparse(value)
+            except Exception:
+                try:
+                    parsed = date_parser.parse(value)
+                except Exception:
+                    return None
+            if parsed.tzinfo:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed.strftime("%b %d, %Y %I:%M %p")
+
+        response_emails = []
+        for email_msg in unique_emails:
+            from_addr = email_msg.get('from', {}).get('emailAddress', {}) if isinstance(email_msg.get('from'), dict) else {}
+            response_emails.append({
+                "id": email_msg.get("id"),
+                "subject": email_msg.get("subject"),
+                "from_address": from_addr.get("address"),
+                "from_name": from_addr.get("name"),
+                "receivedDateTime": email_msg.get("receivedDateTime"),
+                "receivedDateTime_display": _format_graph_datetime_display(email_msg.get("receivedDateTime")),
+                "is_source": bool(email_msg.get("_is_source")),
+            })
+
+        return jsonify(
+            success=True,
+            emails=response_emails,
+            source_message_id=source_message_id,
+            graph_connected=True,
+        )
+
+    except Exception as e:
+        logging.exception(f"Error fetching related emails data for parts list {list_id}: {e}")
+        return jsonify(success=False, message="Failed to load related emails"), 500
