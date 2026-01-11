@@ -25,7 +25,7 @@
                     {{ get_status_name(customer['status_id']) }}
                 </span>
             </td>
-            <td>${{ "{:,}".format(customer['estimated_revenue']|default(0)|int) }}</td>
+            <td>£{{ "{:,}".format(customer['estimated_revenue']|default(0)|int) }}</td>
             <td>
                 {% if customer['latest_activity'] %}
                     <div class="d-flex align-items-center">

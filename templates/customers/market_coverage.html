@@ -554,7 +554,7 @@ async function loadMarketIntelligence(tagId) {
                                     <strong>${company.company_name}</strong>
                                     <div class="text-muted small">
                                         ${company.country || ''}
-                                        ${company.estimated_revenue ? '| Revenue: €' + company.estimated_revenue : ''}
+                                        ${company.estimated_revenue ? '| Revenue: £' + company.estimated_revenue : ''}
                                         ${company.product_focus ? '| Focus: ' + company.product_focus : ''}
                                     </div>
                                 </div>
@@ -1580,7 +1580,7 @@ async function sendFeedback(feedback) {
                         <span class="badge rounded-pill bg-danger">Lead</span>
                     </td>
                     <td>${suggestion.country}</td>
-                    <td>€${suggestion.estimated_revenue ? suggestion.estimated_revenue.toLocaleString() : '0'}</td>
+                    <td>£${suggestion.estimated_revenue ? suggestion.estimated_revenue.toLocaleString() : '0'}</td>
                     <td>
                         <span class="text-muted">Unassigned</span>
                     </td>
@@ -1675,7 +1675,7 @@ function renderNarrativeSuggestions(suggestions) {
             <p>
                 <strong>${suggestion.company_name}</strong> -
                 ${suggestion.website ? `<a href="${suggestion.website}" target="_blank">${suggestion.website}</a>` : "No website available"} |
-                ${suggestion.estimated_revenue ? `€${suggestion.estimated_revenue.toLocaleString()}` : "Revenue unknown"} |
+                ${suggestion.estimated_revenue ? `£${suggestion.estimated_revenue.toLocaleString()}` : "Revenue unknown"} |
                 ${suggestion.product_focus || "No focus specified"}
                 <button type="button" class="btn btn-success btn-sm ms-2" onclick='openCustomerModal(${JSON.stringify(suggestion)})'>
                     <i class="bi bi-plus-circle"></i> Add

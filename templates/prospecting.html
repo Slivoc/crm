@@ -154,7 +154,7 @@
             </span>
         </td>
         <td>{{ customer.country }}</td>
-        <td>${{ '{:,}'.format(customer.estimated_revenue|default(0)|int) }}</td>
+        <td>£{{ '{:,}'.format(customer.estimated_revenue|default(0)|int) }}</td>
         <td>
             {% if customer.assigned_salesperson_name %}
                 <span class="text-body">{{ customer.assigned_salesperson_name }}</span>
@@ -378,7 +378,7 @@ function refreshCustomersTable() {
                             </span>
                         </td>
                         <td>${customer.country || 'Unknown'}</td>
-                        <td>${customer.estimated_revenue ? '$' + parseInt(customer.estimated_revenue).toLocaleString() : '$0'}</td>
+                        <td>${customer.estimated_revenue ? '£' + parseInt(customer.estimated_revenue).toLocaleString() : '£0'}</td>
                         <td>
                             ${customer.assigned_salesperson_name ?
                                 `<span class="text-body">${customer.assigned_salesperson_name}</span>` :

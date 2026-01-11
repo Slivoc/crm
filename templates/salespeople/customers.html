@@ -3863,7 +3863,7 @@ function getIconForCommType(type) {
             parts.push(`MRO Score: ${data.enrichment.mro_score}/100`);
           }
           if (data.enrichment.estimated_revenue) {
-            parts.push(`Revenue: $${data.enrichment.estimated_revenue.toLocaleString()}`);
+            parts.push(`Revenue: £${data.enrichment.estimated_revenue.toLocaleString()}`);
           }
           if (parts.length) {
             summary += '\n\n' + parts.join('\n');

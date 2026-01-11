@@ -432,7 +432,7 @@ Instructions:
 - DO NOT suggest variations of existing tags
 
 Return ONLY a JSON object with these exact fields:
-- estimated_revenue (number in USD)
+- estimated_revenue (number in GBP, convert from other currencies if needed)
 - country_code (string, ISO alpha-2)
 - matched_tag_ids (array of existing tag IDs that match)
 - suggested_new_tags (array of strings for new tag suggestions)
@@ -756,7 +756,7 @@ For Operators, estimate FLEET_SIZE as the number of aircraft they operate.
 
 Return ONLY a valid JSON object with these fields:
 {{
-  "estimated_revenue": <number in USD, be accurate based on available data>,
+  "estimated_revenue": <number in GBP (British Pounds), convert from other currencies if needed>,
   "country_code": "<ISO alpha-2 country code of headquarters>",
   "company_type_ids": [<array of NUMERIC IDs from the company types list above, e.g. [1, 2]>],
   "matched_tag_ids": [<array of NUMERIC IDs from the industry tags list above, e.g. [5, 12]>],

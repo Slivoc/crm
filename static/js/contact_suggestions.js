@@ -38,8 +38,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const formatCurrency = (value) => {
     const num = Number(value || 0);
-    if (!Number.isFinite(num)) return 'GBP 0';
-    return `GBP ${num.toLocaleString('en-GB', { maximumFractionDigits: 0 })}`;
+    if (!Number.isFinite(num)) return '£0';
+    return `£${num.toLocaleString('en-GB', { maximumFractionDigits: 0 })}`;
   };
 
   const escapeHtml = (value) => {

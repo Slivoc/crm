@@ -17,7 +17,7 @@
                 {% endif %}
             </h5>
             <p class="mb-1">{{ insight.description }}</p>
-            <small class="text-muted">Estimated Revenue: ${{ "{:,}".format(insight.estimated_revenue|default(0)|int) }}</small>
+            <small class="text-muted">Estimated Revenue: £{{ "{:,}".format(insight.estimated_revenue|default(0)|int) }}</small>
         </div>
         <button type="button" class="btn btn-primary"
             onclick='openCustomerModal({
