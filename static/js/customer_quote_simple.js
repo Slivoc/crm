@@ -1276,20 +1276,27 @@ document.addEventListener('DOMContentLoaded', function() {
             btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending...';
 
             try {
-                const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/send-email`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
+                const isReply = Boolean(replyToMessageId);
+                const endpoint = isReply
+                    ? '/emails/graph/reply'
+                    : `/customer-quoting/parts-lists/${LIST_ID}/customer-quote/send-email`;
+                const payload = isReply
+                    ? { message_id: replyToMessageId, html_body: bodyHtml }
+                    : {
                         subject: subject,
                         body_html: bodyHtml,
                         to_emails: toEmails,
                         cc_emails: ccEmails,
                         reply_to_message_id: replyToMessageId
-                    })
+                    };
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
                 });
                 const result = await response.json();
                 if (!response.ok || !result.success) {
-                    throw new Error(result.message || 'Failed to send email');
+                    throw new Error(result.error || result.message || 'Failed to send email');
                 }
                 btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Sent!';
                 btn.classList.remove('btn-success');
