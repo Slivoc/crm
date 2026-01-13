@@ -520,14 +520,39 @@ def part_number_search():
     base_part_number = create_base_part_number(query)  # Assuming you have this function to strip the part number
 
     search_query = '''
-        SELECT base_part_number, part_number 
-        FROM part_numbers 
+        SELECT
+            pn.base_part_number,
+            pn.part_number,
+            pn.system_part_number,
+            pn.stock,
+            pc.category_name,
+            COALESCE(pm.manufacturers, '') AS manufacturers
+        FROM part_numbers pn
+        LEFT JOIN part_categories pc ON pn.category_id = pc.category_id
+        LEFT JOIN (
+            SELECT
+                pm.base_part_number,
+                STRING_AGG(DISTINCT m.name, ', ' ORDER BY m.name) AS manufacturers
+            FROM part_manufacturers pm
+            JOIN manufacturers m ON m.id = pm.manufacturer_id
+            GROUP BY pm.base_part_number
+        ) pm ON pm.base_part_number = pn.base_part_number
         WHERE base_part_number LIKE ? OR part_number LIKE ?
         LIMIT 5
     '''
     results = db_execute(search_query, (f'%{base_part_number}%', f'%{query}%'), fetch='all') or []
 
-    return jsonify([{'base_part_number': row['base_part_number'], 'part_number': row['part_number']} for row in results])
+    return jsonify([
+        {
+            'base_part_number': row['base_part_number'],
+            'part_number': row['part_number'],
+            'system_part_number': row.get('system_part_number'),
+            'stock': row.get('stock'),
+            'category_name': row.get('category_name'),
+            'manufacturers': row.get('manufacturers', ''),
+        }
+        for row in results
+    ])
 
 
 @parts_bp.route('/add_part_alternative', methods=['POST'])

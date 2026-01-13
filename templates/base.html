@@ -1413,17 +1413,35 @@ function openAddCustomerModal(customerName = null) {
                             resultDropdown.empty();  // Clear previous results
 
                             if (data.length > 0) {
-                                // Display only part_number but use base_part_number for the href link
                                 data.forEach(function(item) {
+                                    var metadata = [];
+                                    if (item.manufacturers) {
+                                        metadata.push(item.manufacturers);
+                                    }
+                                    if (item.system_part_number) {
+                                        metadata.push('System: ' + item.system_part_number);
+                                    }
+                                    if (item.category_name) {
+                                        metadata.push('Category: ' + item.category_name);
+                                    }
+                                    if (item.stock !== null && item.stock !== undefined) {
+                                        metadata.push('Stock: ' + item.stock);
+                                    }
+                                    var metadataHtml = metadata.length > 0
+                                        ? '<div class="text-muted" style="font-size: 0.75rem;">' + metadata.join(' • ') + '</div>'
+                                        : '';
                                     resultDropdown.append(
-                                        '<li class="nav-item">' +
-                                        '<a class="nav-link" href="/parts/' + item.base_part_number + '">' +
-                                        item.part_number + '</a>' +
+                                        '<li class="list-group-item list-group-item-action p-2">' +
+                                        '<a class="text-decoration-none text-dark d-block" href="/parts/' + item.base_part_number + '">' +
+                                        '<div class="fw-semibold">' + item.part_number + '</div>' +
+                                        '<div class="text-muted" style="font-size: 0.7rem;">Base: ' + item.base_part_number + '</div>' +
+                                        metadataHtml +
+                                        '</a>' +
                                         '</li>'
                                     );
                                 });
                             } else {
-                                resultDropdown.append('<li class="nav-item"><a class="nav-link disabled">No results found</a></li>');
+                                resultDropdown.append('<li class="list-group-item text-muted">No results found</li>');
                             }
                         }
                     });
