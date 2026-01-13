@@ -976,6 +976,7 @@
 {% endblock %}
 
 {% block scripts %}
+{{ super() }}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script type="module">
     import ChartUtils from '{{ url_for("static", filename="js/chart-utils.js") }}';
