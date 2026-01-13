@@ -1418,9 +1418,7 @@ function openAddCustomerModal(customerName = null) {
                                     if (item.manufacturers) {
                                         metadata.push(item.manufacturers);
                                     }
-                                    if (item.system_part_number) {
-                                        metadata.push('System: ' + item.system_part_number);
-                                    }
+                                    metadata.push(`Approvals: ${item.approvals_count || 0}`);
                                     if (item.category_name) {
                                         metadata.push('Category: ' + item.category_name);
                                     }
@@ -1434,7 +1432,6 @@ function openAddCustomerModal(customerName = null) {
                                         '<li class="list-group-item list-group-item-action p-2">' +
                                         '<a class="text-decoration-none text-dark d-block" href="/parts/' + item.base_part_number + '">' +
                                         '<div class="fw-semibold">' + item.part_number + '</div>' +
-                                        '<div class="text-muted" style="font-size: 0.7rem;">Base: ' + item.base_part_number + '</div>' +
                                         metadataHtml +
                                         '</a>' +
                                         '</li>'

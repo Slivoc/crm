@@ -526,7 +526,8 @@ def part_number_search():
             pn.system_part_number,
             pn.stock,
             pc.category_name,
-            COALESCE(pm.manufacturers, '') AS manufacturers
+            COALESCE(pm.manufacturers, '') AS manufacturers,
+            COALESCE(ma.approvals_count, 0) AS approvals_count
         FROM part_numbers pn
         LEFT JOIN part_categories pc ON pn.category_id = pc.category_id
         LEFT JOIN (
@@ -537,7 +538,13 @@ def part_number_search():
             JOIN manufacturers m ON m.id = pm.manufacturer_id
             GROUP BY pm.base_part_number
         ) pm ON pm.base_part_number = pn.base_part_number
-        WHERE base_part_number LIKE ? OR part_number LIKE ?
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS approvals_count
+            FROM manufacturer_approvals ma
+            WHERE ma.airbus_material_base = pn.base_part_number
+               OR ma.manufacturer_part_number_base = pn.base_part_number
+        ) ma ON TRUE
+        WHERE pn.base_part_number LIKE ? OR pn.part_number LIKE ?
         LIMIT 5
     '''
     results = db_execute(search_query, (f'%{base_part_number}%', f'%{query}%'), fetch='all') or []
@@ -550,6 +557,7 @@ def part_number_search():
             'stock': row.get('stock'),
             'category_name': row.get('category_name'),
             'manufacturers': row.get('manufacturers', ''),
+            'approvals_count': row.get('approvals_count', 0),
         }
         for row in results
     ])

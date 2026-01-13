@@ -103,23 +103,23 @@
 
                             <div class="workspace-notifications">
                                 {% if current_user.id in workspace.member_ids %}
-                                    {% set pref = None %}
+                                    {% set pref_ns = namespace(value=None) %}
                                     {% for p in notification_prefs %}
                                         {% if p.workspace_id == workspace.id %}
-                                            {% set pref = p %}
+                                            {% set pref_ns.value = p %}
                                         {% endif %}
                                     {% endfor %}
                                     
                                     <h6 class="mb-3">My Notifications</h6>
                                     <form class="notification-pref-form" data-workspace-id="{{ workspace.id }}">
                                         <div class="form-check mb-2">
-                                            <input class="form-check-input" type="checkbox" id="notify-tickets-{{ workspace.id }}" name="notify_ticket_assignments" value="1" {% if pref and pref.notify_ticket_assignments %}checked{% endif %}>
+                                            <input class="form-check-input" type="checkbox" id="notify-tickets-{{ workspace.id }}" name="notify_ticket_assignments" value="1" {% if pref_ns.value and pref_ns.value.notify_ticket_assignments %}checked{% endif %}>
                                             <label class="form-check-label small" for="notify-tickets-{{ workspace.id }}">
                                                 Notify for new tickets
                                             </label>
                                         </div>
                                         <div class="form-check mb-3">
-                                            <input class="form-check-input" type="checkbox" id="notify-tasks-{{ workspace.id }}" name="notify_task_assignments" value="1" {% if pref and pref.notify_task_assignments %}checked{% endif %}>
+                                            <input class="form-check-input" type="checkbox" id="notify-tasks-{{ workspace.id }}" name="notify_task_assignments" value="1" {% if pref_ns.value and pref_ns.value.notify_task_assignments %}checked{% endif %}>
                                             <label class="form-check-label small" for="notify-tasks-{{ workspace.id }}">
                                                 Notify for tasks/subtasks
                                             </label>
