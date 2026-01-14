@@ -440,6 +440,7 @@
 <script>
     window.PARTS_LIST_ID = {{ list_id }};
     window.OPEN_QUOTE_ID = {{ open_quote_id if open_quote_id else 'null' }};
+    window.PROPONENT_SUPPLIER_ID = {{ proponent_supplier_id if proponent_supplier_id else 'null' }};
 
     // Add listener to highlight when chosen qty differs from requested
     document.addEventListener('DOMContentLoaded', function() {
@@ -547,8 +548,8 @@
                 </div>
 
                 <div class="card border-primary mb-3" id="pdf-drop-zone" style="border-style: dashed; background:#f8f9ff;">  <div class="card-body text-center py-5">
-    <i class="bi bi-file-earmark-pdf display-4 text-primary mb-3"></i>
-    <p class="lead">Drag & drop supplier PDF quote here<br>or click to select</p>
+    <i class="bi bi-file-earmark-pdf display-4 text-primary mb-3" id="quote-drop-icon"></i>
+    <p class="lead" id="quote-drop-title">Drag & drop supplier PDF quote here<br>or click to select</p>
     <input type="file" accept=".pdf" id="pdf-upload-input" style="display:none;">
   </div>
 </div>

@@ -2464,11 +2464,23 @@ document.addEventListener('DOMContentLoaded', function() {
             `;
         }
 
+        html += `
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-2" data-notification-dismiss="${notification.id}">
+                Dismiss
+            </button>
+        `;
+
         html += '</div>';
         toast.innerHTML = html;
         const closeButton = toast.querySelector('.btn-close');
         if (closeButton) {
             closeButton.addEventListener('click', () => {
+                dismissNotification(notification.id, toast);
+            });
+        }
+        const dismissButton = toast.querySelector('[data-notification-dismiss]');
+        if (dismissButton) {
+            dismissButton.addEventListener('click', () => {
                 dismissNotification(notification.id, toast);
             });
         }

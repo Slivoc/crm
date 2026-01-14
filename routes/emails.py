@@ -1321,6 +1321,30 @@ def send_graph_email(subject, html_body, to_emails, *, cc_emails=None, bcc_email
     return {"success": True}
 
 
+def _merge_graph_reply_body(reply_html, draft_html):
+    reply_html = reply_html or ""
+    draft_html = draft_html or ""
+    if not draft_html:
+        return reply_html
+    if not reply_html:
+        return draft_html
+    trimmed = reply_html.strip()
+    if trimmed and trimmed in draft_html:
+        return draft_html
+    try:
+        draft_soup = BeautifulSoup(draft_html, "html.parser")
+        body = draft_soup.body
+        if body:
+            reply_soup = BeautifulSoup(reply_html, "html.parser")
+            nodes = reply_soup.body.contents if reply_soup.body else reply_soup.contents
+            for node in reversed(list(nodes)):
+                body.insert(0, node)
+            return str(draft_soup)
+    except Exception:
+        pass
+    return f"{reply_html}<br><br>{draft_html}"
+
+
 def send_graph_reply(message_id, html_body, *, reply_all=False, user_id=None):
     if not message_id:
         return {"success": False, "error": "Message ID is required for reply."}
@@ -1369,11 +1393,17 @@ def send_graph_reply(message_id, html_body, *, reply_all=False, user_id=None):
     if not draft_id:
         return {"success": False, "error": "Reply draft was not created."}
 
+    # Preserve the original reply block so the thread looks like a reply in Outlook.
+    draft_content = ""
+    if isinstance(draft_body, dict):
+        draft_content = (draft_body.get("body") or {}).get("content") or ""
+    merged_body = _merge_graph_reply_body(html_body, draft_content)
+
     safe_draft_id = quote(draft_id, safe="")
     patch_resp = requests.patch(
         f"https://graph.microsoft.com/v1.0/me/messages/{safe_draft_id}",
         headers=headers,
-        json={"body": {"contentType": "HTML", "content": html_body}},
+        json={"body": {"contentType": "HTML", "content": merged_body}},
         timeout=20,
     )
     if patch_resp.status_code >= 400:

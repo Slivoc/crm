@@ -121,6 +121,14 @@ def supplier_portal_home():
                 if user_id:
                     monroe_settings['user_settings'] = _get_user_supplier_settings(cur, user_id, 'monroe')
 
+        proponent_settings = {}
+        proponent_supplier_id = _get_supplier_setting(cur, 'proponent_supplier_id')
+        if proponent_supplier_id:
+            cur.execute("SELECT id, name FROM suppliers WHERE id = ?", (proponent_supplier_id,))
+            supplier = cur.fetchone()
+            if supplier:
+                proponent_settings['supplier'] = dict(supplier)
+
         # Get all suppliers for dropdown
         cur.execute("SELECT id, name FROM suppliers ORDER BY name")
         all_suppliers = [dict(row) for row in cur.fetchall()]
@@ -134,6 +142,7 @@ def supplier_portal_home():
 
         return render_template('supplier_portal.html',
                              monroe_settings=monroe_settings,
+                             proponent_settings=proponent_settings,
                              all_suppliers=all_suppliers,
                              breadcrumbs=breadcrumbs)
 
@@ -146,9 +155,9 @@ def supplier_portal_home():
 @login_required
 def supplier_settings(supplier_key):
     """
-    Get or set supplier settings (currently supports 'monroe').
+    Get or set supplier settings (currently supports 'monroe' and 'proponent').
     """
-    if supplier_key not in ['monroe']:
+    if supplier_key not in ['monroe', 'proponent']:
         return jsonify(success=False, message="Unknown supplier"), 400
 
     try:
@@ -166,8 +175,10 @@ def supplier_settings(supplier_key):
             if supplier_id:
                 _set_supplier_setting(cur, f'{supplier_key}_supplier_id', supplier_id)
 
-            # User-level settings
-            if user_id and (auto_search_new_parts is not None or auto_create_supplier_offer is not None):
+            # User-level settings (Monroe only)
+            if supplier_key == 'monroe' and user_id and (
+                auto_search_new_parts is not None or auto_create_supplier_offer is not None
+            ):
                 _set_user_supplier_settings(
                     cur,
                     user_id,
@@ -191,7 +202,7 @@ def supplier_settings(supplier_key):
 
         # Get user-specific settings if user is logged in
         user_settings = {}
-        if user_id:
+        if user_id and supplier_key == 'monroe':
             user_settings = _get_user_supplier_settings(cur, user_id, supplier_key)
 
         cur.execute("SELECT id, name FROM suppliers ORDER BY name")

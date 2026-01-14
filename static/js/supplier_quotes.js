@@ -7,6 +7,59 @@ let showSentOnly = false;
 let partNumberFilterValue = '';
 let emailedSuppliersCache = null;
 
+function getProponentSupplierId() {
+    const id = parseInt(window.PROPONENT_SUPPLIER_ID, 10);
+    return Number.isFinite(id) ? id : null;
+}
+
+function getSelectedSupplierId() {
+    const value = document.getElementById('quote-supplier-select')?.value;
+    const id = parseInt(value, 10);
+    return Number.isFinite(id) ? id : null;
+}
+
+function isProponentSupplierSelected() {
+    const proponentId = getProponentSupplierId();
+    const selectedId = getSelectedSupplierId();
+    return !!proponentId && selectedId === proponentId;
+}
+
+function getQuoteUploadConfig() {
+    const proponent = isProponentSupplierSelected();
+    return {
+        isProponent: proponent,
+        accept: proponent ? '.xlsx' : '.pdf',
+        label: proponent ? 'XLSX' : 'PDF',
+        endpoint: proponent ? '/parts_list/extract-quote-from-xlsx' : '/parts_list/extract-quote-from-pdf'
+    };
+}
+
+function updateQuoteDropZoneUI() {
+    const dropZone = document.getElementById('pdf-drop-zone');
+    const fileInput = document.getElementById('pdf-upload-input');
+    if (!dropZone || !fileInput) return;
+
+    const config = getQuoteUploadConfig();
+    fileInput.accept = config.accept;
+
+    const icon = dropZone.querySelector('#quote-drop-icon');
+    if (icon) {
+        icon.classList.remove('bi-file-earmark-pdf', 'bi-file-earmark-spreadsheet');
+        icon.classList.add(config.isProponent ? 'bi-file-earmark-spreadsheet' : 'bi-file-earmark-pdf');
+    }
+
+    const title = dropZone.querySelector('#quote-drop-title');
+    if (title) {
+        if (title.tagName === 'P') {
+            title.innerHTML = config.isProponent
+                ? 'Drag & drop supplier XLSX quote here<br>or click to select'
+                : 'Drag & drop supplier PDF quote here<br>or click to select';
+        } else {
+            title.textContent = config.isProponent ? 'Drop XLSX Quote Here' : 'Drop PDF Quote Here';
+        }
+    }
+}
+
 function noBidCheckboxRenderer(instance, td, row, col, prop, value, cellProperties) {
     Handsontable.dom.empty(td);
     const checked = !!value;
@@ -136,41 +189,54 @@ function initializePdfDropZone() {
 
     if (!dropZone || !fileInput) return;
 
-    // Drag events
-    ['dragover', 'dragenter'].forEach(evt => {
-        dropZone.addEventListener(evt, e => {
-            e.preventDefault();
-            e.stopPropagation();
-            dropZone.classList.add('drag-over');
-        });
-    });
+    updateQuoteDropZoneUI();
 
-    ['dragleave', 'dragend', 'drop'].forEach(evt => {
-        dropZone.addEventListener(evt, e => {
-            e.preventDefault();
-            e.stopPropagation();
-            dropZone.classList.remove('drag-over');
-        });
-    });
+    dropZone.ondragover = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add('drag-over');
+    };
+    dropZone.ondragenter = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add('drag-over');
+    };
+    dropZone.ondragleave = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('drag-over');
+    };
+    dropZone.ondragend = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('drag-over');
+    };
+    dropZone.ondrop = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('drag-over');
 
-    // Handle drop
-    dropZone.addEventListener('drop', e => {
         const file = e.dataTransfer.files[0];
-        if (file && file.type === 'application/pdf') {
-            uploadAndExtractPdf(file);
+        const config = getQuoteUploadConfig();
+        if (file && isValidQuoteFile(file, config)) {
+            uploadAndExtractQuoteFile(file, config);
         } else {
-            showToast('Please drop a PDF file', 'warning');
+            showToast(`Please drop a ${config.label} file`, 'warning');
         }
-    });
+    };
 
-    // Handle click to browse
-    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.onclick = () => fileInput.click();
 
-    fileInput.addEventListener('change', () => {
+    fileInput.onchange = () => {
         if (fileInput.files[0]) {
-            uploadAndExtractPdf(fileInput.files[0]);
+            const config = getQuoteUploadConfig();
+            if (isValidQuoteFile(fileInput.files[0], config)) {
+                uploadAndExtractQuoteFile(fileInput.files[0], config);
+            } else {
+                showToast(`Please select a ${config.label} file`, 'warning');
+            }
         }
-    });
+    };
 
     ensureQuoteLinesToolbar();
     applyVisibilityFilters();
@@ -262,7 +328,16 @@ function applyVisibilityFilters() {
     }
 }
 
-function uploadAndExtractPdf(file) {
+function isValidQuoteFile(file, config) {
+    const name = (file.name || '').toLowerCase();
+    if (config.isProponent) {
+        return name.endsWith('.xlsx') ||
+            file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    }
+    return name.endsWith('.pdf') || file.type === 'application/pdf';
+}
+
+function uploadAndExtractQuoteFile(file, config) {
     // Show loading state
     const dropZone = document.getElementById('pdf-drop-zone');
     const originalHTML = dropZone.innerHTML;
@@ -272,8 +347,8 @@ function uploadAndExtractPdf(file) {
             <div class="spinner-border text-primary mb-3" role="status">
                 <span class="visually-hidden">Loading...</span>
             </div>
-            <h5 class="mb-2">Processing PDF...</h5>
-            <p class="text-muted mb-0">Extracting quote data with AI</p>
+            <h5 class="mb-2">Processing ${config.label}...</h5>
+            <p class="text-muted mb-0">Extracting quote data</p>
         </div>
     `;
 
@@ -284,16 +359,16 @@ function uploadAndExtractPdf(file) {
         formData.append('list_id', window.PARTS_LIST_ID);
     }
 
-    fetch('/parts_list/extract-quote-from-pdf', {
+    fetch(config.endpoint, {
         method: 'POST',
         body: formData
     })
     .then(r => r.json())
     .then(data => {
-        console.log('extract-quote-from-pdf response:', data);
+        console.log('extract-quote response:', data);
 
         if (!data.success) {
-            showToast('Error: ' + (data.message || 'PDF extraction failed'), 'danger');
+            showToast('Error: ' + (data.message || `${config.label} extraction failed`), 'danger');
             dropZone.innerHTML = originalHTML;
             initializePdfDropZone(); // Re-initialize
             return;
@@ -303,7 +378,7 @@ function uploadAndExtractPdf(file) {
         dropZone.innerHTML = `
             <div class="card-body text-center py-5">
                 <i class="bi bi-check-circle display-3 text-success mb-3"></i>
-                <h5 class="mb-2">PDF Processed!</h5>
+                <h5 class="mb-2">${config.label} Processed!</h5>
                 <p class="text-muted mb-0">Quote data extracted successfully</p>
             </div>
         `;
@@ -321,9 +396,9 @@ function uploadAndExtractPdf(file) {
 
         if (Array.isArray(extractedLines) && extractedLines.length > 0) {
             applyExtractedDataToTable(extractedLines);
-            showToast(`AI extracted ${extractedLines.length} lines from PDF!`, 'success');
+            showToast(`AI extracted ${extractedLines.length} lines from ${config.label}!`, 'success');
         } else {
-            showToast('PDF processed but no quoted parts were found', 'warning');
+            showToast(`${config.label} processed but no quoted parts were found`, 'warning');
         }
 
         // Reset drop zone after 3 seconds
@@ -498,11 +573,13 @@ function loadSuppliersForQuote() {
             currentSupplierId = parseInt(data.id);
             initializeEmptyQuoteLines(currentSupplierId);
         }
+        updateQuoteDropZoneUI();
     }).on('select2:clear', function () {
         if (!currentQuoteId) {
             currentSupplierId = null;
             initializeEmptyQuoteLines();
         }
+        updateQuoteDropZoneUI();
     });
 
     initializeEmailedSupplierSelect();
@@ -558,11 +635,13 @@ function initializeQuickQuoteSuppliers() {
             currentSupplierId = parseInt(data.id);
             initializeEmptyQuoteLines(currentSupplierId);
         }
+        updateQuoteDropZoneUI();
     }).on('select2:clear', function () {
         if (!currentQuoteId) {
             currentSupplierId = null;
             initializeEmptyQuoteLines();
         }
+        updateQuoteDropZoneUI();
     });
 
     initializeEmailedSupplierSelect();
@@ -582,6 +661,7 @@ function initializeQuickQuoteSuppliers() {
                     // Trigger change to update Select2
                     $supplierSelect.trigger('change');
                     currentSupplierId = supplier.id;
+                    updateQuoteDropZoneUI();
 
                     // Set the currency AFTER Select2 is fully initialized
                     setTimeout(() => {
@@ -643,6 +723,7 @@ function initializeEmailedSupplierSelect() {
             supplierSelect.val(supplierId);
         }
         supplierSelect.trigger('change');
+        updateQuoteDropZoneUI();
 
         if (currencyId) {
             const currencySelect = document.getElementById('quote-currency-select');
@@ -730,6 +811,8 @@ function populateQuoteForm(quote) {
     if (notesInput) {
         notesInput.value = quote.notes || '';
     }
+
+    updateQuoteDropZoneUI();
 }
 
 function initializeEmptyQuoteLines(supplierId = null) {

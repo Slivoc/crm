@@ -2609,6 +2609,17 @@ def parts_list_costing(list_id):
             fetch='all',
         )
 
+        proponent_supplier_id = None
+        proponent_setting = db_execute(
+            "SELECT value FROM app_settings WHERE key = 'proponent_supplier_id'",
+            fetch='one',
+        )
+        if proponent_setting and proponent_setting.get('value'):
+            try:
+                proponent_supplier_id = int(proponent_setting['value'])
+            except (TypeError, ValueError):
+                proponent_supplier_id = None
+
         # Calculate stats
         total_lines = len(lines)
         lines_with_cost = sum(1 for l in lines if l['chosen_cost'] is not None)
@@ -2647,6 +2658,7 @@ def parts_list_costing(list_id):
                                lines_without_cost=lines_without_cost,
                                lines_fully_in_stock=lines_fully_in_stock,
                                total_cost=f"£{total_cost:.2f}",
+                               proponent_supplier_id=proponent_supplier_id,
                                breadcrumbs=breadcrumbs)
 
     except Exception as e:
@@ -5654,6 +5666,236 @@ def extract_quote_from_pdf():
         logging.exception("PDF extraction failed")
         return jsonify(success=False, message="Failed to process PDF: " + str(e))
 
+@parts_list_bp.route('/extract-quote-from-xlsx', methods=['POST'])
+def extract_quote_from_xlsx():
+    """
+    Upload XLSX -> parse Proponent export -> return lines ready for Handsontable
+    """
+    if 'file' not in request.files:
+        return jsonify(success=False, message="No file uploaded")
+
+    file = request.files['file']
+    if not file.filename.lower().endswith('.xlsx'):
+        return jsonify(success=False, message="File must be an XLSX")
+
+    list_id = request.form.get('list_id', type=int)
+
+    def _normalize_part_number(value):
+        if not value:
+            return ''
+        return re.sub(r'[^A-Z0-9]', '', str(value).upper())
+
+    def _parse_number(value):
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        text = str(value).strip()
+        if not text:
+            return None
+        if 'no bid' in text.lower():
+            return None
+        match = re.search(r'-?\d+(?:\.\d+)?', text.replace(',', ''))
+        return float(match.group(0)) if match else None
+
+    def _parse_int(value):
+        number = _parse_number(value)
+        if number is None:
+            return None
+        return int(round(number))
+
+    def _parse_qty_break(value):
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            num = int(value)
+            return (num, num)
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith('+'):
+            minimum = _parse_int(text[:-1])
+            return (minimum, None) if minimum is not None else None
+        match = re.match(r'^\s*(\d+)\s*[-–]\s*(\d+)\s*$', text)
+        if match:
+            return (int(match.group(1)), int(match.group(2)))
+        single = _parse_int(text)
+        if single is not None:
+            return (single, single)
+        return None
+
+    def _choose_price_break(breaks, target_qty):
+        if not breaks:
+            return None
+        if target_qty is None:
+            return breaks[0]['price']
+        for item in breaks:
+            minimum = item['min']
+            maximum = item['max']
+            if minimum is None:
+                continue
+            if maximum is None and target_qty >= minimum:
+                return item['price']
+            if maximum is not None and minimum <= target_qty <= maximum:
+                return item['price']
+        eligible = [b for b in breaks if b['min'] is not None and b['min'] <= target_qty]
+        if eligible:
+            return max(eligible, key=lambda b: b['min'])['price']
+        return min(breaks, key=lambda b: b['min'] if b['min'] is not None else 0)['price']
+
+    try:
+        import openpyxl
+
+        workbook = openpyxl.load_workbook(file, data_only=True)
+        sheet = workbook.active
+        rows = list(sheet.iter_rows(values_only=True))
+
+        if not rows:
+            return jsonify(success=False, message="No rows found in XLSX")
+
+        header_row = rows[0]
+        header_map = {}
+        for idx, value in enumerate(header_row):
+            if value:
+                header_map[str(value).strip().lower()] = idx
+
+        def _col(name):
+            return header_map.get(name.lower())
+
+        requested_part_idx = _col('requested part')
+        quoted_part_idx = _col('quoted part')
+        requested_qty_idx = _col('requested qty')
+        quoted_qty_idx = _col('quoted qty')
+        unit_price_idx = _col('unit price')
+        moq_idx = _col('moq')
+        qty_available_idx = _col('qty available')
+        lead_time_idx = _col('out of stock lead time')
+        certs_idx = _col('certs')
+        notes_idx = _col('notes')
+
+        breaks = []
+        for i in range(1, 8):
+            qty_idx = _col(f'qty break {i}')
+            price_idx = _col(f'price {i}')
+            if qty_idx is not None and price_idx is not None:
+                breaks.append((qty_idx, price_idx))
+
+        if requested_part_idx is None:
+            return jsonify(success=False, message="Missing 'Requested Part' column in XLSX")
+
+        requested_qty_by_part = {}
+        if list_id:
+            lines = db_execute(
+                """
+                SELECT customer_part_number, quantity
+                FROM parts_list_lines
+                WHERE parts_list_id = ?
+                """,
+                (list_id,),
+                fetch='all',
+            ) or []
+            for line in lines:
+                key = _normalize_part_number(line['customer_part_number'])
+                if not key:
+                    continue
+                current = requested_qty_by_part.get(key)
+                qty = _parse_int(line['quantity'])
+                if qty is None:
+                    continue
+                requested_qty_by_part[key] = max(current, qty) if current is not None else qty
+
+        best_by_part = {}
+        for row in rows[1:]:
+            requested_part = row[requested_part_idx] if requested_part_idx is not None else None
+            if not requested_part:
+                continue
+            requested_part_text = str(requested_part).strip()
+            if requested_part_text.lower().startswith('company name:'):
+                continue
+
+            quoted_part = row[quoted_part_idx] if quoted_part_idx is not None else None
+            requested_qty = _parse_int(row[requested_qty_idx]) if requested_qty_idx is not None else None
+            quoted_qty = _parse_int(row[quoted_qty_idx]) if quoted_qty_idx is not None else None
+            qty_available = _parse_int(row[qty_available_idx]) if qty_available_idx is not None else None
+            unit_price = _parse_number(row[unit_price_idx]) if unit_price_idx is not None else None
+            moq = _parse_int(row[moq_idx]) if moq_idx is not None else None
+            lead_time_days = _parse_int(row[lead_time_idx]) if lead_time_idx is not None else None
+
+            if qty_available is None or qty_available <= 0:
+                continue
+
+            normalized_part = _normalize_part_number(requested_part_text)
+            target_qty = requested_qty_by_part.get(normalized_part, requested_qty)
+            if target_qty is None:
+                target_qty = quoted_qty
+
+            price_breaks = []
+            for qty_idx, price_idx in breaks:
+                qty_range = _parse_qty_break(row[qty_idx])
+                price_value = _parse_number(row[price_idx])
+                if qty_range and price_value is not None:
+                    price_breaks.append({
+                        'min': qty_range[0],
+                        'max': qty_range[1],
+                        'price': price_value
+                    })
+
+            selected_price = _choose_price_break(price_breaks, target_qty) if price_breaks else unit_price
+            if selected_price is None:
+                continue
+            notes_parts = []
+            certs_value = row[certs_idx] if certs_idx is not None else None
+            notes_value = row[notes_idx] if notes_idx is not None else None
+            if certs_value:
+                notes_parts.append(str(certs_value).strip())
+            if notes_value:
+                notes_parts.append(str(notes_value).strip())
+
+            line_entry = {
+                'match_part_number': requested_part_text,
+                'part_number': str(quoted_part).strip() if quoted_part else requested_part_text,
+                'quantity': quoted_qty if quoted_qty is not None else requested_qty,
+                'qty_available': qty_available,
+                'purchase_increment': None,
+                'moq': moq,
+                'price': selected_price,
+                'lead_time_days': lead_time_days,
+                'condition': '',
+                'certifications': str(certs_value).strip() if certs_value else '',
+                'notes': "\n".join(notes_parts).strip(),
+                '_exact_match': _normalize_part_number(requested_part_text) == _normalize_part_number(quoted_part)
+            }
+
+            existing = best_by_part.get(normalized_part)
+            if not existing:
+                best_by_part[normalized_part] = line_entry
+            else:
+                replace = False
+                if line_entry['_exact_match'] and not existing.get('_exact_match'):
+                    replace = True
+                elif line_entry.get('_exact_match') == existing.get('_exact_match'):
+                    if line_entry['price'] is not None and existing.get('price') is not None:
+                        replace = line_entry['price'] < existing['price']
+                    if line_entry['price'] == existing.get('price'):
+                        replace = (line_entry.get('qty_available') or 0) > (existing.get('qty_available') or 0)
+                if replace:
+                    best_by_part[normalized_part] = line_entry
+
+        extracted_lines = []
+        for line_entry in best_by_part.values():
+            line_entry.pop('_exact_match', None)
+            extracted_lines.append(line_entry)
+
+        return jsonify(
+            success=True,
+            extracted_lines=extracted_lines,
+            message=f"Extracted {len(extracted_lines)} lines from XLSX"
+        )
+
+    except Exception as e:
+        logging.exception("XLSX extraction failed")
+        return jsonify(success=False, message="Failed to process XLSX: " + str(e))
+
 @parts_list_bp.route('/extract-pdf-text', methods=['POST'])
 def extract_pdf_text():
     if 'file' not in request.files:
@@ -5782,6 +6024,16 @@ def quick_supplier_quote(list_id, supplier_id=None):
         # All suppliers + currencies for dropdowns
         suppliers = _execute_with_cursor(cur, "SELECT id, name FROM suppliers ORDER BY name").fetchall()
         currencies = _execute_with_cursor(cur, "SELECT id, currency_code FROM currencies").fetchall()
+        proponent_setting = _execute_with_cursor(
+            cur,
+            "SELECT value FROM app_settings WHERE key = 'proponent_supplier_id'"
+        ).fetchone()
+        proponent_supplier_id = None
+        if proponent_setting and proponent_setting.get('value'):
+            try:
+                proponent_supplier_id = int(proponent_setting['value'])
+            except (TypeError, ValueError):
+                proponent_supplier_id = None
 
     return render_template('quick_supplier_quote.html',
                            list_id=list_id,
@@ -5794,6 +6046,7 @@ def quick_supplier_quote(list_id, supplier_id=None):
                            currencies=[dict(c) for c in currencies],
                            email_message_id=email_message_id,
                            email_conversation_id=email_conversation_id,
+                           proponent_supplier_id=proponent_supplier_id,
                            cache_bust=cache_bust)
 
 

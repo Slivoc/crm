@@ -178,6 +178,9 @@
                     Email Suppliers
                 </h5>
                 <div>
+                    <button class="btn btn-sm btn-success me-2" id="emailAllSystemBtn">
+                        Email All Visible (System)
+                    </button>
                     <button class="btn btn-sm btn-outline-primary me-2" id="copyForILSBtn">
                         📋 Copy for ILS Search
                     </button>
@@ -1014,6 +1017,124 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
     // Reset file input
     e.target.value = '';
 });
+
+    function getVisibleSelectedPartsForSupplier(supplierId) {
+        const selectedParts = [];
+        document.querySelectorAll(`.part-checkbox[data-supplier-id="${supplierId}"]:checked`).forEach(cb => {
+            const row = cb.closest('.part-row');
+            if (row && row.style.display === 'none') {
+                return;
+            }
+
+            const part = {
+                part_number: cb.dataset.partNumber,
+                quantity: cb.dataset.quantity,
+                ils_quantity: cb.dataset.ilsQuantity,
+                condition: cb.dataset.condition || ''
+            };
+            const lineId = cb.dataset.lineId;
+            if (lineId) part.line_id = parseInt(lineId);
+            selectedParts.push(part);
+        });
+        return selectedParts;
+    }
+
+    async function generateSupplierEmailPayload(supplierData) {
+        const resp = await fetch('{{ url_for("parts_list.generate_supplier_email") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(supplierData)
+        });
+        return resp.json();
+    }
+
+    async function sendSupplierEmailPayload(emailData) {
+        const resp = await fetch('/parts_list/send-supplier-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                recipient_email: emailData.recipient_email,
+                subject: emailData.subject,
+                body_html: emailData.body_html
+            })
+        });
+        return resp.json();
+    }
+
+    const emailAllSystemBtn = document.getElementById('emailAllSystemBtn');
+    if (emailAllSystemBtn) {
+        emailAllSystemBtn.addEventListener('click', async function() {
+            const supplierButtons = Array.from(document.querySelectorAll('.email-supplier-btn'));
+            const suppliersToSend = [];
+
+            supplierButtons.forEach(btn => {
+                const supplierId = btn.dataset.supplierId;
+                const selectedParts = getVisibleSelectedPartsForSupplier(supplierId);
+                if (!selectedParts.length) return;
+
+                suppliersToSend.push({
+                    supplier_id: supplierId,
+                    supplier_name: btn.dataset.supplierName,
+                    contact_name: btn.dataset.contactName,
+                    contact_email: btn.dataset.contactEmail,
+                    parts: selectedParts,
+                    list_id: currentListId
+                });
+            });
+
+            if (!suppliersToSend.length) {
+                alert('No visible selected parts with supplier emails. Adjust filters or selections.');
+                return;
+            }
+
+            const totalParts = suppliersToSend.reduce((sum, supplier) => sum + supplier.parts.length, 0);
+            const confirmSend = confirm(
+                `Send ${suppliersToSend.length} system email${suppliersToSend.length === 1 ? '' : 's'} ` +
+                `covering ${totalParts} part${totalParts === 1 ? '' : 's'}?`
+            );
+            if (!confirmSend) return;
+
+            const btn = this;
+            const originalHTML = btn.innerHTML;
+            btn.disabled = true;
+
+            let sentCount = 0;
+            let failedCount = 0;
+
+            for (let i = 0; i < suppliersToSend.length; i++) {
+                const supplierData = suppliersToSend[i];
+                btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Sending ${i + 1} of ${suppliersToSend.length}...`;
+
+                try {
+                    const emailData = await generateSupplierEmailPayload(supplierData);
+                    if (!emailData.success) {
+                        throw new Error(emailData.error || 'Failed to generate email');
+                    }
+
+                    const sendResult = await sendSupplierEmailPayload(emailData);
+                    if (!sendResult.success) {
+                        throw new Error(sendResult.error || 'Failed to send email');
+                    }
+
+                    await recordEmailSent(emailData);
+                    sentCount += 1;
+                } catch (error) {
+                    console.error('Bulk send failed', supplierData, error);
+                    failedCount += 1;
+                }
+            }
+
+            btn.innerHTML = originalHTML;
+            btn.disabled = false;
+
+            if (failedCount) {
+                alert(`Sent ${sentCount} of ${suppliersToSend.length}. ${failedCount} failed — check the console for details.`);
+            } else {
+                alert(`Sent ${sentCount} email${sentCount === 1 ? '' : 's'} via system.`);
+            }
+        });
+    }
+
     // ---- Email Supplier Button ------------------------------------
     document.querySelectorAll('.email-supplier-btn').forEach(btn => {
         btn.addEventListener('click', function() {

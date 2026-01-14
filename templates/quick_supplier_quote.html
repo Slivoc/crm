@@ -140,8 +140,8 @@
         <div class="col-lg-6">
             <div class="card h-100" id="pdf-drop-zone">
                 <div class="card-body text-center py-5 d-flex flex-column justify-content-center">
-                    <i class="bi bi-file-earmark-pdf display-3 text-primary mb-3"></i>
-                    <h5 class="mb-2">Drop PDF Quote Here</h5>
+                    <i class="bi bi-file-earmark-pdf display-3 text-primary mb-3" id="quote-drop-icon"></i>
+                    <h5 class="mb-2" id="quote-drop-title">Drop PDF Quote Here</h5>
                     <p class="text-muted mb-0">Or click to browse files</p>
                     <small class="text-muted mt-2">AI will extract quote data automatically</small>
                     <input type="file" accept=".pdf" id="pdf-upload-input" style="display:none;">
@@ -199,6 +199,7 @@
     window.IS_QUICK_QUOTE = true;
     window.EMAIL_MESSAGE_ID = {{ email_message_id | tojson }};
     window.EMAIL_CONVERSATION_ID = {{ email_conversation_id | tojson }};
+    window.PROPONENT_SUPPLIER_ID = {{ proponent_supplier_id if proponent_supplier_id else 'null' }};
     {% if supplier_id %}
     window.PRESELECTED_SUPPLIER_ID = {{ supplier_id }};
     {% endif %}
