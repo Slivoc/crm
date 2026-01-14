@@ -1526,6 +1526,39 @@ document.addEventListener('DOMContentLoaded', function() {
             stockIcon = '<i class="bi bi-x-circle-fill" style="font-size: 1rem; color: #dc3545;"></i>';
         }
 
+        const stockSummaryDisplay = `
+            <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+                <span class="${stockClasses}">
+                    ${stockIcon}
+                    <span>${stockDisplay}</span>
+                </span>
+                <div style="font-weight: 600; color: ${avgStockCost !== '-' ? '#0d6efd' : '#adb5bd'}; font-size: 0.8rem;">
+                    ${avgStockCost}
+                </div>
+            </div>
+        `;
+
+        const bomGuideDisplay = `
+            <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+                <span class="badge-count ${part.bom_usage_count > 0 ? 'badge-success' : 'badge-muted'}">
+                    ${part.bom_usage_count > 0 ? part.bom_usage_count : '-'}
+                </span>
+                <div style="font-weight: 600; color: ${guidePrice !== '-' ? '#0d6efd' : '#adb5bd'}; font-size: 0.8rem;">
+                    ${guidePrice}
+                </div>
+            </div>
+        `;
+
+        const avgSalePriceDisplay = formatCurrency(part.avg_sale_price);
+        const saleSummaryDisplay = `
+            <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+                <div style="font-weight: 600; color: ${part.avg_sale_price ? '#198754' : '#adb5bd'}; font-size: 0.8rem;">
+                    ${avgSalePriceDisplay}
+                </div>
+                <div><small>${lastSaleDate}</small></div>
+            </div>
+        `;
+
         let ilsDisplay = '-';
         let ilsClickable = '';
         let ilsClickHandler = '';
@@ -1620,13 +1653,9 @@ document.addEventListener('DOMContentLoaded', function() {
     <td style="width: 80px; min-width: 80px; text-align: center; font-weight: 600; color: #495057;">
         ${part.quantity || 1}
     </td>
-    <td style="width: 120px; min-width: 120px;" class="purchasing-col">
-        <span class="${stockClasses}">
-            ${stockIcon}
-            <span>${stockDisplay}</span>
-        </span>
+    <td style="width: 170px; min-width: 170px;" class="purchasing-col">
+        ${stockSummaryDisplay}
     </td>
-    <td style="width: 150px; min-width: 150px; font-weight: 600; color: ${avgStockCost !== '-' ? '#0d6efd' : '#adb5bd'};" class="purchasing-col">${avgStockCost}</td>
     <td style="width: 100px; min-width: 100px;" class="purchasing-col">
         <span class="badge-count ${part.vq_count > 0 ? 'badge-success' : 'badge-muted'}">
             ${part.vq_count > 0 ? part.vq_count : '-'}
@@ -1669,14 +1698,8 @@ document.addEventListener('DOMContentLoaded', function() {
             ${part.so_count > 0 ? part.so_count : '-'}
         </span>
     </td>
-    <td style="width: 150px; min-width: 150px; font-weight: 600; color: ${part.avg_sale_price ? '#198754' : '#adb5bd'};" class="sales-col">${formatCurrency(part.avg_sale_price)}</td>
-    <td style="width: 140px; min-width: 140px;" class="sales-col"><small>${lastSaleDate}</small></td>
-    <td style="width: 100px; min-width: 100px;">
-        <span class="badge-count ${part.bom_usage_count > 0 ? 'badge-success' : 'badge-muted'}">
-            ${part.bom_usage_count > 0 ? part.bom_usage_count : '-'}
-        </span>
-    </td>
-    <td style="width: 150px; min-width: 150px; font-weight: 600; color: ${guidePrice !== '-' ? '#0d6efd' : '#adb5bd'};">${guidePrice}</td>
+    <td style="width: 170px; min-width: 170px;" class="sales-col">${saleSummaryDisplay}</td>
+    <td style="width: 170px; min-width: 170px;">${bomGuideDisplay}</td>
     <td style="width: 120px; min-width: 120px;">
         ${part.found && (part.bom_usage_count > 0 || part.vq_count > 0 || part.so_count > 0 || part.cq_count > 0 || part.po_count > 0 || part.stock_movement_count > 0 || part.ils_total_suppliers > 0 || part.excess_count > 0 || part.parts_list_quotes_count > 0)
             ? `<button class="btn btn-sm btn-outline-primary"

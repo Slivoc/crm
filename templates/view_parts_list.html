@@ -49,6 +49,33 @@
     background: #d1f4e0;
 }
 
+.date-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.date-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    background-color: #dc3545;
+    flex: 0 0 auto;
+}
+
+.date-dot.recent-week {
+    background-color: #198754;
+}
+
+.date-dot.recent-month {
+    background-color: #ffc107;
+}
+
+.date-indicator.date-compact {
+    font-size: 0.7rem;
+}
+
 .badge-count {
     display: inline-block; min-width: 35px; text-align: center;
     padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-weight: 600;

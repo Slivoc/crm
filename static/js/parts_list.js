@@ -174,10 +174,16 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
     });
 
     let lastSaleDate = '-';
+    let lastSaleDateRaw = null;
     if (part.so_details && part.so_details.length > 0) {
-        const dates = part.so_details.map(so => new Date(so.date_entered));
-        const latestDate = new Date(Math.max(...dates));
-        lastSaleDate = formatDate(latestDate);
+        const dates = part.so_details
+            .map(so => new Date(so.date_entered))
+            .filter(date => !Number.isNaN(date.getTime()));
+        if (dates.length > 0) {
+            const latestDate = new Date(Math.max(...dates));
+            lastSaleDate = formatDate(latestDate);
+            lastSaleDateRaw = latestDate;
+        }
     }
 
     let guidePrice = '-';
@@ -189,6 +195,7 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
     let latestVqPrice = '-';
     let latestVqSupplier = '';
     let latestVqDate = '';
+    let latestVqDateRaw = null;
     if (part.vq_details && part.vq_details.length > 0) {
         const sortedVqs = [...part.vq_details].sort((a, b) => {
             const dateA = new Date(a.entry_date);
@@ -199,6 +206,7 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         latestVqPrice = formatCurrency(latestVq.vendor_price);
         latestVqSupplier = latestVq.supplier_name || '';
         latestVqDate = formatDate(latestVq.entry_date);
+        latestVqDateRaw = latestVq.entry_date;
     }
 
     let avgStockCost = '-';
@@ -242,7 +250,7 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
 
     if (part.ils_total_suppliers > 0) {
         const latestIlsDateHtml = part.ils_latest_search_date
-            ? `<div class="mt-1"><small class="text-muted"><i class="bi bi-calendar"></i> ${formatDate(part.ils_latest_search_date)}</small></div>`
+            ? `<div class="mt-1">${formatDateIndicator(part.ils_latest_search_date, { icon: 'bi bi-calendar', className: ' date-compact' })}</div>`
             : '';
         ilsDisplay = `
             <div style="display: flex; flex-direction: column; gap: 0.25rem;">
@@ -346,6 +354,44 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         </span>`;
     }
 
+    const latestVqDateHtml = latestVqDateRaw
+        ? `<br>${formatDateIndicator(latestVqDateRaw, { icon: 'bi bi-calendar3', className: ' date-compact' })}`
+        : '';
+
+    const stockSummaryDisplay = `
+        <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+            <span class="${stockClasses}">
+                ${stockIcon}
+                <span>${stockDisplay}</span>
+            </span>
+            <div style="font-weight: 600; color: ${avgStockCost !== '-' ? '#0d6efd' : '#adb5bd'}; font-size: 0.8rem;">
+                ${avgStockCost}
+            </div>
+        </div>
+    `;
+
+    const bomGuideDisplay = `
+        <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+            <span class="badge-count ${part.bom_usage_count > 0 ? 'badge-success' : 'badge-muted'}">
+                ${part.bom_usage_count > 0 ? part.bom_usage_count : '-'}
+            </span>
+            <div style="font-weight: 600; color: ${guidePrice !== '-' ? '#0d6efd' : '#adb5bd'}; font-size: 0.8rem;">
+                ${guidePrice}
+            </div>
+        </div>
+    `;
+
+    const avgSalePriceDisplay = formatCurrency(part.avg_sale_price);
+    const lastSaleDisplay = formatDateIndicator(lastSaleDateRaw, { className: ' date-compact' });
+    const saleSummaryDisplay = `
+        <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+            <div style="font-weight: 600; color: ${part.avg_sale_price ? '#198754' : '#adb5bd'}; font-size: 0.8rem;">
+                ${avgSalePriceDisplay}
+            </div>
+            <div>${lastSaleDisplay}</div>
+        </div>
+    `;
+
     tr.innerHTML = `
         <td style="width: 60px; min-width: 60px;">${lineNumberDisplay}</td>
         <td style="width: 200px; min-width: 200px; ${isAlt ? 'padding-left: 1.2rem;' : ''}">
@@ -375,17 +421,11 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         <td style="width: 220px; min-width: 220px;">
             ${buildStatusDisplay(part)}
         </td>
-        <td style="width: 120px; min-width: 120px; cursor: ${part.stock_movement_count > 0 ? 'pointer' : 'default'};"
+        <td style="width: 170px; min-width: 170px; cursor: ${part.stock_movement_count > 0 ? 'pointer' : 'default'};"
             class="purchasing-col ${part.stock_movement_count > 0 ? 'clickable-cell' : ''}"
             ${part.stock_movement_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'stock')"` : ''}>
-            <span class="${stockClasses}">
-                ${stockIcon}
-                <span>${stockDisplay}</span>
-            </span>
+            ${stockSummaryDisplay}
         </td>
-        <td style="width: 150px; min-width: 150px; font-weight: 600; color: ${avgStockCost !== '-' ? '#0d6efd' : '#adb5bd'}; cursor: ${part.stock_movement_count > 0 ? 'pointer' : 'default'};"
-            class="purchasing-col ${part.stock_movement_count > 0 ? 'clickable-cell' : ''}"
-            ${part.stock_movement_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'stock')"` : ''}>${avgStockCost}</td>
         <td style="width: 100px; min-width: 100px; cursor: ${part.vq_count > 0 ? 'pointer' : 'default'};"
             class="purchasing-col ${part.vq_count > 0 ? 'clickable-cell' : ''}"
             ${part.vq_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'vq')"` : ''}>
@@ -399,7 +439,7 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
             <div style="font-weight: 600; color: ${latestVqPrice !== '-' ? '#0d6efd' : '#adb5bd'};">
                 ${latestVqPrice}
                 ${latestVqSupplier ? `<br><small class="text-muted" style="font-size: 0.75rem;">${escapeHtml(latestVqSupplier)}</small>` : ''}
-                ${latestVqDate !== '-' ? `<br><small class="text-muted" style="font-size: 0.7rem;"><i class="bi bi-calendar3"></i> ${latestVqDate}</small>` : ''}
+                ${latestVqDateHtml}
             </div>
         </td>
         <td style="width: 100px; min-width: 100px; cursor: ${part.po_count > 0 ? 'pointer' : 'default'};"
@@ -437,16 +477,9 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
             data-part-index="${actualIndex}">
             ${ilsDisplay}
         </td>
-        <td style="width: 100px; min-width: 100px; cursor: ${part.bom_usage_count > 0 ? 'pointer' : 'default'};"
+        <td style="width: 170px; min-width: 170px; cursor: ${part.bom_usage_count > 0 ? 'pointer' : 'default'};"
             class="purchasing-col ${part.bom_usage_count > 0 ? 'clickable-cell' : ''}"
-            ${part.bom_usage_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'bom')"` : ''}>
-            <span class="badge-count ${part.bom_usage_count > 0 ? 'badge-success' : 'badge-muted'}">
-                ${part.bom_usage_count > 0 ? part.bom_usage_count : '-'}
-            </span>
-        </td>
-        <td style="width: 150px; min-width: 150px; font-weight: 600; color: ${guidePrice !== '-' ? '#0d6efd' : '#adb5bd'}; cursor: ${part.bom_usage_count > 0 ? 'pointer' : 'default'};"
-            class="purchasing-col ${part.bom_usage_count > 0 ? 'clickable-cell' : ''}"
-            ${part.bom_usage_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'bom')"` : ''}>${guidePrice}</td>
+            ${part.bom_usage_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'bom')"` : ''}>${bomGuideDisplay}</td>
         <td style="width: 100px; min-width: 100px; cursor: ${part.cq_count > 0 ? 'pointer' : 'default'};"
     class="sales-col ${part.cq_count > 0 ? 'clickable-cell' : ''}"
     ${part.cq_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'cq')"` : ''}>
@@ -471,12 +504,9 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
                 ${part.so_count > 0 ? part.so_count : '-'}
             </span>
         </td>
-        <td style="width: 150px; min-width: 150px; font-weight: 600; color: ${part.avg_sale_price ? '#198754' : '#adb5bd'}; cursor: ${part.so_count > 0 ? 'pointer' : 'default'};"
+        <td style="width: 170px; min-width: 170px; cursor: ${part.so_count > 0 ? 'pointer' : 'default'};"
             class="sales-col ${part.so_count > 0 ? 'clickable-cell' : ''}"
-            ${part.so_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'so')"` : ''}>${formatCurrency(part.avg_sale_price)}</td>
-        <td style="width: 140px; min-width: 140px; cursor: ${part.so_count > 0 ? 'pointer' : 'default'};"
-            class="sales-col ${part.so_count > 0 ? 'clickable-cell' : ''}"
-            ${part.so_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'so')"` : ''}><small>${lastSaleDate}</small></td>
+            ${part.so_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'so')"` : ''}>${saleSummaryDisplay}</td>
     `;
     return tr;
 }
@@ -675,6 +705,45 @@ function formatDate(dateStr) {
     if (!dateStr) return '-';
     try { return new Date(dateStr).toLocaleDateString(); }
     catch (e) { return dateStr; }
+}
+
+function getRecencyClass(dateValue) {
+    if (!dateValue || dateValue === '-') return null;
+    const parsed = dateValue instanceof Date ? dateValue : new Date(dateValue);
+    if (Number.isNaN(parsed.getTime())) return null;
+
+    const now = new Date();
+    const diffMs = now - parsed;
+    const diffDays = diffMs / (1000 * 60 * 60 * 24);
+
+    if (diffDays <= 7) {
+        return 'recent-week';
+    }
+    if (diffDays <= 30) {
+        return 'recent-month';
+    }
+    return null;
+}
+
+function formatDateIndicator(dateValue, options = {}) {
+    if (!dateValue || dateValue === '-') {
+        return options.empty || '-';
+    }
+
+    const parsed = dateValue instanceof Date ? dateValue : new Date(dateValue);
+    if (Number.isNaN(parsed.getTime())) {
+        const display = options.display || formatDate(dateValue);
+        return `<small class="text-muted">${display}</small>`;
+    }
+
+    const display = options.display || formatDate(parsed);
+    const recencyClass = getRecencyClass(parsed);
+    const dotClass = recencyClass ? `date-dot ${recencyClass}` : 'date-dot';
+    const iconHtml = options.icon ? `<i class="${options.icon}"></i> ` : '';
+    const className = options.className || '';
+    const dateAttr = parsed.toISOString().slice(0, 10);
+
+    return `<small class="text-muted date-indicator${className}" data-date="${dateAttr}"><span class="${dotClass}"></span>${iconHtml}${display}</small>`;
 }
 
 function escapeHtml(text) {
