@@ -3,6 +3,29 @@
 {% block title %}Parts Lists{% endblock %}
 
 {% block content %}
+<style>
+    .date-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .date-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+        background-color: #dc3545;
+    }
+
+    .date-dot.recent-week {
+        background-color: #198754;
+    }
+
+    .date-dot.recent-month {
+        background-color: #ffc107;
+    }
+</style>
 <div class="container-fluid mt-4">
     <div class="row mb-3 align-items-center">
         <div class="col-md-6">
@@ -256,12 +279,24 @@
                             </td>
                             <td>
                                 <small class="text-muted">
-                                    {{ list.date_created.strftime('%Y-%m-%d') if list.date_created else '-' }}
+                                    {% if list.date_created %}
+                                        <span class="date-indicator" data-date="{{ list.date_created.strftime('%Y-%m-%d') }}">
+                                            {{ list.date_created.strftime('%Y-%m-%d') }}
+                                        </span>
+                                    {% else %}
+                                        -
+                                    {% endif %}
                                 </small>
                             </td>
                             <td>
                                 <small class="text-muted">
-                                    {{ list.date_modified.strftime('%Y-%m-%d') if list.date_modified else '-' }}
+                                    {% if list.date_modified %}
+                                        <span class="date-indicator" data-date="{{ list.date_modified.strftime('%Y-%m-%d') }}">
+                                            {{ list.date_modified.strftime('%Y-%m-%d') }}
+                                        </span>
+                                    {% else %}
+                                        -
+                                    {% endif %}
                                 </small>
                             </td>
                             <td class="text-end">
@@ -359,6 +394,61 @@ function filterByCustomer(customerId) {
 }
 
 let partsListDataTable = null;
+
+function getRecencyClass(dateStr) {
+    const parsed = new Date(dateStr);
+    if (Number.isNaN(parsed.getTime())) {
+        return null;
+    }
+
+    const now = new Date();
+    const diffMs = now - parsed;
+    const diffDays = diffMs / (1000 * 60 * 60 * 24);
+
+    if (diffDays <= 7) {
+        return 'recent-week';
+    }
+    if (diffDays <= 30) {
+        return 'recent-month';
+    }
+    return null;
+}
+
+function applyDateIndicators(container = document) {
+    const targets = container.querySelectorAll('[data-date]');
+
+    targets.forEach(target => {
+        const dateStr = target.dataset.date;
+        if (!dateStr) {
+            return;
+        }
+
+        if (!target.classList.contains('date-indicator')) {
+            target.classList.add('date-indicator');
+        }
+
+        if (target.querySelector('.date-dot')) {
+            return;
+        }
+
+        const dot = document.createElement('span');
+        dot.classList.add('date-dot');
+        const recencyClass = getRecencyClass(dateStr);
+        if (recencyClass) {
+            dot.classList.add(recencyClass);
+        }
+
+        target.prepend(dot);
+    });
+}
+
+function formatDateCell(dateStr) {
+    const display = dateStr ? dateStr.substring(0, 10) : '-';
+    const dataDate = dateStr ? dateStr.substring(0, 10) : '';
+    const dataAttr = dataDate ? ` data-date="${dataDate}"` : '';
+
+    return `<small class="text-muted date-indicator"${dataAttr}>${display}</small>`;
+}
 
 function applyCustomerTextFilter(term) {
     const normalized = (term || '').toLowerCase();
@@ -515,11 +605,13 @@ function searchPartsListsByPart() {
                     + '<td>' + customer + '</td>'
                     + '<td><span class="badge bg-secondary">' + status + '</span></td>'
                     + '<td class="text-center">' + (row.line_number || '') + '</td>'
-                    + '<td><small class="text-muted">' + created + '</small></td>'
-                    + '<td><small class="text-muted">' + modified + '</small></td>';
+                    + '<td>' + formatDateCell(created) + '</td>'
+                    + '<td>' + formatDateCell(modified) + '</td>';
 
                 tbody.appendChild(tr);
             });
+
+            applyDateIndicators(tbody);
         })
         .catch(error => {
             console.error('Error searching parts lists:', error);
@@ -603,12 +695,13 @@ function loadTopQuotes() {
                     <td><span class="badge bg-secondary">${row.status_name || 'Draft'}</span></td>
                     <td class="text-center">${row.quoted_lines || 0}</td>
                     <td class="text-end">${formatCurrencyGBP(quotedValue)}</td>
-                    <td><small class="text-muted">${row.date_modified ? row.date_modified.substring(0, 10) : '-'}</small></td>
+                    <td>${formatDateCell(row.date_modified)}</td>
                 `;
                 tbody.appendChild(tr);
             });
 
             totalEl.textContent = formatCurrencyGBP(totalValue);
+            applyDateIndicators(tbody);
         })
         .catch(error => {
             console.error('Error loading top quotes:', error);
@@ -655,6 +748,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+
+    applyDateIndicators();
 
     const customerSearchInput = document.getElementById('customerSearchInput');
     if (customerSearchInput) {
