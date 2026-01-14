@@ -274,11 +274,13 @@
                         <option value="all">All Parts</option>
                         <option value="no-source">No Source Data</option>
                         <option value="has-vq">Has VQ Data</option>
+                        <option value="not-quoted">Not Yet Quoted</option>
                         <option value="has-po">Has PO Data</option>
                         <option value="has-stock">Has Stock</option>
                         <option value="has-suggested">Has Suggested Suppliers</option>
                         <option value="contacted">Already Contacted</option>
                         <option value="not-contacted">Not Yet Contacted</option>
+                        <option value="not-costed">Not Yet Costed</option>
                     </select>
                 </div>
                 <div class="col-md-3">
@@ -356,6 +358,8 @@
                             data-has-excess="{{ '1' if line.excess_data else '0' }}"
                             data-has-suggested="{{ '1' if line.suggested_suppliers else '0' }}"
                             data-contacted="{{ '1' if line.email_history else '0' }}"
+                            data-has-cost="{{ '1' if line.chosen_cost else '0' }}"
+                            data-has-customer-quote="{{ '1' if line.has_customer_quote else '0' }}"
                             data-part-number="{{ line.customer_part_number }}">
 
                             <td class="text-center"><strong>{{ line.line_number }}</strong></td>

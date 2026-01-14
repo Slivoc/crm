@@ -212,6 +212,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     case 'has-vq':
                         showRow = row.dataset.hasVq === '1';
                         break;
+                    case 'not-quoted':
+                        showRow = row.dataset.hasCustomerQuote === '0';
+                        break;
                     case 'has-po':
                         showRow = row.dataset.hasPo === '1';
                         break;
