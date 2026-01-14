@@ -1108,17 +1108,18 @@ def process_stock_levels_upload():
         }
 
         # Hard-coded column names from ERP
-        ERP_ID_COL = 'id'  # Unique identifier from ERP
+        ERP_ID_COL = 'id'  # Optional unique identifier from ERP
         PART_NUMBER_COL = 'partNumber'
-        PART_ID_COL = 'partId'  # System part number
+        PART_ID_COL = 'partId'  # Optional system part number
         QUANTITY_COL = 'remainingQty'
         COST_COL = 'unitCost'
 
         # Verify required columns exist
-        required_cols = [ERP_ID_COL, PART_NUMBER_COL, PART_ID_COL, QUANTITY_COL]
-        for col in required_cols:
-            if col not in df.columns:
-                return jsonify(success=False, message=f"Required column '{col}' not found in CSV"), 400
+        required_cols = [PART_NUMBER_COL, QUANTITY_COL]
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            missing_list = ", ".join(missing_cols)
+            return jsonify(success=False, message=f"Required column(s) '{missing_list}' not found in CSV"), 400
 
         # Run destructive reset inside a transaction
         conn = get_db_connection()
@@ -1143,23 +1144,24 @@ def process_stock_levels_upload():
             # Process each row, committing as we go so a single failure doesn't abort the entire import
             for idx, row in df.iterrows():
                 try:
-                    # Get ERP ID
-                    erp_id = str(row[ERP_ID_COL]).strip()
-                    if not erp_id or erp_id.lower() in ['nan', 'none', '']:
-                        results['errors'].append(f"Row {idx + 1}: Missing ERP ID")
-                        continue
+                    # Get ERP ID (optional)
+                    erp_id = None
+                    if ERP_ID_COL in df.columns:
+                        erp_id = str(row[ERP_ID_COL]).strip()
+                        if erp_id.lower() in ['nan', 'none', '']:
+                            erp_id = None
 
                     # Get part number
                     part_number = str(row[PART_NUMBER_COL]).strip()
 
-                    # Get system part number (partId)
-                    system_part_number = str(row[PART_ID_COL]).strip()
+                    # Get system part number (partId) if available
+                    system_part_number = None
+                    if PART_ID_COL in df.columns:
+                        system_part_number = str(row[PART_ID_COL]).strip()
+                        if system_part_number.lower() in ['nan', 'none', '']:
+                            system_part_number = None
 
                     if not part_number or part_number.lower() in ['nan', 'none', '']:
-                        continue
-
-                    if not system_part_number or system_part_number.lower() in ['nan', 'none', '']:
-                        results['errors'].append(f"Row {idx + 1}: Missing partId (system_part_number)")
                         continue
 
                     # Get quantity
@@ -1196,8 +1198,14 @@ def process_stock_levels_upload():
 
                     if not result:
                         # Part doesn't exist - create it on-demand
-                        base_part_number = create_part_on_demand(cur, system_part_number, part_number)
-                        results['errors'].append(f"Row {idx + 1}: Created new part {system_part_number}")
+                        base_part_number = create_part_on_demand(
+                            cur,
+                            system_part_number or part_number,
+                            part_number,
+                        )
+                        results['errors'].append(
+                            f"Row {idx + 1}: Created new part {system_part_number or part_number}"
+                        )
                     else:
                         base_part_number = (
                             result['base_part_number'] if isinstance(result, dict)
@@ -1220,7 +1228,7 @@ def process_stock_levels_upload():
                                 quantity,
                                 quantity,
                                 unit_price,
-                                f"ERP-{erp_id}",
+                                f"ERP-{erp_id}" if erp_id else f"IMPORT-{file_id}-ROW-{idx + 1}",
                                 f"Stock from ERP import",
                             ),
                         )
