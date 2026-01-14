@@ -4760,6 +4760,13 @@ def parts_list_sourcing(list_id):
                     (SELECT COUNT(*) 
                      FROM parts_list_line_supplier_emails 
                      WHERE parts_list_line_id = pll.id) as emails_sent_count
+                    ,
+                    (SELECT 1
+                     FROM customer_quote_lines cql
+                     WHERE cql.parts_list_line_id = pll.id
+                       AND cql.quoted_status = 'quoted'
+                       AND cql.quote_price_gbp IS NOT NULL
+                     LIMIT 1) as has_customer_quote
                 FROM parts_list_lines pll
                 LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
                 WHERE pll.parts_list_id = ?
