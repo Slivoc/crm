@@ -700,8 +700,21 @@
                   </div>
                   <div class="d-flex justify-content-between align-items-center">
                     <small class="text-muted">{{ item.customer_name or '-' }}</small>
-                    <span class="badge bg-light text-dark" style="font-size: 0.65rem;">{{ item.status_name or '-' }}</span>
+                    <select class="form-select form-select-sm parts-list-status-select"
+                            data-list-id="{{ item.id }}"
+                            style="font-size: 0.65rem; max-width: 140px;">
+                      {% for status in parts_list_statuses %}
+                        <option value="{{ status.id }}" {% if item.status_id == status.id %}selected{% endif %}>
+                          {{ status.name }}
+                        </option>
+                      {% endfor %}
+                    </select>
                   </div>
+                  <textarea class="form-control form-control-sm mt-2 parts-list-comment-input"
+                            data-list-id="{{ item.id }}"
+                            rows="2"
+                            placeholder="Add comment...">{{ item.notes }}</textarea>
+                  <small class="text-muted parts-list-update-status" data-list-id="{{ item.id }}"></small>
                 </div>
               {% endfor %}
             </div>

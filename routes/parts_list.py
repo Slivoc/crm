@@ -617,6 +617,7 @@ def manage_supplier_quotes(list_id):
         'parts_list_supplier_quotes_manage.html',
         list_id=list_id,
         list_name=header['name'],
+        list_notes=header.get('notes'),
         customer_name=header.get('customer_name'),
         status_id=header.get('status_id'),
         status_name=header.get('status_name'),
@@ -2646,6 +2647,7 @@ def parts_list_costing(list_id):
         return render_template('parts_list_costing.html',
                                list_id=list_id,
                                list_name=header['name'],
+                               list_notes=header.get('notes'),
                                customer_name=header.get('customer_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
@@ -2799,6 +2801,7 @@ def email_suppliers():
                            page_title=page_title,
                            list_id=list_id,
                            list_name=list_header['name'] if list_header else None,
+                           list_notes=list_header['notes'] if list_header else None,
                            customer_name=list_header['customer_name'] if list_header else None,
                            status_id=list_header['status_id'] if list_header else None,
                            status_name=list_header['status_name'] if list_header else None)
@@ -3400,6 +3403,7 @@ def table_view(list_id):
                            breadcrumbs=breadcrumbs,
                            list_id=list_id,
                            list_name=header['name'],
+                           list_notes=header.get('notes'),
                            customer_name=header['customer_name'],
                            status_id=header.get('status_id'),
                            status_name=header.get('status_name'),
@@ -4999,6 +5003,7 @@ def parts_list_sourcing(list_id):
         return render_template('parts_list_sourcing.html',
                                list_id=list_id,
                                list_name=header['name'],
+                               list_notes=header.get('notes'),
                                customer_name=header['customer_name'],
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
@@ -5601,6 +5606,7 @@ def view_parts_list(list_id):
                            loaded_list=loaded_list,
                            list_id=list_id,
                            list_name=header['name'],
+                           list_notes=header.get('notes'),
                            customer_name=header['customer_name'],
                            status_id=header.get('status_id'),
                            status_name=header.get('status_name'))
@@ -7430,15 +7436,16 @@ def get_related_emails(list_id):
                 ('Related Emails', None)
             ]
             return render_template('parts_list_related_emails.html',
-                                 list_id=list_id,
-                                 list_name=parts_list['name'],
-                                 customer_name=customer_name,
-                                 source_email=None,
-                                 conversation_emails=[],
-                                 supplier_quote_emails=[dict(sq) for sq in (supplier_quotes or [])],
-                                 supplier_line_emails=[dict(se) for se in (supplier_line_emails or [])],
-                                 has_email_tracking=False,
-                                 graph_connected=True)
+                                   list_id=list_id,
+                                   list_name=parts_list['name'],
+                                   list_notes=parts_list.get('notes'),
+                                   customer_name=customer_name,
+                                   source_email=None,
+                                   conversation_emails=[],
+                                   supplier_quote_emails=[dict(sq) for sq in (supplier_quotes or [])],
+                                   supplier_line_emails=[dict(se) for se in (supplier_line_emails or [])],
+                                   has_email_tracking=False,
+                                   graph_connected=True)
 
         # Import Graph helpers from emails module
         from routes.emails import (
@@ -7564,15 +7571,16 @@ def get_related_emails(list_id):
         ]
 
         return render_template('parts_list_related_emails.html',
-                             list_id=list_id,
-                             list_name=parts_list['name'],
-                             customer_name=customer_name,
-                             source_email=source_email,
-                             conversation_emails=unique_emails,
-                             supplier_quote_emails=[dict(sq) for sq in (supplier_quotes or [])],
-                             supplier_line_emails=[dict(se) for se in (supplier_line_emails or [])],
-                             has_email_tracking=bool(conversation_id or source_message_id or message_ids),
-                             graph_connected=graph_connected)
+                               list_id=list_id,
+                               list_name=parts_list['name'],
+                               list_notes=parts_list.get('notes'),
+                               customer_name=customer_name,
+                               source_email=source_email,
+                               conversation_emails=unique_emails,
+                               supplier_quote_emails=[dict(sq) for sq in (supplier_quotes or [])],
+                               supplier_line_emails=[dict(se) for se in (supplier_line_emails or [])],
+                               has_email_tracking=bool(conversation_id or source_message_id or message_ids),
+                               graph_connected=graph_connected)
 
     except Exception as e:
         logging.exception(f"Error fetching related emails for parts list {list_id}: {e}")
