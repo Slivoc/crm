@@ -54,31 +54,75 @@
                             aria-label="Delete Parts List">
                         <i class="bi bi-trash"></i>
                     </button>
-                </div>
-                <div class="d-flex align-items-center flex-wrap gap-2 ms-2">
-                    <label class="small text-muted mb-0" for="partsListProjectSelect">Project</label>
-                    <select id="partsListProjectSelect"
-                            class="form-select form-select-sm"
-                            style="min-width: 220px;"
-                            data-list-id="{{ list_id }}">
-                        <option value="">No project</option>
-                        {% for proj in projects %}
-                            <option value="{{ proj.id }}" {% if project_id and proj.id == project_id %}selected{% endif %}>
-                                {{ proj.name }}
-                            </option>
-                        {% endfor %}
-                    </select>
-                    <small id="partsListProjectStatus" class="text-muted" aria-live="polite"></small>
-                    {% if project_id %}
-                        <a class="btn btn-sm btn-outline-secondary"
-                           href="{{ url_for('projects.edit_project', project_id=project_id) }}">
-                            View Project
-                        </a>
-                        <a class="btn btn-sm btn-outline-primary"
-                           href="{{ url_for('projects.project_parts_list_report', project_id=project_id) }}">
-                            Parts List Report
-                        </a>
-                    {% endif %}
+                    <!-- Project Popover Button -->
+                    <div class="position-relative d-inline-block">
+                        <button type="button"
+                                class="btn btn-sm pl-icon-btn position-relative"
+                                id="project-popover-btn"
+                                title="Assign Project"
+                                aria-label="Assign Project"
+                                aria-expanded="false">
+                            <i class="bi bi-folder{% if project_id %}-check{% endif %}"></i>
+                            {% if project_id %}
+                            <span id="project-indicator" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-success" style="font-size: 0.6rem;">
+                                <span class="visually-hidden">Has project</span>
+                            </span>
+                            {% endif %}
+                        </button>
+                        <div id="project-popover"
+                             class="position-absolute bg-white border rounded shadow-sm p-2"
+                             style="display: none; z-index: 1050; width: 280px; left: 0; top: 100%; margin-top: 4px;">
+                            <label class="form-label small text-muted mb-1" for="partsListProjectSelect">Project</label>
+                            <select id="partsListProjectSelect"
+                                    class="form-select form-select-sm mb-1"
+                                    data-list-id="{{ list_id }}">
+                                <option value="">No project</option>
+                                {% for proj in projects %}
+                                    <option value="{{ proj.id }}" {% if project_id and proj.id == project_id %}selected{% endif %}>
+                                        {{ proj.name }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                            <small id="partsListProjectStatus" class="text-muted d-block mb-2" aria-live="polite"></small>
+                            {% if project_id %}
+                            <div class="d-flex gap-1 flex-wrap">
+                                <a class="btn btn-sm btn-outline-secondary"
+                                   href="{{ url_for('projects.edit_project', project_id=project_id) }}">
+                                    <i class="bi bi-eye me-1"></i>View
+                                </a>
+                                <a class="btn btn-sm btn-outline-primary"
+                                   href="{{ url_for('projects.project_parts_list_report', project_id=project_id) }}">
+                                    <i class="bi bi-file-text me-1"></i>Report
+                                </a>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <!-- Comment Popover Button -->
+                    <div class="position-relative d-inline-block">
+                        <button type="button"
+                                class="btn btn-sm pl-icon-btn position-relative"
+                                id="comment-popover-btn"
+                                title="View/Edit Comment"
+                                aria-label="View/Edit Comment"
+                                aria-expanded="false">
+                            <i class="bi bi-chat-left-text"></i>
+                            <span id="comment-indicator" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-primary" style="font-size: 0.6rem; display: none;">
+                                <span class="visually-hidden">Has comment</span>
+                            </span>
+                        </button>
+                        <div id="comment-popover"
+                             class="position-absolute bg-white border rounded shadow-sm p-2"
+                             style="display: none; z-index: 1050; width: 300px; right: 0; top: 100%; margin-top: 4px;">
+                            <label for="partsListCommentInput" class="form-label small text-muted mb-1">Comment</label>
+                            <textarea id="partsListCommentInput"
+                                      class="form-control form-control-sm"
+                                      rows="3"
+                                      data-list-id="{{ list_id }}"
+                                      placeholder="Add a comment...">{{ list_notes or '' }}</textarea>
+                            <small id="partsListCommentStatus" class="text-muted" aria-live="polite"></small>
+                        </div>
+                    </div>
                 </div>
             </div>
             <!-- Navigation buttons on the right -->
@@ -115,16 +159,6 @@
     </div>
 </div>
 
-<div class="card-body pt-2 pb-3">
-    <label for="partsListCommentInput" class="form-label small text-muted mb-1">Comment</label>
-    <textarea id="partsListCommentInput"
-              class="form-control form-control-sm"
-              rows="2"
-              data-list-id="{{ list_id }}"
-              placeholder="Add a comment...">{{ list_notes or '' }}</textarea>
-    <small id="partsListCommentStatus" class="text-muted" aria-live="polite"></small>
-</div>
-
 <style>
 .pl-icon-btn {
     border: 0;
@@ -151,8 +185,87 @@
     const listId = {{ list_id|tojson }};
     const commentInput = document.getElementById('partsListCommentInput');
     const commentStatus = document.getElementById('partsListCommentStatus');
+    const commentPopoverBtn = document.getElementById('comment-popover-btn');
+    const commentPopover = document.getElementById('comment-popover');
+    const commentIndicator = document.getElementById('comment-indicator');
     const projectSelect = document.getElementById('partsListProjectSelect');
     const projectStatus = document.getElementById('partsListProjectStatus');
+    const projectPopoverBtn = document.getElementById('project-popover-btn');
+    const projectPopover = document.getElementById('project-popover');
+
+    // Project popover toggle
+    if (projectPopoverBtn && projectPopover) {
+        projectPopoverBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Close comment popover if open
+            if (commentPopover) {
+                commentPopover.style.display = 'none';
+                commentPopoverBtn?.setAttribute('aria-expanded', 'false');
+            }
+            const isOpen = projectPopover.style.display !== 'none';
+            projectPopover.style.display = isOpen ? 'none' : 'block';
+            projectPopoverBtn.setAttribute('aria-expanded', !isOpen);
+        });
+
+        // Close popover when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!projectPopover.contains(e.target) && e.target !== projectPopoverBtn) {
+                projectPopover.style.display = 'none';
+                projectPopoverBtn.setAttribute('aria-expanded', 'false');
+            }
+        });
+
+        // Prevent popover from closing when clicking inside it
+        projectPopover.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+    }
+
+    // Comment popover toggle
+    if (commentPopoverBtn && commentPopover) {
+        // Show indicator if there's already a comment
+        const updateIndicator = () => {
+            if (commentInput && commentInput.value.trim()) {
+                commentIndicator.style.display = 'inline';
+            } else {
+                commentIndicator.style.display = 'none';
+            }
+        };
+        updateIndicator();
+
+        commentPopoverBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Close project popover if open
+            if (projectPopover) {
+                projectPopover.style.display = 'none';
+                projectPopoverBtn?.setAttribute('aria-expanded', 'false');
+            }
+            const isOpen = commentPopover.style.display !== 'none';
+            commentPopover.style.display = isOpen ? 'none' : 'block';
+            commentPopoverBtn.setAttribute('aria-expanded', !isOpen);
+            if (!isOpen && commentInput) {
+                commentInput.focus();
+            }
+        });
+
+        // Close popover when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!commentPopover.contains(e.target) && e.target !== commentPopoverBtn) {
+                commentPopover.style.display = 'none';
+                commentPopoverBtn.setAttribute('aria-expanded', 'false');
+            }
+        });
+
+        // Prevent popover from closing when clicking inside it
+        commentPopover.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+
+        // Update indicator when comment changes
+        if (commentInput) {
+            commentInput.addEventListener('input', updateIndicator);
+        }
+    }
 
     if (statusBadge && listId) {
         const renderStatus = (name) => {
