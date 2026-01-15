@@ -90,6 +90,16 @@
     </div>
 </div>
 
+<div class="card-body pt-2 pb-3">
+    <label for="partsListCommentInput" class="form-label small text-muted mb-1">Comment</label>
+    <textarea id="partsListCommentInput"
+              class="form-control form-control-sm"
+              rows="2"
+              data-list-id="{{ list_id }}"
+              placeholder="Add a comment...">{{ list_notes or '' }}</textarea>
+    <small id="partsListCommentStatus" class="text-muted" aria-live="polite"></small>
+</div>
+
 <style>
 .pl-icon-btn {
     border: 0;
@@ -114,6 +124,8 @@
 (function() {
     const statusBadge = document.getElementById('partsListStatusBadge');
     const listId = {{ list_id|tojson }};
+    const commentInput = document.getElementById('partsListCommentInput');
+    const commentStatus = document.getElementById('partsListCommentStatus');
 
     if (statusBadge && listId) {
         const renderStatus = (name) => {
@@ -190,6 +202,46 @@
                 updateStatus();
             }
         });
+    }
+
+    if (commentInput && listId) {
+        let saveTimer = null;
+        const saveComment = () => {
+            const notes = commentInput.value;
+            if (commentStatus) {
+                commentStatus.textContent = 'Saving...';
+            }
+            fetch("{{ url_for('parts_list.update_parts_list_header', list_id=0) }}".replace(/0$/, listId), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ notes })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    throw new Error(data.message || 'Unable to save comment');
+                }
+                if (commentStatus) {
+                    commentStatus.textContent = 'Saved';
+                }
+            })
+            .catch(error => {
+                console.error('Error saving comment:', error);
+                if (commentStatus) {
+                    commentStatus.textContent = 'Error saving comment';
+                }
+            });
+        };
+
+        const scheduleSave = () => {
+            if (saveTimer) {
+                clearTimeout(saveTimer);
+            }
+            saveTimer = setTimeout(saveComment, 600);
+        };
+
+        commentInput.addEventListener('input', scheduleSave);
+        commentInput.addEventListener('blur', saveComment);
     }
 
     const deleteBtn = document.getElementById('delete-parts-list-btn');

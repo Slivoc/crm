@@ -1352,7 +1352,9 @@ def activity(salesperson_id):
                 SELECT
                     pl.id,
                     pl.name,
+                    pl.notes,
                     c.name AS customer_name,
+                    pl.status_id,
                     pls.name AS status_name,
                     pl.date_modified,
                     COALESCE(SUM(CASE
@@ -1368,7 +1370,7 @@ def activity(salesperson_id):
                 LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
                 WHERE pl.salesperson_id = ?
                 {status_clause}
-                GROUP BY pl.id, pl.name, c.name, pl.date_modified, pls.name
+                GROUP BY pl.id, pl.name, pl.notes, c.name, pl.status_id, pl.date_modified, pls.name
                 HAVING COALESCE(SUM(CASE
                     WHEN cql.quoted_status = 'quoted'
                          AND COALESCE(cql.is_no_bid, 0) = 0
@@ -1395,7 +1397,9 @@ def activity(salesperson_id):
                 {
                     'id': row.get('id'),
                     'name': row.get('name') or '',
+                    'notes': row.get('notes') or '',
                     'customer_name': row.get('customer_name') or '',
+                    'status_id': row.get('status_id'),
                     'status_name': row.get('status_name') or '',
                     'date_modified': _format_list_date(row.get('date_modified')),
                     'quoted_value_gbp': float(row.get('quoted_value_gbp') or 0),

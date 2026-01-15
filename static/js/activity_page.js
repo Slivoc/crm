@@ -50,6 +50,35 @@ function fetchCallListData() {
             `;
         });
 }
+
+function updatePartsListHeader(listId, payload, statusEl) {
+    if (!listId) {
+        return Promise.resolve();
+    }
+    if (statusEl) {
+        statusEl.textContent = 'Saving...';
+    }
+    return fetch(`/parts-lists/${listId}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                throw new Error(data.message || 'Unable to save parts list');
+            }
+            if (statusEl) {
+                statusEl.textContent = 'Saved';
+            }
+        })
+        .catch(error => {
+            console.error('Error updating parts list:', error);
+            if (statusEl) {
+                statusEl.textContent = 'Error saving';
+            }
+        });
+}
 function displayCallList(data) {
     const container = document.getElementById('callListContent');
     const noComms = data.no_communications || [];
@@ -1138,6 +1167,42 @@ document.addEventListener('DOMContentLoaded', function() {
     window.customerNewsManager = new CustomerNewsManager();
     window.customerNewsManager.loadCachedNews();
     // Call list + comms initialized later to avoid double fetches.
+
+    const statusSelects = document.querySelectorAll('.parts-list-status-select');
+    statusSelects.forEach(select => {
+        select.addEventListener('change', () => {
+            const listId = select.dataset.listId;
+            const statusId = parseInt(select.value, 10);
+            const statusEl = document.querySelector(
+                `.parts-list-update-status[data-list-id="${listId}"]`
+            );
+            if (Number.isNaN(statusId)) {
+                return;
+            }
+            updatePartsListHeader(listId, { status_id: statusId }, statusEl);
+        });
+    });
+
+    const commentInputs = document.querySelectorAll('.parts-list-comment-input');
+    commentInputs.forEach(input => {
+        let timer = null;
+        const listId = input.dataset.listId;
+        const statusEl = document.querySelector(
+            `.parts-list-update-status[data-list-id="${listId}"]`
+        );
+        const scheduleSave = () => {
+            if (timer) {
+                clearTimeout(timer);
+            }
+            timer = setTimeout(() => {
+                updatePartsListHeader(listId, { notes: input.value }, statusEl);
+            }, 600);
+        };
+        input.addEventListener('input', scheduleSave);
+        input.addEventListener('blur', () => {
+            updatePartsListHeader(listId, { notes: input.value }, statusEl);
+        });
+    });
 
     // Chart variables
     const salesChartCtx = document.getElementById('salesChart').getContext('2d');
