@@ -598,11 +598,15 @@ def manage_supplier_quotes(list_id):
             pl.id,
             pl.name,
             pl.status_id,
+            pl.project_id,
+            pl.notes,
             c.name AS customer_name,
-            s.name AS status_name
+            s.name AS status_name,
+            p.name AS project_name
         FROM parts_lists pl
         LEFT JOIN customers c ON c.id = pl.customer_id
         LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+        LEFT JOIN projects p ON p.id = pl.project_id
         WHERE pl.id = ?
         """,
         (list_id,),
@@ -619,6 +623,8 @@ def manage_supplier_quotes(list_id):
         list_name=header['name'],
         list_notes=header.get('notes'),
         customer_name=header.get('customer_name'),
+        project_id=header.get('project_id'),
+        project_name=header.get('project_name'),
         status_id=header.get('status_id'),
         status_name=header.get('status_name'),
         cache_bust=cache_bust,
@@ -2502,11 +2508,13 @@ def parts_list_costing(list_id):
                 c.name AS customer_name,
                 cont.name AS contact_name,
                 cont.email AS contact_email,
-                s.name AS status_name
+                s.name AS status_name,
+                p.name AS project_name
             FROM parts_lists pl
             LEFT JOIN customers c ON c.id = pl.customer_id
             LEFT JOIN contacts cont ON cont.id = pl.contact_id
             LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+            LEFT JOIN projects p ON p.id = pl.project_id
             WHERE pl.id = ?
             """,
             (list_id,),
@@ -2649,6 +2657,8 @@ def parts_list_costing(list_id):
                                list_name=header['name'],
                                list_notes=header.get('notes'),
                                customer_name=header.get('customer_name'),
+                               project_id=header.get('project_id'),
+                               project_name=header.get('project_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
                                lines=[dict(l) for l in lines],
@@ -2744,11 +2754,15 @@ def email_suppliers():
                 SELECT
                     pl.name,
                     pl.status_id,
+                    pl.notes,
+                    pl.project_id,
                     c.name AS customer_name,
-                    s.name AS status_name
+                    s.name AS status_name,
+                    p.name AS project_name
                 FROM parts_lists pl
                 LEFT JOIN customers c ON c.id = pl.customer_id
                 LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+                LEFT JOIN projects p ON p.id = pl.project_id
                 WHERE pl.id = ?
             """, (list_id,)).fetchone()
 
@@ -2803,6 +2817,8 @@ def email_suppliers():
                            list_name=list_header['name'] if list_header else None,
                            list_notes=list_header['notes'] if list_header else None,
                            customer_name=list_header['customer_name'] if list_header else None,
+                           project_id=list_header.get('project_id') if list_header else None,
+                           project_name=list_header.get('project_name') if list_header else None,
                            status_id=list_header['status_id'] if list_header else None,
                            status_name=list_header['status_name'] if list_header else None)
 
@@ -3244,10 +3260,11 @@ def table_view(list_id):
     """
     header = db_execute(
         """
-        SELECT pl.*, c.name AS customer_name, s.name AS status_name
+        SELECT pl.*, c.name AS customer_name, s.name AS status_name, p.name AS project_name
         FROM parts_lists pl
         LEFT JOIN customers c ON c.id = pl.customer_id
         LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+        LEFT JOIN projects p ON p.id = pl.project_id
         WHERE pl.id = ?
         """,
         (list_id,),
@@ -3405,6 +3422,8 @@ def table_view(list_id):
                            list_name=header['name'],
                            list_notes=header.get('notes'),
                            customer_name=header['customer_name'],
+                           project_id=header.get('project_id'),
+                           project_name=header.get('project_name'),
                            status_id=header.get('status_id'),
                            status_name=header.get('status_name'),
                            lines=lines)
@@ -3809,7 +3828,7 @@ def update_parts_list_header(list_id):
         fields = []
         params = []
 
-        for key in ('name', 'customer_id', 'contact_id', 'salesperson_id', 'status_id', 'notes'):
+        for key in ('name', 'customer_id', 'contact_id', 'salesperson_id', 'status_id', 'notes', 'project_id'):
             if key in data:
                 fields.append(f"{key} = ?")
                 params.append(data.get(key))
@@ -4777,11 +4796,13 @@ def parts_list_sourcing(list_id):
                     c.name as customer_name,
                     cont.name as contact_name,
                     cont.email as contact_email,
-                    s.name as status_name
+                    s.name as status_name,
+                    p.name as project_name
                 FROM parts_lists pl
                 LEFT JOIN customers c ON c.id = pl.customer_id
                 LEFT JOIN contacts cont ON cont.id = pl.contact_id
                 LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+                LEFT JOIN projects p ON p.id = pl.project_id
                 WHERE pl.id = ?
             """, (list_id,)).fetchone()
 
@@ -5028,6 +5049,8 @@ def parts_list_sourcing(list_id):
                                list_name=header['name'],
                                list_notes=header.get('notes'),
                                customer_name=header['customer_name'],
+                               project_id=header.get('project_id'),
+                               project_name=header.get('project_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
                                lines=lines_with_data,
@@ -5586,11 +5609,13 @@ def view_parts_list(list_id):
             c.name AS customer_name,
             cont.name AS contact_name,
             cont.email AS contact_email,
-            s.name AS status_name
+            s.name AS status_name,
+            p.name AS project_name
         FROM parts_lists pl
         LEFT JOIN customers c ON c.id = pl.customer_id
         LEFT JOIN contacts cont ON cont.id = pl.contact_id
         LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+        LEFT JOIN projects p ON p.id = pl.project_id
         WHERE pl.id = ?
         """,
         (list_id,),
@@ -5631,6 +5656,8 @@ def view_parts_list(list_id):
                            list_name=header['name'],
                            list_notes=header.get('notes'),
                            customer_name=header['customer_name'],
+                           project_id=header.get('project_id'),
+                           project_name=header.get('project_name'),
                            status_id=header.get('status_id'),
                            status_name=header.get('status_name'))
 

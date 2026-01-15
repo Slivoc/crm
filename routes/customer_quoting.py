@@ -152,11 +152,13 @@ def customer_quote(list_id):
                            c.currency_id as customer_currency_id,
                            s.name as status_name,
                            ct.name as contact_name,
-                           ct.email as contact_email
+                           ct.email as contact_email,
+                           p.name as project_name
                     FROM parts_lists pl
                     LEFT JOIN customers c ON c.id = pl.customer_id
                     LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
                     LEFT JOIN contacts ct ON ct.id = pl.contact_id
+                    LEFT JOIN projects p ON p.id = pl.project_id
                     WHERE pl.id = ?
                 """, (list_id,)).fetchone()
 
@@ -347,6 +349,8 @@ def customer_quote(list_id):
                                list_name=header['name'],
                                list_notes=header.get('notes'),
                                customer_name=header['customer_name'],
+                               project_id=header.get('project_id'),
+                               project_name=header.get('project_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
                                customer_system_code=header.get('customer_system_code'),
@@ -1706,11 +1710,13 @@ def customer_quote_simple(list_id):
                        c.currency_id as customer_currency_id,
                        s.name as status_name,
                        ct.name as contact_name,
-                       ct.email as contact_email
+                       ct.email as contact_email,
+                       p.name as project_name
                 FROM parts_lists pl
                 LEFT JOIN customers c ON c.id = pl.customer_id
                 LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
                 LEFT JOIN contacts ct ON ct.id = pl.contact_id
+                LEFT JOIN projects p ON p.id = pl.project_id
                 WHERE pl.id = ?
             """, (list_id,)).fetchone()
 
@@ -1900,6 +1906,8 @@ def customer_quote_simple(list_id):
                                list_name=header['name'],
                                list_notes=header.get('notes'),
                                customer_name=header['customer_name'],
+                               project_id=header.get('project_id'),
+                               project_name=header.get('project_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
                                customer_system_code=header.get('customer_system_code'),

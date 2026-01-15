@@ -1,6 +1,8 @@
 import os
+import csv
+import io
 from datetime import datetime
-from flask import Blueprint, request, redirect, url_for, jsonify, current_app, render_template, send_from_directory, flash, session
+from flask import Blueprint, request, redirect, url_for, jsonify, current_app, render_template, send_from_directory, flash, session, Response
 from werkzeug.utils import secure_filename
 from db import db_cursor, execute as db_execute
 from models import get_rfqs_for_project, insert_stage_update, get_stage_updates, insert_file_for_project_stage, insert_project, get_stage, get_stage_by_id, insert_project_stage, get_project_stages, generate_breadcrumbs, update_project, get_project_by_id, get_projects, insert_project_update, \
@@ -31,6 +33,48 @@ def _execute_with_cursor(cur, query, params=None, fetch=None):
     if fetch == 'all':
         return cur.fetchall()
     return cur
+
+
+def _fetch_project_parts_list_rows(project_id):
+    rows = db_execute(
+        """
+        SELECT
+            pl.id AS parts_list_id,
+            pl.name AS parts_list_name,
+            pll.id AS parts_list_line_id,
+            pll.line_number,
+            pll.customer_part_number,
+            pll.base_part_number,
+            pll.quantity AS requested_qty,
+            sq.id AS supplier_quote_id,
+            s.name AS supplier_name,
+            sq.quote_reference,
+            sq.quote_date,
+            curr.currency_code,
+            sql.id AS supplier_quote_line_id,
+            sql.quoted_part_number,
+            sql.manufacturer,
+            sql.quantity_quoted,
+            sql.unit_price,
+            sql.lead_time_days,
+            sql.condition_code,
+            sql.certifications,
+            sql.is_no_bid,
+            sql.line_notes
+        FROM parts_lists pl
+        JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+        LEFT JOIN parts_list_supplier_quote_lines sql
+            ON sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+        LEFT JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+        LEFT JOIN suppliers s ON s.id = sq.supplier_id
+        LEFT JOIN currencies curr ON curr.id = sq.currency_id
+        WHERE pl.project_id = ?
+        ORDER BY pl.id, pll.line_number, sql.id
+        """,
+        (project_id,),
+        fetch='all',
+    ) or []
+    return [dict(row) for row in rows]
 
 @projects_bp.route('/new', methods=['POST'])
 def create_project():
@@ -79,6 +123,24 @@ def edit_project(project_id):
     )
 
     project_rfqs = get_rfqs_for_project(project_id)
+    project_parts_lists = db_execute(
+        """
+        SELECT
+            pl.id,
+            pl.name,
+            pl.date_created,
+            pl.date_modified,
+            c.name AS customer_name,
+            s.name AS status_name
+        FROM parts_lists pl
+        LEFT JOIN customers c ON c.id = pl.customer_id
+        LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+        WHERE pl.project_id = ?
+        ORDER BY pl.date_modified DESC, pl.date_created DESC
+        """,
+        (project_id,),
+        fetch='all',
+    ) or []
 
     return render_template(
         'project_edit.html',
@@ -93,7 +155,109 @@ def edit_project(project_id):
         recurrence_types=recurrence_types,
         rendered_stages=rendered_stages,
         get_project_stages=get_project_stages,
-        project_rfqs=project_rfqs  # Add this line to pass RFQs to template
+        project_rfqs=project_rfqs,  # Add this line to pass RFQs to template
+        project_parts_lists=[dict(row) for row in project_parts_lists]
+    )
+
+
+@projects_bp.route('/<int:project_id>/parts-lists/report', methods=['GET'])
+def project_parts_list_report(project_id):
+    project = get_project_by_id(project_id)
+    if not project:
+        flash('Project not found', 'error')
+        return redirect(url_for('projects.list_projects'))
+
+    summary = db_execute(
+        """
+        SELECT
+            COUNT(DISTINCT pl.id) AS list_count,
+            COUNT(DISTINCT pll.id) AS line_count,
+            COUNT(sql.id) AS quote_line_count
+        FROM parts_lists pl
+        JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+        LEFT JOIN parts_list_supplier_quote_lines sql ON sql.parts_list_line_id = pll.id
+        WHERE pl.project_id = ?
+        """,
+        (project_id,),
+        fetch='one',
+    ) or {}
+
+    rows = _fetch_project_parts_list_rows(project_id)
+
+    return render_template(
+        'project_parts_list_report.html',
+        project=project,
+        summary=summary,
+        rows=rows,
+    )
+
+
+@projects_bp.route('/<int:project_id>/parts-lists/report.csv', methods=['GET'])
+def project_parts_list_report_csv(project_id):
+    project = get_project_by_id(project_id)
+    if not project:
+        return jsonify({'success': False, 'error': 'Project not found'}), 404
+
+    rows = _fetch_project_parts_list_rows(project_id)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        'parts_list_id',
+        'parts_list_name',
+        'parts_list_line_id',
+        'line_number',
+        'customer_part_number',
+        'base_part_number',
+        'requested_qty',
+        'supplier_quote_id',
+        'supplier_name',
+        'quote_reference',
+        'quote_date',
+        'currency_code',
+        'supplier_quote_line_id',
+        'quoted_part_number',
+        'manufacturer',
+        'quantity_quoted',
+        'unit_price',
+        'lead_time_days',
+        'condition_code',
+        'certifications',
+        'is_no_bid',
+        'line_notes',
+    ])
+
+    for row in rows:
+        writer.writerow([
+            row.get('parts_list_id'),
+            row.get('parts_list_name'),
+            row.get('parts_list_line_id'),
+            row.get('line_number'),
+            row.get('customer_part_number'),
+            row.get('base_part_number'),
+            row.get('requested_qty'),
+            row.get('supplier_quote_id'),
+            row.get('supplier_name'),
+            row.get('quote_reference'),
+            row.get('quote_date'),
+            row.get('currency_code'),
+            row.get('supplier_quote_line_id'),
+            row.get('quoted_part_number'),
+            row.get('manufacturer'),
+            row.get('quantity_quoted'),
+            row.get('unit_price'),
+            row.get('lead_time_days'),
+            row.get('condition_code'),
+            row.get('certifications'),
+            row.get('is_no_bid'),
+            row.get('line_notes'),
+        ])
+
+    filename = f"project_{project_id}_parts_list_report.csv"
+    return Response(
+        output.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename={filename}'},
     )
 
 

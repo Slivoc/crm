@@ -55,6 +55,31 @@
                         <i class="bi bi-trash"></i>
                     </button>
                 </div>
+                <div class="d-flex align-items-center flex-wrap gap-2 ms-2">
+                    <label class="small text-muted mb-0" for="partsListProjectSelect">Project</label>
+                    <select id="partsListProjectSelect"
+                            class="form-select form-select-sm"
+                            style="min-width: 220px;"
+                            data-list-id="{{ list_id }}">
+                        <option value="">No project</option>
+                        {% for proj in projects %}
+                            <option value="{{ proj.id }}" {% if project_id and proj.id == project_id %}selected{% endif %}>
+                                {{ proj.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <small id="partsListProjectStatus" class="text-muted" aria-live="polite"></small>
+                    {% if project_id %}
+                        <a class="btn btn-sm btn-outline-secondary"
+                           href="{{ url_for('projects.edit_project', project_id=project_id) }}">
+                            View Project
+                        </a>
+                        <a class="btn btn-sm btn-outline-primary"
+                           href="{{ url_for('projects.project_parts_list_report', project_id=project_id) }}">
+                            Parts List Report
+                        </a>
+                    {% endif %}
+                </div>
             </div>
             <!-- Navigation buttons on the right -->
             <div class="btn-group" role="group">
@@ -126,6 +151,8 @@
     const listId = {{ list_id|tojson }};
     const commentInput = document.getElementById('partsListCommentInput');
     const commentStatus = document.getElementById('partsListCommentStatus');
+    const projectSelect = document.getElementById('partsListProjectSelect');
+    const projectStatus = document.getElementById('partsListProjectStatus');
 
     if (statusBadge && listId) {
         const renderStatus = (name) => {
@@ -242,6 +269,38 @@
 
         commentInput.addEventListener('input', scheduleSave);
         commentInput.addEventListener('blur', saveComment);
+    }
+
+    if (projectSelect && listId) {
+        projectSelect.addEventListener('change', () => {
+            const rawValue = projectSelect.value;
+            const projectId = rawValue ? Number(rawValue) : null;
+
+            if (projectStatus) {
+                projectStatus.textContent = 'Saving...';
+            }
+
+            fetch("{{ url_for('parts_list.update_parts_list_header', list_id=0) }}".replace(/0$/, listId), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ project_id: Number.isFinite(projectId) ? projectId : null })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    throw new Error(data.message || 'Unable to save project');
+                }
+                if (projectStatus) {
+                    projectStatus.textContent = 'Saved';
+                }
+            })
+            .catch(error => {
+                console.error('Error saving project:', error);
+                if (projectStatus) {
+                    projectStatus.textContent = 'Error saving project';
+                }
+            });
+        });
     }
 
     const deleteBtn = document.getElementById('delete-parts-list-btn');
