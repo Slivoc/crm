@@ -647,13 +647,15 @@
           {% if quotes_by_day and quotes_by_day|length > 0 %}
             <div class="data-list">
               {% for day in quotes_by_day %}
-                <div class="data-list-item d-flex justify-content-between align-items-center py-2 {% if not loop.last %}border-bottom{% endif %}">
-                  <div>
+                <a class="data-list-item d-flex justify-content-between align-items-center py-2 text-decoration-none {% if not loop.last %}border-bottom{% endif %}"
+                   href="{{ url_for('parts_list.view_parts_lists', salesperson_id=salesperson.id, quoted_date=day.quoted_date) }}"
+                   title="View quotes for {{ day.quoted_date }}">
+                  <div class="text-body">
                     <span class="fw-medium">{{ day.quoted_date or '-' }}</span>
                     <span class="badge bg-secondary bg-opacity-10 text-secondary ms-2">{{ day.quoted_lists }} lists</span>
                   </div>
-                  <span class="fw-semibold text-success">{{ format_currency(day.quoted_value_gbp, '£') }}</span>
-                </div>
+                  <span class="fw-semibold text-success">{{ format_currency(day.quoted_value_gbp, '?') }}</span>
+                </a>
               {% endfor %}
             </div>
           {% else %}

@@ -32,6 +32,13 @@
             <div>
                 <h2 class="fw-bold mb-1">Parts Lists</h2>
                 <p class="text-muted mb-0">Manage and track customer parts lists</p>
+                {% if selected_quoted_date %}
+                    <small class="text-muted d-block mt-1">
+                        <i class="bi bi-calendar-event me-1"></i>
+                        Quotes on {{ selected_quoted_date }}
+                        <a class="ms-2" href="{{ url_for('parts_list.view_parts_lists', status_id=selected_status_id if selected_status_id else '', customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '') }}">Clear date filter</a>
+                    </small>
+                {% endif %}
             </div>
         </div>
         <div class="col-md-6 text-end">
@@ -49,7 +56,7 @@
                     <ul class="dropdown-menu">
                         {% if current_salesperson %}
                             <li>
-                                <a class="dropdown-item" href="{{ url_for('parts_list.view_parts_lists') }}">
+                                <a class="dropdown-item" href="{{ url_for('parts_list.view_parts_lists', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
                                     <i class="bi bi-people"></i> All Salespeople
                                 </a>
                             </li>
@@ -59,7 +66,7 @@
                             {% for sp in all_salespeople %}
                                 {% if not current_salesperson or sp.id != current_salesperson.id %}
                                     <li>
-                                        <a class="dropdown-item" href="{{ url_for('parts_list.view_parts_lists', salesperson_id=sp.id) }}">
+                                        <a class="dropdown-item" href="{{ url_for('parts_list.view_parts_lists', salesperson_id=sp.id, quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
                                             <i class="bi bi-person"></i> {{ sp.name }}
                                             {% if sp.parts_list_count > 0 %}
                                                 <span class="badge bg-secondary ms-2">{{ sp.parts_list_count }}</span>
@@ -125,14 +132,14 @@
                     <ul class="nav nav-pills" role="tablist">
                         <li class="nav-item" role="presentation">
                             <a class="nav-link {% if not selected_status_id %}active{% endif %}"
-                               href="{{ url_for('parts_list.view_parts_lists', customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '') }}">
+                               href="{{ url_for('parts_list.view_parts_lists', customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
                                 All Statuses
                             </a>
                         </li>
                         {% for status in statuses %}
                         <li class="nav-item" role="presentation">
                             <a class="nav-link {% if status.id|string == selected_status_id|string %}active{% endif %}"
-                               href="{{ url_for('parts_list.view_parts_lists', status_id=status.id, customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '') }}">
+                               href="{{ url_for('parts_list.view_parts_lists', status_id=status.id, customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
                                 {{ status.name }}
                             </a>
                         </li>
@@ -373,6 +380,7 @@
 function filterByCustomer(customerId) {
     const currentStatus = "{{ selected_status_id or '' }}";
     const currentSalesperson = "{{ selected_salesperson_id or '' }}";
+    const currentQuotedDate = "{{ selected_quoted_date or '' }}";
     let url = "{{ url_for('parts_list.view_parts_lists') }}";
     const params = new URLSearchParams();
 
@@ -384,6 +392,9 @@ function filterByCustomer(customerId) {
     }
     if (currentSalesperson) {
         params.append('salesperson_id', currentSalesperson);
+    }
+    if (currentQuotedDate) {
+        params.append('quoted_date', currentQuotedDate);
     }
 
     if (params.toString()) {

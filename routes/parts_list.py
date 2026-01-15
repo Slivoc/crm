@@ -3616,6 +3616,13 @@ def view_parts_lists():
         salesperson_id_param = request.args.get('salesperson_id', type=int)
         salesperson_id = salesperson_id_param
         part_search = (request.args.get('q') or '').strip()
+        quoted_date = (request.args.get('quoted_date') or '').strip()
+        quoted_date_filter = None
+        if quoted_date:
+            try:
+                quoted_date_filter = datetime.strptime(quoted_date, '%Y-%m-%d').date().isoformat()
+            except ValueError:
+                quoted_date_filter = None
 
         current_user_salesperson_id = None
         if current_user.is_authenticated:
@@ -3714,6 +3721,20 @@ def view_parts_lists():
             where_clauses.append("pl.salesperson_id = ?")
             params.append(salesperson_id)
 
+        if quoted_date_filter:
+            where_clauses.append("""
+                EXISTS (
+                    SELECT 1
+                    FROM parts_list_lines pll2
+                    JOIN customer_quote_lines cql2 ON cql2.parts_list_line_id = pll2.id
+                    WHERE pll2.parts_list_id = pl.id
+                      AND cql2.quoted_status = 'quoted'
+                      AND cql2.quoted_on IS NOT NULL
+                      AND DATE(cql2.quoted_on) = ?
+                )
+            """)
+            params.append(quoted_date_filter)
+
         if where_clauses:
             sql += " WHERE " + " AND ".join(where_clauses)
 
@@ -3768,6 +3789,7 @@ def view_parts_lists():
                                selected_customer_name=selected_customer_name,
                                selected_salesperson_id=salesperson_id,
                                explicit_salesperson_id=salesperson_id_param,
+                               selected_quoted_date=quoted_date_filter,
                                initial_part_search=part_search)
     except Exception as e:
         logging.exception(e)
@@ -3777,6 +3799,7 @@ def view_parts_lists():
                                all_salespeople=[],
                                current_salesperson=None,
                                current_user_salesperson_id=None,
+                               selected_quoted_date=None,
                                initial_part_search=part_search)
 
 @parts_list_bp.route('/parts-lists/<int:list_id>/update', methods=['POST'])
@@ -7449,7 +7472,10 @@ def get_related_emails(list_id):
 
         # Import Graph helpers from emails module
         from routes.emails import (
-            _get_graph_settings, _load_graph_cache, _build_msal_app, _save_graph_cache
+            _get_graph_settings,
+            _load_graph_cache_for_request,
+            _build_msal_app,
+            _save_graph_cache_for_request,
         )
         import requests
         from urllib.parse import quote as url_quote
@@ -7457,7 +7483,7 @@ def get_related_emails(list_id):
         from datetime import timezone
 
         settings = _get_graph_settings(include_secret=True)
-        cache = _load_graph_cache()
+        cache, user_id = _load_graph_cache_for_request()
         app = _build_msal_app(settings, cache=cache)
         accounts = app.get_accounts()
 
@@ -7620,7 +7646,10 @@ def get_related_emails_data(list_id):
             return jsonify(success=True, emails=[], source_message_id=None, graph_connected=True)
 
         from routes.emails import (
-            _get_graph_settings, _load_graph_cache, _build_msal_app, _save_graph_cache
+            _get_graph_settings,
+            _load_graph_cache_for_request,
+            _build_msal_app,
+            _save_graph_cache_for_request,
         )
         import requests
         from urllib.parse import quote as url_quote
@@ -7628,7 +7657,7 @@ def get_related_emails_data(list_id):
         from datetime import timezone
 
         settings = _get_graph_settings(include_secret=True)
-        cache = _load_graph_cache()
+        cache, user_id = _load_graph_cache_for_request()
         app = _build_msal_app(settings, cache=cache)
         accounts = app.get_accounts()
 
@@ -7636,7 +7665,7 @@ def get_related_emails_data(list_id):
             return jsonify(success=False, message="No Graph account connected"), 400
 
         token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
-        _save_graph_cache(cache)
+        _save_graph_cache_for_request(user_id, cache)
 
         if not token or "access_token" not in token:
             return jsonify(success=False, message="Failed to refresh access token"), 400
