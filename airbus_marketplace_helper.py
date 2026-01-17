@@ -37,7 +37,8 @@ MARKETPLACE_CATEGORIES = [
 ]
 
 FALLBACK_CATEGORY = "Marketplace Categories/Hardware and Electrical/Miscellaneous"
-FALLBACK_REASON = "parse_error_or_api_error"
+FALLBACK_REASON_PARSE = "parse_error"
+FALLBACK_REASON_API = "api_error"
 
 
 def _fallback_suggestion(reason):
@@ -58,7 +59,7 @@ def _extract_json_object(raw_content):
 
 def _parse_category_response(raw_content):
     if not raw_content:
-        return _fallback_suggestion(FALLBACK_REASON)
+        return _fallback_suggestion(FALLBACK_REASON_PARSE)
 
     content = raw_content.strip()
     if content.startswith("```json"):
@@ -75,9 +76,9 @@ def _parse_category_response(raw_content):
             try:
                 result = json.loads(extracted)
             except json.JSONDecodeError:
-                return _fallback_suggestion(FALLBACK_REASON)
+                return _fallback_suggestion(FALLBACK_REASON_PARSE)
         else:
-            return _fallback_suggestion(FALLBACK_REASON)
+            return _fallback_suggestion(FALLBACK_REASON_PARSE)
 
     suggested_category = result.get("category")
     if suggested_category not in MARKETPLACE_CATEGORIES:
@@ -121,9 +122,9 @@ def suggest_marketplace_category(part_number, description="", additional_info=""
         # Create category list for the prompt
         category_list = "\n".join([f"- {cat}" for cat in MARKETPLACE_CATEGORIES])
 
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
+        request_kwargs = {
+            "model": "gpt-4o",
+            "messages": [
                 {
                     "role": "system",
                     "content": f"""You are an expert in aviation hardware categorization for the Airbus Marketplace.
@@ -170,9 +171,23 @@ Output format:
 Return the most appropriate category from the list provided."""
                 }
             ],
-            max_tokens=500,
-            temperature=0.2,
-        )
+            "max_tokens": 500,
+            "temperature": 0.2,
+        }
+
+        try:
+            response = client.chat.completions.create(
+                **request_kwargs,
+                response_format={"type": "json_object"},
+            )
+        except TypeError:
+            response = client.chat.completions.create(**request_kwargs)
+        except Exception as exc:
+            if "response_format" in str(exc):
+                logger.warning("response_format not supported, retrying without it.")
+                response = client.chat.completions.create(**request_kwargs)
+            else:
+                raise
 
         raw_content = response.choices[0].message.content.strip()
         logger.debug("Raw AI response: %s", raw_content[:1000])
@@ -187,7 +202,7 @@ Return the most appropriate category from the list provided."""
 
     except Exception as e:
         logger.exception(f"Error suggesting marketplace category: {e}")
-        return _fallback_suggestion(FALLBACK_REASON)
+        return _fallback_suggestion(FALLBACK_REASON_API)
 
 
 def suggest_categories_batch(parts_list):
@@ -209,7 +224,7 @@ def suggest_categories_batch(parts_list):
 
         suggestion = suggest_marketplace_category(part_number, description, additional_info)
         if not suggestion:
-            suggestion = _fallback_suggestion(FALLBACK_REASON)
+            suggestion = _fallback_suggestion(FALLBACK_REASON_API)
 
         result = {
             'part_number': part_number,
