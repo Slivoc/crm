@@ -7,108 +7,45 @@
     <div class="row mb-4">
         <div class="col">
             <h2><i class="bi bi-tags"></i> Marketplace Categorization Tool</h2>
-            <p class="text-muted">Use AI to suggest a category and prefixes, then apply to matching parts in bulk.</p>
+            <p class="text-muted">Work through uncategorized export parts and apply categories one-by-one.</p>
         </div>
     </div>
 
     <div class="card mb-4">
         <div class="card-header">
-            <strong>1) Get Suggestion</strong>
+            <strong>Uncategorized Parts</strong>
         </div>
         <div class="card-body">
             <div class="row mb-3">
                 <div class="col-md-6">
-                    <label class="form-label fw-bold">Part Number</label>
-                    <input type="text" class="form-control" id="toolPartNumber" placeholder="e.g. 202K132-25-0">
+                    <label class="form-label fw-bold">Filter</label>
+                    <input type="text" class="form-control" id="uncategorizedFilter" placeholder="Type to filter (e.g. 2123, CR)">
+                    <div class="small text-muted mt-1" id="uncategorizedSource"></div>
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label fw-bold">Description (optional)</label>
-                    <input type="text" class="form-control" id="toolDescription" placeholder="Optional description">
-                </div>
-            </div>
-            <div class="row mb-3">
-                <div class="col-md-6">
-                    <label class="form-label fw-bold">Or pick an uncategorized part</label>
+                    <label class="form-label fw-bold">Mass categorize filtered</label>
                     <div class="input-group">
-                        <select class="form-select" id="uncategorizedSelect">
-                            <option value="">Loading uncategorized parts...</option>
+                        <select class="form-select" id="massCategorySelect">
+                            <option value="">Loading categories...</option>
                         </select>
-                        <button class="btn btn-outline-secondary" type="button" id="useExportResultsBtn">
-                            <i class="bi bi-clock-history"></i>
-                        </button>
-                        <button class="btn btn-outline-secondary" type="button" id="refreshUncategorizedBtn">
-                            <i class="bi bi-arrow-repeat"></i>
+                        <button class="btn btn-success" id="massCategorizeBtn" disabled>
+                            <i class="bi bi-check-circle"></i> Apply
                         </button>
                     </div>
-                    <div class="small text-muted mt-1" id="uncategorizedSource">Pulls the first 50 uncategorized parts.</div>
+                    <div class="small text-muted mt-1" id="massCategoryHint">Applies to all currently filtered parts.</div>
                 </div>
-            </div>
-            <div class="d-flex align-items-center gap-3">
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="usePerplexity" checked>
-                    <label class="form-check-label" for="usePerplexity">Use Perplexity web search</label>
-                </div>
-                <button class="btn btn-primary" id="getSuggestionBtn">
-                    <i class="bi bi-magic"></i> Suggest Category + Prefixes
-                </button>
-            </div>
-            <div id="suggestionStatus" class="text-muted mt-2" style="display: none;"></div>
-        </div>
-    </div>
-
-    <div class="card mb-4">
-        <div class="card-header">
-            <strong>2) Review + Edit</strong>
-        </div>
-        <div class="card-body">
-            <div class="row mb-3">
-                <div class="col-md-6">
-                    <label class="form-label fw-bold">Suggested Category</label>
-                    <select class="form-select" id="categorySelect">
-                        <option value="">Loading categories...</option>
-                    </select>
-                    <div class="small text-muted mt-1" id="suggestionReasoning"></div>
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label fw-bold">Prefixes (one per line)</label>
-                    <textarea class="form-control" id="prefixesInput" rows="5" placeholder="e.g. 202K&#10;21215DC"></textarea>
-                </div>
-            </div>
-            <div class="d-flex align-items-center gap-3">
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="onlyUncategorized" checked>
-                    <label class="form-check-label" for="onlyUncategorized">Only apply to uncategorized parts</label>
-                </div>
-                <button class="btn btn-outline-primary" id="previewMatchesBtn">
-                    <i class="bi bi-search"></i> Preview Matches
-                </button>
-                <button class="btn btn-success" id="applyCategoryBtn" disabled>
-                    <i class="bi bi-check-circle"></i> Apply Category to Matches
-                </button>
-            </div>
-            <div id="previewStatus" class="text-muted mt-2" style="display: none;"></div>
-        </div>
-    </div>
-
-    <div class="card" id="previewCard" style="display: none;">
-        <div class="card-header">
-            <strong>Preview</strong>
-        </div>
-        <div class="card-body">
-            <div class="mb-2">
-                <span class="fw-bold">Total matches:</span>
-                <span id="previewTotal">0</span>
             </div>
             <div class="table-responsive">
                 <table class="table table-sm table-striped">
                     <thead>
                         <tr>
-                            <th>Base Part Number</th>
                             <th>Part Number</th>
-                            <th>Current Category</th>
+                            <th>Suggested Category</th>
+                            <th>Reasoning</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="previewTableBody"></tbody>
+                    <tbody id="uncategorizedTableBody"></tbody>
                 </table>
             </div>
         </div>
@@ -120,75 +57,52 @@
 <script>
 let categories = [];
 let uncategorizedParts = [];
+let filteredParts = [];
+let searchTimer = null;
+let selectedCategoryMap = {};
 
 $(document).ready(function() {
     loadCategories();
-    loadUncategorizedParts(true);
+    loadUncategorizedParts();
 
-    $('#getSuggestionBtn').click(function() {
-        getSuggestion();
+    $('#uncategorizedFilter').on('input', function() {
+        scheduleUncategorizedFilter($(this).val());
     });
 
-    $('#previewMatchesBtn').click(function() {
-        previewMatches();
-    });
-
-    $('#applyCategoryBtn').click(function() {
-        applyCategory();
-    });
-
-    $('#refreshUncategorizedBtn').click(function() {
-        loadUncategorizedParts(false);
-    });
-
-    $('#useExportResultsBtn').click(function() {
-        loadUncategorizedParts(true);
-    });
-
-    $('#uncategorizedSelect').change(function() {
-        const selected = $(this).val();
-        if (!selected) {
-            return;
-        }
-        $('#toolPartNumber').val(selected);
+    $('#massCategorizeBtn').click(function() {
+        applyMassCategory();
     });
 });
 
 function loadCategories() {
     $.get('/marketplace/categories', function(response) {
         categories = response.categories || [];
-        const $select = $('#categorySelect');
-        $select.empty();
+        const $massSelect = $('#massCategorySelect');
+        $massSelect.empty();
+        $massSelect.append($('<option>', { value: '', text: 'Select category...' }));
         categories.forEach(cat => {
             const shortName = cat.replace('Marketplace Categories/Hardware and Electrical/', '');
-            $select.append($('<option>', { value: cat, text: shortName }));
+            $massSelect.append($('<option>', { value: cat, text: shortName }));
         });
+        $('#massCategorizeBtn').prop('disabled', false);
+        applyUncategorizedFilter($('#uncategorizedFilter').val());
     }).fail(function() {
-        $('#categorySelect').html('<option value="">Failed to load categories</option>');
+        categories = [];
+        $('#massCategorySelect').html('<option value="">Failed to load categories</option>');
+        $('#massCategorizeBtn').prop('disabled', true);
+        applyUncategorizedFilter($('#uncategorizedFilter').val());
     });
 }
 
 function loadUncategorizedParts() {
-    loadUncategorizedParts(true);
-}
-
-function loadUncategorizedParts(preferExportResults) {
-    if (preferExportResults) {
-        const exportPayload = getExportUncategorizedParts();
-        if (exportPayload) {
-            renderUncategorizedParts(exportPayload.uncategorized || []);
-            updateUncategorizedSource(exportPayload);
-            return;
-        }
+    const exportPayload = getExportUncategorizedParts();
+    if (!exportPayload) {
+        $('#uncategorizedSource').html('Run the <a href="/marketplace/export-page">export page</a> to load uncategorized parts.');
+        renderUncategorizedParts([]);
+        return;
     }
-
-    $.get('/marketplace/categorization-tool/uncategorized', { limit: 50 }, function(response) {
-        renderUncategorizedParts(response.parts || []);
-        updateUncategorizedSource();
-    }).fail(function() {
-        $('#uncategorizedSelect').html('<option value="">Failed to load uncategorized parts</option>');
-        $('#uncategorizedSource').text('Failed to load uncategorized parts.');
-    });
+    renderUncategorizedParts(exportPayload.uncategorized || []);
+    updateUncategorizedSource(exportPayload);
 }
 
 function getExportUncategorizedParts() {
@@ -214,187 +128,224 @@ function updateUncategorizedSource(payload) {
         $('#uncategorizedSource').text(`Using ${count} uncategorized parts from last export (${timestamp.toLocaleString()}).`);
         return;
     }
-    $('#uncategorizedSource').text('Pulls the first 50 uncategorized parts.');
+    $('#uncategorizedSource').text('No export results loaded yet.');
 }
 
 function renderUncategorizedParts(parts) {
     uncategorizedParts = parts || [];
-    const $select = $('#uncategorizedSelect');
-    $select.empty();
-    $select.append($('<option>', { value: '', text: 'Select an uncategorized part...' }));
-    uncategorizedParts.forEach(part => {
-        const label = part.part_number || part.base_part_number;
-        $select.append($('<option>', { value: label, text: label }));
+    applyUncategorizedFilter($('#uncategorizedFilter').val());
+}
+
+function scheduleUncategorizedFilter(filterText) {
+    if (searchTimer) {
+        clearTimeout(searchTimer);
+    }
+    searchTimer = setTimeout(function() {
+        applyUncategorizedFilter(filterText);
+    }, 250);
+}
+
+function applyUncategorizedFilter(filterText) {
+    const query = (filterText || '').trim().toLowerCase();
+    filteredParts = uncategorizedParts.filter(part => {
+        const label = (part.part_number || part.base_part_number || '').toLowerCase();
+        return !query || label.includes(query);
     });
+    renderUncategorizedTable();
 }
 
-function getSuggestion() {
-    const partNumber = $('#toolPartNumber').val().trim();
-    const description = $('#toolDescription').val().trim();
-    const usePerplexity = $('#usePerplexity').prop('checked');
-
-    if (!partNumber) {
-        alert('Please enter a part number.');
-        return;
-    }
-
-    setStatus('#suggestionStatus', 'Requesting suggestion...', 'text-muted');
-    $('#getSuggestionBtn').prop('disabled', true);
-
-    $.ajax({
-        url: '/marketplace/categorization-tool/suggest',
-        method: 'POST',
-        contentType: 'application/json',
-        data: JSON.stringify({
-            part_number: partNumber,
-            description: description,
-            use_perplexity: usePerplexity
-        }),
-        success: function(response) {
-            if (!response.success) {
-                setStatus('#suggestionStatus', response.error || 'Suggestion failed.', 'text-danger');
-                $('#getSuggestionBtn').prop('disabled', false);
-                return;
-            }
-
-            $('#categorySelect').val(response.category);
-            $('#suggestionReasoning').text(response.reasoning || '');
-            $('#prefixesInput').val((response.prefixes || []).join('\n'));
-            setStatus('#suggestionStatus', `Suggested ${response.category}.`, 'text-success');
-        },
-        error: function(xhr, status, error) {
-            setStatus('#suggestionStatus', xhr.responseJSON?.error || error, 'text-danger');
-        },
-        complete: function() {
-            $('#getSuggestionBtn').prop('disabled', false);
-        }
-    });
-}
-
-function previewMatches() {
-    const prefixes = getPrefixes();
-    const onlyUncategorized = $('#onlyUncategorized').prop('checked');
-
-    if (prefixes.length === 0) {
-        alert('Add at least one prefix.');
-        return;
-    }
-
-    setStatus('#previewStatus', 'Loading preview...', 'text-muted');
-    $('#previewMatchesBtn').prop('disabled', true);
-
-    $.ajax({
-        url: '/marketplace/categorization-tool/prefix-preview',
-        method: 'POST',
-        contentType: 'application/json',
-        data: JSON.stringify({
-            prefixes: prefixes,
-            only_uncategorized: onlyUncategorized
-        }),
-        success: function(response) {
-            if (!response.success) {
-                setStatus('#previewStatus', response.error || 'Preview failed.', 'text-danger');
-                return;
-            }
-
-            $('#previewTotal').text(response.total || 0);
-            renderPreviewTable(response.sample || []);
-            $('#previewCard').toggle((response.total || 0) > 0);
-            $('#applyCategoryBtn').prop('disabled', (response.total || 0) === 0);
-            setStatus('#previewStatus', 'Preview updated.', 'text-success');
-        },
-        error: function(xhr, status, error) {
-            setStatus('#previewStatus', xhr.responseJSON?.error || error, 'text-danger');
-        },
-        complete: function() {
-            $('#previewMatchesBtn').prop('disabled', false);
-        }
-    });
-}
-
-function applyCategory() {
-    const prefixes = getPrefixes();
-    const category = $('#categorySelect').val();
-    const onlyUncategorized = $('#onlyUncategorized').prop('checked');
-
-    if (!category) {
-        alert('Select a category.');
-        return;
-    }
-    if (prefixes.length === 0) {
-        alert('Add at least one prefix.');
-        return;
-    }
-
-    if (!confirm(`Apply "${category}" to all matching parts?`)) {
-        return;
-    }
-
-    $('#applyCategoryBtn').prop('disabled', true);
-    setStatus('#previewStatus', 'Applying category...', 'text-muted');
-
-    $.ajax({
-        url: '/marketplace/categorization-tool/apply-prefix',
-        method: 'POST',
-        contentType: 'application/json',
-        data: JSON.stringify({
-            prefixes: prefixes,
-            category: category,
-            only_uncategorized: onlyUncategorized
-        }),
-        success: function(response) {
-            if (!response.success) {
-                setStatus('#previewStatus', response.error || 'Apply failed.', 'text-danger');
-                return;
-            }
-            setStatus('#previewStatus', `Updated ${response.updated_count} parts.`, 'text-success');
-            previewMatches();
-        },
-        error: function(xhr, status, error) {
-            setStatus('#previewStatus', xhr.responseJSON?.error || error, 'text-danger');
-        },
-        complete: function() {
-            $('#applyCategoryBtn').prop('disabled', false);
-        }
-    });
-}
-
-function getPrefixes() {
-    return $('#prefixesInput').val()
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0);
-}
-
-function renderPreviewTable(rows) {
-    const $tbody = $('#previewTableBody');
+function renderUncategorizedTable() {
+    const $tbody = $('#uncategorizedTableBody');
     $tbody.empty();
-    if (!rows.length) {
-        $tbody.append('<tr><td colspan="3" class="text-center text-muted">No matches</td></tr>');
+    if (!filteredParts.length) {
+        $tbody.append('<tr><td colspan="4" class="text-center text-muted">No matches</td></tr>');
         return;
     }
-    rows.forEach(row => {
-        $tbody.append(`
-            <tr>
-                <td>${row.base_part_number || ''}</td>
-                <td>${row.part_number || ''}</td>
-                <td>${row.mkp_category || ''}</td>
+    filteredParts.forEach(part => {
+        const label = part.part_number || part.base_part_number;
+        const options = categories.length
+            ? categories.map(cat => `<option value="${cat}">${cat.replace('Marketplace Categories/Hardware and Electrical/', '')}</option>`).join('')
+            : '<option value="">Loading categories...</option>';
+        const row = `
+            <tr data-base-part-number="${part.base_part_number}">
+                <td>${label}</td>
+                <td>
+                    <select class="form-select form-select-sm category-select">
+                        <option value="">Select category...</option>
+                        ${options}
+                    </select>
+                </td>
+                <td class="small text-muted reasoning-cell"></td>
+                <td class="text-nowrap">
+                    <button class="btn btn-sm btn-outline-primary suggest-btn">
+                        <i class="bi bi-magic"></i> Perplexity
+                    </button>
+                    <button class="btn btn-sm btn-success apply-btn">
+                        <i class="bi bi-check-circle"></i> Categorize
+                    </button>
+                </td>
             </tr>
-        `);
+        `;
+        $tbody.append(row);
+    });
+
+    $('.suggest-btn').off('click').on('click', function() {
+        const $row = $(this).closest('tr');
+        const basePartNumber = $row.data('base-part-number');
+        const part = filteredParts.find(p => p.base_part_number === basePartNumber);
+        if (!part) {
+            return;
+        }
+        const $reason = $row.find('.reasoning-cell');
+        const $select = $row.find('.category-select');
+        $(this).prop('disabled', true).text('Working...');
+        $.ajax({
+            url: '/marketplace/categorization-tool/suggest',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                part_number: part.part_number || part.base_part_number,
+                description: '',
+                use_perplexity: true
+            }),
+            success: function(response) {
+                if (response.success) {
+                    const shortName = response.category
+                        ? response.category.replace('Marketplace Categories/Hardware and Electrical/', '')
+                        : 'Unknown';
+                    const confidence = response.confidence ? ` (${response.confidence})` : '';
+                    $row.data('suggested-category', response.category || '');
+                    $reason.text(`Suggested: ${shortName}${confidence}. ${response.reasoning || ''}`);
+                } else {
+                    $reason.text(response.error || 'Suggestion failed');
+                }
+            },
+            error: function(xhr, status, error) {
+                $reason.text(xhr.responseJSON?.error || error);
+            },
+            complete: function() {
+                $row.find('.suggest-btn').prop('disabled', false).html('<i class="bi bi-magic"></i> Perplexity');
+            }
+        });
+    });
+
+    $('.apply-btn').off('click').on('click', function() {
+        const $row = $(this).closest('tr');
+        const basePartNumber = $row.data('base-part-number');
+        const category = $row.find('.category-select').val();
+        if (!category) {
+            $row.find('.reasoning-cell').text('Select a category first.');
+            return;
+        }
+        $(this).prop('disabled', true).text('Applying...');
+        $.ajax({
+            url: `/marketplace/update-category/${basePartNumber}`,
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ mkp_category: category }),
+            success: function(response) {
+                if (response.success) {
+                    removePartFromList(basePartNumber);
+                } else {
+                    $row.find('.reasoning-cell').text(response.error || 'Update failed');
+                }
+            },
+            error: function(xhr, status, error) {
+                $row.find('.reasoning-cell').text(xhr.responseJSON?.error || error);
+            },
+            complete: function() {
+                $row.find('.apply-btn').prop('disabled', false).html('<i class="bi bi-check-circle"></i> Categorize');
+            }
+        });
+    });
+
+    $('.category-select').off('change').on('change', function() {
+        const $row = $(this).closest('tr');
+        const basePartNumber = $row.data('base-part-number');
+        const value = $(this).val();
+        if (value) {
+            selectedCategoryMap[basePartNumber] = value;
+        } else {
+            delete selectedCategoryMap[basePartNumber];
+        }
     });
 }
 
-function setStatus(selector, message, className) {
-    const $el = $(selector);
-    if (!message) {
-        $el.hide().text('');
+function removePartFromList(basePartNumber) {
+    uncategorizedParts = uncategorizedParts.filter(part => part.base_part_number !== basePartNumber);
+    removeFromExportCache([basePartNumber]);
+    applyUncategorizedFilter($('#uncategorizedFilter').val());
+}
+
+function applyMassCategory() {
+    const category = $('#massCategorySelect').val();
+    if (!category) {
+        $('#massCategoryHint').text('Select a category first.');
         return;
     }
-    $el
-        .text(message)
-        .removeClass('text-muted text-success text-danger')
-        .addClass(className || 'text-muted')
-        .show();
+    if (!filteredParts.length) {
+        $('#massCategoryHint').text('No filtered parts to update.');
+        return;
+    }
+    if (!confirm(`Apply "${category}" to ${filteredParts.length} parts?`)) {
+        return;
+    }
+
+    $('#massCategorizeBtn').prop('disabled', true).text('Applying...');
+    const basePartNumbers = filteredParts
+        .filter(part => !selectedCategoryMap[part.base_part_number])
+        .map(part => part.base_part_number);
+    if (!basePartNumbers.length) {
+        $('#massCategoryHint').text('All filtered parts already have a selection.');
+        $('#massCategorizeBtn').prop('disabled', false).html('<i class="bi bi-check-circle"></i> Apply');
+        return;
+    }
+    $.ajax({
+        url: '/marketplace/categorization-tool/apply-list',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            base_part_numbers: basePartNumbers,
+            category: category
+        }),
+        success: function(response) {
+            if (response.success) {
+                uncategorizedParts = uncategorizedParts.filter(part => !basePartNumbers.includes(part.base_part_number));
+                removeFromExportCache(basePartNumbers);
+                basePartNumbers.forEach(partNumber => delete selectedCategoryMap[partNumber]);
+                applyUncategorizedFilter($('#uncategorizedFilter').val());
+                $('#massCategoryHint').text(`Updated ${response.updated_count} parts.`);
+            } else {
+                $('#massCategoryHint').text(response.error || 'Apply failed.');
+            }
+        },
+        error: function(xhr, status, error) {
+            $('#massCategoryHint').text(xhr.responseJSON?.error || error);
+        },
+        complete: function() {
+            $('#massCategorizeBtn').prop('disabled', false).html('<i class="bi bi-check-circle"></i> Apply');
+        }
+    });
+}
+
+function removeFromExportCache(basePartNumbers) {
+    try {
+        const raw = localStorage.getItem('marketplaceExportUncategorizedParts');
+        if (!raw) {
+            return;
+        }
+        const payload = JSON.parse(raw);
+        if (!payload || !Array.isArray(payload.uncategorized)) {
+            return;
+        }
+        const removeSet = new Set(basePartNumbers);
+        payload.uncategorized = payload.uncategorized.filter(
+            part => !removeSet.has(part.base_part_number)
+        );
+        localStorage.setItem('marketplaceExportUncategorizedParts', JSON.stringify(payload));
+    } catch (error) {
+        console.warn('Failed to update export cache', error);
+    }
 }
 </script>
 {% endblock %}

@@ -298,6 +298,43 @@ def categorization_tool_uncategorized():
     return jsonify({'success': True, 'parts': parts}), 200
 
 
+@marketplace_bp.route('/categorization-tool/uncategorized-search', methods=['GET'])
+def categorization_tool_uncategorized_search():
+    query = (request.args.get('q') or '').strip().lower()
+    limit = request.args.get('limit', 200)
+    try:
+        limit = max(1, min(int(limit), 200))
+    except (TypeError, ValueError):
+        limit = 200
+
+    if not query:
+        return jsonify({'success': True, 'parts': []}), 200
+
+    like_value = f"%{query}%"
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute(
+        """
+        SELECT base_part_number, part_number
+        FROM part_numbers
+        WHERE (mkp_category IS NULL OR mkp_category = '')
+          AND (LOWER(part_number) LIKE ? OR LOWER(base_part_number) LIKE ?)
+        ORDER BY part_number
+        LIMIT ?
+        """,
+        (like_value, like_value, limit)
+    )
+    rows = cursor.fetchall()
+    parts = [
+        {
+            'base_part_number': row['base_part_number'],
+            'part_number': row['part_number'] or row['base_part_number'],
+        }
+        for row in rows
+    ]
+    return jsonify({'success': True, 'parts': parts}), 200
+
+
 @marketplace_bp.route('/categorization-tool/prefix-preview', methods=['POST'])
 def categorization_tool_prefix_preview():
     data = request.get_json() or {}
@@ -371,6 +408,32 @@ def categorization_tool_apply_prefix():
     cursor = db.cursor()
     update_query = f"UPDATE part_numbers pn SET mkp_category = ? WHERE {where_sql}"
     cursor.execute(update_query, [category] + params)
+    db.commit()
+
+    return jsonify({'success': True, 'updated_count': cursor.rowcount}), 200
+
+
+@marketplace_bp.route('/categorization-tool/apply-list', methods=['POST'])
+def categorization_tool_apply_list():
+    data = request.get_json() or {}
+    base_part_numbers = data.get('base_part_numbers') or []
+    category = (data.get('category') or '').strip()
+
+    if not base_part_numbers:
+        return jsonify({'success': False, 'error': 'base_part_numbers are required'}), 400
+    if not category:
+        return jsonify({'success': False, 'error': 'category is required'}), 400
+
+    valid_categories = get_available_categories()
+    if category not in valid_categories:
+        return jsonify({'success': False, 'error': 'Invalid category'}), 400
+
+    placeholders = ','.join('?' * len(base_part_numbers))
+    query = f"UPDATE part_numbers SET mkp_category = ? WHERE base_part_number IN ({placeholders})"
+
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute(query, [category] + base_part_numbers)
     db.commit()
 
     return jsonify({'success': True, 'updated_count': cursor.rowcount}), 200
