@@ -931,7 +931,8 @@ function processCategorizationBatch(allPartNumbers, offset, total) {
                     processedInBatch: response.total_in_batch,
                     updatedInBatch: response.updated_count,
                     totalProcessed: processed,
-                    totalParts: total
+                    totalParts: total,
+                    batchDetails: response.batch_details || []
                 }));
 
                 // Continue if there are more parts
@@ -982,13 +983,29 @@ $('#cancelProgressBtn').click(function() {
 
 function buildBatchDetails(details) {
     const skipped = Math.max(details.processedInBatch - details.updatedInBatch, 0);
-    return [
+    const lines = [
         `Batch ${details.batchNumber} of ${details.totalBatches}`,
         `Processed: ${details.processedInBatch}`,
         `Updated: ${details.updatedInBatch}`,
         `Skipped: ${skipped}`,
         `Total processed: ${details.totalProcessed} / ${details.totalParts}`
-    ].join('\n');
+    ];
+
+    if (details.batchDetails && details.batchDetails.length) {
+        lines.push('Parts:');
+        details.batchDetails.forEach((detail) => {
+            const partLabel = detail.part_number || detail.base_part_number || 'Unknown part';
+            const statusLabel = detail.updated ? 'Updated' : 'Skipped';
+            const categoryLabel = detail.suggested_category || 'NO SUGGESTION';
+            const confidenceLabel = detail.confidence ? ` (conf: ${detail.confidence})` : '';
+            lines.push(`${partLabel}: ${categoryLabel}${confidenceLabel} [${statusLabel}]`);
+            if (detail.reasoning) {
+                lines.push(`  Reason: ${truncateText(detail.reasoning, 300)}`);
+            }
+        });
+    }
+
+    return lines.join('\n');
 }
 function exportToExcel() {
     const categorizedParts = allParts.filter(p => p.mkp_category);

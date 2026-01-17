@@ -657,9 +657,11 @@ def auto_categorize_parts():
 
         # Update database
         updated_count = 0
+        batch_details = []
         for row, suggestion in zip(rows, suggestions):
             base_part_number = row['base_part_number']
             suggested_category = suggestion.get('suggested_category')
+            was_updated = False
 
             if suggested_category:
                 cursor.execute(
@@ -667,6 +669,16 @@ def auto_categorize_parts():
                     (suggested_category, base_part_number)
                 )
                 updated_count += 1
+                was_updated = True
+
+            batch_details.append({
+                'base_part_number': base_part_number,
+                'part_number': row['part_number'],
+                'suggested_category': suggested_category,
+                'confidence': suggestion.get('confidence'),
+                'reasoning': suggestion.get('reasoning'),
+                'updated': was_updated
+            })
 
         db.commit()
 
@@ -680,7 +692,8 @@ def auto_categorize_parts():
             'updated_count': updated_count,
             'total_in_batch': len(rows),
             'has_more': has_more,
-            'next_offset': offset + batch_size
+            'next_offset': offset + batch_size,
+            'batch_details': batch_details
         }), 200
 
     except Exception as e:
