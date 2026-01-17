@@ -417,6 +417,9 @@
                 <button type="button" class="btn btn-danger" id="cancelProgressBtn">
                     <i class="bi bi-x-circle"></i> Cancel
                 </button>
+                <button type="button" class="btn btn-outline-secondary" id="downloadBatchCsvBtn" disabled>
+                    <i class="bi bi-download"></i> Download Batch CSV
+                </button>
             </div>
         </div>
     </div>
@@ -850,6 +853,7 @@ function saveMiraklSettings() {
 
 let categorizationCancelled = false;
 let totalCategorized = 0;
+let lastBatchDetails = [];
 
 function autoCategorizeMissing() {
     const uncategorizedNumbers = allParts
@@ -879,6 +883,8 @@ function autoCategorizeMissing() {
     $('#progressDetails').text('');
     $('#progressError').hide();
     $('#cancelProgressBtn').prop('disabled', false);
+    $('#downloadBatchCsvBtn').prop('disabled', true);
+    lastBatchDetails = [];
 
     // Disable the auto-categorize button
     $('#autoCategorizeMissingBtn').prop('disabled', true);
@@ -925,6 +931,8 @@ function processCategorizationBatch(allPartNumbers, offset, total) {
                     .css('width', percentage + '%')
                     .attr('aria-valuenow', percentage)
                     .text(percentage + '%');
+                lastBatchDetails = response.batch_details || [];
+                $('#downloadBatchCsvBtn').prop('disabled', lastBatchDetails.length === 0);
                 $('#progressDetails').text(buildBatchDetails({
                     batchNumber: currentBatch,
                     totalBatches: totalBatches,
@@ -932,7 +940,7 @@ function processCategorizationBatch(allPartNumbers, offset, total) {
                     updatedInBatch: response.updated_count,
                     totalProcessed: processed,
                     totalParts: total,
-                    batchDetails: response.batch_details || []
+                    batchDetails: lastBatchDetails
                 }));
 
                 // Continue if there are more parts
@@ -998,7 +1006,8 @@ function buildBatchDetails(details) {
             const statusLabel = detail.updated ? 'Updated' : 'Skipped';
             const categoryLabel = detail.suggested_category || 'NO SUGGESTION';
             const confidenceLabel = detail.confidence ? ` (conf: ${detail.confidence})` : '';
-            lines.push(`${partLabel}: ${categoryLabel}${confidenceLabel} [${statusLabel}]`);
+            const reasonLabel = detail.reasoning ? ` | ${detail.reasoning}` : '';
+            lines.push(`${partLabel}: ${categoryLabel}${confidenceLabel} [${statusLabel}]${reasonLabel}`);
             if (detail.reasoning) {
                 lines.push(`  Reason: ${truncateText(detail.reasoning, 300)}`);
             }
@@ -1006,6 +1015,47 @@ function buildBatchDetails(details) {
     }
 
     return lines.join('\n');
+}
+
+$('#downloadBatchCsvBtn').click(function() {
+    if (!lastBatchDetails.length) {
+        return;
+    }
+    const rows = [
+        ['base_part_number', 'part_number', 'suggested_category', 'confidence', 'reasoning', 'updated']
+    ];
+    lastBatchDetails.forEach((detail) => {
+        rows.push([
+            detail.base_part_number || '',
+            detail.part_number || '',
+            detail.suggested_category || '',
+            detail.confidence || '',
+            detail.reasoning || '',
+            detail.updated ? 'true' : 'false'
+        ]);
+    });
+    const csv = rows.map((row) => row.map(escapeCsvValue).join(',')).join('\n');
+    downloadCsv(csv, 'marketplace_auto_categorize_batch.csv');
+});
+
+function escapeCsvValue(value) {
+    const strValue = String(value ?? '');
+    if (strValue.includes('"') || strValue.includes(',') || strValue.includes('\n')) {
+        return `"${strValue.replace(/"/g, '""')}"`;
+    }
+    return strValue;
+}
+
+function downloadCsv(csvContent, filename) {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 }
 function exportToExcel() {
     const categorizedParts = allParts.filter(p => p.mkp_category);

@@ -36,6 +36,62 @@ MARKETPLACE_CATEGORIES = [
     "Marketplace Categories/Hardware and Electrical/Washers",
 ]
 
+FALLBACK_CATEGORY = "Marketplace Categories/Hardware and Electrical/Miscellaneous"
+FALLBACK_REASON = "parse_error_or_api_error"
+
+
+def _fallback_suggestion(reason):
+    return {
+        "category": FALLBACK_CATEGORY,
+        "confidence": "low",
+        "reasoning": reason,
+    }
+
+
+def _extract_json_object(raw_content):
+    start = raw_content.find("{")
+    end = raw_content.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    return raw_content[start:end + 1]
+
+
+def _parse_category_response(raw_content):
+    if not raw_content:
+        return _fallback_suggestion(FALLBACK_REASON)
+
+    content = raw_content.strip()
+    if content.startswith("```json"):
+        content = content[7:-3].strip()
+    elif content.startswith("```"):
+        content = content[3:-3].strip()
+
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError:
+        logger.debug("AI response parse failed. Raw (truncated): %s", raw_content[:1000])
+        extracted = _extract_json_object(content)
+        if extracted:
+            try:
+                result = json.loads(extracted)
+            except json.JSONDecodeError:
+                return _fallback_suggestion(FALLBACK_REASON)
+        else:
+            return _fallback_suggestion(FALLBACK_REASON)
+
+    suggested_category = result.get("category")
+    if suggested_category not in MARKETPLACE_CATEGORIES:
+        logger.warning("AI suggested invalid category: %s", suggested_category)
+        return _fallback_suggestion("invalid_category")
+
+    confidence = result.get("confidence") or "low"
+    reasoning = result.get("reasoning") or "no_reasoning"
+    return {
+        "category": suggested_category,
+        "confidence": confidence,
+        "reasoning": reasoning,
+    }
+
 
 def suggest_marketplace_category(part_number, description="", additional_info=""):
     """
@@ -81,7 +137,8 @@ Rules:
 2. Choose ONE category from the list above - use the EXACT string
 3. Provide a confidence level: "high", "medium", or "low"
 4. If truly uncertain, use "Marketplace Categories/Hardware and Electrical/Miscellaneous"
-5. Common patterns:
+5. Reasoning must be a single short sentence, max 12 words, no quotes
+6. Common patterns:
    - Part numbers with "NAS", "AN", "MS" followed by numbers are usually hardware
    - "BOLT", "SCREW" in description → Bolts or Screws category
    - "NUT" → Nuts category
@@ -118,30 +175,19 @@ Return the most appropriate category from the list provided."""
         )
 
         raw_content = response.choices[0].message.content.strip()
-        logger.debug(f"Raw AI response: {raw_content}")
+        logger.debug("Raw AI response: %s", raw_content[:1000])
 
-        # Strip markdown if present
-        if raw_content.startswith('```json'):
-            raw_content = raw_content[7:-3].strip()
-        elif raw_content.startswith('```'):
-            raw_content = raw_content[3:-3].strip()
-
-        # Parse response
-        result = json.loads(raw_content)
-
-        # Validate category is in our list
-        suggested_category = result.get('category')
-        if suggested_category not in MARKETPLACE_CATEGORIES:
-            logger.warning(f"AI suggested invalid category: {suggested_category}, using Miscellaneous")
-            result['category'] = "Marketplace Categories/Hardware and Electrical/Miscellaneous"
-            result['confidence'] = "low"
-
-        logger.info(f"Suggested category: {result['category']} (confidence: {result.get('confidence', 'unknown')})")
+        result = _parse_category_response(raw_content)
+        logger.info(
+            "Suggested category: %s (confidence: %s)",
+            result.get("category"),
+            result.get("confidence", "unknown"),
+        )
         return result
 
     except Exception as e:
         logger.exception(f"Error suggesting marketplace category: {e}")
-        return None
+        return _fallback_suggestion(FALLBACK_REASON)
 
 
 def suggest_categories_batch(parts_list):
@@ -162,6 +208,8 @@ def suggest_categories_batch(parts_list):
         additional_info = part.get('additional_info', '')
 
         suggestion = suggest_marketplace_category(part_number, description, additional_info)
+        if not suggestion:
+            suggestion = _fallback_suggestion(FALLBACK_REASON)
 
         result = {
             'part_number': part_number,

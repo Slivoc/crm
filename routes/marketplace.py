@@ -646,7 +646,7 @@ def auto_categorize_parts():
         # Process this batch
         parts_list = [
             {
-                'part_number': row['part_number'],
+                'part_number': row['part_number'] or row['base_part_number'],
                 'description': '',
                 'additional_info': ''
             }
