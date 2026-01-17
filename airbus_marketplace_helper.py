@@ -2,6 +2,8 @@
 Airbus Marketplace category suggestion and export functionality
 """
 import logging
+import random
+import time
 from openai import OpenAI
 import json
 
@@ -40,6 +42,12 @@ FALLBACK_CATEGORY = "Marketplace Categories/Hardware and Electrical/Miscellaneou
 FALLBACK_REASON_PARSE = "parse_error"
 FALLBACK_REASON_API = "api_error"
 
+MIN_REQUEST_INTERVAL_SECONDS = 0.6
+MAX_RETRY_ATTEMPTS = 6
+INITIAL_BACKOFF_SECONDS = 1.5
+MAX_BACKOFF_SECONDS = 20.0
+_last_request_time = 0.0
+
 
 def _fallback_suggestion(reason):
     return {
@@ -55,6 +63,58 @@ def _extract_json_object(raw_content):
     if start == -1 or end == -1 or end <= start:
         return None
     return raw_content[start:end + 1]
+
+
+def _throttle_requests():
+    global _last_request_time
+    now = time.monotonic()
+    elapsed = now - _last_request_time
+    if elapsed < MIN_REQUEST_INTERVAL_SECONDS:
+        time.sleep(MIN_REQUEST_INTERVAL_SECONDS - elapsed)
+    _last_request_time = time.monotonic()
+
+
+def _is_rate_limit_error(exc):
+    status_code = getattr(exc, "status_code", None)
+    if status_code == 429:
+        return True
+    return "429" in str(exc) or "rate limit" in str(exc).lower()
+
+
+def _request_with_retry(request_kwargs):
+    backoff = INITIAL_BACKOFF_SECONDS
+    last_error = None
+
+    for attempt in range(1, MAX_RETRY_ATTEMPTS + 1):
+        _throttle_requests()
+        try:
+            try:
+                return client.chat.completions.create(
+                    **request_kwargs,
+                    response_format={"type": "json_object"},
+                )
+            except TypeError:
+                return client.chat.completions.create(**request_kwargs)
+        except Exception as exc:
+            last_error = exc
+            if _is_rate_limit_error(exc):
+                sleep_for = min(backoff, MAX_BACKOFF_SECONDS)
+                jitter = random.uniform(0.0, 0.3 * sleep_for)
+                logger.warning(
+                    "OpenAI rate limit hit (attempt %s/%s). Sleeping %.2fs.",
+                    attempt,
+                    MAX_RETRY_ATTEMPTS,
+                    sleep_for + jitter,
+                )
+                time.sleep(sleep_for + jitter)
+                backoff *= 2
+                continue
+            if "response_format" in str(exc):
+                logger.warning("response_format not supported, retrying without it.")
+                return client.chat.completions.create(**request_kwargs)
+            raise
+
+    raise last_error
 
 
 def _parse_category_response(raw_content):
@@ -175,19 +235,7 @@ Return the most appropriate category from the list provided."""
             "temperature": 0.2,
         }
 
-        try:
-            response = client.chat.completions.create(
-                **request_kwargs,
-                response_format={"type": "json_object"},
-            )
-        except TypeError:
-            response = client.chat.completions.create(**request_kwargs)
-        except Exception as exc:
-            if "response_format" in str(exc):
-                logger.warning("response_format not supported, retrying without it.")
-                response = client.chat.completions.create(**request_kwargs)
-            else:
-                raise
+        response = _request_with_retry(request_kwargs)
 
         raw_content = response.choices[0].message.content.strip()
         logger.debug("Raw AI response: %s", raw_content[:1000])
