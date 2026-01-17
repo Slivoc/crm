@@ -83,6 +83,74 @@ function updatePartsListHeader(listId, payload, statusEl, updateUrl) {
         });
 }
 
+function formatStatusCurrency(value, symbol) {
+    if (value === null || value === undefined || value === '') {
+        return '-';
+    }
+    const numeric = parseFloat(value);
+    if (Number.isNaN(numeric)) {
+        return '-';
+    }
+    const prefix = symbol || '';
+    return `${prefix}${numeric.toFixed(2)}`;
+}
+
+function buildPreviewLineStatus(line) {
+    const supplierQuoteCount = line.line_supplier_quote_count || 0;
+    const supplierQuoteBadge = supplierQuoteCount > 0
+        ? `<div><small class="text-muted">Supplier quotes: ${supplierQuoteCount}</small></div>`
+        : '';
+
+    if (line.line_quote_price !== null && line.line_quote_price !== undefined && line.line_quote_price !== '') {
+        const quoteDisplay = formatStatusCurrency(line.line_quote_price, line.line_quote_currency_symbol || '£');
+        return `
+            <div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-success">Quoted</span>
+                    <span class="fw-semibold text-primary">${quoteDisplay}</span>
+                </div>
+                ${supplierQuoteBadge}
+            </div>
+        `;
+    }
+
+    if (line.chosen_cost !== null && line.chosen_cost !== undefined && line.chosen_cost !== '') {
+        const costDisplay = formatStatusCurrency(line.chosen_cost, line.chosen_currency_symbol || '£');
+        const supplierName = line.chosen_supplier_name ? `<div><small class="text-muted">${line.chosen_supplier_name}</small></div>` : '';
+        return `
+            <div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-primary">Costed</span>
+                    <span class="fw-semibold text-primary">${costDisplay}</span>
+                </div>
+                ${supplierName}
+                ${supplierQuoteBadge}
+            </div>
+        `;
+    }
+
+    if (supplierQuoteCount > 0) {
+        return `
+            <div>
+                <div><span class="badge bg-info text-dark">Supplier Quote</span></div>
+                ${supplierQuoteBadge}
+            </div>
+        `;
+    }
+
+    const contactedCount = line.line_contacted_suppliers_count || 0;
+    if (contactedCount > 0) {
+        return `
+            <div>
+                <div><span class="badge bg-warning text-dark">Contacted</span></div>
+                <div><small class="text-muted">${contactedCount} supplier${contactedCount !== 1 ? 's' : ''}</small></div>
+            </div>
+        `;
+    }
+
+    return '';
+}
+
 function renderPartsListPreviewLines(lines) {
     if (!lines || lines.length === 0) {
         return '<p class="text-muted mb-0">No lines found for this parts list.</p>';
@@ -92,7 +160,7 @@ function renderPartsListPreviewLines(lines) {
         <tr>
             <td>${line.line_number ?? '-'}</td>
             <td>${line.customer_part_number || '-'}</td>
-            <td>${line.base_part_number || '-'}</td>
+            <td>${buildPreviewLineStatus(line)}</td>
             <td class="text-end">${line.quantity ?? '-'}</td>
         </tr>
     `).join('');
@@ -104,7 +172,7 @@ function renderPartsListPreviewLines(lines) {
                     <tr>
                         <th scope="col">Line</th>
                         <th scope="col">Customer Part</th>
-                        <th scope="col">Base Part</th>
+                        <th scope="col">Status</th>
                         <th scope="col" class="text-end">Qty</th>
                     </tr>
                 </thead>
@@ -138,7 +206,10 @@ async function showPartsListPreview(options) {
     partsListPreviewModal.show();
 
     try {
-        const response = await fetch(linesUrl);
+        const requestUrl = linesUrl
+            ? (linesUrl.includes('?') ? `${linesUrl}&include_status=1` : `${linesUrl}?include_status=1`)
+            : linesUrl;
+        const response = await fetch(requestUrl);
         const data = await response.json();
         if (!data.success) {
             throw new Error(data.message || 'Unable to load parts list lines.');

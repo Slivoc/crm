@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, jsonify, url_for, session
 from flask_login import current_user
-from models import get_db_connection, get_base_currency
+from models import get_db_connection, get_base_currency, create_base_part_number
 import logging
 from openai import OpenAI
 import json
@@ -79,6 +79,24 @@ def get_current_timestamp_sql():
     Both support CURRENT_TIMESTAMP
     """
     return 'CURRENT_TIMESTAMP'
+
+
+def _ensure_part_number(cur, base_part_number, part_number):
+    if not base_part_number:
+        return
+    part_value = part_number or base_part_number
+    if _using_postgres():
+        insert_query = """
+            INSERT INTO part_numbers (base_part_number, part_number)
+            VALUES (?, ?)
+            ON CONFLICT (base_part_number) DO NOTHING
+        """
+    else:
+        insert_query = """
+            INSERT OR IGNORE INTO part_numbers (base_part_number, part_number)
+            VALUES (?, ?)
+        """
+    cur.execute(insert_query, (base_part_number, part_value))
 
 
 @parts_list_ai_bp.route('/')
@@ -1349,6 +1367,10 @@ def _auto_create_monroe_offer(cur, list_id, result_ids, user_id):
         quantity_quoted = max(requested_qty, moq)
         if quantity_quoted < 1:
             quantity_quoted = 1
+        part_value = result.get('searched_part_number') or result.get('base_part_number')
+        base_part_number = create_base_part_number(part_value) if part_value else result.get('base_part_number')
+        if base_part_number:
+            _ensure_part_number(cur, base_part_number, part_value)
 
         cur.execute("""
             INSERT INTO parts_list_supplier_quote_lines
@@ -2380,6 +2402,10 @@ def monroe_load_as_offer(list_id):
             quantity_quoted = max(requested_qty, moq)
             if quantity_quoted < 1:
                 quantity_quoted = 1
+            part_value = result.get('searched_part_number') or result.get('base_part_number')
+            base_part_number = create_base_part_number(part_value) if part_value else result.get('base_part_number')
+            if base_part_number:
+                _ensure_part_number(cur, base_part_number, part_value)
             cur.execute("""
                 INSERT INTO parts_list_supplier_quote_lines
                 (supplier_quote_id, parts_list_line_id, quoted_part_number,

@@ -1607,19 +1607,18 @@ def cancel_purchase_order(po_id):
 
 def _analyze_quote_internal(customer_id, parts):
     """Internal version without auth decorator - for testing"""
-    user = db_execute("""
-        SELECT pu.*, c.name as customer_name
-        FROM portal_users pu
-        JOIN customers c ON c.id = pu.customer_id
-        WHERE pu.customer_id = ? AND pu.is_active = TRUE
-        LIMIT 1
-    """, (customer_id,), fetch='one')
+    user = None
+    if customer_id:
+        user = db_execute("""
+            SELECT pu.*, c.name as customer_name
+            FROM portal_users pu
+            JOIN customers c ON c.id = pu.customer_id
+            WHERE pu.customer_id = ? AND pu.is_active = TRUE
+            LIMIT 1
+        """, (customer_id,), fetch='one')
 
-    if not user:
-        return jsonify({'success': False, 'error': 'Customer not found'}), 400
-
-    # Set portal_user to bypass auth
-    request.portal_user = dict(user)
+    # Set portal_user to bypass auth. Fall back to a minimal stub when no portal user exists.
+    request.portal_user = dict(user) if user else {'customer_id': customer_id}
 
     # Mock get_json for the internal call
     original_get_json = request.get_json

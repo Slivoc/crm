@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, request, jsonify, url_for, session
 from flask_login import current_user
 from routes.emails import send_graph_email, send_graph_reply
 from routes.email_signatures import get_user_default_signature
-from models import get_email_signature_by_id
+from models import get_email_signature_by_id, create_base_part_number
 from db import db_cursor, execute as db_execute
 import logging
 from datetime import datetime
@@ -59,6 +59,17 @@ def _parse_decimal(value):
         return Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return None
+
+
+def _ensure_part_number(cur, base_part_number, part_number):
+    if not base_part_number:
+        return
+    part_value = part_number or base_part_number
+    _execute_with_cursor(cur, """
+        INSERT INTO part_numbers (base_part_number, part_number)
+        VALUES (?, ?)
+        ON CONFLICT (base_part_number) DO NOTHING
+    """, (base_part_number, part_value))
 
 
 def _get_default_signature(user_id=None):
@@ -883,9 +894,13 @@ def bulk_update_quote_lines(list_id):
 
                 line = _execute_with_cursor(cur, """
                     SELECT 
-                        pll.id, 
+                        pll.id,
+                        pll.base_part_number,
+                        pll.customer_part_number,
                         cql.id as quote_line_id, 
                         cql.base_cost_gbp,
+                        cql.display_part_number,
+                        cql.quoted_part_number,
                         cql.quoted_status
                     FROM parts_list_lines pll
                     LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
@@ -971,6 +986,19 @@ def bulk_update_quote_lines(list_id):
                             fields.append("quoted_on = CURRENT_TIMESTAMP")
                         elif current_status == 'quoted':
                             fields.append("quoted_on = NULL")
+
+                if new_status == 'quoted' and not is_no_bid:
+                    part_value = (
+                        update.get('quoted_part_number')
+                        or update.get('display_part_number')
+                        or line['quoted_part_number']
+                        or line['display_part_number']
+                        or line['customer_part_number']
+                        or line['base_part_number']
+                    )
+                    base_part_number = create_base_part_number(part_value) if part_value else line['base_part_number']
+                    if base_part_number:
+                        _ensure_part_number(cur, base_part_number, part_value)
 
                 if 'margin_percent' in update and not is_locked:
                     fields.append("margin_percent = ?")
@@ -1110,6 +1138,32 @@ def mark_as_quoted(list_id):
     """
     try:
         with db_cursor(commit=True) as cur:
+            rows = _execute_with_cursor(cur, """
+                SELECT
+                    pll.base_part_number,
+                    pll.customer_part_number,
+                    cql.display_part_number,
+                    cql.quoted_part_number
+                FROM parts_list_lines pll
+                JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                WHERE pll.parts_list_id = ?
+                  AND cql.quoted_status = 'created'
+                  AND cql.quote_price_gbp > 0
+                  AND cql.margin_percent > 0
+                  AND (cql.is_no_bid IS NULL OR cql.is_no_bid = 0)
+            """, (list_id,)).fetchall()
+
+            for row in rows or []:
+                part_value = (
+                    row.get('quoted_part_number')
+                    or row.get('display_part_number')
+                    or row.get('customer_part_number')
+                    or row.get('base_part_number')
+                )
+                base_part_number = create_base_part_number(part_value) if part_value else row.get('base_part_number')
+                if base_part_number:
+                    _ensure_part_number(cur, base_part_number, part_value)
+
             result = _execute_with_cursor(cur, """
                 UPDATE customer_quote_lines
                 SET quoted_status = 'quoted',

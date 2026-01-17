@@ -55,6 +55,21 @@ def _safe_row_get(row, key, default=None):
         return default
 
 
+def _ensure_part_number(base_part_number, part_number):
+    if not base_part_number:
+        return
+    part_value = part_number or base_part_number
+    db_execute(
+        """
+        INSERT INTO part_numbers (base_part_number, part_number)
+        VALUES (?, ?)
+        ON CONFLICT (base_part_number) DO NOTHING
+        """,
+        (base_part_number, part_value),
+        commit=True,
+    )
+
+
 def _log_parts_list_creation_communication(list_id, list_name, customer_id, contact_id, salesperson_id):
     if not (list_id and customer_id and contact_id and salesperson_id):
         return
@@ -490,6 +505,23 @@ def save_supplier_quote_lines(list_id, quote_id):
                 continue
 
             logging.info("SAVING THIS LINE")
+
+            if not is_no_bid:
+                line_info = db_execute(
+                    """
+                    SELECT base_part_number, customer_part_number
+                    FROM parts_list_lines
+                    WHERE id = ?
+                    """,
+                    (parts_list_line_id,),
+                    fetch='one',
+                )
+                line_base = _safe_row_get(line_info, 'base_part_number')
+                line_customer = _safe_row_get(line_info, 'customer_part_number')
+                part_value = quoted_part_number or line_customer or line_base
+                base_part_number = create_base_part_number(part_value) if part_value else line_base
+                if base_part_number:
+                    _ensure_part_number(base_part_number, part_value)
 
             # Check if line already exists
             existing = db_execute(
@@ -5283,6 +5315,7 @@ def get_parts_list_lines(list_id):
     try:
         # Get optional supplier_id from query params
         supplier_id = request.args.get('supplier_id', type=int)
+        include_status = request.args.get('include_status', type=int)
 
         if supplier_id:
             lines = db_execute(
@@ -5304,6 +5337,48 @@ def get_parts_list_lines(list_id):
                 ORDER BY pll.line_number ASC
                 """,
                 (supplier_id, list_id),
+                fetch='all',
+            )
+        elif include_status:
+            lines = db_execute(
+                """
+                SELECT 
+                    pll.id,
+                    pll.line_number,
+                    pll.customer_part_number,
+                    pll.base_part_number,
+                    pll.quantity,
+                    pll.chosen_cost,
+                    s.name as chosen_supplier_name,
+                    c.symbol as chosen_currency_symbol,
+                    (
+                        SELECT cql.quote_price_gbp
+                        FROM customer_quote_lines cql
+                        WHERE cql.parts_list_line_id = pll.id
+                          AND cql.quoted_status = 'quoted'
+                          AND COALESCE(CAST(cql.is_no_bid AS INTEGER), 0) = 0
+                          AND cql.quote_price_gbp IS NOT NULL
+                        ORDER BY cql.date_modified DESC, cql.id DESC
+                        LIMIT 1
+                    ) as line_quote_price,
+                    (
+                        SELECT COUNT(*)
+                        FROM parts_list_supplier_quote_lines sql
+                        WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                    ) as line_supplier_quote_count,
+                    (
+                        SELECT COUNT(DISTINCT supplier_id)
+                        FROM parts_list_line_supplier_emails plse
+                        WHERE plse.parts_list_line_id = pll.id
+                    ) as line_contacted_suppliers_count,
+                    0 AS quote_requested
+                FROM parts_list_lines pll
+                LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
+                LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
+                WHERE pll.parts_list_id = ?
+                ORDER BY pll.line_number ASC
+                """,
+                (list_id,),
                 fetch='all',
             )
         else:

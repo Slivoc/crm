@@ -3,8 +3,11 @@ Airbus Marketplace routes
 """
 
 from flask import Blueprint, jsonify, request, send_file, render_template
-from datetime import datetime
+import calendar
+from datetime import datetime, date
 import logging
+import os
+import time
 
 from airbus_marketplace_helper import (
     suggest_marketplace_category,
@@ -13,17 +16,104 @@ from airbus_marketplace_helper import (
 )
 from airbus_marketplace_export import export_parts_to_airbus_marketplace
 from models import get_db
+from routes.portal_api import _analyze_quote_internal, get_portal_setting
+from integrations.mirakl.client import MiraklClient, MiraklError
+from integrations.mirakl.services.offers import build_offers_csv
 
 logger = logging.getLogger(__name__)
 
 marketplace_bp = Blueprint('marketplace', __name__)
 
 
+def _months_ago(reference: date, months: int) -> date:
+    if months <= 0:
+        return reference
+
+    year = reference.year
+    month = reference.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+
+    day = min(reference.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _get_mirakl_config():
+    base_url = os.getenv('MIRAKL_BASE_URL') or get_portal_setting('mirakl_base_url')
+    api_key = os.getenv('MIRAKL_API_KEY') or get_portal_setting('mirakl_api_key')
+    shop_id = os.getenv('MIRAKL_SHOP_ID') or get_portal_setting('mirakl_shop_id')
+    return base_url, api_key, shop_id
+
+
+def _get_mirakl_client():
+    base_url, api_key, shop_id = _get_mirakl_config()
+    if not base_url or not api_key:
+        return None, "MIRAKL_BASE_URL and MIRAKL_API_KEY must be configured."
+    return MiraklClient(base_url, api_key, shop_id=shop_id), None
+
+
+def _upsert_portal_setting(cursor, key, value):
+    cursor.execute(
+        "UPDATE portal_settings SET setting_value = ?, date_modified = CURRENT_TIMESTAMP WHERE setting_key = ?",
+        (value, key),
+    )
+    if cursor.rowcount == 0:
+        cursor.execute(
+            "INSERT INTO portal_settings (setting_key, setting_value, date_modified) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (key, value),
+        )
+
+
+def _get_marketplace_customer_id():
+    value = get_portal_setting('marketplace_customer_id')
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_portal_estimates(parts, customer_id):
+    if not parts:
+        return {}
+
+    estimate_response = _analyze_quote_internal(customer_id, parts)
+    estimate_data = (
+        estimate_response[0].get_json()
+        if isinstance(estimate_response, tuple)
+        else estimate_response.get_json()
+    )
+    if not estimate_data or not estimate_data.get('success'):
+        logger.info(
+            "Marketplace export estimates unavailable: customer_id=%s success=%s",
+            customer_id,
+            estimate_data.get('success') if estimate_data else None,
+        )
+        return {}
+
+    results = estimate_data.get('results', [])
+    return {
+        (item.get('base_part_number') or item.get('part_number')): item
+        for item in results
+        if item.get('base_part_number') or item.get('part_number')
+    }
+
+
 @marketplace_bp.route('/export-page', methods=['GET'])
 def export_page():
     """Render the marketplace export page"""
     from flask import render_template
-    return render_template('marketplace_export.html')
+    mirakl_base_url = get_portal_setting('mirakl_base_url')
+    mirakl_shop_id = get_portal_setting('mirakl_shop_id')
+    mirakl_api_key = get_portal_setting('mirakl_api_key')
+    return render_template(
+        'marketplace_export.html',
+        mirakl_base_url=mirakl_base_url,
+        mirakl_shop_id=mirakl_shop_id,
+        mirakl_api_key_set=bool(mirakl_api_key),
+    )
 
 
 @marketplace_bp.route('/categories', methods=['GET'])
@@ -149,17 +239,13 @@ def update_part_category(base_part_number):
 @marketplace_bp.route('/get-parts-for-export', methods=['POST'])
 def get_parts_for_export():
     """
-    Get filtered parts with stock and pricing data for export preview
+    Get filtered parts with portal pricing data for export preview
 
     POST body:
     {
         "stock_filter": "all|stock_only|no_stock",
         "category_filter": "all|categorized_only|missing_only",
-        "include_sales_activity": true/false,
-        "activity_period_days": "30|90|180|365|730|all",
-        "pricing_period_days": "90|180|365|730|all",
-        "part_category_id": optional category ID,
-        "manufacturer": optional manufacturer filter,
+        "pricing_only": true/false,
         "part_number_search": optional part number search
     }
     """
@@ -168,107 +254,33 @@ def get_parts_for_export():
 
         stock_filter = data.get('stock_filter', 'all')
         category_filter = data.get('category_filter', 'all')
-        include_sales_activity = data.get('include_sales_activity', False)
-        activity_period_days = data.get('activity_period_days', '365')
-        pricing_period_days = data.get('pricing_period_days', '365')  # NEW
-        part_category_id = data.get('part_category_id', '')
-        manufacturer = data.get('manufacturer', '').strip()
+        pricing_only = data.get('pricing_only', False)
         part_number_search = data.get('part_number_search', '').strip()
+
+        logger.info(
+            "Marketplace export parts request: stock_filter=%s category_filter=%s "
+            "pricing_only=%s part_number_search=%s",
+            stock_filter,
+            category_filter,
+            pricing_only,
+            part_number_search or "<none>",
+        )
+
+        customer_id = _get_marketplace_customer_id()
 
         db = get_db()
         cursor = db.cursor()
 
-        # Build WHERE clause for pricing period
-        pricing_where = ""
-        if pricing_period_days != 'all':
-            pricing_where = f"date('now', '-{pricing_period_days} days')"
-        else:
-            pricing_where = "date('1900-01-01')"  # Effectively all time
-
-        # Build base query with stock info and pricing data
-        query = f"""
+        query = """
             SELECT 
                 pn.base_part_number,
                 pn.part_number,
-                pn.mkp_category,
-                COALESCE(stock.total_stock, 0) as stock_qty,
-                stock.avg_cost as stock_cost,
-                sales.avg_price as avg_sale_price,
-                sales.last_price as last_sale_price,
-                sales.last_sale_date,
-                cq.avg_price as avg_cq_price,
-                po.avg_price as avg_po_price,
-                vq.avg_price as avg_vq_price,
-                vq.lowest_price as lowest_vq_price
+                pn.mkp_category
             FROM part_numbers pn
-            LEFT JOIN (
-                SELECT 
-                    base_part_number,
-                    SUM(available_quantity) as total_stock,
-                    AVG(cost_per_unit) as avg_cost
-                FROM stock_movements
-                WHERE movement_type = 'IN' AND available_quantity > 0
-                GROUP BY base_part_number
-            ) stock ON pn.base_part_number = stock.base_part_number
-            LEFT JOIN (
-                SELECT 
-                    sol.base_part_number,
-                    AVG(sol.price) as avg_price,
-                    MAX(sol.price) as last_price,
-                    MAX(so.date_entered) as last_sale_date
-                FROM sales_order_lines sol
-                JOIN sales_orders so ON sol.sales_order_id = so.id
-        """
-
-        params = []
-
-        # Add date filter for sales if activity period specified
-        if include_sales_activity and activity_period_days != 'all':
-            query += " WHERE so.date_entered >= date('now', '-' || ? || ' days')"
-            params.append(activity_period_days)
-
-        query += f"""
-                GROUP BY sol.base_part_number
-            ) sales ON pn.base_part_number = sales.base_part_number
-            LEFT JOIN (
-                SELECT 
-                    cl.base_part_number,
-                    AVG(cl.unit_price) as avg_price
-                FROM cq_lines cl
-                JOIN cqs c ON cl.cq_id = c.id
-                WHERE c.entry_date >= {pricing_where}
-                  AND cl.unit_price IS NOT NULL
-                  AND cl.is_no_quote = 0
-                GROUP BY cl.base_part_number
-            ) cq ON pn.base_part_number = cq.base_part_number
-            LEFT JOIN (
-                SELECT 
-                    pol.base_part_number,
-                    AVG(pol.price) as avg_price
-                FROM purchase_order_lines pol
-                JOIN purchase_orders po ON pol.purchase_order_id = po.id
-                WHERE po.date_issued >= {pricing_where}
-                  AND pol.price IS NOT NULL
-                GROUP BY pol.base_part_number
-            ) po ON pn.base_part_number = po.base_part_number
-            LEFT JOIN (
-                SELECT 
-                    vl.base_part_number,
-                    AVG(vl.vendor_price) as avg_price,
-                    MIN(vl.vendor_price) as lowest_price
-                FROM vq_lines vl
-                JOIN vqs v ON vl.vq_id = v.id
-                WHERE v.entry_date >= {pricing_where}
-                GROUP BY vl.base_part_number
-            ) vq ON pn.base_part_number = vq.base_part_number
             WHERE 1=1
         """
 
-        # Apply stock filter
-        if stock_filter == 'stock_only':
-            query += " AND stock.total_stock > 0"
-        elif stock_filter == 'no_stock':
-            query += " AND (stock.total_stock IS NULL OR stock.total_stock = 0)"
+        params = []
 
         # Apply category filter
         if category_filter == 'categorized_only':
@@ -276,25 +288,128 @@ def get_parts_for_export():
         elif category_filter == 'missing_only':
             query += " AND (pn.mkp_category IS NULL OR pn.mkp_category = '')"
 
-        # Apply sales activity filter
-        if include_sales_activity:
-            query += " AND sales.last_sale_date IS NOT NULL"
+        # Apply pricing filter (mirror portal recency rules to avoid loading all parts)
+        if pricing_only:
+            so_months = int(get_portal_setting('sales_order_recency_months', 6))
+            vq_months = int(get_portal_setting('vq_recency_months', 12))
+            po_months = int(get_portal_setting('po_recency_months', 12))
+            cq_months = int(get_portal_setting('cq_recency_months', 6))
+            min_stock = int(get_portal_setting('min_stock_threshold', 1))
+            show_estimates = bool(int(get_portal_setting('show_estimated_prices', 1)))
 
-        # CRITICAL: Only include parts with stock OR pricing data
-        query += """
-            AND (
-                stock.total_stock > 0 
-                OR sales.avg_price IS NOT NULL 
-                OR cq.avg_price IS NOT NULL 
-                OR po.avg_price IS NOT NULL 
-                OR vq.avg_price IS NOT NULL
-            )
-        """
+            today = datetime.utcnow().date()
+            so_cutoff = _months_ago(today, so_months)
+            vq_cutoff = _months_ago(today, vq_months)
+            po_cutoff = _months_ago(today, po_months)
+            cq_cutoff = _months_ago(today, cq_months)
 
-        # Apply part category filter
-        if part_category_id:
-            query += " AND pn.category_id = ?"
-            params.append(part_category_id)
+            pricing_filters = [
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM stock_movements sm
+                    WHERE sm.base_part_number = pn.base_part_number
+                      AND sm.movement_type = 'IN'
+                      AND sm.available_quantity >= ?
+                )
+                """,
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM cq_lines cl
+                    JOIN cqs c ON cl.cq_id = c.id
+                    WHERE cl.base_part_number = pn.base_part_number
+                      AND c.entry_date >= ?
+                      AND cl.unit_price > 0
+                      AND cl.is_no_quote = FALSE
+                )
+                """,
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM sales_order_lines sol
+                    JOIN sales_orders so ON sol.sales_order_id = so.id
+                    WHERE sol.base_part_number = pn.base_part_number
+                      AND so.date_entered >= ?
+                      AND sol.price > 0
+                )
+                """,
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM customer_quote_lines cql
+                    JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+                    WHERE pll.base_part_number = pn.base_part_number
+                      AND cql.quoted_status = 'quoted'
+                      AND cql.quote_price_gbp > 0
+                      AND COALESCE(cql.is_no_bid, 0) = 0
+                      AND cql.date_created >= ?
+                )
+                """,
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM parts_list_supplier_quote_lines sql
+                    JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                    JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+                    WHERE pll.base_part_number = pn.base_part_number
+                      AND sql.unit_price > 0
+                      AND (sql.is_no_bid = FALSE OR sql.is_no_bid IS NULL)
+                      AND COALESCE(sq.quote_date, sq.date_created) >= ?
+                )
+                """,
+            ]
+
+            params.extend([
+                min_stock,
+                cq_cutoff,
+                so_cutoff,
+                cq_cutoff,
+                vq_cutoff,
+            ])
+
+            if customer_id:
+                pricing_filters.append(
+                    """
+                    EXISTS (
+                        SELECT 1
+                        FROM portal_customer_pricing pcp
+                        WHERE pcp.customer_id = ?
+                          AND pcp.base_part_number = pn.base_part_number
+                          AND pcp.is_active = TRUE
+                          AND (pcp.valid_from IS NULL OR pcp.valid_from <= ?)
+                          AND (pcp.valid_until IS NULL OR pcp.valid_until >= ?)
+                    )
+                    """
+                )
+                params.extend([customer_id, today, today])
+
+            if show_estimates:
+                pricing_filters.extend([
+                    """
+                    EXISTS (
+                        SELECT 1
+                        FROM vq_lines vl
+                        JOIN vqs v ON vl.vq_id = v.id
+                        WHERE vl.base_part_number = pn.base_part_number
+                          AND v.entry_date >= ?
+                          AND vl.vendor_price > 0
+                    )
+                    """,
+                    """
+                    EXISTS (
+                        SELECT 1
+                        FROM purchase_order_lines pol
+                        JOIN purchase_orders po ON pol.purchase_order_id = po.id
+                        WHERE pol.base_part_number = pn.base_part_number
+                          AND po.date_issued >= ?
+                          AND pol.price > 0
+                    )
+                    """,
+                ])
+                params.extend([vq_cutoff, po_cutoff])
+
+            query += " AND (" + " OR ".join(pricing_filters) + ")"
 
         # Apply part number search
         if part_number_search:
@@ -306,26 +421,65 @@ def get_parts_for_export():
 
         cursor.execute(query, params)
         rows = cursor.fetchall()
+        logger.info("Marketplace export query returned %s parts", len(rows))
+
+        parts_payload = [
+            {'part_number': row['part_number'] or row['base_part_number'], 'quantity': 1}
+            for row in rows
+        ]
+        estimates_start = time.monotonic()
+        estimates = _get_portal_estimates(parts_payload, customer_id)
+        logger.info(
+            "Marketplace export estimates: requested=%s returned=%s took=%.2fs",
+            len(parts_payload),
+            len(estimates),
+            time.monotonic() - estimates_start,
+        )
 
         parts = []
+        filtered_stock = 0
+        filtered_no_stock = 0
+        filtered_pricing = 0
         for row in rows:
+            base_part_number = row['base_part_number']
+            estimate = estimates.get(base_part_number) or estimates.get(row['part_number'])
+            estimated_price = estimate.get('estimated_price') if estimate else None
+            in_stock = bool(estimate.get('in_stock')) if estimate else False
+            stock_qty = estimate.get('stock_quantity') if estimate else None
+
+            if stock_filter == 'stock_only' and not in_stock:
+                filtered_stock += 1
+                continue
+            if stock_filter == 'no_stock' and in_stock:
+                filtered_no_stock += 1
+                continue
+            if pricing_only and estimated_price is None:
+                filtered_pricing += 1
+                continue
+
             parts.append({
-                'base_part_number': row['base_part_number'],
+                'base_part_number': base_part_number,
                 'part_number': row['part_number'],
                 'mkp_category': row['mkp_category'],
-                'description': '',  # Not in part_numbers table
-                'manufacturer': '',  # Not in part_numbers table
-                'stock_qty': row['stock_qty'],
-                'stock_cost': row['stock_cost'],
-                'avg_sale_price': row['avg_sale_price'],
-                'last_sale_price': row['last_sale_price'],
-                'last_sale_date': row['last_sale_date'],
-                'avg_cq_price': row['avg_cq_price'],
-                'avg_po_price': row['avg_po_price'],
-                'avg_vq_price': row['avg_vq_price'],
-                'lowest_vq_price': row['lowest_vq_price']
+                'description': '',
+                'manufacturer': '',
+                'estimated_price': estimated_price,
+                'price_source': estimate.get('price_source') if estimate else None,
+                'estimated_lead_days': estimate.get('estimated_lead_days') if estimate else None,
+                'currency': estimate.get('currency') if estimate else None,
+                'in_stock': in_stock,
+                'stock_qty': stock_qty if stock_qty is not None else 0,
             })
 
+        logger.info(
+            "Marketplace export parts response: total=%s returned=%s "
+            "filtered_stock=%s filtered_no_stock=%s filtered_pricing=%s",
+            len(rows),
+            len(parts),
+            filtered_stock,
+            filtered_no_stock,
+            filtered_pricing,
+        )
         return jsonify({'success': True, 'parts': parts}), 200
 
     except Exception as e:
@@ -340,15 +494,8 @@ def export_to_marketplace():
     POST body (as form data from JS):
     {
         "export_data": {
-            "part_ids": [1, 2, 3],
-            "pricing_config": {
-                "stock_price_source": "cost|avg_sale|last_sale|manual",
-                "stock_margin": 35,
-                "manual_stock_price": null,
-                "non_stock_price_source": "avg_sale|last_sale|avg_vq|lowest_vq|none",
-                "default_lead_time": 14,
-                "default_quantity": 1
-            }
+            "base_part_numbers": ["ABC", "XYZ"],
+            "default_quantity": 1
         }
     }
     """
@@ -361,7 +508,7 @@ def export_to_marketplace():
 
         export_data = json.loads(export_data_str)
         base_part_numbers = export_data.get('base_part_numbers', [])
-        pricing_config = export_data.get('pricing_config', {})
+        default_quantity = int(export_data.get('default_quantity') or 1)
 
         if not base_part_numbers:
             return jsonify({'error': 'No parts selected for export'}), 400
@@ -369,49 +516,13 @@ def export_to_marketplace():
         db = get_db()
         cursor = db.cursor()
 
-        # Get parts with all pricing data
         placeholders = ','.join('?' * len(base_part_numbers))
         query = f"""
             SELECT 
                 pn.base_part_number,
                 pn.part_number,
-                pn.mkp_category,
-                COALESCE(stock.total_stock, 0) as stock_qty,
-                stock.avg_cost as stock_cost,
-                sales.avg_price as avg_sale_price,
-                sales.last_price as last_sale_price,
-                vq.avg_price as avg_vq_price,
-                vq.lowest_price as lowest_vq_price
+                pn.mkp_category
             FROM part_numbers pn
-            LEFT JOIN (
-                SELECT 
-                    base_part_number,
-                    SUM(available_quantity) as total_stock,
-                    AVG(cost_per_unit) as avg_cost
-                FROM stock_movements
-                WHERE movement_type = 'IN' AND available_quantity > 0
-                GROUP BY base_part_number
-            ) stock ON pn.base_part_number = stock.base_part_number
-            LEFT JOIN (
-                SELECT 
-                    sol.base_part_number,
-                    AVG(sol.price) as avg_price,
-                    MAX(sol.price) as last_price
-                FROM sales_order_lines sol
-                JOIN sales_orders so ON sol.sales_order_id = so.id
-                WHERE so.date_entered >= date('now', '-365 days')
-                GROUP BY sol.base_part_number
-            ) sales ON pn.base_part_number = sales.base_part_number
-            LEFT JOIN (
-                SELECT 
-                    vl.base_part_number,
-                    AVG(vl.vendor_price) as avg_price,
-                    MIN(vl.vendor_price) as lowest_price
-                FROM vq_lines vl
-                JOIN vqs v ON vl.vq_id = v.id
-                WHERE v.entry_date >= date('now', '-365 days')
-                GROUP BY vl.base_part_number
-            ) vq ON pn.base_part_number = vq.base_part_number
             WHERE pn.base_part_number IN ({placeholders})
         """
 
@@ -421,50 +532,30 @@ def export_to_marketplace():
         if not rows:
             return jsonify({'error': 'No parts found to export'}), 404
 
-        # Calculate prices based on configuration
+        customer_id = _get_marketplace_customer_id()
+        parts_payload = [
+            {'part_number': row['part_number'] or row['base_part_number'], 'quantity': 1}
+            for row in rows
+        ]
+        estimates = _get_portal_estimates(parts_payload, customer_id)
+
+        default_lead_days = int(get_portal_setting('default_lead_time_days', 7))
+
+        # Calculate prices based on portal estimates
         parts_data = []
         for row in rows:
-            stock_qty = row['stock_qty']
+            estimate = estimates.get(row['base_part_number']) or estimates.get(row['part_number'])
+            price = estimate.get('estimated_price') if estimate else None
+            lead_time = estimate.get('estimated_lead_days') if estimate else None
+            in_stock = bool(estimate.get('in_stock')) if estimate else False
+            stock_qty = estimate.get('stock_quantity') if estimate else None
 
-            # Calculate price
-            price = None
-            if stock_qty > 0:
-                # Stock item pricing
-                source = pricing_config.get('stock_price_source', 'cost')
-                margin = pricing_config.get('stock_margin', 35) / 100
-
-                base_price = 0
-                if source == 'cost' and row['stock_cost']:
-                    base_price = row['stock_cost']
-                elif source == 'avg_sale' and row['avg_sale_price']:
-                    base_price = row['avg_sale_price']
-                elif source == 'last_sale' and row['last_sale_price']:
-                    base_price = row['last_sale_price']
-                elif source == 'manual':
-                    base_price = pricing_config.get('manual_stock_price') or 0
-
-                if base_price > 0:
-                    price = base_price * (1 + margin)
-            else:
-                # Non-stock item pricing
-                source = pricing_config.get('non_stock_price_source', 'avg_sale')
-
-                if source == 'avg_sale' and row['avg_sale_price']:
-                    price = row['avg_sale_price']
-                elif source == 'last_sale' and row['last_sale_price']:
-                    price = row['last_sale_price']
-                elif source == 'avg_vq' and row['avg_vq_price']:
-                    price = row['avg_vq_price']
-                elif source == 'lowest_vq' and row['lowest_vq_price']:
-                    price = row['lowest_vq_price']
-
-            # Determine lead time
-            lead_time = 7 if stock_qty > 0 else pricing_config.get('default_lead_time', 14)
-
-            # Get quantity
-            quantity = pricing_config.get('default_quantity', 1)
-            if stock_qty > 0:
+            quantity = default_quantity
+            if in_stock and stock_qty:
                 quantity = stock_qty
+
+            if lead_time is None:
+                lead_time = 0 if in_stock else default_lead_days
 
             parts_data.append({
                 'base_part_number': row['base_part_number'],
@@ -473,7 +564,7 @@ def export_to_marketplace():
                 'description': '',
                 'manufacturer': '',
                 'quantity': quantity,
-                'price': round(price, 2) if price else '',
+                'price': round(price, 2) if price is not None else '',
                 'condition': 'New',
                 'lead_time_days': lead_time,
             })
@@ -555,7 +646,7 @@ def auto_categorize_parts():
         # Process this batch
         parts_list = [
             {
-                'part_number': row[1],
+                'part_number': row['part_number'],
                 'description': '',
                 'additional_info': ''
             }
@@ -567,7 +658,7 @@ def auto_categorize_parts():
         # Update database
         updated_count = 0
         for row, suggestion in zip(rows, suggestions):
-            base_part_number = row[0]
+            base_part_number = row['base_part_number']
             suggested_category = suggestion.get('suggested_category')
 
             if suggested_category:
@@ -597,3 +688,101 @@ def auto_categorize_parts():
         if db:
             db.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@marketplace_bp.route('/mirakl/health', methods=['GET'])
+def mirakl_health():
+    client, error = _get_mirakl_client()
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+
+    try:
+        data = client.get_account()
+        return jsonify({'success': True, 'account': data}), 200
+    except MiraklError as exc:
+        logger.exception("Mirakl health check failed")
+        return jsonify({'success': False, 'error': str(exc)}), 502
+
+
+@marketplace_bp.route('/mirakl/offers/import', methods=['POST'])
+def mirakl_import_offers():
+    client, error = _get_mirakl_client()
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+
+    data = request.get_json() or {}
+    offers = data.get('offers') or []
+    import_mode = data.get('import_mode', 'NORMAL')
+
+    if not offers:
+        return jsonify({'success': False, 'error': 'offers array is required'}), 400
+
+    try:
+        csv_bytes = build_offers_csv(offers)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    try:
+        result = client.import_offers(csv_bytes, import_mode=import_mode)
+        return jsonify({'success': True, 'result': result}), 200
+    except MiraklError as exc:
+        logger.exception("Mirakl offer import failed")
+        return jsonify({'success': False, 'error': str(exc)}), 502
+
+
+@marketplace_bp.route('/mirakl/offers/imports/<import_id>', methods=['GET'])
+def mirakl_import_status(import_id):
+    client, error = _get_mirakl_client()
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+
+    try:
+        result = client.get_offers_import(import_id)
+        return jsonify({'success': True, 'result': result}), 200
+    except MiraklError as exc:
+        logger.exception("Mirakl import status fetch failed")
+        return jsonify({'success': False, 'error': str(exc)}), 502
+
+
+@marketplace_bp.route('/mirakl/offers/imports/<import_id>/errors', methods=['GET'])
+def mirakl_import_errors(import_id):
+    client, error = _get_mirakl_client()
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+
+    try:
+        content, content_type = client.get_offers_import_errors(import_id)
+        return content, 200, {'Content-Type': content_type}
+    except MiraklError as exc:
+        logger.exception("Mirakl import error report fetch failed")
+        return jsonify({'success': False, 'error': str(exc)}), 502
+
+
+@marketplace_bp.route('/mirakl/settings', methods=['POST'])
+def mirakl_update_settings():
+    data = request.get_json() or {}
+    base_url = (data.get('mirakl_base_url') or '').strip()
+    shop_id = (data.get('mirakl_shop_id') or '').strip()
+    api_key = (data.get('mirakl_api_key') or '').strip()
+
+    if not base_url:
+        return jsonify({'success': False, 'error': 'Mirakl base URL is required.'}), 400
+
+    db = get_db()
+    cursor = None
+    try:
+        cursor = db.cursor()
+        _upsert_portal_setting(cursor, 'mirakl_base_url', base_url)
+        _upsert_portal_setting(cursor, 'mirakl_shop_id', shop_id)
+        if api_key:
+            _upsert_portal_setting(cursor, 'mirakl_api_key', api_key)
+        db.commit()
+    except Exception as exc:
+        logger.exception("Failed to update Mirakl settings")
+        db.rollback()
+        return jsonify({'success': False, 'error': str(exc)}), 500
+    finally:
+        if cursor:
+            cursor.close()
+
+    return jsonify({'success': True}), 200

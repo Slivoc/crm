@@ -139,25 +139,14 @@
                 </div>
             </div>
 
-            <!-- Activity Filter -->
+            <!-- Pricing Filter -->
             <div class="col-md-6 mb-3">
-                <label class="form-label fw-bold">Sales/Quote Activity</label>
+                <label class="form-label fw-bold">Portal Pricing</label>
                 <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="includeSalesActivity">
-                    <label class="form-check-label" for="includeSalesActivity">
-                        Only parts with sales/quotes in period
+                    <input class="form-check-input" type="checkbox" id="pricingOnly">
+                    <label class="form-check-label" for="pricingOnly">
+                        Only parts with portal pricing data
                     </label>
-                </div>
-                <div class="ms-4 mt-2" id="activityPeriodSection" style="display: none;">
-                    <label class="form-label">Time Period</label>
-                    <select class="form-select form-select-sm" id="activityPeriod">
-                        <option value="30">Last 30 days</option>
-                        <option value="90">Last 90 days</option>
-                        <option value="180">Last 6 months</option>
-                        <option value="365" selected>Last 12 months</option>
-                        <option value="730">Last 24 months</option>
-                        <option value="all">All time</option>
-                    </select>
                 </div>
             </div>
         </div>
@@ -212,76 +201,57 @@
                 <button class="btn btn-secondary ms-2" id="resetFiltersBtn">
                     <i class="bi bi-x-circle"></i> Reset Filters
                 </button>
+                <div id="loadStatus" class="text-muted mt-2" style="display: none;"></div>
             </div>
         </div>
     </div>
 
-    <!-- Pricing Configuration -->
+    <!-- Mirakl Settings -->
     <div class="filter-section">
-        <h5><i class="bi bi-currency-pound"></i> Pricing Configuration</h5>
+        <h5><i class="bi bi-plug"></i> Mirakl Connection</h5>
+        <div class="alert alert-warning mb-3">
+            These settings are used for Mirakl API calls from the marketplace module.
+        </div>
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                <label class="form-label fw-bold">Mirakl Base URL</label>
+                <input type="url" class="form-control" id="miraklBaseUrl" value="{{ mirakl_base_url or '' }}" placeholder="https://operator.example.com">
+            </div>
+            <div class="col-md-6 mb-3">
+                <label class="form-label fw-bold">Mirakl Shop ID (optional)</label>
+                <input type="text" class="form-control" id="miraklShopId" value="{{ mirakl_shop_id or '' }}" placeholder="Shop ID if required">
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                <label class="form-label fw-bold">Mirakl API Key</label>
+                <input type="password" class="form-control" id="miraklApiKey" placeholder="{{ 'Saved in settings' if mirakl_api_key_set else 'Enter API key' }}">
+                <small class="form-text text-muted">Leave blank to keep the existing key.</small>
+            </div>
+        </div>
+        <div class="row mt-2">
+            <div class="col">
+                <button class="btn btn-outline-primary" id="saveMiraklSettingsBtn">
+                    <i class="bi bi-save"></i> Save Mirakl Settings
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Portal Pricing -->
+    <div class="filter-section">
+        <h5><i class="bi bi-currency-pound"></i> Portal Pricing</h5>
 
         <div class="alert alert-info mb-3">
-            <strong>Price Hierarchy:</strong> Prices are calculated using the first available source in this order:
-            <ol class="mb-0 mt-2">
-                <li>Stock Cost (if part is in stock) + margin</li>
-                <li>Recent Sales Price (average from selected period)</li>
-                <li>Recent CQ Price (average from selected period)</li>
-                <li>Recent PO Price (average from selected period)</li>
-                <li>Recent VQ Price (average from selected period)</li>
-            </ol>
+            Pricing and lead times are sourced from the customer portal settings.
+            Update margins, recency windows, and defaults in Portal Admin.
         </div>
 
         <div class="row">
             <div class="col-md-3 mb-3">
-                <label class="form-label fw-bold">Stock Cost Margin %</label>
-                <input type="number" class="form-control" id="stockMargin" value="35" min="0" max="200" step="1">
-                <small class="form-text text-muted">Added to stock cost</small>
-            </div>
-
-            <div class="col-md-3 mb-3">
-                <label class="form-label fw-bold">Pricing Lookback Period</label>
-                <select class="form-select" id="pricingPeriod">
-                    <option value="90">Last 90 days</option>
-                    <option value="180">Last 6 months</option>
-                    <option value="365" selected>Last 12 months</option>
-                    <option value="730">Last 24 months</option>
-                    <option value="all">All time</option>
-                </select>
-                <small class="form-text text-muted">For sales/CQ/PO/VQ prices</small>
-            </div>
-
-            <div class="col-md-3 mb-3">
-                <label class="form-label fw-bold">Use Alternative Sources</label>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="useCQPricing" checked>
-                    <label class="form-check-label" for="useCQPricing">
-                        Include CQ prices
-                    </label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="usePOPricing" checked>
-                    <label class="form-check-label" for="usePOPricing">
-                        Include PO prices
-                    </label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="useVQPricing" checked>
-                    <label class="form-check-label" for="useVQPricing">
-                        Include VQ prices
-                    </label>
-                </div>
-            </div>
-
-            <div class="col-md-3 mb-3">
-                <label class="form-label fw-bold">Export Defaults</label>
-                <div class="mb-2">
-                    <label class="form-label">Lead Time (days)</label>
-                    <input type="number" class="form-control form-control-sm" id="defaultLeadTime" value="14" min="0" step="1">
-                </div>
-                <div>
-                    <label class="form-label">Quantity</label>
-                    <input type="number" class="form-control form-control-sm" id="defaultQuantity" value="1" min="1" step="1">
-                </div>
+                <label class="form-label fw-bold">Default Quantity</label>
+                <input type="number" class="form-control" id="defaultQuantity" value="1" min="1" step="1">
+                <small class="form-text text-muted">Used when stock quantity is unavailable.</small>
             </div>
         </div>
     </div>
@@ -314,7 +284,7 @@
                         <tr>
                             <th>Part Number</th>
                             <th>Stock Qty</th>
-                            <th>Has Pricing</th>
+                            <th>Has Portal Price</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -453,14 +423,10 @@
 let allParts = [];
 let categories = [];
 let currentEditingPartNumber = null;
+let loadStatusTimer = null;
 
 $(document).ready(function() {
     loadCategories();
-
-    // Show/hide activity period when checkbox changes
-    $('#includeSalesActivity').change(function() {
-        $('#activityPeriodSection').toggle(this.checked);
-    });
 
     // Apply filters
     $('#applyFiltersBtn').click(function() {
@@ -471,15 +437,8 @@ $(document).ready(function() {
     $('#resetFiltersBtn').click(function() {
         $('input[name="stockFilter"][value="all"]').prop('checked', true);
         $('input[name="categoryFilter"][value="all"]').prop('checked', true);
-        $('#includeSalesActivity').prop('checked', false);
-        $('#activityPeriodSection').hide();
+        $('#pricingOnly').prop('checked', false);
         $('#partNumberSearch').val('');
-        $('#stockMargin').val(35);
-        $('#pricingPeriod').val('365');
-        $('#useCQPricing').prop('checked', true);
-        $('#usePOPricing').prop('checked', true);
-        $('#useVQPricing').prop('checked', true);
-        $('#defaultLeadTime').val(14);
         $('#defaultQuantity').val(1);
     });
 
@@ -506,6 +465,10 @@ $(document).ready(function() {
     $('#saveCategoryBtn').click(function() {
         saveCategoryAssignment();
     });
+
+    $('#saveMiraklSettingsBtn').click(function() {
+        saveMiraklSettings();
+    });
 });
 
 function loadCategories() {
@@ -528,17 +491,27 @@ function loadCategories() {
 }
 
 function loadParts() {
+    const startTime = Date.now();
+
     $('#loadingSpinner').show();
     $('#statsRow').hide();
     $('#uncategorizedCard').hide();
     $('#exportCard').hide();
+    $('#noPartsMessage').hide();
+    setLoadStatus('Loading parts...', 'text-muted');
+    setApplyFiltersBusy(true);
+
+    if (loadStatusTimer) {
+        clearTimeout(loadStatusTimer);
+    }
+    loadStatusTimer = setTimeout(function() {
+        setLoadStatus('Still working... fetching parts and portal pricing.', 'text-muted');
+    }, 4000);
 
     const filters = {
         stock_filter: $('input[name="stockFilter"]:checked').val(),
         category_filter: $('input[name="categoryFilter"]:checked').val(),
-        include_sales_activity: $('#includeSalesActivity').prop('checked'),
-        activity_period_days: $('#activityPeriod').val(),
-        pricing_period_days: $('#pricingPeriod').val(),  // NEW
+        pricing_only: $('#pricingOnly').prop('checked'),
         part_number_search: $('#partNumberSearch').val().trim()
     };
 
@@ -548,7 +521,10 @@ function loadParts() {
         contentType: 'application/json',
         data: JSON.stringify(filters),
         success: function(response) {
+            const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
             $('#loadingSpinner').hide();
+            setApplyFiltersBusy(false);
+            clearTimeout(loadStatusTimer);
 
             if (response.success && response.parts && response.parts.length > 0) {
                 allParts = response.parts;
@@ -556,34 +532,62 @@ function loadParts() {
                 renderUncategorizedParts();
                 $('#statsRow').show();
                 $('#exportCard').show();
+                setLoadStatus(`Loaded ${response.parts.length} parts in ${elapsedSeconds}s.`, 'text-success');
             } else {
                 $('#noPartsMessage').show();
                 allParts = [];
+                setLoadStatus(`No parts found (${elapsedSeconds}s).`, 'text-muted');
             }
         },
         error: function(xhr, status, error) {
+            const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
             $('#loadingSpinner').hide();
+            setApplyFiltersBusy(false);
+            clearTimeout(loadStatusTimer);
             console.error('Error loading parts:', error);
             console.error('Response:', xhr.responseText);
+            setLoadStatus(`Error loading parts (${elapsedSeconds}s): ${xhr.responseJSON?.error || error}`, 'text-danger');
             alert('Error loading parts: ' + (xhr.responseJSON?.error || error));
         }
     });
 }
 
+function setLoadStatus(message, className) {
+    const $status = $('#loadStatus');
+    if (!message) {
+        $status.hide().text('');
+        return;
+    }
+    $status
+        .text(message)
+        .removeClass('text-muted text-success text-danger')
+        .addClass(className || 'text-muted')
+        .show();
+}
+
+function setApplyFiltersBusy(isBusy) {
+    const $btn = $('#applyFiltersBtn');
+    if (isBusy) {
+        $btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Loading...');
+    } else {
+        $btn.prop('disabled', false).html('<i class="bi bi-search"></i> Apply Filters & Load Parts');
+    }
+}
+
 function updateSummaryStats() {
     const categorized = allParts.filter(p => p.mkp_category).length;
     const uncategorized = allParts.length - categorized;
-    const inStock = allParts.filter(p => p.stock_qty > 0).length;
+    const inStock = allParts.filter(p => p.in_stock).length;
 
-    // Count parts with pricing data (using hierarchical fallback)
+    // Count parts with portal pricing data
     let withPrice = 0;
     let totalValue = 0;
 
     allParts.forEach(part => {
-        const price = calculateHierarchicalPrice(part);
-        if (price) {
+        const price = getPortalPrice(part);
+        if (price !== null) {
             withPrice++;
-            const qty = part.stock_qty > 0 ? part.stock_qty : parseInt($('#defaultQuantity').val());
+            const qty = getExportQuantity(part);
             totalValue += price * qty;
         }
     });
@@ -614,14 +618,14 @@ function renderUncategorizedParts() {
     $tbody.empty();
 
     uncategorized.forEach(part => {
-        const price = calculateHierarchicalPrice(part);
-        const hasPricing = price ? 'Yes' : 'No';
-        const pricingClass = price ? 'text-success' : 'text-muted';
+        const price = getPortalPrice(part);
+        const hasPricing = price !== null ? 'Yes' : 'No';
+        const pricingClass = price !== null ? 'text-success' : 'text-muted';
 
         const row = `
             <tr data-part-number="${part.base_part_number}">
                 <td><strong>${part.part_number}</strong></td>
-                <td class="text-center">${part.stock_qty || 0}</td>
+                <td class="text-center">${formatStockDisplay(part)}</td>
                 <td class="text-center ${pricingClass}">${hasPricing}</td>
                 <td>
                     <button class="btn btn-sm btn-outline-primary assign-category-btn" data-part-number="${part.base_part_number}">
@@ -640,38 +644,24 @@ function renderUncategorizedParts() {
     });
 }
 
-function calculateHierarchicalPrice(part) {
-    const margin = parseFloat($('#stockMargin').val()) / 100;
-    const useCQ = $('#useCQPricing').prop('checked');
-    const usePO = $('#usePOPricing').prop('checked');
-    const useVQ = $('#useVQPricing').prop('checked');
+function getPortalPrice(part) {
+    const value = parseFloat(part.estimated_price);
+    return Number.isFinite(value) ? value : null;
+}
 
-    // 1. Stock cost + margin (if in stock)
-    if (part.stock_qty > 0 && part.stock_cost) {
-        return part.stock_cost * (1 + margin);
+function getExportQuantity(part) {
+    const defaultQty = parseInt($('#defaultQuantity').val(), 10) || 1;
+    if (part.in_stock && part.stock_qty && part.stock_qty > 0) {
+        return part.stock_qty;
     }
+    return defaultQty;
+}
 
-    // 2. Recent sales price
-    if (part.avg_sale_price) {
-        return part.avg_sale_price;
+function formatStockDisplay(part) {
+    if (part.stock_qty && part.stock_qty > 0) {
+        return part.stock_qty;
     }
-
-    // 3. Recent CQ price
-    if (useCQ && part.avg_cq_price) {
-        return part.avg_cq_price;
-    }
-
-    // 4. Recent PO price
-    if (usePO && part.avg_po_price) {
-        return part.avg_po_price;
-    }
-
-    // 5. Recent VQ price
-    if (useVQ && part.avg_vq_price) {
-        return part.avg_vq_price;
-    }
-
-    return null;
+    return part.in_stock ? 'In stock' : '0';
 }
 
 function openCategoryModal(basePartNumber) {
@@ -759,6 +749,32 @@ function saveCategoryAssignment() {
         },
         error: function() {
             alert('Error updating category');
+        }
+    });
+}
+
+function saveMiraklSettings() {
+    const payload = {
+        mirakl_base_url: $('#miraklBaseUrl').val().trim(),
+        mirakl_shop_id: $('#miraklShopId').val().trim(),
+        mirakl_api_key: $('#miraklApiKey').val().trim()
+    };
+
+    $.ajax({
+        url: '/marketplace/mirakl/settings',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(payload),
+        success: function(response) {
+            if (response.success) {
+                alert('Mirakl settings saved.');
+                $('#miraklApiKey').val('');
+            } else {
+                alert('Error saving settings: ' + (response.error || 'Unknown error'));
+            }
+        },
+        error: function(xhr, status, error) {
+            alert('Error saving settings: ' + (xhr.responseJSON?.error || error));
         }
     });
 }
@@ -899,15 +915,7 @@ function exportToExcel() {
     // Prepare export data with pricing
     const exportData = {
         base_part_numbers: categorizedParts.map(p => p.base_part_number),
-        pricing_config: {
-            stock_margin: parseFloat($('#stockMargin').val()),
-            pricing_period_days: $('#pricingPeriod').val(),
-            use_cq_pricing: $('#useCQPricing').prop('checked'),
-            use_po_pricing: $('#usePOPricing').prop('checked'),
-            use_vq_pricing: $('#useVQPricing').prop('checked'),
-            default_lead_time: parseInt($('#defaultLeadTime').val()),
-            default_quantity: parseInt($('#defaultQuantity').val())
-        }
+        default_quantity: parseInt($('#defaultQuantity').val(), 10) || 1
     };
     
     // Create a form and submit it to trigger download
