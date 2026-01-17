@@ -706,7 +706,7 @@
                               data-customer-name="{{ item.customer_name or '-' }}"
                               data-lines-url="{{ url_for('parts_list.get_parts_list_lines', list_id=item.id) }}"
                               aria-label="Preview parts list {{ item.name or '-' }}">
-                        <i class="bi bi-eye"></i>
+                        <i class="bi bi-file-earmark-text"></i>
                       </button>
                     </div>
                     <span class="fw-semibold text-warning text-nowrap">{{ format_currency(item.quoted_value_gbp, '£') }}</span>

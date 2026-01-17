@@ -54,17 +54,12 @@ function fetchCallListData() {
 let partsListPreviewModal;
 
 function updatePartsListHeader(listId, payload, statusEl, updateUrl) {
-let partsListPreviewModal;
-
-function updatePartsListHeader(listId, payload, statusEl, updateUrl) {
     if (!listId) {
         return Promise.resolve();
     }
     if (statusEl) {
         statusEl.textContent = 'Saving...';
     }
-    const targetUrl = updateUrl || `/parts_list/parts-lists/${listId}/update`;
-    return fetch(targetUrl, {
     const targetUrl = updateUrl || `/parts_list/parts-lists/${listId}/update`;
     return fetch(targetUrl, {
         method: 'POST',
@@ -1325,14 +1320,12 @@ document.addEventListener('DOMContentLoaded', function() {
             const listId = select.dataset.listId;
             const statusId = parseInt(select.value, 10);
             const updateUrl = select.dataset.updateUrl;
-            const updateUrl = select.dataset.updateUrl;
             const statusEl = document.querySelector(
                 `.parts-list-update-status[data-list-id="${listId}"]`
             );
             if (Number.isNaN(statusId)) {
                 return;
             }
-            updatePartsListHeader(listId, { status_id: statusId }, statusEl, updateUrl);
             updatePartsListHeader(listId, { status_id: statusId }, statusEl, updateUrl);
         });
     });
@@ -1341,7 +1334,6 @@ document.addEventListener('DOMContentLoaded', function() {
     commentInputs.forEach(input => {
         let timer = null;
         const listId = input.dataset.listId;
-        const updateUrl = input.dataset.updateUrl;
         const updateUrl = input.dataset.updateUrl;
         const statusEl = document.querySelector(
             `.parts-list-update-status[data-list-id="${listId}"]`
@@ -1352,24 +1344,10 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             timer = setTimeout(() => {
                 updatePartsListHeader(listId, { notes: input.value }, statusEl, updateUrl);
-                updatePartsListHeader(listId, { notes: input.value }, statusEl, updateUrl);
             }, 600);
         };
         input.addEventListener('input', scheduleSave);
         input.addEventListener('blur', () => {
-            updatePartsListHeader(listId, { notes: input.value }, statusEl, updateUrl);
-        });
-    });
-
-    const previewButtons = document.querySelectorAll('.parts-list-preview-btn');
-    previewButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            showPartsListPreview({
-                listId: button.dataset.listId,
-                listName: button.dataset.listName,
-                customerName: button.dataset.customerName,
-                linesUrl: button.dataset.linesUrl
-            });
             updatePartsListHeader(listId, { notes: input.value }, statusEl, updateUrl);
         });
     });

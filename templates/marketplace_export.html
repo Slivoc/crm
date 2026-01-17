@@ -202,6 +202,7 @@
                     <i class="bi bi-x-circle"></i> Reset Filters
                 </button>
                 <div id="loadStatus" class="text-muted mt-2" style="display: none;"></div>
+                <pre id="loadStatusDetails" class="small text-muted mt-1" style="display: none; white-space: pre-wrap;"></pre>
             </div>
         </div>
     </div>
@@ -499,6 +500,7 @@ function loadParts() {
     $('#exportCard').hide();
     $('#noPartsMessage').hide();
     setLoadStatus('Loading parts...', 'text-muted');
+    setLoadStatusDetails('');
     setApplyFiltersBusy(true);
 
     if (loadStatusTimer) {
@@ -525,6 +527,7 @@ function loadParts() {
             $('#loadingSpinner').hide();
             setApplyFiltersBusy(false);
             clearTimeout(loadStatusTimer);
+            setLoadStatusDetails('');
 
             if (response.success && response.parts && response.parts.length > 0) {
                 allParts = response.parts;
@@ -546,8 +549,11 @@ function loadParts() {
             clearTimeout(loadStatusTimer);
             console.error('Error loading parts:', error);
             console.error('Response:', xhr.responseText);
-            setLoadStatus(`Error loading parts (${elapsedSeconds}s): ${xhr.responseJSON?.error || error}`, 'text-danger');
-            alert('Error loading parts: ' + (xhr.responseJSON?.error || error));
+            const summary = xhr.responseJSON?.error || error || status || 'Unknown error';
+            const details = buildAjaxErrorDetails(xhr, status, error);
+            setLoadStatus(`Error loading parts (${elapsedSeconds}s): ${summary}`, 'text-danger');
+            setLoadStatusDetails(details, 'text-danger');
+            alert('Error loading parts: ' + summary);
         }
     });
 }
@@ -563,6 +569,63 @@ function setLoadStatus(message, className) {
         .removeClass('text-muted text-success text-danger')
         .addClass(className || 'text-muted')
         .show();
+}
+
+function setLoadStatusDetails(message, className) {
+    const $details = $('#loadStatusDetails');
+    if (!message) {
+        $details.hide().text('');
+        return;
+    }
+    $details
+        .text(message)
+        .removeClass('text-muted text-success text-danger')
+        .addClass(className || 'text-muted')
+        .show();
+}
+
+function buildAjaxErrorDetails(xhr, status, error) {
+    const details = [];
+    if (xhr) {
+        if (xhr.status) {
+            const statusText = xhr.statusText ? ` ${xhr.statusText}` : '';
+            details.push(`HTTP ${xhr.status}${statusText}`);
+        }
+        if (xhr.getResponseHeader) {
+            const contentType = xhr.getResponseHeader('Content-Type');
+            if (contentType) {
+                details.push(`Content-Type: ${contentType}`);
+            }
+        }
+        let responseJson = xhr.responseJSON;
+        const responseText = xhr.responseText;
+        if (!responseJson && responseText) {
+            try {
+                responseJson = JSON.parse(responseText);
+            } catch (parseError) {
+                responseJson = null;
+            }
+        }
+        if (responseJson) {
+            details.push(`Response JSON:\n${JSON.stringify(responseJson, null, 2)}`);
+        } else if (responseText) {
+            details.push(`Response Text:\n${truncateText(responseText, 8000)}`);
+        }
+    }
+    if (status) {
+        details.push(`Status: ${status}`);
+    }
+    if (error) {
+        details.push(`Error: ${error}`);
+    }
+    return details.join('\n');
+}
+
+function truncateText(text, maxLength) {
+    if (!text || text.length <= maxLength) {
+        return text || '';
+    }
+    return `${text.slice(0, maxLength)}\n... (truncated, ${text.length} chars total)`;
 }
 
 function setApplyFiltersBusy(isBusy) {

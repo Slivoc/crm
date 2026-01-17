@@ -25,6 +25,23 @@
     .date-dot.recent-month {
         background-color: #ffc107;
     }
+
+    .icon-box {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        flex-shrink: 0;
+    }
+
+    .card.shadow-sm {
+        transition: box-shadow 0.2s ease;
+    }
+
+    .card.shadow-sm:hover {
+        box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.1) !important;
+    }
 </style>
 <div class="container-fluid mt-4">
     <div class="row mb-3 align-items-center">
@@ -202,10 +219,24 @@
         <i class="bi bi-info-circle"></i> No parts lists found. Create your first one!
     </div>
     {% else %}
-    <div class="card">
-        <div class="card-body">
+    <div class="card shadow-sm border-0">
+        <div class="card-header border-0 bg-white">
+            <div class="d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center">
+                    <div class="icon-box bg-primary bg-opacity-10 rounded-3 p-2 me-3">
+                        <i class="bi bi-card-list text-primary fs-5"></i>
+                    </div>
+                    <div>
+                        <h6 class="card-title mb-0 fw-semibold">Saved Parts Lists</h6>
+                        <small class="text-muted">Track quote progress and review key list details.</small>
+                    </div>
+                </div>
+                <span class="badge bg-secondary bg-opacity-10 text-secondary">{{ lists|length }} lists</span>
+            </div>
+        </div>
+        <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-hover align-middle" id="partsListsTable">
+                <table class="table table-hover align-middle mb-0" id="partsListsTable">
                     <thead>
     <tr>
         <th>Name</th>
@@ -213,6 +244,7 @@
         <th>Contact</th>
         <th>Status</th>
         <th class="text-center" style="width: 18%;">Lines / Costed / Quoted</th>
+        <th class="text-end">Quoted Value</th>
         <th class="text-center">QPL</th>
         <th style="width: 25%;">Preview</th>
         <th>Created</th>
@@ -270,6 +302,9 @@
                                          aria-valuemax="{{ line_count }}">
                                     </div>
                                 </div>
+                            </td>
+                            <td class="text-end text-nowrap">
+                                {{ format_currency(list.quoted_value_gbp or 0, '£') }}
                             </td>
                             <td class="text-center">
                                 <span class="fw-semibold">{{ list.qpl_line_count or 0 }}</span>
@@ -752,7 +787,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (typeof $.fn.DataTable !== 'undefined') {
             partsListDataTable = $('#partsListsTable').DataTable({
-            order: [[7, 'desc']],
+            order: [[8, 'desc']],
             pageLength: 25,
             language: {
                 search: "Search lists:"
