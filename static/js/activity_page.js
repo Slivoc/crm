@@ -51,14 +51,17 @@ function fetchCallListData() {
         });
 }
 
-function updatePartsListHeader(listId, payload, statusEl) {
+let partsListPreviewModal;
+
+function updatePartsListHeader(listId, payload, statusEl, updateUrl) {
     if (!listId) {
         return Promise.resolve();
     }
     if (statusEl) {
         statusEl.textContent = 'Saving...';
     }
-    return fetch(`/parts-lists/${listId}/update`, {
+    const targetUrl = updateUrl || `/parts_list/parts-lists/${listId}/update`;
+    return fetch(targetUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -78,6 +81,78 @@ function updatePartsListHeader(listId, payload, statusEl) {
                 statusEl.textContent = 'Error saving';
             }
         });
+}
+
+function renderPartsListPreviewLines(lines) {
+    if (!lines || lines.length === 0) {
+        return '<p class="text-muted mb-0">No lines found for this parts list.</p>';
+    }
+
+    const rows = lines.map(line => `
+        <tr>
+            <td>${line.line_number ?? '-'}</td>
+            <td>${line.customer_part_number || '-'}</td>
+            <td>${line.base_part_number || '-'}</td>
+            <td class="text-end">${line.quantity ?? '-'}</td>
+        </tr>
+    `).join('');
+
+    return `
+        <div class="table-responsive">
+            <table class="table table-sm align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th scope="col">Line</th>
+                        <th scope="col">Customer Part</th>
+                        <th scope="col">Base Part</th>
+                        <th scope="col" class="text-end">Qty</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+async function showPartsListPreview(options) {
+    const modalEl = document.getElementById('partsListPreviewModal');
+    if (!modalEl) {
+        return;
+    }
+    if (!partsListPreviewModal) {
+        partsListPreviewModal = new bootstrap.Modal(modalEl);
+    }
+
+    const { listName, customerName, linesUrl } = options;
+    const titleEl = document.getElementById('partsListPreviewTitle');
+    const subtitleEl = document.getElementById('partsListPreviewSubtitle');
+    const contentEl = document.getElementById('partsListPreviewContent');
+    const spinnerEl = document.getElementById('partsListPreviewSpinner');
+
+    titleEl.textContent = listName || 'Parts List Preview';
+    subtitleEl.textContent = customerName ? `Customer: ${customerName}` : '';
+    contentEl.innerHTML = '';
+    spinnerEl.classList.remove('d-none');
+    partsListPreviewModal.show();
+
+    try {
+        const response = await fetch(linesUrl);
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.message || 'Unable to load parts list lines.');
+        }
+        contentEl.innerHTML = renderPartsListPreviewLines(data.lines);
+    } catch (error) {
+        contentEl.innerHTML = `
+            <div class="alert alert-danger mb-0">
+                ${error.message}
+            </div>
+        `;
+    } finally {
+        spinnerEl.classList.add('d-none');
+    }
 }
 function displayCallList(data) {
     const container = document.getElementById('callListContent');
@@ -1173,13 +1248,14 @@ document.addEventListener('DOMContentLoaded', function() {
         select.addEventListener('change', () => {
             const listId = select.dataset.listId;
             const statusId = parseInt(select.value, 10);
+            const updateUrl = select.dataset.updateUrl;
             const statusEl = document.querySelector(
                 `.parts-list-update-status[data-list-id="${listId}"]`
             );
             if (Number.isNaN(statusId)) {
                 return;
             }
-            updatePartsListHeader(listId, { status_id: statusId }, statusEl);
+            updatePartsListHeader(listId, { status_id: statusId }, statusEl, updateUrl);
         });
     });
 
@@ -1187,6 +1263,7 @@ document.addEventListener('DOMContentLoaded', function() {
     commentInputs.forEach(input => {
         let timer = null;
         const listId = input.dataset.listId;
+        const updateUrl = input.dataset.updateUrl;
         const statusEl = document.querySelector(
             `.parts-list-update-status[data-list-id="${listId}"]`
         );
@@ -1195,12 +1272,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 clearTimeout(timer);
             }
             timer = setTimeout(() => {
-                updatePartsListHeader(listId, { notes: input.value }, statusEl);
+                updatePartsListHeader(listId, { notes: input.value }, statusEl, updateUrl);
             }, 600);
         };
         input.addEventListener('input', scheduleSave);
         input.addEventListener('blur', () => {
-            updatePartsListHeader(listId, { notes: input.value }, statusEl);
+            updatePartsListHeader(listId, { notes: input.value }, statusEl, updateUrl);
+        });
+    });
+
+    const previewButtons = document.querySelectorAll('.parts-list-preview-btn');
+    previewButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            showPartsListPreview({
+                listId: button.dataset.listId,
+                listName: button.dataset.listName,
+                customerName: button.dataset.customerName,
+                linesUrl: button.dataset.linesUrl
+            });
         });
     });
 

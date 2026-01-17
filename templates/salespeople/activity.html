@@ -697,13 +697,25 @@
               {% for item in top_quoted_lists %}
                 <div class="data-list-item py-2 {% if not loop.last %}border-bottom{% endif %}">
                   <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
-                    <span class="fw-medium">{{ item.name or '-' }}</span>
+                    <div class="d-flex align-items-center gap-2">
+                      <span class="fw-medium">{{ item.name or '-' }}</span>
+                      <button type="button"
+                              class="btn btn-link btn-sm p-0 text-decoration-none parts-list-preview-btn"
+                              data-list-id="{{ item.id }}"
+                              data-list-name="{{ item.name or '-' }}"
+                              data-customer-name="{{ item.customer_name or '-' }}"
+                              data-lines-url="{{ url_for('parts_list.get_parts_list_lines', list_id=item.id) }}"
+                              aria-label="Preview parts list {{ item.name or '-' }}">
+                        <i class="bi bi-eye"></i>
+                      </button>
+                    </div>
                     <span class="fw-semibold text-warning text-nowrap">{{ format_currency(item.quoted_value_gbp, '£') }}</span>
                   </div>
                   <div class="d-flex justify-content-between align-items-center">
                     <small class="text-muted">{{ item.customer_name or '-' }}</small>
                     <select class="form-select form-select-sm parts-list-status-select"
                             data-list-id="{{ item.id }}"
+                            data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=item.id) }}"
                             style="font-size: 0.65rem; max-width: 140px;">
                       {% for status in parts_list_statuses %}
                         <option value="{{ status.id }}" {% if item.status_id == status.id %}selected{% endif %}>
@@ -714,6 +726,7 @@
                   </div>
                   <textarea class="form-control form-control-sm mt-2 parts-list-comment-input"
                             data-list-id="{{ item.id }}"
+                            data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=item.id) }}"
                             rows="2"
                             placeholder="Add comment...">{{ item.notes }}</textarea>
                   <small class="text-muted parts-list-update-status" data-list-id="{{ item.id }}"></small>
@@ -776,6 +789,28 @@
               <small>No next actions for {{ next_action_month_label }}</small>
             </div>
           {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="partsListPreviewModal" tabindex="-1" aria-labelledby="partsListPreviewTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <h5 class="modal-title" id="partsListPreviewTitle">Parts List Preview</h5>
+            <small class="text-muted" id="partsListPreviewSubtitle"></small>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="text-center py-4" id="partsListPreviewSpinner">
+            <div class="spinner-border text-primary" role="status">
+              <span class="visually-hidden">Loading...</span>
+            </div>
+          </div>
+          <div id="partsListPreviewContent"></div>
         </div>
       </div>
     </div>
