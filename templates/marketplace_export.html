@@ -406,6 +406,11 @@
                     <strong>Categorized:</strong> <span id="progressCategorized" class="text-success">0</span> parts
                 </div>
 
+                <div class="mb-3">
+                    <strong>Last Batch:</strong>
+                    <div id="progressDetails" class="text-muted small" style="white-space: pre-wrap;"></div>
+                </div>
+
                 <div id="progressError" class="alert alert-danger" style="display: none;"></div>
             </div>
             <div class="modal-footer">
@@ -871,6 +876,7 @@ function autoCategorizeMissing() {
     $('#progressCategorized').text(0);
     $('#progressBar').css('width', '0%').text('0%');
     $('#progressStatus').text('Starting...');
+    $('#progressDetails').text('');
     $('#progressError').hide();
     $('#cancelProgressBtn').prop('disabled', false);
 
@@ -919,6 +925,14 @@ function processCategorizationBatch(allPartNumbers, offset, total) {
                     .css('width', percentage + '%')
                     .attr('aria-valuenow', percentage)
                     .text(percentage + '%');
+                $('#progressDetails').text(buildBatchDetails({
+                    batchNumber: currentBatch,
+                    totalBatches: totalBatches,
+                    processedInBatch: response.total_in_batch,
+                    updatedInBatch: response.updated_count,
+                    totalProcessed: processed,
+                    totalParts: total
+                }));
 
                 // Continue if there are more parts
                 if (response.has_more && !categorizationCancelled) {
@@ -965,6 +979,17 @@ $('#cancelProgressBtn').click(function() {
         $('#progressModal').modal('hide');
     }
 });
+
+function buildBatchDetails(details) {
+    const skipped = Math.max(details.processedInBatch - details.updatedInBatch, 0);
+    return [
+        `Batch ${details.batchNumber} of ${details.totalBatches}`,
+        `Processed: ${details.processedInBatch}`,
+        `Updated: ${details.updatedInBatch}`,
+        `Skipped: ${skipped}`,
+        `Total processed: ${details.totalProcessed} / ${details.totalParts}`
+    ].join('\n');
+}
 function exportToExcel() {
     const categorizedParts = allParts.filter(p => p.mkp_category);
 
