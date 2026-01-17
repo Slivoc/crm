@@ -69,6 +69,11 @@
             </h2>
             <p class="text-muted">Select parts and configure export settings for Airbus Marketplace (Keycopter)</p>
         </div>
+        <div class="col-auto align-self-center">
+            <a class="btn btn-outline-secondary" href="/marketplace/categorization-tool">
+                <i class="bi bi-tags"></i> Categorization Tool
+            </a>
+        </div>
     </div>
 
     <!-- Summary Stats -->
@@ -539,6 +544,7 @@ function loadParts() {
 
             if (response.success && response.parts && response.parts.length > 0) {
                 allParts = response.parts;
+                storeExportUncategorizedParts(response.parts, filters);
                 updateSummaryStats();
                 renderUncategorizedParts();
                 $('#statsRow').show();
@@ -733,6 +739,25 @@ function formatStockDisplay(part) {
         return part.stock_qty;
     }
     return part.in_stock ? 'In stock' : '0';
+}
+
+function storeExportUncategorizedParts(parts, filters) {
+    try {
+        const uncategorized = parts
+            .filter(p => !p.mkp_category)
+            .map(p => ({
+                base_part_number: p.base_part_number,
+                part_number: p.part_number || p.base_part_number
+            }));
+        const payload = {
+            stored_at: new Date().toISOString(),
+            filters: filters || {},
+            uncategorized: uncategorized
+        };
+        localStorage.setItem('marketplaceExportUncategorizedParts', JSON.stringify(payload));
+    } catch (error) {
+        console.warn('Failed to store export results', error);
+    }
 }
 
 function openCategoryModal(basePartNumber) {

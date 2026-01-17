@@ -8,6 +8,8 @@ from datetime import datetime, date
 import logging
 import os
 import time
+import json
+import re
 
 from airbus_marketplace_helper import (
     suggest_marketplace_category,
@@ -19,10 +21,13 @@ from models import get_db
 from routes.portal_api import _analyze_quote_internal, get_portal_setting
 from integrations.mirakl.client import MiraklClient, MiraklError
 from integrations.mirakl.services.offers import build_offers_csv
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
 marketplace_bp = Blueprint('marketplace', __name__)
+
+PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY') or "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"
 
 
 def _months_ago(reference: date, months: int) -> date:
@@ -75,6 +80,48 @@ def _get_marketplace_customer_id():
         return None
 
 
+def _get_perplexity_client():
+    if not PERPLEXITY_API_KEY:
+        return None
+    return OpenAI(api_key=PERPLEXITY_API_KEY, base_url="https://api.perplexity.ai")
+
+
+def _extract_json_object(raw_content):
+    start = raw_content.find("{")
+    end = raw_content.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    return raw_content[start:end + 1]
+
+
+def _normalize_prefixes(prefixes):
+    cleaned = []
+    for prefix in prefixes or []:
+        value = (prefix or "").strip()
+        if value:
+            cleaned.append(value)
+    return list(dict.fromkeys(cleaned))
+
+
+def _guess_prefixes_from_part_number(part_number):
+    if not part_number:
+        return []
+    token = re.split(r"[-/\\s]+", part_number.strip())[0]
+    if token and token != part_number:
+        return [token]
+    return []
+
+
+def _build_prefix_conditions(prefixes):
+    conditions = []
+    params = []
+    for prefix in prefixes:
+        like_value = f"{prefix}%"
+        conditions.append("(pn.part_number LIKE ? OR pn.base_part_number LIKE ?)")
+        params.extend([like_value, like_value])
+    return conditions, params
+
+
 def _get_portal_estimates(parts, customer_id):
     if not parts:
         return {}
@@ -125,6 +172,208 @@ def get_marketplace_categories():
     except Exception as e:
         logger.exception("Error getting marketplace categories")
         return jsonify({'error': str(e)}), 500
+
+
+@marketplace_bp.route('/categorization-tool', methods=['GET'])
+def categorization_tool_page():
+    """Render the marketplace categorization tool page"""
+    return render_template('marketplace_category_tool.html')
+
+
+@marketplace_bp.route('/categorization-tool/suggest', methods=['POST'])
+def categorization_tool_suggest():
+    data = request.get_json() or {}
+    part_number = (data.get('part_number') or '').strip()
+    description = (data.get('description') or '').strip()
+    use_perplexity = bool(data.get('use_perplexity', True))
+
+    if not part_number:
+        return jsonify({'success': False, 'error': 'part_number is required'}), 400
+
+    categories = get_available_categories()
+    category_list = "\n".join([f"- {cat}" for cat in categories])
+
+    if use_perplexity:
+        client = _get_perplexity_client()
+        if not client:
+            return jsonify({'success': False, 'error': 'Perplexity API key not configured'}), 400
+
+        system_message = f"""You are an aviation hardware analyst. Return ONLY valid JSON.
+
+Choose one category from this exact list:
+{category_list}
+
+Rules:
+1. Output ONLY JSON, no markdown
+2. If unsure, use "Marketplace Categories/Hardware and Electrical/Miscellaneous"
+3. Reasoning must be max 12 words, no quotes
+4. Suggest 0-3 prefixes to apply for mass updates, or an empty list
+
+Output format:
+{{
+  "category": "Marketplace Categories/Hardware and Electrical/CategoryName",
+  "confidence": "high|medium|low",
+  "reasoning": "short reason",
+  "prefixes": ["EXAMPLE", "SERIES"]
+}}"""
+
+        user_message = f"""Part number: {part_number}
+Description: {description or "None"}
+
+Suggest a category and any useful prefixes or series identifiers."""
+
+        try:
+            response = client.chat.completions.create(
+                model="sonar-pro",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0.2,
+                max_tokens=500,
+            )
+            raw_content = response.choices[0].message.content.strip()
+            try:
+                result = json.loads(raw_content)
+            except json.JSONDecodeError:
+                extracted = _extract_json_object(raw_content)
+                result = json.loads(extracted) if extracted else {}
+        except Exception as exc:
+            logger.exception("Perplexity suggestion failed")
+            return jsonify({'success': False, 'error': str(exc)}), 500
+    else:
+        result = suggest_marketplace_category(part_number, description, '')
+
+    category = result.get('category') if isinstance(result, dict) else None
+    confidence = result.get('confidence', 'low') if isinstance(result, dict) else 'low'
+    reasoning = result.get('reasoning', '') if isinstance(result, dict) else ''
+    prefixes = _normalize_prefixes(result.get('prefixes') if isinstance(result, dict) else [])
+
+    if category not in categories:
+        category = "Marketplace Categories/Hardware and Electrical/Miscellaneous"
+        confidence = "low"
+        if not reasoning:
+            reasoning = "invalid_category"
+
+    if not prefixes and not use_perplexity:
+        prefixes = _guess_prefixes_from_part_number(part_number)
+
+    return jsonify({
+        'success': True,
+        'category': category,
+        'confidence': confidence,
+        'reasoning': reasoning,
+        'prefixes': prefixes,
+    }), 200
+
+
+@marketplace_bp.route('/categorization-tool/uncategorized', methods=['GET'])
+def categorization_tool_uncategorized():
+    limit = request.args.get('limit', 50)
+    try:
+        limit = max(1, min(int(limit), 200))
+    except (TypeError, ValueError):
+        limit = 50
+
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute(
+        """
+        SELECT base_part_number, part_number
+        FROM part_numbers
+        WHERE mkp_category IS NULL OR mkp_category = ''
+        ORDER BY part_number
+        LIMIT ?
+        """,
+        (limit,)
+    )
+    rows = cursor.fetchall()
+    parts = [
+        {
+            'base_part_number': row['base_part_number'],
+            'part_number': row['part_number'] or row['base_part_number'],
+        }
+        for row in rows
+    ]
+    return jsonify({'success': True, 'parts': parts}), 200
+
+
+@marketplace_bp.route('/categorization-tool/prefix-preview', methods=['POST'])
+def categorization_tool_prefix_preview():
+    data = request.get_json() or {}
+    prefixes = _normalize_prefixes(data.get('prefixes', []))
+    only_uncategorized = bool(data.get('only_uncategorized', True))
+
+    if not prefixes:
+        return jsonify({'success': True, 'total': 0, 'sample': []}), 200
+
+    conditions, params = _build_prefix_conditions(prefixes)
+    where_clause = " OR ".join(conditions)
+    filters = [f"({where_clause})"]
+    if only_uncategorized:
+        filters.append("(pn.mkp_category IS NULL OR pn.mkp_category = '')")
+
+    where_sql = " AND ".join(filters)
+
+    db = get_db()
+    cursor = db.cursor()
+
+    count_query = f"SELECT COUNT(*) AS total FROM part_numbers pn WHERE {where_sql}"
+    cursor.execute(count_query, params)
+    total_row = cursor.fetchone()
+    total = total_row['total'] if total_row else 0
+
+    sample_query = f"""
+        SELECT pn.base_part_number, pn.part_number, pn.mkp_category
+        FROM part_numbers pn
+        WHERE {where_sql}
+        ORDER BY pn.part_number
+        LIMIT 20
+    """
+    cursor.execute(sample_query, params)
+    rows = cursor.fetchall()
+    sample = [
+        {
+            'base_part_number': row['base_part_number'],
+            'part_number': row['part_number'],
+            'mkp_category': row['mkp_category'],
+        }
+        for row in rows
+    ]
+
+    return jsonify({'success': True, 'total': total, 'sample': sample}), 200
+
+
+@marketplace_bp.route('/categorization-tool/apply-prefix', methods=['POST'])
+def categorization_tool_apply_prefix():
+    data = request.get_json() or {}
+    prefixes = _normalize_prefixes(data.get('prefixes', []))
+    category = (data.get('category') or '').strip()
+    only_uncategorized = bool(data.get('only_uncategorized', True))
+
+    if not prefixes:
+        return jsonify({'success': False, 'error': 'prefixes are required'}), 400
+    if not category:
+        return jsonify({'success': False, 'error': 'category is required'}), 400
+
+    valid_categories = get_available_categories()
+    if category not in valid_categories:
+        return jsonify({'success': False, 'error': 'Invalid category'}), 400
+
+    conditions, params = _build_prefix_conditions(prefixes)
+    where_clause = " OR ".join(conditions)
+    filters = [f"({where_clause})"]
+    if only_uncategorized:
+        filters.append("(mkp_category IS NULL OR mkp_category = '')")
+    where_sql = " AND ".join(filters)
+
+    db = get_db()
+    cursor = db.cursor()
+    update_query = f"UPDATE part_numbers pn SET mkp_category = ? WHERE {where_sql}"
+    cursor.execute(update_query, [category] + params)
+    db.commit()
+
+    return jsonify({'success': True, 'updated_count': cursor.rowcount}), 200
 
 
 @marketplace_bp.route('/suggest-category', methods=['POST'])
