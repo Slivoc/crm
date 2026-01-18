@@ -1,7 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, request, g, current_app
 import logging
 from db import execute as db_execute, db_cursor
-from models import get_contact_status_by_id, get_contact_communications, get_customer_development_plan, update_customer_development_answer, delete_customer_development_answer, update_contact_status, add_contact_ajax, get_all_contacts_by_status, get_all_contact_statuses, get_all_contact_status_counts, get_customer_contacts, get_all_contacts_filtered, get_all_contact_lists, create_contact_list, delete_contact_list, get_contact_list_by_id, add_contacts_to_list, remove_contacts_from_list, get_lists_by_contact_id, update_contact_list_name, remove_contacts_from_list, get_contacts_by_ids, get_customer_domains, get_tag_description, Permission, get_all_company_types, get_available_company_types, abort, get_company_types_by_customer_id, remove_customer_company_type, insert_customer_company_type, get_rfqs_by_customer_id, get_sales_orders_by_customer_id, update_customer_apollo_id, get_customer_tags, get_templates_by_tags, update_contact, update_customer_enrichment, get_customer, get_customer_data, get_available_tags, get_customers_by_country, get_nested_tags, get_child_tags, get_customers_by_tag, get_customers_by_tags, get_customers_by_continent, get_available_countries, get_countries_by_continent, get_customer_statuses, get_continents, get_status_name, insert_customer_tag, get_all_customers, get_all_tags, get_customers_by_tag, get_latest_activity, get_customers_with_status_and_updates,  get_tag_description, insert_customer_tags, insert_customer_industry, delete_customer_industries, get_industries, get_customer_industry, update_customer_industry, delete_customer_tags, get_tags_by_customer_id, get_updates_by_customer_id, get_addresses_by_customer, insert_update, get_contact_by_id, get_customers, get_salespeople, get_currencies, get_salesperson_by_id, get_customer_by_id, get_contacts_by_customer, insert_customer, update_customer, insert_contact
+from models import get_contact_status_by_id, get_contact_communications, get_customer_development_plan, update_customer_development_answer, delete_customer_development_answer, update_contact_status, add_contact_ajax, get_all_contacts_by_status, get_all_contact_statuses, get_all_contact_status_counts, get_customer_contacts, get_all_contacts_filtered, get_all_contact_lists, create_contact_list, delete_contact_list, get_contact_list_by_id, add_contacts_to_list, remove_contacts_from_list, get_lists_by_contact_id, update_contact_list_name, remove_contacts_from_list, get_contacts_by_ids, get_customer_domains, get_tag_description, Permission, get_all_company_types, get_available_company_types, abort, get_company_types_by_customer_id, remove_customer_company_type, insert_customer_company_type, get_rfqs_by_customer_id, get_sales_orders_by_customer_id, update_customer_apollo_id, get_customer_tags, get_templates_by_tags, update_contact, update_customer_enrichment, get_customer, get_customer_data, get_available_tags, get_customers_by_country, get_nested_tags, get_child_tags, get_customers_by_tag, get_customers_by_tags, get_customers_by_continent, get_available_countries, get_countries_by_continent, get_customer_statuses, get_continents, get_status_name, insert_customer_tag, get_all_customers, get_all_tags, get_customers_by_tag, get_latest_activity, get_customers_with_status_and_updates,  get_tag_description, insert_customer_tags, insert_customer_industry, delete_customer_industries, get_industries, get_customer_industry, update_customer_industry, delete_customer_tags, get_tags_by_customer_id, get_updates_by_customer_id, get_addresses_by_customer, insert_update, get_contact_by_id, get_customers, get_salespeople, get_currencies, get_salesperson_by_id, get_customer_by_id, get_contacts_by_customer, insert_customer, update_customer, insert_contact, get_call_list_contact_ids
 from jinja2 import TemplateNotFound
 from ai_helper import start_bulk_enrichment, start_perplexity_enrichment, enrich_customer_with_perplexity, apply_perplexity_enrichment, generate_industry_insights, generate_preview_prompt, enrich_customer_data, validate_enrichment_data, generate_industry_insights_with_custom_prompt
 from http import HTTPStatus
@@ -55,6 +55,30 @@ def _execute_with_cursor(cur, query, params=None):
     payload = params if isinstance(params, dict) else (params or [])
     cur.execute(prepared, payload)
     return cur
+
+
+def _call_list_has_snoozed_until():
+    try:
+        with db_cursor() as cur:
+            if _using_postgres():
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'call_list'
+                      AND column_name = 'snoozed_until'
+                    """
+                )
+                return cur.fetchone() is not None
+            cur.execute("PRAGMA table_info(call_list)")
+            for row in cur.fetchall() or []:
+                if isinstance(row, dict) and row.get('name') == 'snoozed_until':
+                    return True
+                if not isinstance(row, dict) and len(row) > 1 and row[1] == 'snoozed_until':
+                    return True
+    except Exception:
+        return False
+    return False
 
 
 def _parse_datetime(value):
@@ -6869,6 +6893,9 @@ def customer_overview(customer_id):
     - Recent activity (updates and orders)
     """
     try:
+        salesperson_id = request.args.get('salesperson_id', type=int)
+        if not salesperson_id and current_user.is_authenticated:
+            salesperson_id = current_user.get_salesperson_id()
         # Check permissions
         customer = get_customer_by_id(customer_id)
         if not customer:
@@ -7049,6 +7076,35 @@ def customer_overview(customer_id):
 
         recent_activity = recent_activity[:5]
 
+        call_list_contact_ids = set()
+        call_list_snoozed_contact_ids = set()
+        if salesperson_id and contacts:
+            contact_ids = [contact['id'] for contact in contacts]
+            placeholders = ','.join('?' for _ in contact_ids)
+            call_list_fields = "contact_id"
+            if _call_list_has_snoozed_until():
+                call_list_fields += ", snoozed_until"
+
+            call_list_rows = db_execute(
+                f"""
+                SELECT {call_list_fields}
+                FROM call_list
+                WHERE salesperson_id = ?
+                  AND is_active = TRUE
+                  AND contact_id IN ({placeholders})
+                """,
+                [salesperson_id] + contact_ids,
+                fetch='all'
+            ) or []
+
+            for row in call_list_rows:
+                contact_id = row['contact_id']
+                call_list_contact_ids.add(contact_id)
+                if row.get('snoozed_until'):
+                    snoozed_until = _parse_datetime(row['snoozed_until'])
+                    if snoozed_until and snoozed_until > datetime.utcnow():
+                        call_list_snoozed_contact_ids.add(contact_id)
+
         overview_data = {
             'customer_name': customer_dict.get('name', 'Unknown'),
             'last_purchase': {
@@ -7068,7 +7124,9 @@ def customer_overview(customer_id):
                     'id': contact['id'],
                     'name': contact['name'],
                     'email': contact['email'],
-                    'phone': contact['phone']
+                    'phone': contact['phone'],
+                    'is_on_call_list': contact['id'] in call_list_contact_ids,
+                    'is_snoozed': contact['id'] in call_list_snoozed_contact_ids
                 } for contact in contacts
             ],
             'recent_activity': recent_activity

@@ -3957,12 +3957,33 @@ def update_parts_list_header(list_id):
 
 @parts_list_bp.route('/parts-lists/<int:list_id>/delete', methods=['POST'])
 def delete_parts_list(list_id):
-    """Delete a parts list (cascades to lines)."""
+    """Delete a parts list and all related data."""
     try:
-        exists = db_execute("SELECT 1 FROM parts_lists WHERE id = ?", (list_id,), fetch='one')
-        if not exists:
-            return jsonify(success=False, message="Parts list not found"), 404
-        db_execute("DELETE FROM parts_lists WHERE id = ?", (list_id,), commit=True)
+        with db_cursor(commit=True) as cur:
+            exists = _execute_with_cursor(cur, "SELECT 1 FROM parts_lists WHERE id = ?", (list_id,)).fetchone()
+            if not exists:
+                return jsonify(success=False, message="Parts list not found"), 404
+
+            # Get all line IDs for this parts list
+            line_ids = _execute_with_cursor(
+                cur,
+                "SELECT id FROM parts_list_lines WHERE parts_list_id = ?",
+                (list_id,)
+            ).fetchall()
+            line_id_list = [row['id'] for row in line_ids]
+
+            # Delete monroe_search_results that reference these lines (no cascade on FK)
+            if line_id_list:
+                placeholders = ','.join('?' * len(line_id_list))
+                _execute_with_cursor(
+                    cur,
+                    f"DELETE FROM monroe_search_results WHERE parts_list_line_id IN ({placeholders})",
+                    line_id_list
+                )
+
+            # Delete the parts list (cascades to lines and other related tables)
+            _execute_with_cursor(cur, "DELETE FROM parts_lists WHERE id = ?", (list_id,))
+
         return jsonify(success=True)
     except Exception as e:
         logging.exception(e)
@@ -6759,9 +6780,13 @@ def generate_no_response_email():
 @parts_list_bp.route('/parts-lists/update-status/<int:list_id>', methods=['POST'])
 def update_parts_list_status(list_id):
     """
-    Cycle to the next status for a parts list.
+    Update status for a parts list. If status_id is provided in request body,
+    set to that status directly. Otherwise cycle to the next status.
     """
     try:
+        data = request.get_json(silent=True) or {}
+        requested_status_id = data.get('status_id')
+
         with db_cursor(commit=True) as cur:
             current = _execute_with_cursor(
                 cur,
@@ -6784,12 +6809,20 @@ def update_parts_list_status(list_id):
 
             status_ids = [s['id'] for s in statuses]
 
-            if current_status_id in status_ids:
-                current_index = status_ids.index(current_status_id)
-                next_index = (current_index + 1) % len(status_ids)
-                next_status_id = status_ids[next_index]
+            if requested_status_id is not None:
+                # Set to specific status if provided
+                requested_status_id = int(requested_status_id)
+                if requested_status_id not in status_ids:
+                    return jsonify({'success': False, 'message': 'Invalid status ID'}), 400
+                next_status_id = requested_status_id
             else:
-                next_status_id = status_ids[0]
+                # Cycle to next status
+                if current_status_id in status_ids:
+                    current_index = status_ids.index(current_status_id)
+                    next_index = (current_index + 1) % len(status_ids)
+                    next_status_id = status_ids[next_index]
+                else:
+                    next_status_id = status_ids[0]
 
             _execute_with_cursor(
                 cur,

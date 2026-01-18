@@ -192,6 +192,8 @@
 </div>
 
 <script>
+const overviewDefaultSalespersonId = {{ current_user.get_salesperson_id() if current_user.is_authenticated and current_user.get_salesperson_id() else 'null' }};
+
 class CustomerOverviewModal {
   constructor() {
     this.modal = document.getElementById('customerOverviewModal');
@@ -222,6 +224,23 @@ class CustomerOverviewModal {
 
     // Setup update form handlers
     this.setupUpdateForm();
+
+    this.modal.addEventListener('click', (event) => {
+      const addButton = event.target.closest('.add-to-call-list-btn');
+      if (addButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.addContactToCallList(addButton);
+        return;
+      }
+
+      const removeButton = event.target.closest('.remove-from-call-list-btn');
+      if (removeButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.removeContactFromCallList(removeButton);
+      }
+    });
   }
 
   setupUpdateForm() {
@@ -384,7 +403,9 @@ class CustomerOverviewModal {
 
     try {
       // Fetch overview data
-      const response = await fetch(`/customers/${customerId}/overview`);
+      const salespersonId = this.getSalespersonId();
+      const query = salespersonId ? `?salesperson_id=${encodeURIComponent(salespersonId)}` : '';
+      const response = await fetch(`/customers/${customerId}/overview${query}`);
 
       if (!response.ok) {
         throw new Error('Failed to fetch overview data');
@@ -595,7 +616,10 @@ class CustomerOverviewModal {
                   ${contact.phone ? `<div><i class="bi bi-telephone me-1"></i>${contact.phone}</div>` : ''}
                 </div>
               </div>
-              ${contact.is_primary ? '<span class="badge bg-primary">Primary</span>' : ''}
+              <div class="d-flex flex-column align-items-end gap-2 ms-2">
+                ${contact.is_primary ? '<span class="badge bg-primary">Primary</span>' : ''}
+                ${this.renderCallListButton(contact)}
+              </div>
             </div>
           </div>
         `).join('')}
@@ -672,6 +696,148 @@ class CustomerOverviewModal {
     }
 
     return formatted;
+  }
+
+  getSalespersonId() {
+    if (window.salespersonManager && typeof window.salespersonManager.getCurrentSalesperson === 'function') {
+      const managerId = window.salespersonManager.getCurrentSalesperson();
+      if (managerId) {
+        return managerId;
+      }
+    }
+    const storedId = localStorage.getItem('salesperson_id');
+    if (storedId) {
+      return storedId;
+    }
+    if (overviewDefaultSalespersonId) {
+      const fallbackId = String(overviewDefaultSalespersonId);
+      localStorage.setItem('salesperson_id', fallbackId);
+      if (window.salespersonManager && typeof window.salespersonManager.setCurrentSalesperson === 'function') {
+        window.salespersonManager.setCurrentSalesperson(fallbackId);
+      }
+      return fallbackId;
+    }
+    return null;
+  }
+
+  renderCallListButton(contact) {
+    const salespersonId = this.getSalespersonId();
+    const hasSalesperson = Boolean(salespersonId);
+    const isOnCallList = Boolean(contact.is_on_call_list);
+    const isSnoozed = Boolean(contact.is_snoozed);
+    const buttonClass = isOnCallList ? 'btn-success remove-from-call-list-btn' : 'btn-warning add-to-call-list-btn';
+    const iconClass = isOnCallList ? (isSnoozed ? 'bi bi-alarm' : 'bi bi-check-circle-fill') : 'bi bi-list-check';
+    const title = hasSalesperson
+      ? (isOnCallList ? (isSnoozed ? 'Snoozed on call list' : 'Click to remove from call list') : 'Add to Call List')
+      : 'Select salesperson to use call list';
+    const disabledAttr = hasSalesperson ? '' : 'disabled';
+
+    return `
+      <button class="btn btn-sm ${buttonClass}"
+              data-contact-id="${contact.id}"
+              data-contact-name="${contact.name}"
+              title="${title}"
+              ${disabledAttr}>
+        <i class="${iconClass}"></i>
+      </button>
+    `;
+  }
+
+  async addContactToCallList(button) {
+    const salespersonId = this.getSalespersonId();
+    if (!salespersonId) {
+      this.showToast('Select a salesperson before adding to the call list', 'warning');
+      return;
+    }
+
+    const contactId = button.getAttribute('data-contact-id');
+    const contactName = button.getAttribute('data-contact-name');
+
+    const icon = button.querySelector('i');
+    const originalIcon = icon.className;
+    icon.className = 'bi bi-hourglass-split';
+    button.disabled = true;
+
+    try {
+      const response = await fetch(`/salespeople/${salespersonId}/add-to-call-list`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          contact_id: contactId,
+          notes: '',
+          priority: 0
+        })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        icon.className = 'bi bi-check-circle-fill';
+        button.classList.remove('btn-warning', 'add-to-call-list-btn');
+        button.classList.add('btn-success', 'remove-from-call-list-btn');
+        button.disabled = false;
+        button.title = 'Click to remove from call list';
+        this.showToast(`${contactName} added to call list`, 'success');
+      } else {
+        icon.className = originalIcon;
+        button.disabled = false;
+        this.showToast(data.error || 'Failed to add to call list', 'danger');
+      }
+    } catch (error) {
+      console.error('Error adding to call list:', error);
+      icon.className = originalIcon;
+      button.disabled = false;
+      this.showToast('An error occurred while adding to call list', 'danger');
+    }
+  }
+
+  async removeContactFromCallList(button) {
+    const salespersonId = this.getSalespersonId();
+    if (!salespersonId) {
+      this.showToast('Select a salesperson before removing from the call list', 'warning');
+      return;
+    }
+
+    const contactId = button.getAttribute('data-contact-id');
+    const contactName = button.getAttribute('data-contact-name');
+
+    const icon = button.querySelector('i');
+    icon.className = 'bi bi-hourglass-split';
+    button.disabled = true;
+
+    try {
+      const response = await fetch(`/salespeople/${salespersonId}/remove-from-call-list`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          contact_id: contactId
+        })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        icon.className = 'bi bi-list-check';
+        button.classList.remove('btn-success', 'remove-from-call-list-btn');
+        button.classList.add('btn-warning', 'add-to-call-list-btn');
+        button.disabled = false;
+        button.title = 'Add to Call List';
+        this.showToast(`${contactName} removed from call list`, 'success');
+      } else {
+        icon.className = 'bi bi-check-circle-fill';
+        button.disabled = false;
+        this.showToast(data.error || 'Failed to remove from call list', 'danger');
+      }
+    } catch (error) {
+      console.error('Error removing from call list:', error);
+      icon.className = 'bi bi-check-circle-fill';
+      button.disabled = false;
+      this.showToast('An error occurred while removing from call list', 'danger');
+    }
   }
 
   showError() {

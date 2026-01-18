@@ -75,6 +75,30 @@ def _strip_html(value: str) -> str:
     return re.sub(r'<[^>]+>', '', value)
 
 
+def _call_list_has_snoozed_until():
+    try:
+        with db_cursor() as cur:
+            if _using_postgres():
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'call_list'
+                      AND column_name = 'snoozed_until'
+                    """
+                )
+                return cur.fetchone() is not None
+            cur.execute("PRAGMA table_info(call_list)")
+            for row in cur.fetchall() or []:
+                if isinstance(row, dict) and row.get('name') == 'snoozed_until':
+                    return True
+                if not isinstance(row, dict) and len(row) > 1 and row[1] == 'snoozed_until':
+                    return True
+    except Exception:
+        return False
+    return False
+
+
 def _get_customer_communication_snapshots(customer_groups, salesperson_id):
     """Fetch latest communications (any + email) for consolidated customer groups."""
     if not customer_groups:
@@ -1410,6 +1434,87 @@ def activity(salesperson_id):
             print(f"DEBUG: Error loading top quoted lists: {e}")
             top_quoted_lists = []
 
+        weekly_sort = request.args.get('week_sort', default='value', type=str)
+        if weekly_sort not in ('value', 'oldest'):
+            weekly_sort = 'value'
+
+        weekly_top_lists = []
+        try:
+            status_clause = ""
+            params = [salesperson_id]
+            if quoted_status_id:
+                status_clause = "AND pl.status_id = ?"
+                params.append(quoted_status_id)
+
+            if weekly_sort == 'oldest':
+                weekly_order_clause = "ORDER BY pl.date_modified ASC NULLS LAST, quoted_value_gbp DESC"
+            else:
+                weekly_order_clause = "ORDER BY quoted_value_gbp DESC, pl.date_modified DESC"
+
+            weekly_rows = db_execute(
+                f"""
+                SELECT
+                    pl.id,
+                    pl.name,
+                    pl.notes,
+                    c.name AS customer_name,
+                    pl.status_id,
+                    pls.name AS status_name,
+                    pl.date_modified,
+                    COALESCE(SUM(
+                        cql.quote_price_gbp *
+                        COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                    ), 0) AS quoted_value_gbp
+                FROM parts_lists pl
+                LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
+                LEFT JOIN customers c ON c.id = pl.customer_id
+                LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+                LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                WHERE pl.salesperson_id = ?
+                  {status_clause}
+                  AND cql.quoted_status = 'quoted'
+                  AND COALESCE(cql.is_no_bid, 0) = 0
+                  AND cql.quote_price_gbp > 0
+                  AND cql.quoted_on >= date_trunc('week', CURRENT_DATE)
+                  AND cql.quoted_on < date_trunc('week', CURRENT_DATE) + interval '7 days'
+                GROUP BY pl.id, pl.name, pl.notes, c.name, pl.status_id, pl.date_modified, pls.name
+                HAVING COALESCE(SUM(
+                    cql.quote_price_gbp *
+                    COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                ), 0) > 0
+                {weekly_order_clause}
+                LIMIT 10
+                """,
+                params,
+                fetch='all'
+            ) or []
+
+            def _format_week_list_date(value):
+                if isinstance(value, datetime):
+                    return value.strftime('%Y-%m-%d')
+                if isinstance(value, date):
+                    return value.strftime('%Y-%m-%d')
+                if value is None:
+                    return ''
+                return str(value)
+
+            weekly_top_lists = [
+                {
+                    'id': row.get('id'),
+                    'name': row.get('name') or '',
+                    'notes': row.get('notes') or '',
+                    'customer_name': row.get('customer_name') or '',
+                    'status_id': row.get('status_id'),
+                    'status_name': row.get('status_name') or '',
+                    'date_modified': _format_week_list_date(row.get('date_modified')),
+                    'quoted_value_gbp': float(row.get('quoted_value_gbp') or 0),
+                }
+                for row in [dict(r) for r in weekly_rows]
+            ]
+        except Exception as e:
+            print(f"DEBUG: Error loading weekly top lists: {e}")
+            weekly_top_lists = []
+
         next_action_customers = []
         next_action_month = datetime.now().strftime('%Y-%m')
         next_action_month_label = datetime.now().strftime('%B %Y')
@@ -1442,8 +1547,10 @@ def activity(salesperson_id):
             call_list_prefill=call_list_prefill,
             quotes_by_day=quotes_by_day,
             top_quoted_lists=top_quoted_lists,
+            weekly_top_lists=weekly_top_lists,
             parts_list_statuses=parts_list_statuses,
             quoted_status_id=quoted_status_id,
+            week_sort=weekly_sort,
             next_action_customers=next_action_customers,
             next_action_month_label=next_action_month_label
         )
@@ -2904,6 +3011,82 @@ def contact_details(contact_id):
         return jsonify({'success': False, 'error': str(e)})
 
 
+@salespeople_bp.route('/contact/<int:contact_id>')
+@login_required
+def contact_detail_page(contact_id):
+    """Full page view for a specific contact"""
+    try:
+        salesperson_id = request.args.get('salesperson_id', type=int)
+
+        with db_cursor() as db:
+            # Get contact with all related info
+            contact = _execute_with_cursor(db, '''
+                SELECT c.*,
+                       cu.name as customer_name,
+                       cu.website as customer_website,
+                       cu.country as customer_country,
+                       cs.name as status_name,
+                       cs.color as status_color,
+                       sp.name as salesperson_name
+                FROM contacts c
+                LEFT JOIN customers cu ON c.customer_id = cu.id
+                LEFT JOIN contact_statuses cs ON c.status_id = cs.id
+                LEFT JOIN salespeople sp ON cu.salesperson_id = sp.id
+                WHERE c.id = ?
+            ''', (contact_id,)).fetchone()
+
+            if not contact:
+                flash('Contact not found', 'error')
+                return redirect(url_for('salespeople.index'))
+
+            contact = dict(contact)
+
+            # Get communications for this contact
+            communications = get_contact_communications(contact_id, salesperson_id)
+
+            # Get communication stats
+            comm_stats = _execute_with_cursor(db, '''
+                SELECT
+                    COUNT(*) as total_communications,
+                    MAX(date) as last_communication_date,
+                    COUNT(CASE WHEN communication_type = 'Email' THEN 1 END) as email_count,
+                    COUNT(CASE WHEN communication_type = 'Phone' THEN 1 END) as phone_count,
+                    COUNT(CASE WHEN communication_type = 'Meeting' THEN 1 END) as meeting_count
+                FROM contact_communications
+                WHERE contact_id = ?
+            ''', (contact_id,)).fetchone()
+
+            comm_stats = dict(comm_stats) if comm_stats else {
+                'total_communications': 0,
+                'last_communication_date': None,
+                'email_count': 0,
+                'phone_count': 0,
+                'meeting_count': 0
+            }
+
+            # Get all contact statuses for edit form
+            contact_statuses = get_all_contact_statuses()
+
+            return render_template(
+                'salespeople/contact_detail_page.html',
+                contact=contact,
+                communications=communications,
+                comm_stats=comm_stats,
+                contact_statuses=contact_statuses,
+                salesperson_id=salesperson_id,
+                communication_types=["Email", "Phone", "Meeting", "Video Call", "Other"]
+            )
+
+    except Exception as e:
+        print(f"Error loading contact detail page: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        flash('Error loading contact details', 'error')
+        if salesperson_id:
+            return redirect(url_for('salespeople.contacts', salesperson_id=salesperson_id))
+        return redirect(url_for('salespeople.dashboard'))
+
+
 @salespeople_bp.route('/contact_details/<int:contact_id>/news')
 @login_required
 def contact_details_news(contact_id):
@@ -3231,10 +3414,37 @@ def contacts(salesperson_id):
 
         # Get call list contact IDs for this salesperson
         call_list_contact_ids = get_call_list_contact_ids(salesperson_id)
+        call_list_snoozed_contact_ids = set()
+        if contacts and call_list_contact_ids and _call_list_has_snoozed_until():
+            contact_ids = [contact['id'] for contact in contacts]
+            if contact_ids:
+                placeholders = ','.join('?' for _ in contact_ids)
+                call_list_rows = db_execute(
+                    f"""
+                    SELECT contact_id,
+                           CASE
+                               WHEN snoozed_until IS NOT NULL
+                                    AND snoozed_until > CURRENT_TIMESTAMP
+                               THEN TRUE
+                               ELSE FALSE
+                           END AS is_snoozed
+                    FROM call_list
+                    WHERE salesperson_id = ?
+                      AND is_active = TRUE
+                      AND contact_id IN ({placeholders})
+                    """,
+                    [salesperson_id] + contact_ids,
+                    fetch='all'
+                ) or []
+
+                for row in call_list_rows:
+                    if row.get('is_snoozed'):
+                        call_list_snoozed_contact_ids.add(row['contact_id'])
 
         # Mark which contacts are on the call list
         for contact in contacts:
             contact['is_on_call_list'] = contact['id'] in call_list_contact_ids
+            contact['is_snoozed'] = contact['id'] in call_list_snoozed_contact_ids
 
         return render_template(
             'salespeople/contacts.html',

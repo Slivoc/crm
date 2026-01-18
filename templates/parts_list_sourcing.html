@@ -309,6 +309,11 @@
     </button>
     <input type="file" id="ils-file-input-compact" accept=".csv" style="display: none;">
 
+    <!-- Scrape Monroe Button -->
+    <button type="button" class="btn btn-sm btn-warning" id="scrape-monroe-btn">
+        <i class="bi bi-cloud-download me-1"></i>Scrape Monroe
+    </button>
+
     <button class="btn btn-sm btn-outline-danger" id="quick-no-bid-btn">
         <i class="bi bi-slash-circle me-1"></i> Quick No Bid
     </button>
@@ -1052,6 +1057,44 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             onError: function(error) {
                 showToast('Error uploading ILS file', 'error');
+            }
+        });
+    }
+
+    // Scrape Monroe button handler
+    const scrapeMonroeBtn = document.getElementById('scrape-monroe-btn');
+    if (scrapeMonroeBtn) {
+        scrapeMonroeBtn.addEventListener('click', async function() {
+            const btn = this;
+            const originalHtml = btn.innerHTML;
+
+            if (!confirm('Start Monroe scrape for this parts list? This will run in the background.')) {
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Starting...';
+
+            try {
+                const resp = await fetch('/supplier-portal/api/scrape-by-id/monroe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ parts_list_id: window.PARTS_LIST_ID })
+                });
+
+                const data = await resp.json();
+
+                if (data.success) {
+                    showToast('Monroe scrape started for ' + data.line_count + ' lines. Check Supplier Portal for progress.', 'success');
+                } else {
+                    showToast(data.message || 'Failed to start Monroe scrape', 'error');
+                }
+            } catch (error) {
+                console.error('Error triggering Monroe scrape:', error);
+                showToast('Error starting Monroe scrape', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
             }
         });
     }

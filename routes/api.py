@@ -7,7 +7,7 @@ import requests
 import extract_msg
 from datetime import datetime
 from db import db_cursor, execute as db_execute
-from models import delete_customer_tag, get_contacts_by_customer, insert_customer_tag, filter_tags_by_search, get_all_tags, update_customer_apollo_id, get_tags_by_customer_id, get_email_logs, get_customer_tags, get_customer_apollo_id, get_excess_stock_list_by_id, get_supplier_by_email, save_email_log, get_email_signature_by_id, get_template_by_id, get_contact_by_id, get_customer_by_id
+from models import delete_customer_tag, get_contacts_by_customer, insert_customer_tag, filter_tags_by_search, get_all_tags, update_customer_apollo_id, get_tags_by_customer_id, get_email_logs, get_customer_tags, get_customer_apollo_id, get_excess_stock_list_by_id, get_supplier_by_email, save_email_log, get_email_signature_by_id, get_template_by_id, get_contact_by_id, get_customer_by_id, get_call_list_contact_ids
 from routes.emails import (
     allowed_file,
     build_email_from_template,
@@ -645,10 +645,14 @@ def get_customer_contacts(customer_id: int):
     """Get paginated customer contacts"""
     try:
         page = request.args.get('page', 1, type=int)
+        salesperson_id = request.args.get('salesperson_id', type=int)
         per_page = 10
         offset = (page - 1) * per_page
 
         contacts = get_contacts_by_customer(customer_id, limit=per_page, offset=offset)
+        call_list_contact_ids = set()
+        if salesperson_id:
+            call_list_contact_ids = get_call_list_contact_ids(salesperson_id)
 
         return jsonify({
             'success': True,
@@ -657,7 +661,8 @@ def get_customer_contacts(customer_id: int):
                     'id': contact['id'],
                     'name': contact['name'],
                     'email': contact['email'],
-                    'job_title': contact['job_title']
+                    'job_title': contact['job_title'],
+                    'is_on_call_list': contact['id'] in call_list_contact_ids
                 } for contact in contacts],
                 'page': page,
                 'per_page': per_page
@@ -774,6 +779,7 @@ def get_customer_preview(customer_id: int):
     print(f"Loading preview for customer {customer_id}")
 
     try:
+        salesperson_id = request.args.get('salesperson_id', type=int)
         customer = get_customer_by_id(customer_id)
         print(f"Customer data: {customer}")
 
@@ -792,6 +798,11 @@ def get_customer_preview(customer_id: int):
         per_page = 10
         offset = (page - 1) * per_page
         contacts = get_contacts_by_customer(customer_id, limit=per_page, offset=offset) or []
+        call_list_contact_ids = set()
+        if salesperson_id:
+            call_list_contact_ids = get_call_list_contact_ids(salesperson_id)
+            for contact in contacts:
+                contact['is_on_call_list'] = contact.get('id') in call_list_contact_ids
         print("Contacts:", contacts)
 
         # Fetch tags using the new function

@@ -689,8 +689,8 @@
           data-contact-id="{{ contact.id }}"
           data-contact-name="{{ contact.name }}"
           data-call-list-id="{{ contact.call_list_id }}"
-          title="Click to remove from call list">
-    <i class="bi bi-check-circle-fill"></i>
+          title="{{ 'Snoozed on call list' if contact.is_snoozed else 'Click to remove from call list' }}">
+    <i class="bi {{ 'bi-alarm' if contact.is_snoozed else 'bi-check-circle-fill' }}"></i>
   </button>
 {% else %}
   <button type="button" class="btn btn-warning add-to-call-list-btn"

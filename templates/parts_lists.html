@@ -6,24 +6,37 @@
 <style>
     .date-indicator {
         display: inline-flex;
-        align-items: center;
-        gap: 6px;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
     }
 
-    .date-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        display: inline-block;
-        background-color: #dc3545;
+    .date-indicator .date-relative {
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
     }
 
-    .date-dot.recent-week {
-        background-color: #198754;
+    .date-indicator .date-absolute {
+        font-size: 0.75rem;
+        color: #6c757d;
     }
 
-    .date-dot.recent-month {
-        background-color: #ffc107;
+    .date-indicator.age-recent .date-relative {
+        color: #198754;
+    }
+
+    .date-indicator.age-moderate .date-relative {
+        color: #0d6efd;
+    }
+
+    .date-indicator.age-old .date-relative {
+        color: #fd7e14;
+    }
+
+    .date-indicator.age-stale .date-relative {
+        color: #dc3545;
     }
 
     .icon-box {
@@ -41,6 +54,10 @@
 
     .card.shadow-sm:hover {
         box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.1) !important;
+    }
+
+    .card .card-body.table-container {
+        padding: 0 !important;
     }
 </style>
 <div class="container-fluid mt-4">
@@ -121,13 +138,13 @@
                     <label for="partSearchInput" class="form-label fw-bold">
                         Search by Part Number
                     </label>
-                    <div class="d-flex align-items-center gap-2">
+                    <div class="d-flex align-items-center gap-2 flex-nowrap">
                          <input type="text"
                                 id="partSearchInput"
                                 class="form-control"
                                 placeholder="Type full or partial part number (customer or base)..."
                                 value="{{ initial_part_search or '' }}">
-                        <button class="btn btn-outline-secondary" type="button" onclick="searchPartsListsByPart()">
+                        <button class="btn btn-outline-secondary text-nowrap" type="button" onclick="searchPartsListsByPart()">
                             <i class="bi bi-search"></i> Search
                         </button>
                     </div>
@@ -167,13 +184,13 @@
                 <!-- Customer Filter -->
                 <div class="col-md-6">
                     <label for="customerSearchInput" class="form-label">Customer</label>
-                    <div class="d-flex align-items-center gap-2">
+                    <div class="d-flex align-items-center gap-2 flex-nowrap">
                         <input type="text"
                                id="customerSearchInput"
                                class="form-control"
                                placeholder="Type to filter by customer name..."
                                autocomplete="off">
-                        <button class="btn btn-outline-secondary" type="button" onclick="clearCustomerSearch()">
+                        <button class="btn btn-outline-secondary text-nowrap" type="button" onclick="clearCustomerSearch()">
                             <i class="bi bi-x-circle"></i> Clear
                         </button>
                     </div>
@@ -234,7 +251,7 @@
                 <span class="badge bg-secondary bg-opacity-10 text-secondary">{{ lists|length }} lists</span>
             </div>
         </div>
-        <div class="card-body p-0">
+        <div class="card-body table-container">
             <div class="table-responsive">
                 <table class="table table-hover align-middle mb-0" id="partsListsTable">
                     <thead>
@@ -245,7 +262,6 @@
         <th>Status</th>
         <th class="text-center" style="width: 18%;">Lines / Costed / Quoted</th>
         <th class="text-end">Quoted Value</th>
-        <th class="text-center">QPL</th>
         <th style="width: 25%;">Preview</th>
         <th>Created</th>
         <th>Modified</th>
@@ -262,14 +278,17 @@
     </td>
     <td>{{ list.customer_name or '-' }}</td>
     <td>{{ list.contact_name or '-' }}</td>
-    <td>
-        <span class="badge bg-secondary"
-              style="cursor: pointer;"
-              onclick="event.stopPropagation(); cycleStatus({{ list.id }}, this)"
-              title="Click to change status"
-              data-status-id="{{ list.status_id }}">
-            {{ list.status_name or 'Draft' }}
-        </span>
+    <td onclick="event.stopPropagation();">
+        <select class="form-select form-select-sm"
+                style="min-width: 120px;"
+                onchange="updateStatus({{ list.id }}, this.value, this)"
+                data-original-status="{{ list.status_id }}">
+            {% for status in statuses %}
+                <option value="{{ status.id }}" {% if status.id == list.status_id %}selected{% endif %}>
+                    {{ status.name }}
+                </option>
+            {% endfor %}
+        </select>
     </td>
                             <td class="text-center">
                                 {% set line_count = list.line_count %}
@@ -306,10 +325,6 @@
                             <td class="text-end text-nowrap">
                                 {{ format_currency(list.quoted_value_gbp or 0, '£') }}
                             </td>
-                            <td class="text-center">
-                                <span class="fw-semibold">{{ list.qpl_line_count or 0 }}</span>
-                                <small class="text-muted">/ {{ line_count }}</small>
-                            </td>
                             <td>
                                 <small class="text-muted font-monospace" style="line-height: 1.4;">
                                     {% if list.preview_parts %}
@@ -320,34 +335,24 @@
                                 </small>
                             </td>
                             <td>
-                                <small class="text-muted">
-                                    {% if list.date_created %}
-                                        <span class="date-indicator" data-date="{{ list.date_created.strftime('%Y-%m-%d') }}">
-                                            {{ list.date_created.strftime('%Y-%m-%d') }}
-                                        </span>
-                                    {% else %}
-                                        -
-                                    {% endif %}
-                                </small>
+                                {% if list.date_created %}
+                                    <span class="date-indicator" data-date="{{ list.date_created.strftime('%Y-%m-%d') }}"></span>
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
                             </td>
                             <td>
-                                <small class="text-muted">
-                                    {% if list.date_modified %}
-                                        <span class="date-indicator" data-date="{{ list.date_modified.strftime('%Y-%m-%d') }}">
-                                            {{ list.date_modified.strftime('%Y-%m-%d') }}
-                                        </span>
-                                    {% else %}
-                                        -
-                                    {% endif %}
-                                </small>
+                                {% if list.date_modified %}
+                                    <span class="date-indicator" data-date="{{ list.date_modified.strftime('%Y-%m-%d') }}"></span>
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
                             </td>
                             <td class="text-end">
-                                <button type="button"
-                                        class="btn btn-outline-danger btn-sm"
-                                        onclick="event.stopPropagation(); deleteList({{ list.id }}, '{{ list.name|replace("'", "\\'") }}')"
-                                        title="Delete">
-                                    <i class="bi bi-trash"></i>
-                                </button>
+                                <i class="bi bi-x-lg text-danger"
+                                   style="cursor: pointer;"
+                                   onclick="event.stopPropagation(); deleteList({{ list.id }}, '{{ list.name|replace("'", "\\'") }}')"
+                                   title="Delete"></i>
                             </td>
                         </tr>
                         {% endfor %}
@@ -441,23 +446,48 @@ function filterByCustomer(customerId) {
 
 let partsListDataTable = null;
 
-function getRecencyClass(dateStr) {
+function getDateAge(dateStr) {
     const parsed = new Date(dateStr);
     if (Number.isNaN(parsed.getTime())) {
-        return null;
+        return { class: '', relative: '' };
     }
 
     const now = new Date();
     const diffMs = now - parsed;
-    const diffDays = diffMs / (1000 * 60 * 60 * 24);
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
+    if (diffDays === 0) {
+        return { class: 'age-recent', relative: 'Today' };
+    }
+    if (diffDays === 1) {
+        return { class: 'age-recent', relative: 'Yesterday' };
+    }
     if (diffDays <= 7) {
-        return 'recent-week';
+        return { class: 'age-recent', relative: `${diffDays} days ago` };
+    }
+    if (diffDays <= 14) {
+        return { class: 'age-moderate', relative: '1 week ago' };
     }
     if (diffDays <= 30) {
-        return 'recent-month';
+        const weeks = Math.floor(diffDays / 7);
+        return { class: 'age-moderate', relative: `${weeks} weeks ago` };
     }
-    return null;
+    if (diffDays <= 60) {
+        return { class: 'age-old', relative: '1 month ago' };
+    }
+    if (diffDays <= 90) {
+        return { class: 'age-old', relative: '2 months ago' };
+    }
+    if (diffDays <= 180) {
+        const months = Math.floor(diffDays / 30);
+        return { class: 'age-stale', relative: `${months} months ago` };
+    }
+    if (diffDays <= 365) {
+        const months = Math.floor(diffDays / 30);
+        return { class: 'age-stale', relative: `${months} months ago` };
+    }
+    const years = Math.floor(diffDays / 365);
+    return { class: 'age-stale', relative: years === 1 ? '1 year ago' : `${years} years ago` };
 }
 
 function applyDateIndicators(container = document) {
@@ -469,31 +499,32 @@ function applyDateIndicators(container = document) {
             return;
         }
 
-        if (!target.classList.contains('date-indicator')) {
-            target.classList.add('date-indicator');
-        }
-
-        if (target.querySelector('.date-dot')) {
+        // Skip if already processed
+        if (target.querySelector('.date-relative')) {
             return;
         }
 
-        const dot = document.createElement('span');
-        dot.classList.add('date-dot');
-        const recencyClass = getRecencyClass(dateStr);
-        if (recencyClass) {
-            dot.classList.add(recencyClass);
+        const age = getDateAge(dateStr);
+        target.classList.add('date-indicator');
+        if (age.class) {
+            target.classList.add(age.class);
         }
 
-        target.prepend(dot);
+        // Clear existing content and rebuild
+        const absoluteDate = dateStr.substring(0, 10);
+        target.innerHTML = `
+            <span class="date-relative">${age.relative || absoluteDate}</span>
+            <span class="date-absolute">${absoluteDate}</span>
+        `;
     });
 }
 
 function formatDateCell(dateStr) {
-    const display = dateStr ? dateStr.substring(0, 10) : '-';
     const dataDate = dateStr ? dateStr.substring(0, 10) : '';
-    const dataAttr = dataDate ? ` data-date="${dataDate}"` : '';
-
-    return `<small class="text-muted date-indicator"${dataAttr}>${display}</small>`;
+    if (!dataDate) {
+        return '<span class="text-muted">-</span>';
+    }
+    return `<span class="date-indicator" data-date="${dataDate}"></span>`;
 }
 
 function applyCustomerTextFilter(term) {
@@ -524,36 +555,36 @@ function clearCustomerSearch() {
     }
 }
 
-// Cycle status function
-function cycleStatus(listId, badgeElement) {
-    const originalText = badgeElement.textContent;
-    badgeElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+// Update status function
+function updateStatus(listId, newStatusId, selectElement) {
+    const originalValue = selectElement.dataset.originalStatus;
+    selectElement.disabled = true;
 
     fetch("{{ url_for('parts_list.update_parts_list_status', list_id=0) }}".replace(/0$/, listId), {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'}
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ status_id: newStatusId })
     })
     .then(response => response.json())
     .then(data => {
+        selectElement.disabled = false;
         if (data.success) {
-            badgeElement.textContent = data.new_status_name;
-            badgeElement.setAttribute('data-status-id', data.new_status_id);
-
-            // Add a brief highlight effect
-            badgeElement.classList.add('bg-success');
+            selectElement.dataset.originalStatus = newStatusId;
+            // Brief highlight effect
+            selectElement.classList.add('border-success');
             setTimeout(() => {
-                badgeElement.classList.remove('bg-success');
-                badgeElement.classList.add('bg-secondary');
+                selectElement.classList.remove('border-success');
             }, 500);
         } else {
             alert('Error: ' + (data.message || 'Unknown error'));
-            badgeElement.textContent = originalText;
+            selectElement.value = originalValue;
         }
     })
     .catch(error => {
         console.error('Error:', error);
         alert('Error updating status');
-        badgeElement.textContent = originalText;
+        selectElement.disabled = false;
+        selectElement.value = originalValue;
     });
 }
 

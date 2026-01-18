@@ -574,7 +574,12 @@ refreshContactData: async function() {
             $('#contact-job-title-container').hide();
         }
 
-        $('#view-full-contact-btn').attr('href', `/contacts/${contact.id}`);
+        // Build URL for full contact page with optional salesperson_id
+        let contactUrl = `/salespeople/contact/${contact.id}`;
+        if (this.currentOptions.salesperson_id) {
+            contactUrl += `?salesperson_id=${this.currentOptions.salesperson_id}`;
+        }
+        $('#view-full-contact-btn').attr('href', contactUrl);
     },
 
     /**

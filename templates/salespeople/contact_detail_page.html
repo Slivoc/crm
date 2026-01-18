@@ -1,0 +1,593 @@
+{% extends "base.html" %}
+
+{% block title %}{{ contact.name }} {{ contact.second_name or '' }} - Contact Details{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Breadcrumb Navigation -->
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('salespeople.dashboard') }}">Sales</a></li>
+            {% if salesperson_id %}
+            <li class="breadcrumb-item"><a href="{{ url_for('salespeople.contacts', salesperson_id=salesperson_id) }}">Contacts</a></li>
+            {% endif %}
+            <li class="breadcrumb-item active" aria-current="page">{{ contact.name }} {{ contact.second_name or '' }}</li>
+        </ol>
+    </nav>
+
+    <!-- Header Section -->
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+            <h2 class="mb-1">
+                {{ contact.name }} {{ contact.second_name or '' }}
+                {% if contact.status_name %}
+                <span class="badge ms-2" style="background-color: {{ contact.status_color or '#6c757d' }}; font-size: 0.6em; vertical-align: middle;">
+                    {{ contact.status_name }}
+                </span>
+                {% endif %}
+            </h2>
+            <p class="text-muted mb-0">
+                {% if contact.job_title %}{{ contact.job_title }} at {% endif %}
+                <strong>{{ contact.customer_name or 'No Company' }}</strong>
+                {% if contact.customer_country %}
+                <span class="ms-2 fi fi-{{ contact.customer_country|lower }}" title="{{ contact.customer_country }}"></span>
+                {% endif %}
+            </p>
+        </div>
+        <div class="d-flex gap-2">
+            {% if salesperson_id %}
+            <a href="{{ url_for('salespeople.contacts', salesperson_id=salesperson_id) }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i> Back to Contacts
+            </a>
+            {% endif %}
+            <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editContactModal">
+                <i class="bi bi-pencil me-1"></i> Edit Contact
+            </button>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Left Column - Main Info -->
+        <div class="col-lg-8">
+            <!-- Contact Information Card -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="card-title mb-0"><i class="bi bi-person-vcard me-2"></i>Contact Information</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row g-4">
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center mb-3">
+                                <div class="bg-primary bg-opacity-10 rounded-circle p-2 me-3">
+                                    <i class="bi bi-envelope text-primary"></i>
+                                </div>
+                                <div>
+                                    <small class="text-muted d-block">Email</small>
+                                    {% if contact.email %}
+                                    <a href="mailto:{{ contact.email }}" class="text-decoration-none">{{ contact.email }}</a>
+                                    {% else %}
+                                    <span class="text-muted">Not provided</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center mb-3">
+                                <div class="bg-success bg-opacity-10 rounded-circle p-2 me-3">
+                                    <i class="bi bi-telephone text-success"></i>
+                                </div>
+                                <div>
+                                    <small class="text-muted d-block">Phone</small>
+                                    {% if contact.phone %}
+                                    <a href="tel:{{ contact.phone }}" class="text-decoration-none">{{ contact.phone }}</a>
+                                    {% else %}
+                                    <span class="text-muted">Not provided</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center mb-3">
+                                <div class="bg-info bg-opacity-10 rounded-circle p-2 me-3">
+                                    <i class="bi bi-building text-info"></i>
+                                </div>
+                                <div>
+                                    <small class="text-muted d-block">Company</small>
+                                    {% if contact.customer_id %}
+                                    <a href="{{ url_for('customers.get_customer_details', customer_id=contact.customer_id) }}" class="text-decoration-none">
+                                        {{ contact.customer_name }}
+                                    </a>
+                                    {% if contact.customer_website %}
+                                    <a href="{{ contact.customer_website if contact.customer_website.startswith('http') else 'https://' + contact.customer_website }}" target="_blank" class="ms-2 text-muted" title="Visit website">
+                                        <i class="bi bi-box-arrow-up-right"></i>
+                                    </a>
+                                    {% endif %}
+                                    {% else %}
+                                    <span class="text-muted">Not assigned</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center mb-3">
+                                <div class="bg-warning bg-opacity-10 rounded-circle p-2 me-3">
+                                    <i class="bi bi-briefcase text-warning"></i>
+                                </div>
+                                <div>
+                                    <small class="text-muted d-block">Job Title</small>
+                                    <span>{{ contact.job_title or 'Not specified' }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% if contact.timezone %}
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center mb-3">
+                                <div class="bg-secondary bg-opacity-10 rounded-circle p-2 me-3">
+                                    <i class="bi bi-clock text-secondary"></i>
+                                </div>
+                                <div>
+                                    <small class="text-muted d-block">Timezone</small>
+                                    <span class="timezone-display" data-timezone="{{ contact.timezone }}">{{ contact.timezone }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% if contact.salesperson_name %}
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center mb-3">
+                                <div class="bg-purple bg-opacity-10 rounded-circle p-2 me-3">
+                                    <i class="bi bi-person-badge text-purple"></i>
+                                </div>
+                                <div>
+                                    <small class="text-muted d-block">Account Manager</small>
+                                    <span>{{ contact.salesperson_name }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Notes Card -->
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0"><i class="bi bi-journal-text me-2"></i>Notes</h5>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="saveNotesBtn">
+                        <i class="bi bi-save me-1"></i> Save Notes
+                    </button>
+                </div>
+                <div class="card-body">
+                    <textarea class="form-control" id="contactNotes" rows="4" placeholder="Add notes about this contact...">{{ contact.notes or '' }}</textarea>
+                </div>
+            </div>
+
+            <!-- Communication History -->
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0"><i class="bi bi-chat-dots me-2"></i>Communication History</h5>
+                    <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#logCommunicationModal">
+                        <i class="bi bi-plus-circle me-1"></i> Log Communication
+                    </button>
+                </div>
+                <div class="card-body">
+                    {% if communications %}
+                    <div class="timeline">
+                        {% for comm in communications %}
+                        <div class="timeline-item mb-3">
+                            <div class="d-flex">
+                                <div class="timeline-marker me-3">
+                                    {% if comm.communication_type|lower == 'email' %}
+                                    <div class="rounded-circle bg-success bg-opacity-10 p-2">
+                                        <i class="bi bi-envelope text-success"></i>
+                                    </div>
+                                    {% elif comm.communication_type|lower == 'phone' %}
+                                    <div class="rounded-circle bg-primary bg-opacity-10 p-2">
+                                        <i class="bi bi-telephone text-primary"></i>
+                                    </div>
+                                    {% elif comm.communication_type|lower == 'meeting' %}
+                                    <div class="rounded-circle bg-warning bg-opacity-10 p-2">
+                                        <i class="bi bi-calendar-event text-warning"></i>
+                                    </div>
+                                    {% elif comm.communication_type|lower == 'video call' %}
+                                    <div class="rounded-circle bg-info bg-opacity-10 p-2">
+                                        <i class="bi bi-camera-video text-info"></i>
+                                    </div>
+                                    {% else %}
+                                    <div class="rounded-circle bg-secondary bg-opacity-10 p-2">
+                                        <i class="bi bi-chat text-secondary"></i>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                <div class="timeline-content flex-grow-1">
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div>
+                                            <span class="badge {{ 'bg-success' if comm.communication_type|lower == 'email' else 'bg-primary' if comm.communication_type|lower == 'phone' else 'bg-warning text-dark' if comm.communication_type|lower == 'meeting' else 'bg-info' if comm.communication_type|lower == 'video call' else 'bg-secondary' }}">
+                                                {{ comm.communication_type }}
+                                            </span>
+                                            <small class="text-muted ms-2">by {{ comm.salesperson_name }}</small>
+                                        </div>
+                                        <small class="text-muted">{{ comm.date_formatted }}</small>
+                                    </div>
+                                    <div class="bg-light rounded p-3">
+                                        {{ comm.notes|nl2br|safe }}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-chat-dots text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-3 mb-0">No communication history yet</p>
+                        <button type="button" class="btn btn-primary mt-3" data-bs-toggle="modal" data-bs-target="#logCommunicationModal">
+                            <i class="bi bi-plus-circle me-1"></i> Log First Communication
+                        </button>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column - Stats & Quick Actions -->
+        <div class="col-lg-4">
+            <!-- Quick Stats Card -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="card-title mb-0"><i class="bi bi-bar-chart me-2"></i>Quick Stats</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <div class="border rounded p-3 text-center">
+                                <div class="h3 mb-0 text-primary">{{ comm_stats.total_communications or 0 }}</div>
+                                <small class="text-muted">Total Communications</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="border rounded p-3 text-center">
+                                <div class="h3 mb-0 text-success">{{ comm_stats.email_count or 0 }}</div>
+                                <small class="text-muted">Emails</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="border rounded p-3 text-center">
+                                <div class="h3 mb-0 text-info">{{ comm_stats.phone_count or 0 }}</div>
+                                <small class="text-muted">Calls</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="border rounded p-3 text-center">
+                                <div class="h3 mb-0 text-warning">{{ comm_stats.meeting_count or 0 }}</div>
+                                <small class="text-muted">Meetings</small>
+                            </div>
+                        </div>
+                    </div>
+                    {% if comm_stats.last_communication_date %}
+                    <div class="mt-3 pt-3 border-top">
+                        <small class="text-muted">Last Contact:</small>
+                        <div class="fw-medium">{{ comm_stats.last_communication_date }}</div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Quick Actions Card -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="card-title mb-0"><i class="bi bi-lightning me-2"></i>Quick Actions</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        {% if contact.email %}
+                        <a href="mailto:{{ contact.email }}" class="btn btn-outline-success">
+                            <i class="bi bi-envelope me-2"></i> Send Email
+                        </a>
+                        {% endif %}
+                        {% if contact.phone %}
+                        <a href="tel:{{ contact.phone }}" class="btn btn-outline-primary">
+                            <i class="bi bi-telephone me-2"></i> Call
+                        </a>
+                        {% endif %}
+                        <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#logCommunicationModal">
+                            <i class="bi bi-plus-circle me-2"></i> Log Communication
+                        </button>
+                        {% if contact.customer_id %}
+                        <a href="{{ url_for('customers.get_customer_details', customer_id=contact.customer_id) }}" class="btn btn-outline-info">
+                            <i class="bi bi-building me-2"></i> View Company
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Contact Metadata Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0"><i class="bi bi-info-circle me-2"></i>Details</h5>
+                </div>
+                <div class="card-body">
+                    <dl class="row mb-0 small">
+                        <dt class="col-5 text-muted">Contact ID</dt>
+                        <dd class="col-7">#{{ contact.id }}</dd>
+
+                        {% if contact.created_at %}
+                        <dt class="col-5 text-muted">Created</dt>
+                        <dd class="col-7">{{ contact.created_at }}</dd>
+                        {% endif %}
+
+                        {% if contact.updated_at %}
+                        <dt class="col-5 text-muted">Last Updated</dt>
+                        <dd class="col-7">{{ contact.updated_at }}</dd>
+                        {% endif %}
+                    </dl>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Log Communication Modal -->
+<div class="modal fade" id="logCommunicationModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Log Communication with {{ contact.name }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="communicationForm" action="{{ url_for('salespeople.add_contact_communication', salesperson_id=salesperson_id or 0) }}" method="post">
+                    <input type="hidden" name="contact_id" value="{{ contact.id }}">
+                    <input type="hidden" name="customer_id" value="{{ contact.customer_id }}">
+
+                    <div class="mb-3">
+                        <label for="communicationType" class="form-label">Communication Type</label>
+                        <select class="form-select" id="communicationType" name="communication_type" required>
+                            <option value="">Select type...</option>
+                            {% for type in communication_types %}
+                            <option value="{{ type }}">{{ type }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="communicationDate" class="form-label">Date</label>
+                        <input type="date" class="form-control" id="communicationDate" name="update_date" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="communicationNotes" class="form-label">Notes</label>
+                        <div class="mb-2">
+                            <small class="text-muted">Quick responses:</small>
+                            <div class="btn-group btn-group-sm mt-1" role="group">
+                                <button type="button" class="btn btn-outline-danger preset-btn" data-text="No answer">
+                                    <i class="bi bi-x-circle"></i> No answer
+                                </button>
+                                <button type="button" class="btn btn-outline-info preset-btn" data-text="RFQ received">
+                                    <i class="bi bi-file-earmark-text"></i> RFQ received
+                                </button>
+                                <button type="button" class="btn btn-outline-success preset-btn" data-text="Order received">
+                                    <i class="bi bi-cart-check"></i> Order received
+                                </button>
+                            </div>
+                        </div>
+                        <textarea class="form-control" id="communicationNotes" name="notes" rows="4" required></textarea>
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle me-1"></i> Save Communication
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Contact Modal -->
+<div class="modal fade" id="editContactModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Edit Contact</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editContactForm">
+                    <input type="hidden" id="editContactId" value="{{ contact.id }}">
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="editFirstName" class="form-label">First Name *</label>
+                            <input type="text" class="form-control" id="editFirstName" value="{{ contact.name }}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="editLastName" class="form-label">Last Name</label>
+                            <input type="text" class="form-control" id="editLastName" value="{{ contact.second_name or '' }}">
+                        </div>
+                        <div class="col-12">
+                            <label for="editEmail" class="form-label">Email *</label>
+                            <input type="email" class="form-control" id="editEmail" value="{{ contact.email or '' }}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="editPhone" class="form-label">Phone</label>
+                            <input type="text" class="form-control" id="editPhone" value="{{ contact.phone or '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="editStatus" class="form-label">Status</label>
+                            <select class="form-select" id="editStatus">
+                                <option value="">No Status</option>
+                                {% for status in contact_statuses %}
+                                <option value="{{ status.id }}" {% if contact.status_id == status.id %}selected{% endif %}>
+                                    {{ status.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label for="editJobTitle" class="form-label">Job Title</label>
+                            <input type="text" class="form-control" id="editJobTitle" value="{{ contact.job_title or '' }}">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveContactBtn">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden inputs for JS -->
+<input type="hidden" id="contactId" value="{{ contact.id }}">
+<input type="hidden" id="customerId" value="{{ contact.customer_id }}">
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.timeline-marker {
+    flex-shrink: 0;
+}
+
+.timeline-content {
+    border-left: 2px solid #e9ecef;
+    padding-left: 1rem;
+    margin-left: 0.75rem;
+}
+
+.timeline-item:last-child .timeline-content {
+    border-left-color: transparent;
+}
+
+.bg-purple {
+    background-color: rgba(156, 39, 176, 0.1) !important;
+}
+
+.text-purple {
+    color: #9c27b0 !important;
+}
+
+.timezone-display {
+    font-family: 'Courier New', monospace;
+    color: #e91e63;
+    font-weight: 600;
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Set default date to today for communication form
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('communicationDate').value = today;
+
+    // Preset button functionality
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.getElementById('communicationNotes').value = this.dataset.text;
+        });
+    });
+
+    // Save notes functionality
+    document.getElementById('saveNotesBtn').addEventListener('click', function() {
+        const contactId = document.getElementById('contactId').value;
+        const notes = document.getElementById('contactNotes').value;
+
+        fetch('/salespeople/save_contact_notes', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+                contact_id: contactId,
+                notes: notes
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Notes saved successfully', 'success');
+            } else {
+                showToast('Error saving notes: ' + data.error, 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('An error occurred while saving notes', 'danger');
+        });
+    });
+
+    // Save contact changes
+    document.getElementById('saveContactBtn').addEventListener('click', function() {
+        const contactId = document.getElementById('editContactId').value;
+
+        fetch(`/customers/contacts/${contactId}/edit`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+                name: document.getElementById('editFirstName').value,
+                second_name: document.getElementById('editLastName').value,
+                email: document.getElementById('editEmail').value,
+                phone: document.getElementById('editPhone').value,
+                job_title: document.getElementById('editJobTitle').value,
+                status_id: document.getElementById('editStatus').value || null
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Contact updated successfully', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast('Error updating contact: ' + data.error, 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('An error occurred while updating contact', 'danger');
+        });
+    });
+
+    // Update timezone display with local time
+    document.querySelectorAll('.timezone-display').forEach(el => {
+        const tz = el.dataset.timezone;
+        if (tz) {
+            try {
+                const time = new Date().toLocaleTimeString('en-US', {
+                    timeZone: tz,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: true
+                });
+                el.textContent = `${time} (${tz})`;
+            } catch (e) {
+                // Keep original timezone text if conversion fails
+            }
+        }
+    });
+
+    function showToast(message, type) {
+        const toast = document.createElement('div');
+        toast.className = `toast show position-fixed bottom-0 end-0 m-3`;
+        toast.setAttribute('role', 'alert');
+        toast.innerHTML = `
+            <div class="toast-header bg-${type} text-white">
+                <strong class="me-auto">${type === 'success' ? 'Success' : 'Error'}</strong>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+            </div>
+            <div class="toast-body">${message}</div>
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+    }
+});
+</script>
+{% endblock %}
