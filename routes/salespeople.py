@@ -1475,8 +1475,8 @@ def activity(salesperson_id):
                   AND cql.quoted_status = 'quoted'
                   AND COALESCE(cql.is_no_bid, 0) = 0
                   AND cql.quote_price_gbp > 0
-                  AND cql.quoted_on >= date_trunc('week', CURRENT_DATE)
-                  AND cql.quoted_on < date_trunc('week', CURRENT_DATE) + interval '7 days'
+                  AND cql.quoted_on >= CURRENT_DATE - interval '14 days'
+                  AND cql.quoted_on <= CURRENT_DATE
                 GROUP BY pl.id, pl.name, pl.notes, c.name, pl.status_id, pl.date_modified, pls.name
                 HAVING COALESCE(SUM(
                     cql.quote_price_gbp *

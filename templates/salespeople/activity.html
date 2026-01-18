@@ -630,40 +630,38 @@
     </div>
   </div>
 
-  <!-- Four Column Data Section: Quotes by Day, Top Quoted Parts, Top Parts Lists This Week, Next Actions -->
+  <!-- Four Column Data Section: Quotes by Day, Top Quoted Parts, Top Parts Lists 14 Days, Next Actions -->
   <div class="row mb-4">
     <!-- Quotes by Day Column -->
     <div class="col-lg-3 mb-4 mb-lg-0">
       <div class="card h-100 shadow-sm border-0">
-        <div class="card-header border-0 bg-white pb-0">
+        <div class="card-header border-0 bg-white py-2">
           <div class="d-flex align-items-center">
-            <div class="icon-box bg-success bg-opacity-10 rounded-3 p-2 me-3">
-              <i class="bi bi-graph-up-arrow text-success fs-5"></i>
-            </div>
-            <h6 class="card-title mb-0 fw-semibold">Quotes by Day</h6>
+            <i class="bi bi-graph-up-arrow text-success me-2"></i>
+            <h6 class="card-title mb-0 fw-semibold small">Quotes by Day</h6>
           </div>
         </div>
-        <div class="card-body pt-3">
+        <div class="card-body p-0">
+          <div class="parts-panel-scroll">
           {% if quotes_by_day and quotes_by_day|length > 0 %}
-            <div class="data-list">
               {% for day in quotes_by_day %}
-                <a class="data-list-item d-flex justify-content-between align-items-center py-2 text-decoration-none {% if not loop.last %}border-bottom{% endif %}"
+                <a class="parts-panel-item d-flex justify-content-between align-items-center text-decoration-none"
                    href="{{ url_for('parts_list.view_parts_lists', salesperson_id=salesperson.id, quoted_date=day.quoted_date) }}"
                    title="View quotes for {{ day.quoted_date }}">
                   <div class="text-body">
-                    <span class="fw-medium">{{ day.quoted_date or '-' }}</span>
-                    <span class="badge bg-secondary bg-opacity-10 text-secondary ms-2">{{ day.quoted_lists }} lists</span>
+                    <span class="small">{{ day.quoted_date or '-' }}</span>
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary ms-1" style="font-size: 0.65rem;">{{ day.quoted_lists }}</span>
                   </div>
-                  <span class="fw-semibold text-success">{{ format_currency(day.quoted_value_gbp, '£') }}</span>
+                  <span class="fw-semibold text-success small">{{ format_currency(day.quoted_value_gbp, '£') }}</span>
                 </a>
               {% endfor %}
-            </div>
           {% else %}
             <div class="text-center text-muted py-4">
-              <i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>
+              <i class="bi bi-inbox d-block mb-2 opacity-50"></i>
               <small>No quotes in the last 10 days</small>
             </div>
           {% endif %}
+          </div>
         </div>
       </div>
     </div>
@@ -671,19 +669,17 @@
     <!-- Top Quoted Parts Lists Column -->
     <div class="col-lg-3 mb-4 mb-lg-0">
       <div class="card h-100 shadow-sm border-0">
-        <div class="card-header border-0 bg-white pb-0">
+        <div class="card-header border-0 bg-white py-2">
           <div class="d-flex align-items-center justify-content-between">
             <div class="d-flex align-items-center">
-              <div class="icon-box bg-warning bg-opacity-10 rounded-3 p-2 me-3">
-                <i class="bi bi-trophy text-warning fs-5"></i>
-              </div>
-              <h6 class="card-title mb-0 fw-semibold">Top Parts Lists</h6>
+              <i class="bi bi-trophy text-warning me-2"></i>
+              <h6 class="card-title mb-0 fw-semibold small">Top Parts Lists</h6>
             </div>
-            <form method="get" class="ms-2">
+            <form method="get">
               {% if week_sort %}
                 <input type="hidden" name="week_sort" value="{{ week_sort }}">
               {% endif %}
-              <select id="quotedStatusFilter" name="quoted_status_id" class="form-select form-select-sm" style="font-size: 0.75rem; padding: 0.2rem 1.5rem 0.2rem 0.5rem;" onchange="this.form.submit()">
+              <select id="quotedStatusFilter" name="quoted_status_id" class="form-select form-select-sm" style="font-size: 0.7rem; padding: 0.15rem 1.2rem 0.15rem 0.4rem;" onchange="this.form.submit()">
                 <option value="">All</option>
                 {% for status in parts_list_statuses %}
                   <option value="{{ status.id }}" {% if quoted_status_id == status.id %}selected{% endif %}>
@@ -694,32 +690,32 @@
             </form>
           </div>
         </div>
-        <div class="card-body pt-3">
+        <div class="card-body p-0">
+          <div class="parts-panel-scroll">
           {% if top_quoted_lists and top_quoted_lists|length > 0 %}
-            <div class="data-list">
               {% for item in top_quoted_lists %}
-                <div class="data-list-item py-2 {% if not loop.last %}border-bottom{% endif %}">
-                  <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
-                    <div class="d-flex align-items-center gap-2">
-                      <span class="fw-medium">{{ item.name or '-' }}</span>
+                <div class="parts-panel-item">
+                  <div class="d-flex justify-content-between align-items-center mb-1">
+                    <div class="d-flex align-items-center gap-1 text-truncate" style="max-width: 65%;">
+                      <span class="small text-truncate" title="{{ item.name or '-' }}">{{ item.name or '-' }}</span>
                       <button type="button"
-                              class="btn btn-link btn-sm p-0 text-decoration-none parts-list-preview-btn"
+                              class="btn btn-link btn-sm p-0 text-decoration-none parts-list-preview-btn flex-shrink-0"
                               data-list-id="{{ item.id }}"
                               data-list-name="{{ item.name or '-' }}"
                               data-customer-name="{{ item.customer_name or '-' }}"
                               data-lines-url="{{ url_for('parts_list.get_parts_list_lines', list_id=item.id) }}"
-                              aria-label="Preview parts list {{ item.name or '-' }}">
-                        <i class="bi bi-file-earmark-text"></i>
+                              aria-label="Preview">
+                        <i class="bi bi-file-earmark-text" style="font-size: 0.75rem;"></i>
                       </button>
                     </div>
-                    <span class="fw-semibold text-warning text-nowrap">{{ format_currency(item.quoted_value_gbp, '£') }}</span>
+                    <span class="fw-semibold text-warning small">{{ format_currency(item.quoted_value_gbp, '£') }}</span>
                   </div>
                   <div class="d-flex justify-content-between align-items-center">
-                    <small class="text-muted">{{ item.customer_name or '-' }}</small>
+                    <small class="text-muted text-truncate" style="font-size: 0.7rem; max-width: 50%;">{{ item.customer_name or '-' }}</small>
                     <select class="form-select form-select-sm parts-list-status-select"
                             data-list-id="{{ item.id }}"
                             data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=item.id) }}"
-                            style="font-size: 0.65rem; max-width: 140px;">
+                            style="font-size: 0.6rem; padding: 0.1rem 1rem 0.1rem 0.3rem; max-width: 100px;">
                       {% for status in parts_list_statuses %}
                         <option value="{{ status.id }}" {% if item.status_id == status.id %}selected{% endif %}>
                           {{ status.name }}
@@ -727,73 +723,65 @@
                       {% endfor %}
                     </select>
                   </div>
-                  <textarea class="form-control form-control-sm mt-2 parts-list-comment-input"
-                            data-list-id="{{ item.id }}"
-                            data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=item.id) }}"
-                            rows="2"
-                            placeholder="Add comment...">{{ item.notes }}</textarea>
-                  <small class="text-muted parts-list-update-status" data-list-id="{{ item.id }}"></small>
                 </div>
               {% endfor %}
-            </div>
           {% else %}
             <div class="text-center text-muted py-4">
-              <i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>
+              <i class="bi bi-inbox d-block mb-2 opacity-50"></i>
               <small>No quoted parts lists found</small>
             </div>
           {% endif %}
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Top Parts Lists This Week Column -->
+    <!-- Top Parts Lists 14 Days Column -->
     <div class="col-lg-3 mb-4 mb-lg-0">
       <div class="card h-100 shadow-sm border-0">
-        <div class="card-header border-0 bg-white pb-0">
+        <div class="card-header border-0 bg-white py-2">
           <div class="d-flex align-items-center justify-content-between">
             <div class="d-flex align-items-center">
-              <div class="icon-box bg-info bg-opacity-10 rounded-3 p-2 me-3">
-                <i class="bi bi-calendar-week text-info fs-5"></i>
-              </div>
-              <h6 class="card-title mb-0 fw-semibold">Top Parts Lists This Week</h6>
+              <i class="bi bi-calendar-week text-info me-2"></i>
+              <h6 class="card-title mb-0 fw-semibold small">Top Parts (14 Days)</h6>
             </div>
-            <form method="get" class="ms-2">
+            <form method="get">
               {% if quoted_status_id %}
                 <input type="hidden" name="quoted_status_id" value="{{ quoted_status_id }}">
               {% endif %}
-              <select id="weeklySortFilter" name="week_sort" class="form-select form-select-sm" style="font-size: 0.75rem; padding: 0.2rem 1.5rem 0.2rem 0.5rem;" onchange="this.form.submit()">
+              <select id="weeklySortFilter" name="week_sort" class="form-select form-select-sm" style="font-size: 0.7rem; padding: 0.15rem 1.2rem 0.15rem 0.4rem;" onchange="this.form.submit()">
                 <option value="value" {% if week_sort == 'value' %}selected{% endif %}>By value</option>
-                <option value="oldest" {% if week_sort == 'oldest' %}selected{% endif %}>Oldest update</option>
+                <option value="oldest" {% if week_sort == 'oldest' %}selected{% endif %}>Oldest</option>
               </select>
             </form>
           </div>
         </div>
-        <div class="card-body pt-3">
+        <div class="card-body p-0">
+          <div class="parts-panel-scroll">
           {% if weekly_top_lists and weekly_top_lists|length > 0 %}
-            <div class="data-list">
               {% for item in weekly_top_lists %}
-                <div class="data-list-item py-2 {% if not loop.last %}border-bottom{% endif %}">
-                  <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
-                    <div class="d-flex align-items-center gap-2">
-                      <span class="fw-medium">{{ item.name or '-' }}</span>
+                <div class="parts-panel-item">
+                  <div class="d-flex justify-content-between align-items-center mb-1">
+                    <div class="d-flex align-items-center gap-1 text-truncate" style="max-width: 65%;">
+                      <span class="small text-truncate" title="{{ item.name or '-' }}">{{ item.name or '-' }}</span>
                       <button type="button"
-                              class="btn btn-link btn-sm p-0 text-decoration-none parts-list-preview-btn"
+                              class="btn btn-link btn-sm p-0 text-decoration-none parts-list-preview-btn flex-shrink-0"
                               data-list-id="{{ item.id }}"
                               data-list-name="{{ item.name or '-' }}"
                               data-customer-name="{{ item.customer_name or '-' }}"
                               data-lines-url="{{ url_for('parts_list.get_parts_list_lines', list_id=item.id) }}"
-                              aria-label="Preview parts list {{ item.name or '-' }}">
-                        <i class="bi bi-file-earmark-text"></i>
+                              aria-label="Preview">
+                        <i class="bi bi-file-earmark-text" style="font-size: 0.75rem;"></i>
                       </button>
                     </div>
-                    <span class="fw-semibold text-info text-nowrap">{{ format_currency(item.quoted_value_gbp, '稖') }}</span>
+                    <span class="fw-semibold text-info small">{{ format_currency(item.quoted_value_gbp, '£') }}</span>
                   </div>
                   <div class="d-flex justify-content-between align-items-center">
-                    <small class="text-muted">{{ item.customer_name or '-' }}</small>
+                    <small class="text-muted text-truncate" style="font-size: 0.7rem; max-width: 50%;">{{ item.customer_name or '-' }}</small>
                     <select class="form-select form-select-sm parts-list-status-select"
                             data-list-id="{{ item.id }}"
                             data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=item.id) }}"
-                            style="font-size: 0.65rem; max-width: 140px;">
+                            style="font-size: 0.6rem; padding: 0.1rem 1rem 0.1rem 0.3rem; max-width: 100px;">
                       {% for status in parts_list_statuses %}
                         <option value="{{ status.id }}" {% if item.status_id == status.id %}selected{% endif %}>
                           {{ status.name }}
@@ -801,21 +789,15 @@
                       {% endfor %}
                     </select>
                   </div>
-                  <textarea class="form-control form-control-sm mt-2 parts-list-comment-input"
-                            data-list-id="{{ item.id }}"
-                            data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=item.id) }}"
-                            rows="2"
-                            placeholder="Add comment...">{{ item.notes }}</textarea>
-                  <small class="text-muted parts-list-update-status" data-list-id="{{ item.id }}"></small>
                 </div>
               {% endfor %}
-            </div>
           {% else %}
             <div class="text-center text-muted py-4">
-              <i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>
-              <small>No quoted parts lists this week</small>
+              <i class="bi bi-inbox d-block mb-2 opacity-50"></i>
+              <small>No parts lists in last 14 days</small>
             </div>
           {% endif %}
+          </div>
         </div>
       </div>
     </div>
@@ -823,49 +805,48 @@
     <!-- Next Actions Column -->
     <div class="col-lg-3">
       <div class="card h-100 shadow-sm border-0">
-        <div class="card-header border-0 bg-white pb-0">
+        <div class="card-header border-0 bg-white py-2">
           <div class="d-flex align-items-center justify-content-between">
             <div class="d-flex align-items-center">
-              <div class="icon-box bg-primary bg-opacity-10 rounded-3 p-2 me-3">
-                <i class="bi bi-chat-left-text text-primary fs-5"></i>
-              </div>
-              <h6 class="card-title mb-0 fw-semibold">Next Actions</h6>
+              <i class="bi bi-chat-left-text text-primary me-2"></i>
+              <h6 class="card-title mb-0 fw-semibold small">Next Actions</h6>
             </div>
-            <small class="text-muted">{{ next_action_month_label }}</small>
+            <small class="text-muted" style="font-size: 0.7rem;">{{ next_action_month_label }}</small>
           </div>
         </div>
-          <div class="card-body pt-3 d-flex flex-column next-actions-body">
+        <div class="card-body p-0">
+          <div class="parts-panel-scroll">
             {% if next_action_customers %}
-              <div class="data-list flex-grow-1 next-actions-list">
                 {% for item in next_action_customers %}
-                  <div class="data-list-item py-2 {% if not loop.last %}border-bottom{% endif %}">
+                  <div class="parts-panel-item">
                     <div class="d-flex justify-content-between align-items-start mb-1">
-                      <div>
-                        <span class="fw-medium">{{ item.name }}</span>
-                      <button type="button"
-                              class="btn btn-link btn-sm p-0 ms-1 text-muted"
-                              style="font-size: 0.7rem;"
-                              onclick="if (window.customerOverviewModal) { window.customerOverviewModal.show({{ item.id }}); }">
-                        <i class="bi bi-box-arrow-up-right"></i>
-                      </button>
+                      <div class="d-flex align-items-center gap-1">
+                        <span class="small fw-medium">{{ item.name }}</span>
+                        <button type="button"
+                                class="btn btn-link btn-sm p-0 text-muted flex-shrink-0"
+                                style="font-size: 0.65rem;"
+                                onclick="if (window.customerOverviewModal) { window.customerOverviewModal.show({{ item.id }}); }">
+                          <i class="bi bi-box-arrow-up-right"></i>
+                        </button>
+                      </div>
                     </div>
+                    <p class="text-muted mb-1" style="font-size: 0.7rem; line-height: 1.3;">{{ item.notes[:60] }}{% if item.notes|length > 60 %}...{% endif %}</p>
+                    <input type="text"
+                           class="form-control form-control-sm next-action-response-input"
+                           style="font-size: 0.7rem; padding: 0.2rem 0.4rem;"
+                           placeholder="Response..."
+                           value="{{ item.response or '' }}"
+                           data-customer-id="{{ item.id }}"
+                           data-target-month="{{ item.target_month }}">
                   </div>
-                  <p class="text-muted small mb-2" style="line-height: 1.3;">{{ item.notes[:80] }}{% if item.notes|length > 80 %}...{% endif %}</p>
-                  <input type="text"
-                         class="form-control form-control-sm next-action-response-input"
-                         placeholder="Enter response..."
-                         value="{{ item.response or '' }}"
-                         data-customer-id="{{ item.id }}"
-                         data-target-month="{{ item.target_month }}">
-                </div>
-              {% endfor %}
-            </div>
-          {% else %}
-            <div class="text-center text-muted py-4">
-              <i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>
-              <small>No next actions for {{ next_action_month_label }}</small>
-            </div>
-          {% endif %}
+                {% endfor %}
+            {% else %}
+              <div class="text-center text-muted py-4">
+                <i class="bi bi-inbox d-block mb-2 opacity-50"></i>
+                <small>No next actions for {{ next_action_month_label }}</small>
+              </div>
+            {% endif %}
+          </div>
         </div>
       </div>
     </div>
@@ -1035,6 +1016,34 @@
 {{ super() }}
 
 <style>
+/* Parts Panel Styles */
+.parts-panel-scroll {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.parts-panel-item {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background-color 0.15s ease;
+}
+
+.parts-panel-item:last-child {
+  border-bottom: none;
+}
+
+.parts-panel-item:hover {
+  background-color: #f8f9fa;
+}
+
+a.parts-panel-item {
+  color: inherit;
+}
+
+a.parts-panel-item:hover {
+  background-color: #e9f5e9;
+}
+
 /* Enhanced News Section Styles */
 .news-preview-card {
   border: 1px solid #e9ecef;
