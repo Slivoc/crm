@@ -1347,7 +1347,12 @@ def activity(salesperson_id):
             print(f"DEBUG: Error loading quotes by day: {e}")
             quotes_by_day = []
 
-        quoted_status_id = request.args.get('quoted_status_id', default=3, type=int)
+        quoted_status_id = request.args.get('quoted_status_id', default=None, type=int)
+        parts_date_range = request.args.get('parts_date_range', default='14days', type=str)
+        parts_custom_date = request.args.get('parts_custom_date', default=None, type=str)
+        if parts_date_range not in ('14days', 'all', 'custom'):
+            parts_date_range = '14days'
+
         parts_list_statuses = []
         try:
             status_rows = db_execute(
@@ -1365,11 +1370,19 @@ def activity(salesperson_id):
 
         top_quoted_lists = []
         try:
+            date_clause = ""
             status_clause = ""
             params = [salesperson_id]
             if quoted_status_id:
                 status_clause = "AND pl.status_id = ?"
                 params.append(quoted_status_id)
+
+            if parts_date_range == '14days':
+                date_clause = "AND cql.quoted_on >= CURRENT_DATE - interval '14 days' AND cql.quoted_on <= CURRENT_DATE"
+            elif parts_date_range == 'custom' and parts_custom_date:
+                date_clause = "AND cql.quoted_on::date = ?::date"
+                params.append(parts_custom_date)
+            # 'all' means no date filter
 
             top_rows = db_execute(
                 f"""
@@ -1394,6 +1407,7 @@ def activity(salesperson_id):
                 LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
                 WHERE pl.salesperson_id = ?
                 {status_clause}
+                {date_clause}
                 GROUP BY pl.id, pl.name, pl.notes, c.name, pl.status_id, pl.date_modified, pls.name
                 HAVING COALESCE(SUM(CASE
                     WHEN cql.quoted_status = 'quoted'
@@ -1402,7 +1416,7 @@ def activity(salesperson_id):
                     THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
                     ELSE 0 END), 0) > 0
                 ORDER BY quoted_value_gbp DESC, pl.date_modified DESC
-                LIMIT 10
+                LIMIT 15
                 """,
                 params,
                 fetch='all'
@@ -1434,87 +1448,6 @@ def activity(salesperson_id):
             print(f"DEBUG: Error loading top quoted lists: {e}")
             top_quoted_lists = []
 
-        weekly_sort = request.args.get('week_sort', default='value', type=str)
-        if weekly_sort not in ('value', 'oldest'):
-            weekly_sort = 'value'
-
-        weekly_top_lists = []
-        try:
-            status_clause = ""
-            params = [salesperson_id]
-            if quoted_status_id:
-                status_clause = "AND pl.status_id = ?"
-                params.append(quoted_status_id)
-
-            if weekly_sort == 'oldest':
-                weekly_order_clause = "ORDER BY pl.date_modified ASC NULLS LAST, quoted_value_gbp DESC"
-            else:
-                weekly_order_clause = "ORDER BY quoted_value_gbp DESC, pl.date_modified DESC"
-
-            weekly_rows = db_execute(
-                f"""
-                SELECT
-                    pl.id,
-                    pl.name,
-                    pl.notes,
-                    c.name AS customer_name,
-                    pl.status_id,
-                    pls.name AS status_name,
-                    pl.date_modified,
-                    COALESCE(SUM(
-                        cql.quote_price_gbp *
-                        COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
-                    ), 0) AS quoted_value_gbp
-                FROM parts_lists pl
-                LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
-                LEFT JOIN customers c ON c.id = pl.customer_id
-                LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
-                LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
-                WHERE pl.salesperson_id = ?
-                  {status_clause}
-                  AND cql.quoted_status = 'quoted'
-                  AND COALESCE(cql.is_no_bid, 0) = 0
-                  AND cql.quote_price_gbp > 0
-                  AND cql.quoted_on >= CURRENT_DATE - interval '14 days'
-                  AND cql.quoted_on <= CURRENT_DATE
-                GROUP BY pl.id, pl.name, pl.notes, c.name, pl.status_id, pl.date_modified, pls.name
-                HAVING COALESCE(SUM(
-                    cql.quote_price_gbp *
-                    COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
-                ), 0) > 0
-                {weekly_order_clause}
-                LIMIT 10
-                """,
-                params,
-                fetch='all'
-            ) or []
-
-            def _format_week_list_date(value):
-                if isinstance(value, datetime):
-                    return value.strftime('%Y-%m-%d')
-                if isinstance(value, date):
-                    return value.strftime('%Y-%m-%d')
-                if value is None:
-                    return ''
-                return str(value)
-
-            weekly_top_lists = [
-                {
-                    'id': row.get('id'),
-                    'name': row.get('name') or '',
-                    'notes': row.get('notes') or '',
-                    'customer_name': row.get('customer_name') or '',
-                    'status_id': row.get('status_id'),
-                    'status_name': row.get('status_name') or '',
-                    'date_modified': _format_week_list_date(row.get('date_modified')),
-                    'quoted_value_gbp': float(row.get('quoted_value_gbp') or 0),
-                }
-                for row in [dict(r) for r in weekly_rows]
-            ]
-        except Exception as e:
-            print(f"DEBUG: Error loading weekly top lists: {e}")
-            weekly_top_lists = []
-
         next_action_customers = []
         next_action_month = datetime.now().strftime('%Y-%m')
         next_action_month_label = datetime.now().strftime('%B %Y')
@@ -1540,17 +1473,17 @@ def activity(salesperson_id):
 
         t_render = time.perf_counter()
         response = render_template(template,
-                               salesperson=salesperson,
-            all_salespeople=all_salespeople,  # ADD THIS LINE
+            salesperson=salesperson,
+            all_salespeople=all_salespeople,
             assigned_customers=assigned_customers,
-            pending_orders=salesperson_orders,  # Keep the variable name for compatibility
+            pending_orders=salesperson_orders,
             call_list_prefill=call_list_prefill,
             quotes_by_day=quotes_by_day,
             top_quoted_lists=top_quoted_lists,
-            weekly_top_lists=weekly_top_lists,
             parts_list_statuses=parts_list_statuses,
             quoted_status_id=quoted_status_id,
-            week_sort=weekly_sort,
+            parts_date_range=parts_date_range,
+            parts_custom_date=parts_custom_date,
             next_action_customers=next_action_customers,
             next_action_month_label=next_action_month_label
         )
