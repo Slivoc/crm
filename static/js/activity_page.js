@@ -1354,7 +1354,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const previewButtons = document.querySelectorAll('.parts-list-preview-btn');
     previewButtons.forEach(button => {
-        button.addEventListener('click', () => {
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
             showPartsListPreview({
                 listId: button.dataset.listId,
                 listName: button.dataset.listName,

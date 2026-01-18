@@ -1368,6 +1368,13 @@ def activity(salesperson_id):
             print(f"DEBUG: Error loading parts list statuses: {e}")
             parts_list_statuses = []
 
+        # Default to "Quoted" status if no status is specified
+        if quoted_status_id is None and parts_list_statuses:
+            for status in parts_list_statuses:
+                if status['name'].lower() == 'quoted':
+                    quoted_status_id = status['id']
+                    break
+
         top_quoted_lists = []
         try:
             date_clause = ""
