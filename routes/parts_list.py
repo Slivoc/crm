@@ -2790,6 +2790,21 @@ def email_suppliers():
                 supplier_data['contact_name'] = supplier_info['contact_name']
                 supplier_data['contact_email'] = supplier_info['contact_email']
 
+        recent_no_bid_lookup = _get_recent_no_bid_lookup(
+            cursor,
+            suppliers_map.keys(),
+            [part.get('base_part_number') for supplier in suppliers_map.values() for part in supplier['parts']],
+            days=30,
+        )
+
+        for supplier_data in suppliers_map.values():
+            supplier_id = supplier_data['supplier_id']
+            for part in supplier_data['parts']:
+                base_part_number = part.get('base_part_number')
+                last_no_bid_date = recent_no_bid_lookup.get((supplier_id, base_part_number))
+                part['recent_no_bid'] = bool(last_no_bid_date)
+                part['recent_no_bid_date'] = last_no_bid_date
+
     # Convert to list and sort by number of parts
     suppliers_list = sorted(suppliers_map.values(),
                             key=lambda x: len(x['parts']),
@@ -2944,6 +2959,48 @@ def clear_ils_copy_queue(entry_id):
     return jsonify(success=True)
 
 
+def _get_recent_no_bid_lookup(cursor, supplier_ids, base_part_numbers, days=30):
+    if not supplier_ids or not base_part_numbers:
+        return {}
+
+    unique_suppliers = sorted({int(supplier_id) for supplier_id in supplier_ids if supplier_id})
+    unique_bases = sorted({base for base in base_part_numbers if base})
+    if not unique_suppliers or not unique_bases:
+        return {}
+
+    supplier_placeholders = ','.join(['?'] * len(unique_suppliers))
+    base_placeholders = ','.join(['?'] * len(unique_bases))
+    cutoff_date = datetime.now() - timedelta(days=days)
+
+    rows = _execute_with_cursor(cursor, f"""
+        SELECT
+            sq.supplier_id,
+            pll.base_part_number,
+            MAX(sql.date_created) AS last_no_bid_date
+        FROM parts_list_supplier_quote_lines sql
+        JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+        JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+        WHERE sql.is_no_bid = TRUE
+          AND sql.date_created >= ?
+          AND sq.supplier_id IN ({supplier_placeholders})
+          AND pll.base_part_number IN ({base_placeholders})
+        GROUP BY sq.supplier_id, pll.base_part_number
+    """, [cutoff_date, *unique_suppliers, *unique_bases]).fetchall() or []
+
+    lookup = {}
+    for row in rows:
+        last_no_bid_date = _safe_row_get(row, 'last_no_bid_date')
+        if hasattr(last_no_bid_date, 'date'):
+            display_date = last_no_bid_date.date().isoformat()
+        elif isinstance(last_no_bid_date, str):
+            display_date = last_no_bid_date.split()[0]
+        else:
+            display_date = None
+        lookup[(row['supplier_id'], row['base_part_number'])] = display_date
+
+    return lookup
+
+
 def process_ils_suppliers(email_data, cursor, cutoff_date):
     """
     Process ILS supplier data (existing logic)
@@ -2999,6 +3056,7 @@ def process_ils_suppliers(email_data, cursor, cutoff_date):
 
             part_data = {
                 'part_number': part['input_part_number'],
+                'base_part_number': part.get('base_part_number') or create_base_part_number(part['input_part_number']),
                 'quantity': part['quantity'],
                 'ils_quantity': ils.get('quantity', 'Unknown'),
                 'condition': ils.get('condition_code', ''),
@@ -3112,6 +3170,7 @@ def process_suggested_suppliers(email_data, cursor):
 
             part_data = {
                 'part_number': part['input_part_number'],
+                'base_part_number': part.get('base_part_number') or create_base_part_number(part['input_part_number']),
                 'quantity': part['quantity'],
                 'ils_quantity': 'N/A',  # Not applicable for suggested suppliers
                 'condition': '',

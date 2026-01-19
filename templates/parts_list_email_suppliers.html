@@ -82,6 +82,10 @@
     background: #6c757d;
     color: white;
 }
+.bg-no-bid {
+    background: #ffc107;
+    color: #212529;
+}
 .bg-source {
     background: #fd7e14;
     color: white;
@@ -371,6 +375,12 @@
                                 {% endif %}
                                 {% if part.has_quotes %}
                                     <span class="badge badge-sm bg-quoted">{{ part.quote_count }} Quote{{ 's' if part.quote_count != 1 else '' }}</span>
+                                {% endif %}
+                                {% if part.recent_no_bid %}
+                                    <span class="badge badge-sm bg-no-bid"
+                                          title="Supplier no-bid in last 30 days{% if part.recent_no_bid_date %} ({{ part.recent_no_bid_date }}){% endif %}">
+                                        Recent No Bid{% if part.recent_no_bid_date %} · {{ part.recent_no_bid_date }}{% endif %}
+                                    </span>
                                 {% endif %}
                                 {% if part.sent_to_this_supplier %}
                                     <span class="badge badge-sm bg-sent-this">✓ Sent to This Supplier</span>
