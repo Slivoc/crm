@@ -45,6 +45,7 @@ def _fetch_project_parts_list_rows(project_id):
             pll.line_number,
             pll.customer_part_number,
             pll.base_part_number,
+            pll.description,
             pll.quantity AS requested_qty,
             sq.id AS supplier_quote_id,
             s.name AS supplier_name,
@@ -70,6 +71,31 @@ def _fetch_project_parts_list_rows(project_id):
         LEFT JOIN currencies curr ON curr.id = sq.currency_id
         WHERE pl.project_id = ?
         ORDER BY pl.id, pll.line_number, sql.id
+        """,
+        (project_id,),
+        fetch='all',
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _fetch_project_parts_list_overview(project_id):
+    rows = db_execute(
+        """
+        SELECT
+            pl.id AS parts_list_id,
+            pl.name AS parts_list_name,
+            pll.id AS parts_list_line_id,
+            pll.line_number,
+            pll.customer_part_number,
+            pll.base_part_number,
+            pll.description,
+            pll.quantity,
+            pll.customer_notes,
+            pll.line_type
+        FROM parts_lists pl
+        JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+        WHERE pl.project_id = ?
+        ORDER BY pl.id, pll.line_number, pll.id
         """,
         (project_id,),
         fetch='all',
@@ -189,6 +215,126 @@ def project_parts_list_report(project_id):
         project=project,
         summary=summary,
         rows=rows,
+    )
+
+
+@projects_bp.route('/<int:project_id>/parts-lists/overview', methods=['GET'])
+def project_parts_list_overview(project_id):
+    project = get_project_by_id(project_id)
+    if not project:
+        flash('Project not found', 'error')
+        return redirect(url_for('projects.list_projects'))
+
+    parts_lists = db_execute(
+        """
+        SELECT id, name
+        FROM parts_lists
+        WHERE project_id = ?
+        ORDER BY date_modified DESC, date_created DESC
+        """,
+        (project_id,),
+        fetch='all',
+    ) or []
+
+    rows = _fetch_project_parts_list_overview(project_id)
+
+    return render_template(
+        'project_parts_list.html',
+        project=project,
+        parts_lists=[dict(row) for row in parts_lists],
+        rows=rows,
+    )
+
+
+@projects_bp.route('/<int:project_id>/parts-lists/create-from-lines', methods=['POST'])
+def project_parts_list_create_from_lines(project_id):
+    data = request.get_json(force=True) or {}
+    list_name = (data.get('name') or '').strip()
+    raw_line_ids = data.get('line_ids') or []
+
+    if not list_name:
+        return jsonify(success=False, message='List name is required'), 400
+
+    line_ids = []
+    for line_id in raw_line_ids:
+        try:
+            line_ids.append(int(line_id))
+        except (TypeError, ValueError):
+            continue
+
+    if not line_ids:
+        return jsonify(success=False, message='Select at least one line'), 400
+
+    project = get_project_by_id(project_id)
+    if not project:
+        return jsonify(success=False, message='Project not found'), 404
+
+    placeholders = ','.join(['?'] * len(line_ids))
+
+    with db_cursor(commit=True) as cur:
+        lines = _execute_with_cursor(
+            cur,
+            f"""
+            SELECT
+                pll.customer_part_number,
+                pll.base_part_number,
+                pll.description,
+                pll.quantity,
+                pll.customer_notes,
+                pll.internal_notes,
+                pll.line_type
+            FROM parts_list_lines pll
+            JOIN parts_lists pl ON pl.id = pll.parts_list_id
+            WHERE pl.project_id = ?
+              AND pll.id IN ({placeholders})
+            ORDER BY pl.id, pll.line_number, pll.id
+            """,
+            [project_id, *line_ids],
+            fetch='all',
+        ) or []
+
+        if not lines:
+            return jsonify(success=False, message='No matching lines found'), 400
+
+        header_row = _execute_with_cursor(
+            cur,
+            """
+            INSERT INTO parts_lists
+                (name, customer_id, salesperson_id, status_id, notes, project_id, date_created, date_modified)
+            VALUES (?, ?, ?, 1, '', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING id
+            """,
+            (list_name, project.get('customer_id'), project.get('salesperson_id'), project_id),
+            fetch='one',
+        )
+        parts_list_id = header_row['id'] if header_row else getattr(cur, 'lastrowid', None)
+
+        for index, line in enumerate(lines, start=1):
+            _execute_with_cursor(
+                cur,
+                """
+                INSERT INTO parts_list_lines
+                    (parts_list_id, line_number, customer_part_number, base_part_number, description,
+                     quantity, customer_notes, internal_notes, line_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    parts_list_id,
+                    index,
+                    line['customer_part_number'],
+                    line['base_part_number'],
+                    line['description'],
+                    line['quantity'],
+                    line['customer_notes'],
+                    line['internal_notes'],
+                    line['line_type'] or 'normal',
+                ),
+            )
+
+    return jsonify(
+        success=True,
+        parts_list_id=parts_list_id,
+        redirect=url_for('parts_list.view_parts_list', list_id=parts_list_id),
     )
 
 

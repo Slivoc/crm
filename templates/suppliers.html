@@ -114,6 +114,7 @@
           <th>Contact Name</th>
           <th>Contact Email</th>
           <th>Contact Phone</th>
+          <th>Warning</th>
           <th>Buffer</th>
           <th>Currency</th>
           <th>Delivery Cost</th>
@@ -136,6 +137,7 @@
           <td><input type="text" value="{{ supplier.contact_name }}" data-supplier-id="{{ supplier.id }}" data-field="contact_name" class="form-control form-control-sm editable-field"></td>
           <td><input type="email" value="{{ supplier.contact_email }}" data-supplier-id="{{ supplier.id }}" data-field="contact_email" class="form-control form-control-sm editable-field"></td>
           <td><input type="text" value="{{ supplier.contact_phone }}" data-supplier-id="{{ supplier.id }}" data-field="contact_phone" class="form-control form-control-sm editable-field"></td>
+          <td><input type="text" value="{{ supplier.warning or '' }}" data-supplier-id="{{ supplier.id }}" data-field="warning" class="form-control form-control-sm editable-field"></td>
           <td><input type="number" value="{{ supplier.buffer }}" data-supplier-id="{{ supplier.id }}" data-field="buffer" class="form-control form-control-sm editable-field"></td>
           <td>
             <select data-supplier-id="{{ supplier.id }}" data-field="currency" class="form-select form-select-sm editable-field">
@@ -224,6 +226,10 @@
           <div class="mb-3">
             <label for="standard_certs" class="form-label">Standard Certs (e.g. man certs, 8310-3)</label>
             <input type="text" id="standard_certs" name="standard_certs" class="form-control">
+          </div>
+          <div class="mb-3">
+            <label for="warning" class="form-label">Warning</label>
+            <textarea id="warning" name="warning" class="form-control" rows="2" placeholder="Add any supplier warnings..."></textarea>
           </div>
         </form>
       </div>

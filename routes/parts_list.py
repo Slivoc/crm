@@ -33,6 +33,11 @@ client = OpenAI()
 
 parts_list_bp = Blueprint('parts_list', __name__)
 
+AI_PARTS_MAX_CHARS = 15000
+AI_PARTS_RESPONSE_TOKENS = 3000
+AI_PARTS_HEADER_LINES = 20
+AI_PARTS_HEADER_CHAR_LIMIT = 2000
+
 
 def _execute_with_cursor(cur, query, params=None):
     """Execute a query on the given cursor with Postgres placeholder translation."""
@@ -1488,13 +1493,95 @@ def extract_parts_data():
 
         logging.debug(f"Extracting data from: {request_data}")
 
-        extracted_parts = extract_part_numbers_and_quantities(request_data)
+        extracted_parts, warnings, batched = extract_part_numbers_and_quantities_batched(request_data)
         logging.debug(f"Extracted parts: {extracted_parts}")
 
-        return jsonify({'success': True, 'parts': extracted_parts})
+        if not extracted_parts:
+            error_message = "AI did not return any part numbers."
+            if batched:
+                error_message = (
+                    "AI did not return any part numbers. The text was large, so it was split into batches. "
+                    "Try removing headers/signatures or splitting the request into smaller chunks."
+                )
+            if warnings:
+                error_message = f"{error_message} {' '.join(warnings)}"
+            return jsonify({'success': False, 'error': error_message, 'warnings': warnings, 'batched': batched})
+
+        return jsonify({'success': True, 'parts': extracted_parts, 'warnings': warnings, 'batched': batched})
     except Exception as e:
         logging.exception(f'Error in extract_parts_data: {str(e)}')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _split_parts_ai_chunks(request_data):
+    if isinstance(request_data, bytes):
+        request_data = request_data.decode(errors='ignore')
+    request_text = str(request_data or "")
+    if len(request_text) <= AI_PARTS_MAX_CHARS:
+        return [request_text]
+
+    lines = request_text.splitlines()
+    header_lines = lines[:AI_PARTS_HEADER_LINES]
+    header_text = "\n".join(header_lines).strip()
+    if len(header_text) > AI_PARTS_HEADER_CHAR_LIMIT:
+        header_text = header_text[:AI_PARTS_HEADER_CHAR_LIMIT].rstrip()
+    header_prefix = f"{header_text}\n\n" if header_text else ""
+
+    body_lines = lines[AI_PARTS_HEADER_LINES:]
+    chunks = []
+    chunk_body_max = max(AI_PARTS_MAX_CHARS - len(header_prefix), 1000)
+    current_lines = []
+    current_len = 0
+    for line in body_lines:
+        line_len = len(line) + 1
+        if current_lines and current_len + line_len > chunk_body_max:
+            chunks.append(header_prefix + "\n".join(current_lines))
+            current_lines = [line]
+            current_len = line_len
+        else:
+            current_lines.append(line)
+            current_len += line_len
+    if current_lines:
+        chunks.append(header_prefix + "\n".join(current_lines))
+
+    return chunks or [request_text[:AI_PARTS_MAX_CHARS]]
+
+
+def _dedupe_extracted_parts(parts):
+    deduped = []
+    seen = set()
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        part_number = str(part.get('part_number', '')).strip()
+        if not part_number:
+            continue
+        quantity = part.get('quantity', 1)
+        key = (part_number.lower(), str(quantity))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(part)
+    return deduped
+
+
+def extract_part_numbers_and_quantities_batched(request_data):
+    chunks = _split_parts_ai_chunks(request_data)
+    warnings = []
+    parts = []
+    if len(chunks) > 1:
+        logging.info("AI parts extraction: splitting input into %s batches", len(chunks))
+        warnings.append(f"Input was split into {len(chunks)} batches to avoid token limits.")
+
+    for index, chunk in enumerate(chunks, start=1):
+        try:
+            extracted = extract_part_numbers_and_quantities(chunk)
+            parts.extend(extracted or [])
+        except Exception as exc:
+            warnings.append(f"Batch {index} failed: {exc}")
+            logging.exception("AI parts extraction failed on batch %s", index)
+
+    return _dedupe_extracted_parts(parts), warnings, len(chunks) > 1
 
 
 def extract_part_numbers_and_quantities(request_data):
@@ -1507,13 +1594,12 @@ def extract_part_numbers_and_quantities(request_data):
 
     try:
         # Hard cap content sent to the model to avoid context blowups from huge emails
-        MAX_CHARS = 15000
         if isinstance(request_data, bytes):
             request_data = request_data.decode(errors='ignore')
         request_data = str(request_data)
-        if len(request_data) > MAX_CHARS:
-            print(f"Trimming request_data from {len(request_data)} to {MAX_CHARS} characters for AI call")
-            request_data = request_data[:MAX_CHARS]
+        if len(request_data) > AI_PARTS_MAX_CHARS:
+            print(f"Trimming request_data from {len(request_data)} to {AI_PARTS_MAX_CHARS} characters for AI call")
+            request_data = request_data[:AI_PARTS_MAX_CHARS]
 
         print("Attempting to send request to OpenAI API")
         response = client.chat.completions.create(
@@ -1532,7 +1618,7 @@ def extract_part_numbers_and_quantities(request_data):
                 {"role": "user",
                  "content": f"Please extract part numbers and quantities from the following text:\n\n{request_data}"}
             ],
-            max_tokens=2000,
+            max_tokens=AI_PARTS_RESPONSE_TOKENS,
             temperature=0.2,
         )
         print("Successfully received response from OpenAI API")
@@ -2813,7 +2899,7 @@ def email_suppliers():
         # Fetch supplier contact details (common for both modes)
         for supplier_id, supplier_data in suppliers_map.items():
             supplier_info = _execute_with_cursor(cursor, '''
-                SELECT contact_name, contact_email
+                SELECT contact_name, contact_email, warning
                 FROM suppliers
                 WHERE id = ?
             ''', (supplier_id,)).fetchone()
@@ -2821,6 +2907,7 @@ def email_suppliers():
             if supplier_info:
                 supplier_data['contact_name'] = supplier_info['contact_name']
                 supplier_data['contact_email'] = supplier_info['contact_email']
+                supplier_data['warning'] = supplier_info['warning']
 
         recent_no_bid_lookup = _get_recent_no_bid_lookup(
             cursor,
@@ -3071,6 +3158,7 @@ def process_ils_suppliers(email_data, cursor, cutoff_date):
                     'supplier_name': ils.get('supplier_name', 'Unknown'),
                     'contact_email': None,
                     'contact_name': None,
+                    'warning': None,
                     'parts': []
                 }
 
@@ -3173,6 +3261,7 @@ def process_suggested_suppliers(email_data, cursor):
                     'supplier_name': sugg['supplier_name'],
                     'contact_email': None,
                     'contact_name': None,
+                    'warning': None,
                     'parts': []
                 }
 
@@ -4009,7 +4098,7 @@ def duplicate_parts_list(list_id):
 
             # Copy lines (preserve parent/child links)
             lines = _execute_with_cursor(cur, """
-                SELECT id, line_number, customer_part_number, base_part_number, quantity,
+                SELECT id, line_number, customer_part_number, base_part_number, description, quantity,
                        chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days,
                        customer_notes, internal_notes, parent_line_id, line_type
                 FROM parts_list_lines
@@ -4023,13 +4112,14 @@ def duplicate_parts_list(list_id):
             for ln in lines:
                 new_line_row = _execute_with_cursor(cur, """
                     INSERT INTO parts_list_lines
-                    (parts_list_id, line_number, customer_part_number, base_part_number, quantity,
+                    (parts_list_id, line_number, customer_part_number, base_part_number, description, quantity,
                      chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days,
                      customer_notes, internal_notes, parent_line_id, line_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                     RETURNING id
                 """, (
-                    new_id, ln['line_number'], ln['customer_part_number'], ln['base_part_number'], ln['quantity'],
+                    new_id, ln['line_number'], ln['customer_part_number'], ln['base_part_number'], ln['description'],
+                    ln['quantity'],
                     ln['chosen_supplier_id'], ln['chosen_cost'], ln['chosen_price'], ln['chosen_currency_id'],
                     ln['chosen_lead_days'], ln['customer_notes'], ln['internal_notes'],
                     ln['line_type'] or 'normal'
@@ -4133,13 +4223,14 @@ def add_lines(list_id):
                     """, (list_id,)).fetchone()['max_ln']
                     next_line_number = int(last) + 1
 
+                description = (item.get('description') or '').strip() or None
                 row = _execute_with_cursor(cur, """
                     INSERT INTO parts_list_lines
-                    (parts_list_id, line_number, customer_part_number, base_part_number, quantity,
+                    (parts_list_id, line_number, customer_part_number, base_part_number, description, quantity,
                      parent_line_id, line_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING id
-                """, (list_id, next_line_number, cpn, bpn, qty, parent_line_id, line_type)).fetchone()
+                """, (list_id, next_line_number, cpn, bpn, description, qty, parent_line_id, line_type)).fetchone()
 
                 if row:
                     created_line_ids.append(row['id'] if isinstance(row, dict) else row[0])
@@ -4238,15 +4329,16 @@ def duplicate_line(list_id, line_id):
 
             new_row = _execute_with_cursor(cur, """
                 INSERT INTO parts_list_lines
-                (parts_list_id, line_number, customer_part_number, base_part_number, quantity,
+                (parts_list_id, line_number, customer_part_number, base_part_number, description, quantity,
                  parent_line_id, line_type, customer_notes, internal_notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
             """, (
                 list_id,
                 next_line_number,
                 line['customer_part_number'],
                 line['base_part_number'],
+                line['description'],
                 line['quantity'],
                 parent_line_id,
                 line_type,
@@ -4343,11 +4435,12 @@ def replace_all_lines(list_id):
                     continue
                 qty = int(item.get('quantity') or 1)
                 bpn = item.get('base_part_number') or create_base_part_number(cpn)
+                description = (item.get('description') or '').strip() or None
                 _execute_with_cursor(cur, """
                     INSERT INTO parts_list_lines
-                    (parts_list_id, line_number, customer_part_number, base_part_number, quantity)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (list_id, ln, cpn, bpn, qty))
+                    (parts_list_id, line_number, customer_part_number, base_part_number, description, quantity)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (list_id, ln, cpn, bpn, description, qty))
                 ln += 1
 
         return jsonify(success=True, count=ln - 1)
@@ -4404,11 +4497,11 @@ def save_parts_list():
             created_line_ids = []
             insert_sql = """
                 INSERT INTO parts_list_lines (
-                    parts_list_id, line_number, customer_part_number, base_part_number, quantity,
+                    parts_list_id, line_number, customer_part_number, base_part_number, description, quantity,
                     chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days, chosen_qty,
                     customer_notes, internal_notes, date_created, date_modified
                 )
-                VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 RETURNING id
             """
             for line in lines:
@@ -4423,6 +4516,7 @@ def save_parts_list():
                     base_part_number = create_base_part_number(customer_part_number)
 
                 quantity = int(line.get('quantity') or 1)
+                description = (line.get('description') or '').strip() or None
 
                 # Prepopulate chosen_qty with quantity if chosen_qty is not provided
                 chosen_qty = line.get('chosen_qty')
@@ -4430,7 +4524,7 @@ def save_parts_list():
                     chosen_qty = quantity
 
                 row = _execute_with_cursor(cur, insert_sql, (
-                    parts_list_id, line_number, customer_part_number, base_part_number, quantity, chosen_qty
+                    parts_list_id, line_number, customer_part_number, base_part_number, description, quantity, chosen_qty
                 )).fetchone()
 
                 if row:
@@ -4536,6 +4630,123 @@ def add_suggested_supplier(list_id, line_id):
             success=True,
             suggested_id=suggested_id,
             supplier_name=supplier['name']
+        )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/suggested-suppliers/bulk-add', methods=['POST'])
+def bulk_add_suggested_suppliers(list_id):
+    """
+    Bulk add suggested suppliers to multiple lines.
+    Body JSON: { entries: [{ line_id, supplier_id, source_type }] }
+    """
+    try:
+        data = request.get_json() or {}
+        entries = data.get('entries') or []
+
+        if not isinstance(entries, list) or not entries:
+            return jsonify(success=False, message='Entries required'), 400
+
+        sanitized = []
+        line_ids = []
+        for entry in entries:
+            line_id = entry.get('line_id')
+            supplier_id = entry.get('supplier_id')
+            source_type = entry.get('source_type') or 'bulk'
+
+            if not line_id or not supplier_id:
+                continue
+
+            sanitized.append({
+                'line_id': int(line_id),
+                'supplier_id': int(supplier_id),
+                'source_type': source_type,
+            })
+            line_ids.append(int(line_id))
+
+        if not sanitized:
+            return jsonify(success=False, message='No valid entries'), 400
+
+        unique_line_ids = sorted(set(line_ids))
+        line_placeholders = ','.join(['?'] * len(unique_line_ids))
+
+        inserted = []
+        existing_count = 0
+        skipped_count = 0
+
+        with db_cursor(commit=True) as cur:
+            valid_lines = _execute_with_cursor(
+                cur,
+                f"""
+                SELECT id
+                FROM parts_list_lines
+                WHERE parts_list_id = ?
+                  AND id IN ({line_placeholders})
+                """,
+                (list_id, *unique_line_ids),
+            ).fetchall()
+
+            valid_line_ids = {row['id'] for row in valid_lines}
+
+            for entry in sanitized:
+                if entry['line_id'] not in valid_line_ids:
+                    skipped_count += 1
+                    continue
+
+                row = _execute_with_cursor(
+                    cur,
+                    """
+                    INSERT INTO parts_list_line_suggested_suppliers
+                        (parts_list_line_id, supplier_id, source_type, date_added)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(parts_list_line_id, supplier_id) DO NOTHING
+                    RETURNING id
+                    """,
+                    (entry['line_id'], entry['supplier_id'], entry['source_type']),
+                ).fetchone()
+
+                if row:
+                    inserted.append({
+                        'line_id': entry['line_id'],
+                        'supplier_id': entry['supplier_id'],
+                        'source_type': entry['source_type'],
+                        'suggested_id': row['id'],
+                    })
+                else:
+                    existing_count += 1
+
+            supplier_name_map = {}
+            if inserted:
+                supplier_ids = sorted({item['supplier_id'] for item in inserted})
+                supplier_placeholders = ','.join(['?'] * len(supplier_ids))
+                supplier_rows = _execute_with_cursor(
+                    cur,
+                    f"""
+                    SELECT id, name
+                    FROM suppliers
+                    WHERE id IN ({supplier_placeholders})
+                    """,
+                    supplier_ids,
+                ).fetchall()
+                supplier_name_map = {row['id']: row['name'] for row in supplier_rows}
+
+        response_items = [
+            {
+                **item,
+                'supplier_name': supplier_name_map.get(item['supplier_id']),
+            }
+            for item in inserted
+        ]
+
+        return jsonify(
+            success=True,
+            added_count=len(inserted),
+            existing_count=existing_count,
+            skipped_count=skipped_count,
+            items=response_items,
         )
 
     except Exception as e:

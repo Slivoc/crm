@@ -5,7 +5,7 @@
 <link href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css" rel="stylesheet">
 <style>
     body { background:#f9fbfc; }
-    .quick-quote-container { max-width: 1400px; }
+    .quick-quote-container { max-width: 100%; }
 
     #pdf-drop-zone {
         border: 3px dashed #0d6efd;
@@ -25,6 +25,19 @@
     #quote-lines-table-container {
         height: 600px;
         overflow: auto;
+    }
+
+    .pdf-preview-frame {
+        width: 100%;
+        height: 520px;
+        border: 0;
+    }
+
+    .pdf-preview-empty {
+        min-height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 
     .ht_master .htCore td.has-quote {
@@ -136,21 +149,37 @@
     </div>
 
     <div class="row g-4 mb-4">
-        <!-- PDF Drop Zone -->
-        <div class="col-lg-6">
-            <div class="card h-100" id="pdf-drop-zone">
-                <div class="card-body text-center py-5 d-flex flex-column justify-content-center">
-                    <i class="bi bi-file-earmark-pdf display-3 text-primary mb-3" id="quote-drop-icon"></i>
-                    <h5 class="mb-2" id="quote-drop-title">Drop PDF Quote Here</h5>
-                    <p class="text-muted mb-0">Or click to browse files</p>
-                    <small class="text-muted mt-2">AI will extract quote data automatically</small>
-                    <input type="file" accept=".pdf" id="pdf-upload-input" style="display:none;">
+        <!-- PDF Drop Zone + Preview -->
+        <div class="col-lg-7">
+            <div class="d-flex flex-column gap-3">
+                <div class="card" id="pdf-drop-zone">
+                    <div class="card-body text-center py-5 d-flex flex-column justify-content-center">
+                        <i class="bi bi-file-earmark-pdf display-3 text-primary mb-3" id="quote-drop-icon"></i>
+                        <h5 class="mb-2" id="quote-drop-title">Drop PDF Quote Here</h5>
+                        <p class="text-muted mb-0">Or click to browse files</p>
+                        <small class="text-muted mt-2">AI will extract quote data automatically</small>
+                        <input type="file" accept=".pdf" id="pdf-upload-input" style="display:none;">
+                    </div>
+                </div>
+                <div class="card" id="pdf-preview-card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">
+                            <i class="bi bi-eye me-2"></i>PDF Preview
+                        </h6>
+                        <small class="text-muted" id="pdf-preview-filename"></small>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="pdf-preview-empty text-muted" id="pdf-preview-empty">
+                            No PDF selected yet.
+                        </div>
+                        <iframe class="pdf-preview-frame" id="pdf-preview-frame" title="PDF preview" hidden></iframe>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Text Extraction -->
-        <div class="col-lg-6">
+        <div class="col-lg-5">
             <div class="card h-100">
                 <div class="card-header">
                     <h5 class="mb-0">
@@ -318,6 +347,9 @@
             }
 
             const blob = base64ToBlob(attachment.content_bytes, attachment.content_type);
+            if (window.setQuotePdfPreview) {
+                window.setQuotePdfPreview(blob, attachment.name || 'attachment.pdf');
+            }
             const formData = new FormData();
             formData.append('file', blob, attachment.name || 'attachment.pdf');
 

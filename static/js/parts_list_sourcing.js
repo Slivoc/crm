@@ -260,6 +260,99 @@ document.addEventListener('DOMContentLoaded', function() {
     if (filterType) filterType.addEventListener('change', applyFilters);
     if (searchPart) searchPart.addEventListener('input', applyFilters);
 
+    const lineDataById = new Map(
+        (window.LINE_DATA || []).map(line => [String(line.id), line])
+    );
+
+    const massAddSuggestedBtn = document.getElementById('mass-add-suggested-btn');
+    if (massAddSuggestedBtn) {
+        massAddSuggestedBtn.addEventListener('click', function() {
+            const visibleRows = Array.from(document.querySelectorAll('.sourcing-table tbody tr.main-row'))
+                .filter(row => row.style.display !== 'none');
+
+            const entries = [];
+            visibleRows.forEach(row => {
+                const lineId = row.dataset.lineId;
+                const lineData = lineDataById.get(String(lineId));
+
+                if (!lineId || !lineData) {
+                    return;
+                }
+
+                const existingSuggested = new Set(
+                    (lineData.suggested_suppliers || [])
+                        .map(supplier => String(supplier.supplier_id))
+                );
+                const addedForLine = new Set();
+
+                const sourceGroups = [
+                    { source: 'vq', items: lineData.vq_data || [] },
+                    { source: 'po', items: lineData.po_data || [] },
+                    { source: 'excess', items: lineData.excess_data || [] },
+                    { source: 'ils', items: lineData.ils_data || [] }
+                ];
+
+                sourceGroups.forEach(group => {
+                    group.items.forEach(item => {
+                        if (!item || !item.supplier_id) {
+                            return;
+                        }
+                        const supplierKey = String(item.supplier_id);
+                        if (existingSuggested.has(supplierKey) || addedForLine.has(supplierKey)) {
+                            return;
+                        }
+                        addedForLine.add(supplierKey);
+                        entries.push({
+                            line_id: parseInt(lineId),
+                            supplier_id: parseInt(item.supplier_id),
+                            source_type: group.source
+                        });
+                    });
+                });
+            });
+
+            if (entries.length === 0) {
+                showToast('No new suppliers found to add', 'info');
+                return;
+            }
+
+            if (!confirm(`Add ${entries.length} suppliers to suggested lists?`)) {
+                return;
+            }
+
+            const originalHtml = this.innerHTML;
+            this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Adding...';
+            this.disabled = true;
+
+            fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/suggested-suppliers/bulk-add`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entries })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    throw new Error(data.message || 'Failed to add suppliers');
+                }
+
+                if (data.added_count > 0) {
+                    showToast(`Added ${data.added_count} suppliers to suggested lists`, 'success');
+                    setTimeout(() => window.location.reload(), 800);
+                    return;
+                }
+
+                showToast('All suppliers were already suggested', 'info');
+                this.innerHTML = originalHtml;
+                this.disabled = false;
+            })
+            .catch(error => {
+                showToast(error.message || 'Failed to add suppliers', 'error');
+                this.innerHTML = originalHtml;
+                this.disabled = false;
+            });
+        });
+    }
+
     // Use cost buttons
     document.addEventListener('click', function(e) {
         const costBtn = e.target.closest('.use-vq-cost-btn, .use-po-cost-btn, .use-stock-cost-btn, .use-excess-cost-btn');

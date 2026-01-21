@@ -2630,6 +2630,9 @@ if (extractAiBtn) {
         .then(response => response.json())
         .then(data => {
             loadingSpinner.style.display = 'none';
+            const warnings = Array.isArray(data.warnings) && data.warnings.length
+                ? `\n\nNotes:\n- ${data.warnings.join('\n- ')}`
+                : '';
             if (data.success && data.parts && data.parts.length > 0) {
                 const formattedParts = data.parts.map(part => {
                     if (part.quantity && part.quantity !== 1) return `${part.part_number}, ${part.quantity}`;
@@ -2638,9 +2641,9 @@ if (extractAiBtn) {
 
                 partsInput.value = formattedParts;
                 partsCount.textContent = `(${data.parts.length} part${data.parts.length !== 1 ? 's' : ''})`;
-                alert(`Successfully extracted ${data.parts.length} part number${data.parts.length !== 1 ? 's' : ''}!`);
+                alert(`Successfully extracted ${data.parts.length} part number${data.parts.length !== 1 ? 's' : ''}!${warnings}`);
             } else {
-                alert('No part numbers could be extracted from the text');
+                alert(`${data.error || 'No part numbers could be extracted from the text'}${warnings}`);
             }
         })
         .catch(error => {
