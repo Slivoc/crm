@@ -1,6 +1,7 @@
 import os
 import csv
 import io
+import json
 from datetime import datetime
 from flask import Blueprint, request, redirect, url_for, jsonify, current_app, render_template, send_from_directory, flash, session, Response
 from werkzeug.utils import secure_filename
@@ -33,6 +34,44 @@ def _execute_with_cursor(cur, query, params=None, fetch=None):
     if fetch == 'all':
         return cur.fetchall()
     return cur
+
+
+def _parse_usage_by_year(raw_value):
+    if raw_value is None:
+        return []
+    if isinstance(raw_value, (list, tuple)):
+        return list(raw_value)
+    if isinstance(raw_value, (bytes, bytearray)):
+        raw_value = raw_value.decode('utf-8', errors='ignore')
+    if isinstance(raw_value, str):
+        if not raw_value.strip():
+            return []
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(parsed, list):
+            return parsed
+        return []
+    return []
+
+
+def _coerce_usage_list(values):
+    usage = []
+    for value in values or []:
+        if value is None or value == '':
+            usage.append(None)
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            usage.append(None)
+            continue
+        if number.is_integer():
+            usage.append(int(number))
+        else:
+            usage.append(number)
+    return usage
 
 
 def _fetch_project_parts_list_rows(project_id):
@@ -82,25 +121,37 @@ def _fetch_project_parts_list_overview(project_id):
     rows = db_execute(
         """
         SELECT
-            pl.id AS parts_list_id,
-            pl.name AS parts_list_name,
-            pll.id AS parts_list_line_id,
-            pll.line_number,
-            pll.customer_part_number,
-            pll.base_part_number,
-            pll.description,
-            pll.quantity,
-            pll.customer_notes,
-            pll.line_type
-        FROM parts_lists pl
-        JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
-        WHERE pl.project_id = ?
-        ORDER BY pl.id, pll.line_number, pll.id
+            ppl.id AS project_line_id,
+            ppl.line_number,
+            ppl.customer_part_number,
+            ppl.description,
+            ppl.category,
+            ppl.comment,
+            ppl.line_type,
+            ppl.total_quantity,
+            ppl.usage_by_year,
+            ppl.status,
+            ppl.parts_list_id,
+            pl.name AS parts_list_name
+        FROM project_parts_list_lines ppl
+        LEFT JOIN parts_lists pl ON pl.id = ppl.parts_list_id
+        WHERE ppl.project_id = ?
+        ORDER BY ppl.line_number, ppl.id
         """,
         (project_id,),
         fetch='all',
     ) or []
-    return [dict(row) for row in rows]
+    formatted = []
+    for row in rows:
+        data = dict(row)
+        usage = _parse_usage_by_year(data.get('usage_by_year'))
+        data['usage_by_year'] = usage
+        data['usage_total'] = sum(value for value in usage if isinstance(value, (int, float)))
+        # Default status for rows without the column yet
+        if not data.get('status'):
+            data['status'] = 'linked' if data.get('parts_list_id') else 'pending'
+        formatted.append(data)
+    return formatted
 
 @projects_bp.route('/new', methods=['POST'])
 def create_project():
@@ -225,25 +276,115 @@ def project_parts_list_overview(project_id):
         flash('Project not found', 'error')
         return redirect(url_for('projects.list_projects'))
 
-    parts_lists = db_execute(
-        """
-        SELECT id, name
-        FROM parts_lists
-        WHERE project_id = ?
-        ORDER BY date_modified DESC, date_created DESC
-        """,
-        (project_id,),
-        fetch='all',
-    ) or []
-
     rows = _fetch_project_parts_list_overview(project_id)
+    max_usage_years = max((len(row.get('usage_by_year') or []) for row in rows), default=2)
+    if max_usage_years < 1:
+        max_usage_years = 1
 
     return render_template(
         'project_parts_list.html',
         project=project,
-        parts_lists=[dict(row) for row in parts_lists],
         rows=rows,
+        max_usage_years=max_usage_years,
     )
+
+
+@projects_bp.route('/<int:project_id>/parts-lists/import', methods=['GET'])
+def project_parts_list_import(project_id):
+    project = get_project_by_id(project_id)
+    if not project:
+        flash('Project not found', 'error')
+        return redirect(url_for('projects.list_projects'))
+
+    rows = _fetch_project_parts_list_overview(project_id)
+    max_usage_years = max((len(row.get('usage_by_year') or []) for row in rows), default=5)
+    if max_usage_years < 5:
+        max_usage_years = 5
+
+    return render_template(
+        'project_parts_list_import.html',
+        project=project,
+        max_usage_years=max_usage_years,
+    )
+
+
+@projects_bp.route('/<int:project_id>/project-parts-list/lines', methods=['POST'])
+def project_parts_list_add_lines(project_id):
+    data = request.get_json(force=True) or {}
+    raw_lines = data.get('lines') or []
+    if isinstance(raw_lines, dict):
+        raw_lines = [raw_lines]
+
+    project = get_project_by_id(project_id)
+    if not project:
+        return jsonify(success=False, message='Project not found'), 404
+
+    cleaned_lines = []
+    for entry in raw_lines:
+        if not isinstance(entry, dict):
+            continue
+        customer_part_number = (entry.get('customer_part_number') or '').strip()
+        if not customer_part_number:
+            continue
+        cleaned_lines.append({
+            'customer_part_number': customer_part_number,
+            'description': (entry.get('description') or '').strip() or None,
+            'category': (entry.get('category') or '').strip() or None,
+            'comment': (entry.get('comment') or '').strip() or None,
+            'line_type': (entry.get('line_type') or 'normal').strip() or 'normal',
+            'total_quantity': entry.get('total_quantity'),
+            'usage_by_year': _coerce_usage_list(entry.get('usage_by_year') or []),
+        })
+
+    if not cleaned_lines:
+        return jsonify(success=False, message='No valid lines provided'), 400
+
+    with db_cursor(commit=True) as cur:
+        max_row = _execute_with_cursor(
+            cur,
+            """
+            SELECT COALESCE(MAX(line_number), 0) AS max_line
+            FROM project_parts_list_lines
+            WHERE project_id = ?
+            """,
+            (project_id,),
+            fetch='one',
+        ) or {}
+        next_line = max_row.get('max_line') or 0
+
+        for line in cleaned_lines:
+            total_quantity = line['total_quantity']
+            if total_quantity in ('', None):
+                total_quantity = None
+            else:
+                try:
+                    total_quantity = int(float(total_quantity))
+                except (TypeError, ValueError):
+                    total_quantity = None
+
+            next_line += 1
+            _execute_with_cursor(
+                cur,
+                """
+                INSERT INTO project_parts_list_lines
+                    (project_id, line_number, customer_part_number, description, category, comment,
+                     line_type, total_quantity, usage_by_year, date_created, date_modified)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (
+                    project_id,
+                    next_line,
+                    line['customer_part_number'],
+                    line['description'],
+                    line['category'],
+                    line['comment'],
+                    line['line_type'],
+                    total_quantity,
+                    json.dumps(line['usage_by_year']) if line['usage_by_year'] else None,
+                ),
+            )
+
+    return jsonify(success=True)
 
 
 @projects_bp.route('/<int:project_id>/parts-lists/create-from-lines', methods=['POST'])
@@ -251,6 +392,7 @@ def project_parts_list_create_from_lines(project_id):
     data = request.get_json(force=True) or {}
     list_name = (data.get('name') or '').strip()
     raw_line_ids = data.get('line_ids') or []
+    quantity_source = data.get('quantity_source', 'total')  # 'total', 'sum', or 'year_N'
 
     if not list_name:
         return jsonify(success=False, message='List name is required'), 400
@@ -276,18 +418,18 @@ def project_parts_list_create_from_lines(project_id):
             cur,
             f"""
             SELECT
-                pll.customer_part_number,
-                pll.base_part_number,
-                pll.description,
-                pll.quantity,
-                pll.customer_notes,
-                pll.internal_notes,
-                pll.line_type
-            FROM parts_list_lines pll
-            JOIN parts_lists pl ON pl.id = pll.parts_list_id
-            WHERE pl.project_id = ?
-              AND pll.id IN ({placeholders})
-            ORDER BY pl.id, pll.line_number, pll.id
+                ppl.id,
+                ppl.customer_part_number,
+                ppl.description,
+                ppl.category,
+                ppl.comment,
+                ppl.line_type,
+                ppl.total_quantity,
+                ppl.usage_by_year
+            FROM project_parts_list_lines ppl
+            WHERE ppl.project_id = ?
+              AND ppl.id IN ({placeholders})
+            ORDER BY ppl.line_number, ppl.id
             """,
             [project_id, *line_ids],
             fetch='all',
@@ -309,26 +451,76 @@ def project_parts_list_create_from_lines(project_id):
         )
         parts_list_id = header_row['id'] if header_row else getattr(cur, 'lastrowid', None)
 
+        project_line_ids_to_update = []
+
         for index, line in enumerate(lines, start=1):
+            usage_values = _parse_usage_by_year(line.get('usage_by_year'))
+            usage_total = sum(value for value in usage_values if isinstance(value, (int, float)))
+
+            # Determine quantity based on source selection
+            chosen_quantity = None
+            if quantity_source == 'total':
+                chosen_quantity = line.get('total_quantity')
+                if chosen_quantity in ('', None):
+                    chosen_quantity = None
+                else:
+                    try:
+                        chosen_quantity = int(float(chosen_quantity))
+                    except (TypeError, ValueError):
+                        chosen_quantity = None
+                # Fallback to sum if total is empty
+                if chosen_quantity is None and usage_values:
+                    chosen_quantity = int(usage_total)
+            elif quantity_source == 'sum':
+                chosen_quantity = int(usage_total) if usage_values else None
+            elif quantity_source.startswith('year_'):
+                try:
+                    year_index = int(quantity_source.replace('year_', '')) - 1
+                    if usage_values and 0 <= year_index < len(usage_values):
+                        val = usage_values[year_index]
+                        if val is not None:
+                            chosen_quantity = int(float(val))
+                except (ValueError, TypeError):
+                    pass
+
+            if chosen_quantity is None:
+                chosen_quantity = 1
+
             _execute_with_cursor(
                 cur,
                 """
                 INSERT INTO parts_list_lines
-                    (parts_list_id, line_number, customer_part_number, base_part_number, description,
+                    (parts_list_id, line_number, customer_part_number, base_part_number, description, category,
                      quantity, customer_notes, internal_notes, line_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     parts_list_id,
                     index,
                     line['customer_part_number'],
-                    line['base_part_number'],
                     line['description'],
-                    line['quantity'],
-                    line['customer_notes'],
-                    line['internal_notes'],
+                    None,
+                    line.get('category'),
+                    chosen_quantity,
+                    line.get('comment'),
+                    None,
                     line['line_type'] or 'normal',
                 ),
+            )
+
+            project_line_ids_to_update.append(line['id'])
+
+        # Update project lines to link them to the new parts list
+        if project_line_ids_to_update:
+            update_placeholders = ','.join(['?'] * len(project_line_ids_to_update))
+            _execute_with_cursor(
+                cur,
+                f"""
+                UPDATE project_parts_list_lines
+                SET parts_list_id = ?, status = 'linked', date_modified = CURRENT_TIMESTAMP
+                WHERE id IN ({update_placeholders})
+                """,
+                [parts_list_id, *project_line_ids_to_update],
             )
 
     return jsonify(
@@ -336,6 +528,118 @@ def project_parts_list_create_from_lines(project_id):
         parts_list_id=parts_list_id,
         redirect=url_for('parts_list.view_parts_list', list_id=parts_list_id),
     )
+
+
+@projects_bp.route('/<int:project_id>/project-parts-list/lines/<int:line_id>', methods=['PATCH'])
+def project_parts_list_update_line(project_id, line_id):
+    data = request.get_json(force=True) or {}
+
+    project = get_project_by_id(project_id)
+    if not project:
+        return jsonify(success=False, message='Project not found'), 404
+
+    allowed_fields = {'comment', 'status', 'category'}
+    updates = {}
+    for field in allowed_fields:
+        if field in data:
+            value = data[field]
+            if field == 'status' and value not in ('pending', 'linked', 'no_bid', 'ignore'):
+                return jsonify(success=False, message=f'Invalid status: {value}'), 400
+            updates[field] = value.strip() if isinstance(value, str) else value
+
+    if not updates:
+        return jsonify(success=False, message='No valid fields to update'), 400
+
+    set_clauses = ', '.join([f'{field} = ?' for field in updates.keys()])
+    values = list(updates.values())
+
+    with db_cursor(commit=True) as cur:
+        _execute_with_cursor(
+            cur,
+            f"""
+            UPDATE project_parts_list_lines
+            SET {set_clauses}, date_modified = CURRENT_TIMESTAMP
+            WHERE id = ? AND project_id = ?
+            """,
+            [*values, line_id, project_id],
+        )
+
+    return jsonify(success=True)
+
+
+@projects_bp.route('/<int:project_id>/project-parts-list/lines/bulk-status', methods=['POST'])
+def project_parts_list_bulk_status(project_id):
+    data = request.get_json(force=True) or {}
+    raw_line_ids = data.get('line_ids') or []
+    new_status = data.get('status', '')
+
+    if new_status not in ('pending', 'no_bid', 'ignore'):
+        return jsonify(success=False, message='Invalid status'), 400
+
+    line_ids = []
+    for line_id in raw_line_ids:
+        try:
+            line_ids.append(int(line_id))
+        except (TypeError, ValueError):
+            continue
+
+    if not line_ids:
+        return jsonify(success=False, message='No lines selected'), 400
+
+    project = get_project_by_id(project_id)
+    if not project:
+        return jsonify(success=False, message='Project not found'), 404
+
+    placeholders = ','.join(['?'] * len(line_ids))
+
+    with db_cursor(commit=True) as cur:
+        _execute_with_cursor(
+            cur,
+            f"""
+            UPDATE project_parts_list_lines
+            SET status = ?, date_modified = CURRENT_TIMESTAMP
+            WHERE project_id = ? AND id IN ({placeholders}) AND status != 'linked'
+            """,
+            [new_status, project_id, *line_ids],
+        )
+
+    return jsonify(success=True)
+
+
+@projects_bp.route('/<int:project_id>/project-parts-list/lines/bulk-category', methods=['POST'])
+def project_parts_list_bulk_category(project_id):
+    data = request.get_json(force=True) or {}
+    raw_line_ids = data.get('line_ids') or []
+    new_category = (data.get('category') or '').strip()
+
+    line_ids = []
+    for line_id in raw_line_ids:
+        try:
+            line_ids.append(int(line_id))
+        except (TypeError, ValueError):
+            continue
+
+    if not line_ids:
+        return jsonify(success=False, message='No lines selected'), 400
+
+    project = get_project_by_id(project_id)
+    if not project:
+        return jsonify(success=False, message='Project not found'), 404
+
+    placeholders = ','.join(['?'] * len(line_ids))
+
+    with db_cursor(commit=True) as cur:
+        _execute_with_cursor(
+            cur,
+            f"""
+            UPDATE project_parts_list_lines
+            SET category = ?, date_modified = CURRENT_TIMESTAMP
+            WHERE project_id = ? AND id IN ({placeholders})
+            """,
+            [new_category or None, project_id, *line_ids],
+        )
+
+    return jsonify(success=True)
 
 
 @projects_bp.route('/<int:project_id>/parts-lists/report.csv', methods=['GET'])

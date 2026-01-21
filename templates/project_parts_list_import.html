@@ -1,0 +1,645 @@
+{% extends "base.html" %}
+
+{% block title %}Import Parts - {{ project.name }}{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable@14.1.0/dist/handsontable.full.min.css">
+<style>
+    .import-container {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 200px);
+        min-height: 500px;
+    }
+    .spreadsheet-wrapper {
+        flex: 1;
+        min-height: 0;
+        border: 1px solid #dee2e6;
+        border-radius: 0.375rem;
+        overflow: hidden;
+    }
+    .handsontable {
+        font-size: 13px;
+    }
+    .handsontable td.htInvalid {
+        background-color: #ffebee !important;
+    }
+    .drop-zone {
+        border: 2px dashed #dee2e6;
+        border-radius: 0.5rem;
+        padding: 2rem;
+        text-align: center;
+        transition: all 0.2s;
+        cursor: pointer;
+        background: #fafafa;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+        border-color: #0d6efd;
+        background: #f0f7ff;
+    }
+    .drop-zone.drag-over {
+        transform: scale(1.01);
+    }
+    .column-mapping-row {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #eee;
+    }
+    .column-mapping-row:last-child {
+        border-bottom: none;
+    }
+    .file-column-name {
+        flex: 1;
+        font-weight: 500;
+        font-family: monospace;
+        font-size: 0.9rem;
+    }
+    .mapping-arrow {
+        color: #6c757d;
+    }
+    .mapping-select {
+        flex: 1;
+    }
+    .preview-value {
+        flex: 1;
+        color: #6c757d;
+        font-size: 0.85rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .status-badge {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+    }
+    .toolbar-section {
+        background: #f8f9fa;
+        border-radius: 0.375rem;
+        padding: 0.75rem 1rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4 mb-5">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+            <h4 class="mb-1">Import Parts</h4>
+            <div class="text-muted">Project: {{ project.name }} ({{ project.id }})</div>
+        </div>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-secondary" href="{{ url_for('projects.project_parts_list_overview', project_id=project.id) }}">
+                Back to Parts List
+            </a>
+        </div>
+    </div>
+
+    <!-- File Upload Section -->
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <strong>Upload File</strong>
+            <span class="text-muted small">Supports Excel (.xlsx, .xls) and CSV files</span>
+        </div>
+        <div class="card-body">
+            <div class="drop-zone" id="dropZone">
+                <div class="mb-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="#6c757d" viewBox="0 0 16 16">
+                        <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                        <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z"/>
+                    </svg>
+                </div>
+                <div class="fw-medium mb-1">Drop Excel or CSV file here</div>
+                <div class="text-muted small">or click to browse</div>
+                <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="d-none">
+            </div>
+        </div>
+    </div>
+
+    <!-- Spreadsheet Section -->
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                    <strong>Spreadsheet Editor</strong>
+                    <span class="text-muted small ms-2">Paste directly from Excel or edit cells</span>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <span class="text-muted small" id="rowCount">0 rows</span>
+                    <button class="btn btn-outline-secondary btn-sm" id="clearAllBtn" type="button">Clear All</button>
+                    <button class="btn btn-outline-secondary btn-sm" id="addRowsBtn" type="button">Add 10 Rows</button>
+                </div>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="import-container">
+                <div class="spreadsheet-wrapper" id="spreadsheet"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Bar -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="skipEmptyRows" checked>
+                        <label class="form-check-label" for="skipEmptyRows">Skip empty rows</label>
+                    </div>
+                    <div id="validationStatus" class="text-muted small"></div>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-primary" id="validateBtn" type="button">Validate</button>
+                    <button class="btn btn-primary" id="importBtn" type="button" disabled>
+                        Import <span id="importCount">0</span> Parts
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Column Mapping Modal -->
+<div class="modal fade" id="columnMappingModal" tabindex="-1" aria-labelledby="columnMappingModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="columnMappingModalLabel">Map Columns</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted mb-3">Match your file's columns to the required fields. Only "Customer PN" is required.</p>
+                <div id="columnMappings"></div>
+                <div class="mt-3 p-3 bg-light rounded">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="hasHeaderRow" checked>
+                        <label class="form-check-label" for="hasHeaderRow">First row contains headers (skip it)</label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="applyMappingBtn">Apply Mapping</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/handsontable@14.1.0/dist/handsontable.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+(function() {
+    const projectId = {{ project.id }};
+    const maxUsageYears = {{ max_usage_years or 5 }};
+
+    // Column definitions
+    const baseColumns = [
+        { key: 'customer_part_number', title: 'Customer PN', required: true, width: 150 },
+        { key: 'description', title: 'Description', width: 200 },
+        { key: 'category', title: 'Category', width: 120 },
+        { key: 'comment', title: 'Comment', width: 150 },
+        { key: 'line_type', title: 'Type', width: 100, type: 'dropdown', source: ['normal', 'alternate', 'price_break'] },
+        { key: 'total_quantity', title: 'Total Qty', width: 90, type: 'numeric' }
+    ];
+
+    // Add year columns
+    const yearColumns = [];
+    for (let i = 1; i <= Math.max(maxUsageYears, 5); i++) {
+        yearColumns.push({ key: `year_${i}`, title: `Yr ${i}`, width: 70, type: 'numeric' });
+    }
+
+    const allColumns = [...baseColumns, ...yearColumns];
+
+    // Find column indices for auto-calculation
+    const totalQtyColIndex = allColumns.findIndex(c => c.key === 'total_quantity');
+    const yearColIndices = yearColumns.map(c => allColumns.findIndex(col => col.key === c.key));
+
+    // Initialize Handsontable
+    const container = document.getElementById('spreadsheet');
+    const hot = new Handsontable(container, {
+        data: createEmptyRows(20),
+        colHeaders: allColumns.map(c => {
+            if (c.key === 'total_quantity') return 'Total Qty (auto)';
+            return c.required ? `${c.title} *` : c.title;
+        }),
+        columns: allColumns.map(col => ({
+            data: col.key,
+            type: col.type || 'text',
+            source: col.source,
+            width: col.width,
+            allowInvalid: true
+        })),
+        rowHeaders: true,
+        height: '100%',
+        stretchH: 'all',
+        manualColumnResize: true,
+        manualRowResize: true,
+        contextMenu: true,
+        minSpareRows: 1,
+        licenseKey: 'non-commercial-and-evaluation',
+        afterChange: function(changes, source) {
+            if (source !== 'loadData') {
+                updateRowCount();
+                updateImportButton();
+
+                // Auto-calculate total when year columns change
+                if (changes) {
+                    const rowsToUpdate = new Set();
+                    changes.forEach(([row, prop, oldVal, newVal]) => {
+                        if (prop && prop.startsWith('year_')) {
+                            rowsToUpdate.add(row);
+                        }
+                    });
+
+                    rowsToUpdate.forEach(row => {
+                        const currentTotal = hot.getDataAtCell(row, totalQtyColIndex);
+                        // Only auto-fill if total is empty
+                        if (currentTotal === null || currentTotal === '' || currentTotal === undefined) {
+                            let sum = 0;
+                            yearColIndices.forEach(colIdx => {
+                                const val = hot.getDataAtCell(row, colIdx);
+                                if (val !== null && val !== '' && !isNaN(val)) {
+                                    sum += parseFloat(val);
+                                }
+                            });
+                            if (sum > 0) {
+                                hot.setDataAtCell(row, totalQtyColIndex, sum, 'autoCalc');
+                            }
+                        }
+                    });
+                }
+            }
+        },
+        afterRemoveRow: function() {
+            updateRowCount();
+            updateImportButton();
+        },
+        beforePaste: function(data, coords) {
+            // Auto-expand rows if needed
+            const neededRows = coords[0].startRow + data.length;
+            const currentRows = hot.countRows();
+            if (neededRows > currentRows) {
+                hot.alter('insert_row_below', currentRows - 1, neededRows - currentRows);
+            }
+        },
+        afterPaste: function(data, coords) {
+            // After paste, auto-calculate totals for affected rows
+            setTimeout(() => {
+                const startRow = coords[0].startRow;
+                const endRow = startRow + data.length;
+                for (let row = startRow; row < endRow; row++) {
+                    const currentTotal = hot.getDataAtCell(row, totalQtyColIndex);
+                    if (currentTotal === null || currentTotal === '' || currentTotal === undefined) {
+                        let sum = 0;
+                        yearColIndices.forEach(colIdx => {
+                            const val = hot.getDataAtCell(row, colIdx);
+                            if (val !== null && val !== '' && !isNaN(val)) {
+                                sum += parseFloat(val);
+                            }
+                        });
+                        if (sum > 0) {
+                            hot.setDataAtCell(row, totalQtyColIndex, sum, 'autoCalc');
+                        }
+                    }
+                }
+                updateRowCount();
+                updateImportButton();
+            }, 10);
+        }
+    });
+
+    function createEmptyRows(count) {
+        const rows = [];
+        for (let i = 0; i < count; i++) {
+            const row = {};
+            allColumns.forEach(col => {
+                row[col.key] = col.key === 'line_type' ? 'normal' : '';
+            });
+            rows.push(row);
+        }
+        return rows;
+    }
+
+    function updateRowCount() {
+        const data = hot.getData();
+        const nonEmptyRows = data.filter(row => row.some(cell => cell !== null && cell !== '')).length;
+        document.getElementById('rowCount').textContent = `${nonEmptyRows} rows`;
+    }
+
+    function getValidRows() {
+        const data = hot.getSourceData();
+        const skipEmpty = document.getElementById('skipEmptyRows').checked;
+
+        return data.filter(row => {
+            const pn = (row.customer_part_number || '').toString().trim();
+            if (!pn) {
+                return !skipEmpty && Object.values(row).some(v => v !== null && v !== '' && v !== 'normal');
+            }
+            return true;
+        }).filter(row => {
+            const pn = (row.customer_part_number || '').toString().trim();
+            return pn.length > 0;
+        });
+    }
+
+    function updateImportButton() {
+        const validRows = getValidRows();
+        const importBtn = document.getElementById('importBtn');
+        const importCount = document.getElementById('importCount');
+        importCount.textContent = validRows.length;
+        importBtn.disabled = validRows.length === 0;
+    }
+
+    // File upload handling
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-over');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            processFile(files[0]);
+        }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            processFile(e.target.files[0]);
+        }
+    });
+
+    let pendingFileData = null;
+    let pendingFileHeaders = null;
+
+    function processFile(file) {
+        const reader = new FileReader();
+
+        reader.onload = function(e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
+
+                if (jsonData.length === 0) {
+                    alert('The file appears to be empty.');
+                    return;
+                }
+
+                // Store data and show mapping modal
+                pendingFileData = jsonData;
+                pendingFileHeaders = jsonData[0].map((h, i) => ({
+                    index: i,
+                    name: h ? String(h).trim() : `Column ${i + 1}`,
+                    sample: jsonData.length > 1 ? String(jsonData[1][i] || '').substring(0, 50) : ''
+                }));
+
+                showMappingModal();
+            } catch (err) {
+                alert('Error reading file: ' + err.message);
+            }
+        };
+
+        reader.readAsArrayBuffer(file);
+    }
+
+    function showMappingModal() {
+        const container = document.getElementById('columnMappings');
+        container.innerHTML = '';
+
+        // Try to auto-detect mappings
+        const autoMappings = autoDetectMappings(pendingFileHeaders);
+
+        pendingFileHeaders.forEach((header, idx) => {
+            const row = document.createElement('div');
+            row.className = 'column-mapping-row';
+
+            const select = document.createElement('select');
+            select.className = 'form-select mapping-select';
+            select.dataset.fileIndex = idx;
+
+            select.innerHTML = `
+                <option value="">-- Skip this column --</option>
+                ${allColumns.map(col => `
+                    <option value="${col.key}" ${autoMappings[idx] === col.key ? 'selected' : ''}>
+                        ${col.title}${col.required ? ' *' : ''}
+                    </option>
+                `).join('')}
+            `;
+
+            row.innerHTML = `
+                <div class="file-column-name">${header.name}</div>
+                <div class="mapping-arrow">&rarr;</div>
+            `;
+            row.appendChild(select);
+            row.innerHTML += `<div class="preview-value" title="${header.sample}">${header.sample || '(empty)'}</div>`;
+
+            container.appendChild(row);
+        });
+
+        const modal = new bootstrap.Modal(document.getElementById('columnMappingModal'));
+        modal.show();
+    }
+
+    function autoDetectMappings(headers) {
+        const mappings = {};
+        const patterns = {
+            customer_part_number: /^(customer\s*)?p(art)?\s*(n(o|um(ber)?)?|#)|^pn$|^part$|^mpn$/i,
+            description: /^desc(ription)?$/i,
+            category: /^cat(egory)?$/i,
+            comment: /^comment|^note|^remarks?$/i,
+            line_type: /^type$|^line\s*type$/i,
+            total_quantity: /^total|^qty|^quantity$/i
+        };
+
+        // Year patterns
+        for (let i = 1; i <= 10; i++) {
+            patterns[`year_${i}`] = new RegExp(`^(y(ea)?r?\\s*)?${i}$|^${2024 + i}$|^yr${i}$`, 'i');
+        }
+
+        headers.forEach((header, idx) => {
+            const name = header.name.toLowerCase();
+            for (const [key, pattern] of Object.entries(patterns)) {
+                if (pattern.test(name) && !Object.values(mappings).includes(key)) {
+                    mappings[idx] = key;
+                    break;
+                }
+            }
+        });
+
+        return mappings;
+    }
+
+    document.getElementById('applyMappingBtn').addEventListener('click', function() {
+        const selects = document.querySelectorAll('.mapping-select');
+        const mappings = {};
+
+        selects.forEach(select => {
+            const fileIdx = parseInt(select.dataset.fileIndex, 10);
+            const targetKey = select.value;
+            if (targetKey) {
+                mappings[fileIdx] = targetKey;
+            }
+        });
+
+        // Check if customer_part_number is mapped
+        if (!Object.values(mappings).includes('customer_part_number')) {
+            alert('Please map at least the "Customer PN" column.');
+            return;
+        }
+
+        const hasHeader = document.getElementById('hasHeaderRow').checked;
+        const startRow = hasHeader ? 1 : 0;
+
+        // Convert file data to spreadsheet format
+        const rows = [];
+        for (let i = startRow; i < pendingFileData.length; i++) {
+            const fileRow = pendingFileData[i];
+            const row = {};
+
+            allColumns.forEach(col => {
+                row[col.key] = col.key === 'line_type' ? 'normal' : '';
+            });
+
+            for (const [fileIdx, targetKey] of Object.entries(mappings)) {
+                let value = fileRow[parseInt(fileIdx, 10)];
+                if (value !== undefined && value !== null) {
+                    value = String(value).trim();
+                    if (targetKey === 'line_type' && !['normal', 'alternate', 'price_break'].includes(value)) {
+                        value = 'normal';
+                    }
+                    row[targetKey] = value;
+                }
+            }
+
+            rows.push(row);
+        }
+
+        // Load into spreadsheet
+        hot.loadData(rows.length > 0 ? rows : createEmptyRows(20));
+        updateRowCount();
+        updateImportButton();
+
+        bootstrap.Modal.getInstance(document.getElementById('columnMappingModal')).hide();
+    });
+
+    // Clear all button
+    document.getElementById('clearAllBtn').addEventListener('click', function() {
+        if (confirm('Clear all data?')) {
+            hot.loadData(createEmptyRows(20));
+            updateRowCount();
+            updateImportButton();
+        }
+    });
+
+    // Add rows button
+    document.getElementById('addRowsBtn').addEventListener('click', function() {
+        hot.alter('insert_row_below', hot.countRows() - 1, 10);
+    });
+
+    // Validate button
+    document.getElementById('validateBtn').addEventListener('click', function() {
+        const data = hot.getSourceData();
+        let errors = 0;
+        let valid = 0;
+
+        data.forEach((row, rowIndex) => {
+            const pn = (row.customer_part_number || '').toString().trim();
+            if (pn) {
+                valid++;
+            } else if (Object.values(row).some(v => v !== null && v !== '' && v !== 'normal')) {
+                errors++;
+                hot.setCellMeta(rowIndex, 0, 'className', 'htInvalid');
+            }
+        });
+
+        hot.render();
+
+        const status = document.getElementById('validationStatus');
+        if (errors > 0) {
+            status.innerHTML = `<span class="text-danger">${errors} row(s) missing Customer PN</span>`;
+        } else {
+            status.innerHTML = `<span class="text-success">${valid} valid row(s)</span>`;
+        }
+
+        updateImportButton();
+    });
+
+    // Import button
+    document.getElementById('importBtn').addEventListener('click', async function() {
+        const validRows = getValidRows();
+
+        if (validRows.length === 0) {
+            alert('No valid rows to import.');
+            return;
+        }
+
+        const importBtn = this;
+        importBtn.disabled = true;
+        importBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Importing...';
+
+        try {
+            const lines = validRows.map(row => {
+                const usageByYear = [];
+                for (let i = 1; i <= 10; i++) {
+                    const val = row[`year_${i}`];
+                    if (val !== undefined && val !== '') {
+                        usageByYear.push(val);
+                    }
+                }
+
+                return {
+                    customer_part_number: (row.customer_part_number || '').toString().trim(),
+                    description: (row.description || '').toString().trim(),
+                    category: (row.category || '').toString().trim(),
+                    comment: (row.comment || '').toString().trim(),
+                    line_type: row.line_type || 'normal',
+                    total_quantity: row.total_quantity || '',
+                    usage_by_year: usageByYear
+                };
+            });
+
+            const response = await fetch(`/projects/${projectId}/project-parts-list/lines`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lines })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Import failed');
+            }
+
+            // Success - redirect back to parts list
+            window.location.href = `/projects/${projectId}/parts-lists/overview`;
+
+        } catch (err) {
+            alert('Import error: ' + err.message);
+            importBtn.disabled = false;
+            importBtn.innerHTML = `Import <span id="importCount">${validRows.length}</span> Parts`;
+        }
+    });
+
+    // Initial state
+    updateRowCount();
+    updateImportButton();
+})();
+</script>
+{% endblock %}

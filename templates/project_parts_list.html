@@ -2,6 +2,56 @@
 
 {% block title %}Project Parts List{% endblock %}
 
+{% block head %}
+<style>
+    .status-badge {
+        font-size: 0.75rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 0.25rem;
+    }
+    .status-pending { background: #fff3cd; color: #856404; }
+    .status-linked { background: #d4edda; color: #155724; }
+    .status-no_bid { background: #f8d7da; color: #721c24; }
+    .status-ignore { background: #e2e3e5; color: #383d41; }
+    .editable-cell {
+        cursor: pointer;
+        position: relative;
+    }
+    .editable-cell:hover {
+        background: #f8f9fa;
+    }
+    .editable-cell input,
+    .editable-cell textarea {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        height: 100%;
+        border: 2px solid #0d6efd;
+        padding: 0.25rem;
+        font-size: inherit;
+        z-index: 10;
+    }
+    .filter-btn.active {
+        font-weight: 600;
+    }
+    .table-row-no_bid td,
+    .table-row-ignore td {
+        opacity: 0.6;
+        text-decoration: line-through;
+    }
+    .table-row-no_bid td:first-child,
+    .table-row-ignore td:first-child,
+    .table-row-no_bid td .status-badge,
+    .table-row-ignore td .status-badge {
+        text-decoration: none;
+        opacity: 1;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid mt-4 mb-5">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
@@ -20,31 +70,110 @@
     </div>
 
     <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <strong>Add Project Parts</strong>
+            <a href="{{ url_for('projects.project_parts_list_import', project_id=project.id) }}" class="btn btn-primary btn-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16" style="vertical-align: -2px;">
+                    <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                    <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z"/>
+                </svg>
+                Spreadsheet Import
+            </a>
+        </div>
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label for="quickCustomerPn" class="form-label">Customer PN</label>
+                    <input type="text" id="quickCustomerPn" class="form-control" placeholder="Part number">
+                </div>
+                <div class="col-md-3">
+                    <label for="quickDescription" class="form-label">Description</label>
+                    <input type="text" id="quickDescription" class="form-control" placeholder="Description">
+                </div>
+                <div class="col-md-2">
+                    <label for="quickCategory" class="form-label">Category</label>
+                    <input type="text" id="quickCategory" class="form-control" placeholder="Category">
+                </div>
+                <div class="col-md-2">
+                    <label for="quickComment" class="form-label">Comment</label>
+                    <input type="text" id="quickComment" class="form-control" placeholder="Comment">
+                </div>
+                <div class="col-md-2">
+                    <label for="quickType" class="form-label">Type</label>
+                    <select id="quickType" class="form-select">
+                        <option value="normal" selected>Normal</option>
+                        <option value="alternate">Alternate</option>
+                        <option value="price_break">Price break</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="quickTotal" class="form-label">Total</label>
+                    <input type="number" id="quickTotal" class="form-control" min="0" step="1" placeholder="Total">
+                </div>
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 mt-3 align-items-end" id="quickUsageInputs"></div>
+
+            <div class="d-flex gap-2 mt-3 flex-wrap">
+                <button class="btn btn-primary btn-sm" id="quickAddBtn" type="button">Add line</button>
+                <button class="btn btn-outline-secondary btn-sm" id="addUsageYearBtn" type="button">Add year</button>
+            </div>
+
+            <hr class="my-4">
+
+            <label for="bulkPartsInput" class="form-label">Bulk add</label>
+            <textarea id="bulkPartsInput" class="form-control" rows="4" placeholder="PN, Description, Category, Comment, Type, Total, Yr1, Yr2... (one line per part)"></textarea>
+            <div class="text-muted small mt-2">
+                Paste CSV or tab-separated rows. Expected columns: customer part number, description, category, comment,
+                type (normal/alternate/price_break), total, then year usage values.
+            </div>
+            <div class="d-flex gap-2 mt-2">
+                <button class="btn btn-outline-primary btn-sm" id="bulkAddBtn" type="button">Add lines</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-3">
         <div class="card-body">
             <div class="row g-3 align-items-end">
                 <div class="col-md-4">
                     <label for="projectPartsSearch" class="form-label">Search</label>
-                    <input type="text" id="projectPartsSearch" class="form-control" placeholder="Filter by part number, description, comment...">
+                    <input type="text" id="projectPartsSearch" class="form-control" placeholder="Filter by part number, description, category, comment...">
                 </div>
-                <div class="col-md-3">
-                    <label for="projectPartsListFilter" class="form-label">Parts List</label>
-                    <select id="projectPartsListFilter" class="form-select">
-                        <option value="">All lists</option>
-                        {% for pl in parts_lists %}
-                            <option value="{{ pl.id }}">PL #{{ pl.id }} - {{ pl.name }}</option>
-                        {% endfor %}
-                    </select>
+                <div class="col-md-4">
+                    <label class="form-label">Filter by status</label>
+                    <div class="btn-group btn-group-sm w-100" role="group">
+                        <button type="button" class="btn btn-outline-secondary filter-btn active" data-filter="all">All</button>
+                        <button type="button" class="btn btn-outline-warning filter-btn" data-filter="pending">Pending</button>
+                        <button type="button" class="btn btn-outline-success filter-btn" data-filter="linked">Linked</button>
+                        <button type="button" class="btn btn-outline-danger filter-btn" data-filter="no_bid">No Bid</button>
+                        <button type="button" class="btn btn-outline-secondary filter-btn" data-filter="ignore">Ignore</button>
+                    </div>
                 </div>
-                <div class="col-md-5 d-flex flex-wrap gap-2 align-items-end">
+                <div class="col-md-4 d-flex flex-wrap gap-2 align-items-end justify-content-end">
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="selectAllProjectParts">
                         <label class="form-check-label" for="selectAllProjectParts">Select visible</label>
                     </div>
                     <span class="text-muted" id="selectedPartsCount">0 selected</span>
-                    <button class="btn btn-primary btn-sm" id="createPartsListBtn" type="button" disabled data-bs-toggle="modal" data-bs-target="#createPartsListModal">
-                        Create linked parts list
-                    </button>
                 </div>
+            </div>
+            <div class="d-flex gap-2 mt-3 flex-wrap">
+                <button class="btn btn-primary btn-sm" id="createPartsListBtn" type="button" disabled data-bs-toggle="modal" data-bs-target="#createPartsListModal">
+                    Create linked parts list
+                </button>
+                <button class="btn btn-outline-info btn-sm" id="setCategoryBtn" type="button" disabled data-bs-toggle="modal" data-bs-target="#setCategoryModal">
+                    Set Category
+                </button>
+                <button class="btn btn-outline-danger btn-sm" id="markNoBidBtn" type="button" disabled>
+                    Mark No Bid
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" id="markIgnoreBtn" type="button" disabled>
+                    Mark Ignore
+                </button>
+                <button class="btn btn-outline-warning btn-sm" id="markPendingBtn" type="button" disabled>
+                    Reset to Pending
+                </button>
             </div>
         </div>
     </div>
@@ -55,43 +184,62 @@
                 <table class="table table-sm table-striped mb-0">
                     <thead class="table-light">
                         <tr>
-                            <th scope="col"></th>
-                            <th scope="col">PL</th>
-                            <th scope="col">List Name</th>
+                            <th scope="col" style="width: 30px;"></th>
                             <th scope="col">Line #</th>
                             <th scope="col">Customer PN</th>
-                            <th scope="col">Base PN</th>
                             <th scope="col">Description</th>
-                            <th scope="col">Qty</th>
-                            <th scope="col">Comment</th>
+                            <th scope="col">Category</th>
+                            <th scope="col" style="min-width: 150px;">Comment</th>
                             <th scope="col">Type</th>
+                            <th scope="col">Total</th>
+                            {% for year_index in range(1, max_usage_years + 1) %}
+                                <th scope="col">Yr {{ year_index }}</th>
+                            {% endfor %}
+                            <th scope="col">Status</th>
+                            <th scope="col">Linked List</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% if rows %}
                             {% for row in rows %}
+                                {% set total_value = row.total_quantity if row.total_quantity is not none else row.usage_total %}
+                                {% set row_status = row.status or 'pending' %}
                                 <tr data-line-row
-                                    data-list-id="{{ row.parts_list_id }}"
-                                    data-search="{{ (row.customer_part_number or '')|lower }} {{ (row.base_part_number or '')|lower }} {{ (row.description or '')|lower }} {{ (row.customer_notes or '')|lower }} {{ (row.parts_list_name or '')|lower }}">
+                                    data-line-id="{{ row.project_line_id }}"
+                                    data-status="{{ row_status }}"
+                                    class="table-row-{{ row_status }}"
+                                    data-search="{{ (row.customer_part_number or '')|lower }} {{ (row.description or '')|lower }} {{ (row.category or '')|lower }} {{ (row.comment or '')|lower }} {{ (row.line_type or '')|lower }}">
                                     <td>
-                                        <input class="form-check-input project-line-checkbox" type="checkbox" value="{{ row.parts_list_line_id }}">
+                                        <input class="form-check-input project-line-checkbox" type="checkbox" value="{{ row.project_line_id }}">
                                     </td>
-                                    <td>
-                                        <a href="{{ url_for('parts_list.view_parts_list', list_id=row.parts_list_id) }}">{{ row.parts_list_id }}</a>
-                                    </td>
-                                    <td>{{ row.parts_list_name }}</td>
                                     <td>{{ row.line_number }}</td>
                                     <td>{{ row.customer_part_number }}</td>
-                                    <td>{{ row.base_part_number }}</td>
                                     <td>{{ row.description }}</td>
-                                    <td>{{ row.quantity }}</td>
-                                    <td>{{ row.customer_notes }}</td>
+                                    <td>{{ row.category }}</td>
+                                    <td class="editable-cell" data-field="comment" data-line-id="{{ row.project_line_id }}">{{ row.comment or '' }}</td>
                                     <td>{{ row.line_type }}</td>
+                                    <td>{{ total_value }}</td>
+                                    {% for year_index in range(1, max_usage_years + 1) %}
+                                        {% set usage_value = row.usage_by_year[year_index - 1] if row.usage_by_year and row.usage_by_year|length >= year_index else '' %}
+                                        <td>{{ usage_value }}</td>
+                                    {% endfor %}
+                                    <td>
+                                        <span class="status-badge status-{{ row_status }}">{{ row_status|replace('_', ' ')|title }}</span>
+                                    </td>
+                                    <td>
+                                        {% if row.parts_list_id %}
+                                            <a href="{{ url_for('parts_list.view_parts_list', list_id=row.parts_list_id) }}" class="text-decoration-none">
+                                                {{ row.parts_list_name or ('List #' ~ row.parts_list_id) }}
+                                            </a>
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
                                 </tr>
                             {% endfor %}
                         {% else %}
                             <tr>
-                                <td colspan="10" class="text-center text-muted py-4">No parts list lines linked to this project.</td>
+                                <td colspan="{{ 10 + max_usage_years }}" class="text-center text-muted py-4">No project parts added yet.</td>
                             </tr>
                         {% endif %}
                     </tbody>
@@ -109,13 +257,55 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <label for="newPartsListName" class="form-label">Parts list name</label>
-                <input type="text" id="newPartsListName" class="form-control" placeholder="Enter a list name">
-                <div class="text-muted small mt-2">Selected lines will be copied into a new parts list linked to this project.</div>
+                <div class="mb-3">
+                    <label for="newPartsListName" class="form-label">Parts list name</label>
+                    <input type="text" id="newPartsListName" class="form-control" placeholder="Enter a list name">
+                </div>
+                <div class="mb-3">
+                    <label for="quantitySource" class="form-label">Quantity source</label>
+                    <select id="quantitySource" class="form-select">
+                        <option value="total" selected>Total column (fallback to sum of years)</option>
+                        <option value="sum">Sum of all years</option>
+                        {% for year_index in range(1, max_usage_years + 1) %}
+                            <option value="year_{{ year_index }}">Year {{ year_index }} only</option>
+                        {% endfor %}
+                    </select>
+                    <div class="text-muted small mt-1">Choose which quantity value to use for the parts list lines.</div>
+                </div>
+                <div class="text-muted small">Selected lines will be copied into a new parts list linked to this project.</div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-primary" id="confirmCreatePartsList">Create</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="setCategoryModal" tabindex="-1" aria-labelledby="setCategoryModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="setCategoryModalLabel">Set Category</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="categoryInput" class="form-label">Category</label>
+                    <input type="text" id="categoryInput" class="form-control" list="categoryList" placeholder="Enter or select a category">
+                    <datalist id="categoryList">
+                        {% set categories = rows|map(attribute='category')|select|unique|sort %}
+                        {% for cat in categories %}
+                            <option value="{{ cat }}">
+                        {% endfor %}
+                    </datalist>
+                    <div class="text-muted small mt-1">Type a new category or select from existing ones used in this project.</div>
+                </div>
+                <div class="text-muted small" id="setCategoryCount">0 lines will be updated.</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirmSetCategory">Set Category</button>
             </div>
         </div>
     </div>
@@ -125,30 +315,56 @@
 {% block scripts %}
 <script>
     const searchInput = document.getElementById('projectPartsSearch');
-    const listFilter = document.getElementById('projectPartsListFilter');
     const selectAll = document.getElementById('selectAllProjectParts');
     const lineCheckboxes = Array.from(document.querySelectorAll('.project-line-checkbox'));
     const rows = Array.from(document.querySelectorAll('[data-line-row]'));
     const selectedCount = document.getElementById('selectedPartsCount');
     const createBtn = document.getElementById('createPartsListBtn');
+    const markNoBidBtn = document.getElementById('markNoBidBtn');
+    const markIgnoreBtn = document.getElementById('markIgnoreBtn');
+    const markPendingBtn = document.getElementById('markPendingBtn');
+    const setCategoryBtn = document.getElementById('setCategoryBtn');
     const confirmCreateBtn = document.getElementById('confirmCreatePartsList');
+    const confirmSetCategoryBtn = document.getElementById('confirmSetCategory');
     const listNameInput = document.getElementById('newPartsListName');
+    const quantitySourceSelect = document.getElementById('quantitySource');
+    const categoryInput = document.getElementById('categoryInput');
+    const setCategoryCountEl = document.getElementById('setCategoryCount');
     const projectId = {{ project.id }};
+
+    const quickCustomerPn = document.getElementById('quickCustomerPn');
+    const quickDescription = document.getElementById('quickDescription');
+    const quickCategory = document.getElementById('quickCategory');
+    const quickComment = document.getElementById('quickComment');
+    const quickType = document.getElementById('quickType');
+    const quickTotal = document.getElementById('quickTotal');
+    const quickUsageInputs = document.getElementById('quickUsageInputs');
+    const quickAddBtn = document.getElementById('quickAddBtn');
+    const addUsageYearBtn = document.getElementById('addUsageYearBtn');
+    const bulkPartsInput = document.getElementById('bulkPartsInput');
+    const bulkAddBtn = document.getElementById('bulkAddBtn');
+
+    let usageYearCount = Number.parseInt('{{ max_usage_years }}', 10) || 1;
+    let currentStatusFilter = 'all';
 
     function updateSelectedCount() {
         const selected = lineCheckboxes.filter((checkbox) => checkbox.checked);
         const count = selected.length;
         selectedCount.textContent = `${count} selected`;
         createBtn.disabled = count === 0;
+        markNoBidBtn.disabled = count === 0;
+        markIgnoreBtn.disabled = count === 0;
+        markPendingBtn.disabled = count === 0;
+        setCategoryBtn.disabled = count === 0;
+        setCategoryCountEl.textContent = `${count} line${count !== 1 ? 's' : ''} will be updated.`;
     }
 
     function applyFilters() {
         const query = (searchInput.value || '').trim().toLowerCase();
-        const listValue = listFilter.value;
         rows.forEach((row) => {
-            const matchesList = !listValue || row.dataset.listId === listValue;
             const matchesQuery = !query || row.dataset.search.includes(query);
-            row.classList.toggle('d-none', !(matchesList && matchesQuery));
+            const matchesStatus = currentStatusFilter === 'all' || row.dataset.status === currentStatusFilter;
+            row.classList.toggle('d-none', !matchesQuery || !matchesStatus);
         });
         const visibleCheckboxes = rows
             .filter((row) => !row.classList.contains('d-none'))
@@ -160,12 +376,198 @@
         }
     }
 
-    if (searchInput) {
-        searchInput.addEventListener('input', applyFilters);
+    // Status filter buttons
+    document.querySelectorAll('.filter-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.filter-btn').forEach((b) => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentStatusFilter = btn.dataset.filter;
+            applyFilters();
+        });
+    });
+
+    function renderUsageInputs() {
+        if (!quickUsageInputs) {
+            return;
+        }
+        quickUsageInputs.innerHTML = '';
+        for (let i = 1; i <= usageYearCount; i += 1) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'd-flex flex-column';
+            wrapper.innerHTML = `
+                <label class="form-label mb-1">Yr ${i}</label>
+                <input type="number" class="form-control form-control-sm usage-input" min="0" step="1" data-year-index="${i}">
+            `;
+            quickUsageInputs.appendChild(wrapper);
+        }
     }
 
-    if (listFilter) {
-        listFilter.addEventListener('change', applyFilters);
+    function getQuickUsageValues() {
+        const inputs = Array.from(document.querySelectorAll('.usage-input'));
+        return inputs.map((input) => input.value);
+    }
+
+    async function addProjectLines(lines) {
+        const response = await fetch(`/projects/${projectId}/project-parts-list/lines`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ lines })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || 'Unable to add project parts.');
+        }
+    }
+
+    async function updateLineField(lineId, field, value) {
+        const response = await fetch(`/projects/${projectId}/project-parts-list/lines/${lineId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [field]: value })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || 'Update failed');
+        }
+    }
+
+    async function bulkUpdateStatus(lineIds, status) {
+        const response = await fetch(`/projects/${projectId}/project-parts-list/lines/bulk-status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ line_ids: lineIds, status })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || 'Update failed');
+        }
+    }
+
+    async function bulkUpdateCategory(lineIds, category) {
+        const response = await fetch(`/projects/${projectId}/project-parts-list/lines/bulk-category`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ line_ids: lineIds, category })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || 'Update failed');
+        }
+    }
+
+    // Editable comment cells
+    document.querySelectorAll('.editable-cell').forEach((cell) => {
+        cell.addEventListener('dblclick', function() {
+            if (cell.querySelector('input, textarea')) return;
+
+            const lineId = cell.dataset.lineId;
+            const field = cell.dataset.field;
+            const currentValue = cell.textContent.trim();
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = currentValue;
+            input.className = 'form-control form-control-sm';
+
+            const originalContent = cell.innerHTML;
+            cell.innerHTML = '';
+            cell.appendChild(input);
+            input.focus();
+            input.select();
+
+            const save = async () => {
+                const newValue = input.value.trim();
+                cell.innerHTML = newValue || '';
+                if (newValue !== currentValue) {
+                    try {
+                        await updateLineField(lineId, field, newValue);
+                    } catch (err) {
+                        alert('Failed to save: ' + err.message);
+                        cell.innerHTML = originalContent;
+                    }
+                }
+            };
+
+            input.addEventListener('blur', save);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    input.blur();
+                } else if (e.key === 'Escape') {
+                    cell.innerHTML = originalContent;
+                }
+            });
+        });
+    });
+
+    // Bulk status buttons
+    markNoBidBtn.addEventListener('click', async () => {
+        const ids = lineCheckboxes.filter(c => c.checked).map(c => parseInt(c.value, 10));
+        if (!ids.length) return;
+        markNoBidBtn.disabled = true;
+        try {
+            await bulkUpdateStatus(ids, 'no_bid');
+            window.location.reload();
+        } catch (err) {
+            alert(err.message);
+            markNoBidBtn.disabled = false;
+        }
+    });
+
+    markIgnoreBtn.addEventListener('click', async () => {
+        const ids = lineCheckboxes.filter(c => c.checked).map(c => parseInt(c.value, 10));
+        if (!ids.length) return;
+        markIgnoreBtn.disabled = true;
+        try {
+            await bulkUpdateStatus(ids, 'ignore');
+            window.location.reload();
+        } catch (err) {
+            alert(err.message);
+            markIgnoreBtn.disabled = false;
+        }
+    });
+
+    markPendingBtn.addEventListener('click', async () => {
+        const ids = lineCheckboxes.filter(c => c.checked).map(c => parseInt(c.value, 10));
+        if (!ids.length) return;
+        markPendingBtn.disabled = true;
+        try {
+            await bulkUpdateStatus(ids, 'pending');
+            window.location.reload();
+        } catch (err) {
+            alert(err.message);
+            markPendingBtn.disabled = false;
+        }
+    });
+
+    // Set category modal
+    confirmSetCategoryBtn.addEventListener('click', async () => {
+        const ids = lineCheckboxes.filter(c => c.checked).map(c => parseInt(c.value, 10));
+        if (!ids.length) return;
+
+        const category = (categoryInput.value || '').trim();
+        confirmSetCategoryBtn.disabled = true;
+        confirmSetCategoryBtn.textContent = 'Updating...';
+
+        try {
+            await bulkUpdateCategory(ids, category);
+            window.location.reload();
+        } catch (err) {
+            alert(err.message);
+            confirmSetCategoryBtn.disabled = false;
+            confirmSetCategoryBtn.textContent = 'Set Category';
+        }
+    });
+
+    // Clear category input when modal opens
+    document.getElementById('setCategoryModal').addEventListener('show.bs.modal', () => {
+        categoryInput.value = '';
+    });
+
+    if (searchInput) {
+        searchInput.addEventListener('input', applyFilters);
     }
 
     if (selectAll) {
@@ -221,7 +623,8 @@
                     },
                     body: JSON.stringify({
                         name: listName,
-                        line_ids: selectedIds
+                        line_ids: selectedIds,
+                        quantity_source: quantitySourceSelect.value
                     })
                 });
 
@@ -244,6 +647,100 @@
         });
     }
 
+    if (quickAddBtn) {
+        quickAddBtn.addEventListener('click', async () => {
+            const customerPn = (quickCustomerPn.value || '').trim();
+            if (!customerPn) {
+                alert('Customer part number is required.');
+                return;
+            }
+            const line = {
+                customer_part_number: customerPn,
+                description: (quickDescription.value || '').trim(),
+                category: (quickCategory.value || '').trim(),
+                comment: (quickComment.value || '').trim(),
+                line_type: (quickType.value || 'normal').trim(),
+                total_quantity: (quickTotal.value || '').trim(),
+                usage_by_year: getQuickUsageValues()
+            };
+
+            quickAddBtn.disabled = true;
+            try {
+                await addProjectLines([line]);
+                window.location.reload();
+            } catch (error) {
+                alert(error.message || 'Unable to add line.');
+            } finally {
+                quickAddBtn.disabled = false;
+            }
+        });
+    }
+
+    if (addUsageYearBtn) {
+        addUsageYearBtn.addEventListener('click', () => {
+            usageYearCount += 1;
+            renderUsageInputs();
+        });
+    }
+
+    if (bulkAddBtn) {
+        bulkAddBtn.addEventListener('click', async () => {
+            const raw = (bulkPartsInput.value || '').trim();
+            if (!raw) {
+                alert('Paste at least one row.');
+                return;
+            }
+
+            const parsedLines = raw
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line) => {
+                    const parts = line.includes('\t') ? line.split('\t') : line.split(',');
+                    return parts.map((value) => value.trim());
+                })
+                .filter((parts) => parts.length > 0 && parts[0]);
+
+            if (!parsedLines.length) {
+                alert('No valid rows found.');
+                return;
+            }
+
+            const lines = parsedLines.map((parts) => {
+                const [
+                    customerPartNumber,
+                    description,
+                    category,
+                    comment,
+                    lineType,
+                    totalQuantity,
+                    ...usageByYear
+                ] = parts;
+
+                return {
+                    customer_part_number: customerPartNumber,
+                    description,
+                    category,
+                    comment,
+                    line_type: lineType || 'normal',
+                    total_quantity: totalQuantity,
+                    usage_by_year: usageByYear
+                };
+            });
+
+            bulkAddBtn.disabled = true;
+            try {
+                await addProjectLines(lines);
+                window.location.reload();
+            } catch (error) {
+                alert(error.message || 'Unable to add lines.');
+            } finally {
+                bulkAddBtn.disabled = false;
+            }
+        });
+    }
+
+    renderUsageInputs();
     updateSelectedCount();
     applyFilters();
 </script>

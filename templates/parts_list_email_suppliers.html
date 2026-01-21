@@ -288,6 +288,9 @@
                 <div>
                     <div class="supplier-name">
                         {{ supplier.supplier_name }}
+                        <a class="ms-2 small text-decoration-none" href="{{ url_for('suppliers.edit_supplier', supplier_id=supplier.supplier_id) }}" aria-label="Edit supplier">
+                            <i class="bi bi-box-arrow-up-right"></i>
+                        </a>
                         {% if supplier.warning %}
                             <span class="supplier-warning">⚠ {{ supplier.warning }}</span>
                         {% endif %}

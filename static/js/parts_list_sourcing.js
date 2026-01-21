@@ -264,65 +264,94 @@ document.addEventListener('DOMContentLoaded', function() {
         (window.LINE_DATA || []).map(line => [String(line.id), line])
     );
 
-    const massAddSuggestedBtn = document.getElementById('mass-add-suggested-btn');
-    if (massAddSuggestedBtn) {
-        massAddSuggestedBtn.addEventListener('click', function() {
-            const visibleRows = Array.from(document.querySelectorAll('.sourcing-table tbody tr.main-row'))
-                .filter(row => row.style.display !== 'none');
+    function showBulkSupplierSelectModal(lineIds) {
+        const modalHTML = `
+            <div class="modal fade" id="bulkSupplierSelectModal" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Apply Suggested Supplier</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label class="form-label">Search Supplier:</label>
+                                <input type="text" class="form-control" id="bulk-supplier-search" placeholder="Type to search...">
+                            </div>
+                            <div id="bulk-supplier-list" class="list-group" style="max-height: 400px; overflow-y: auto;">
+                                <div class="text-center py-3">
+                                    <div class="spinner-border spinner-border-sm" role="status"></div>
+                                    <span class="ms-2">Loading suppliers...</span>
+                                </div>
+                            </div>
+                            <div class="text-muted small mt-3">
+                                Applies to visible lines only.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
 
-            const entries = [];
-            visibleRows.forEach(row => {
-                const lineId = row.dataset.lineId;
-                const lineData = lineDataById.get(String(lineId));
+        const existingModal = document.getElementById('bulkSupplierSelectModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
 
-                if (!lineId || !lineData) {
-                    return;
+        document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+        const modal = new bootstrap.Modal(document.getElementById('bulkSupplierSelectModal'));
+        modal.show();
+
+        let allSuppliers = [];
+
+        fetch('/parts_list/suppliers/all')
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) {
+                    throw new Error(data.error || 'Failed to load suppliers');
                 }
 
-                const existingSuggested = new Set(
-                    (lineData.suggested_suppliers || [])
-                        .map(supplier => String(supplier.supplier_id))
-                );
-                const addedForLine = new Set();
+                allSuppliers = data.suppliers;
+                displayBulkSuppliers(allSuppliers);
 
-                const sourceGroups = [
-                    { source: 'vq', items: lineData.vq_data || [] },
-                    { source: 'po', items: lineData.po_data || [] },
-                    { source: 'excess', items: lineData.excess_data || [] },
-                    { source: 'ils', items: lineData.ils_data || [] }
-                ];
-
-                sourceGroups.forEach(group => {
-                    group.items.forEach(item => {
-                        if (!item || !item.supplier_id) {
-                            return;
-                        }
-                        const supplierKey = String(item.supplier_id);
-                        if (existingSuggested.has(supplierKey) || addedForLine.has(supplierKey)) {
-                            return;
-                        }
-                        addedForLine.add(supplierKey);
-                        entries.push({
-                            line_id: parseInt(lineId),
-                            supplier_id: parseInt(item.supplier_id),
-                            source_type: group.source
-                        });
-                    });
+                const searchInput = document.getElementById('bulk-supplier-search');
+                searchInput.addEventListener('input', function() {
+                    const searchTerm = this.value.toLowerCase();
+                    const filtered = allSuppliers.filter(s =>
+                        s.name && s.name.toLowerCase().includes(searchTerm)
+                    );
+                    displayBulkSuppliers(filtered);
                 });
+            })
+            .catch(error => {
+                document.getElementById('bulk-supplier-list').innerHTML = `
+                    <div class="alert alert-danger">Error loading suppliers: ${error.message}</div>
+                `;
             });
 
+        document.getElementById('bulk-supplier-list').addEventListener('click', function(e) {
+            const supplierItem = e.target.closest('.bulk-supplier-list-item');
+            if (!supplierItem) return;
+
+            const supplierId = supplierItem.dataset.supplierId;
+            const supplierName = supplierItem.dataset.supplierName;
+            const entries = buildBulkSuggestedEntries(lineIds, supplierId);
+
             if (entries.length === 0) {
-                showToast('No new suppliers found to add', 'info');
+                showToast(`"${supplierName}" is already suggested for all visible lines`, 'info');
+                modal.hide();
                 return;
             }
 
-            if (!confirm(`Add ${entries.length} suppliers to suggested lists?`)) {
+            if (!confirm(`Apply "${supplierName}" to ${entries.length} lines?`)) {
                 return;
             }
 
-            const originalHtml = this.innerHTML;
-            this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Adding...';
-            this.disabled = true;
+            const confirmBtn = supplierItem;
+            const originalHtml = confirmBtn.innerHTML;
+            confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Applying...';
+            confirmBtn.disabled = true;
 
             fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/suggested-suppliers/bulk-add`, {
                 method: 'POST',
@@ -336,20 +365,95 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
 
                 if (data.added_count > 0) {
-                    showToast(`Added ${data.added_count} suppliers to suggested lists`, 'success');
+                    showToast(`Added "${supplierName}" to ${data.added_count} lines`, 'success');
                     setTimeout(() => window.location.reload(), 800);
                     return;
                 }
 
-                showToast('All suppliers were already suggested', 'info');
-                this.innerHTML = originalHtml;
-                this.disabled = false;
+                showToast(`"${supplierName}" was already suggested`, 'info');
+                confirmBtn.innerHTML = originalHtml;
+                confirmBtn.disabled = false;
             })
             .catch(error => {
                 showToast(error.message || 'Failed to add suppliers', 'error');
-                this.innerHTML = originalHtml;
-                this.disabled = false;
+                confirmBtn.innerHTML = originalHtml;
+                confirmBtn.disabled = false;
             });
+        });
+
+        document.getElementById('bulkSupplierSelectModal').addEventListener('hidden.bs.modal', function() {
+            this.remove();
+        });
+    }
+
+    function displayBulkSuppliers(suppliers) {
+        const listContainer = document.getElementById('bulk-supplier-list');
+
+        if (suppliers.length === 0) {
+            listContainer.innerHTML = '<div class="text-muted text-center py-3">No suppliers found</div>';
+            return;
+        }
+
+        let html = '';
+        suppliers.forEach(supplier => {
+            const supplierName = supplier.name || 'Unnamed Supplier';
+            html += `
+                <button type="button"
+        class="list-group-item list-group-item-action bulk-supplier-list-item"
+        data-supplier-id="${supplier.id}"
+        data-supplier-name="${supplierName}">
+    <div class="d-flex justify-content-between align-items-center">
+        <strong>${supplierName}</strong>
+        ${supplier.currency_code ? `<span class="badge bg-secondary">${supplier.currency_code}</span>` : ''}
+    </div>
+</button>
+            `;
+        });
+
+        listContainer.innerHTML = html;
+    }
+
+    function buildBulkSuggestedEntries(lineIds, supplierId) {
+        const entries = [];
+        const supplierKey = String(supplierId);
+
+        lineIds.forEach(lineId => {
+            const lineData = lineDataById.get(String(lineId));
+            const existingSuggested = new Set(
+                (lineData && lineData.suggested_suppliers ? lineData.suggested_suppliers : [])
+                    .map(supplier => String(supplier.supplier_id))
+            );
+
+            if (existingSuggested.has(supplierKey)) {
+                return;
+            }
+
+            entries.push({
+                line_id: parseInt(lineId, 10),
+                supplier_id: parseInt(supplierId, 10),
+                source_type: 'mass-selected'
+            });
+        });
+
+        return entries;
+    }
+
+    const massAddSuggestedBtn = document.getElementById('mass-add-suggested-btn');
+    if (massAddSuggestedBtn) {
+        massAddSuggestedBtn.addEventListener('click', function() {
+            const visibleRows = Array.from(document.querySelectorAll('.sourcing-table tbody tr.main-row'))
+                .filter(row => row.style.display !== 'none');
+
+            const lineIds = visibleRows
+                .map(row => row.dataset.lineId)
+                .filter(lineId => lineId);
+
+            if (lineIds.length === 0) {
+                showToast('No visible lines to update', 'info');
+                return;
+            }
+
+            showBulkSupplierSelectModal(lineIds);
         });
     }
 

@@ -1635,8 +1635,9 @@ CREATE TABLE parts_list_lines (
       line_number NUMERIC(10,2) NOT NULL,
     customer_part_number TEXT NOT NULL,  -- Raw part number as customer provided it
 
-    base_part_number TEXT,  -- Normalized part number for lookups
-    description TEXT,
+      base_part_number TEXT,  -- Normalized part number for lookups
+      description TEXT,
+      category TEXT,
 
       quantity INTEGER NOT NULL DEFAULT 1,
 
@@ -1678,7 +1679,34 @@ CREATE TABLE parts_list_lines (
       FOREIGN KEY (parent_line_id) REFERENCES parts_list_lines(id) ON DELETE CASCADE,
     FOREIGN KEY (chosen_supplier_id) REFERENCES suppliers(id),
 
-    FOREIGN KEY (chosen_currency_id) REFERENCES currencies(id)
+      FOREIGN KEY (chosen_currency_id) REFERENCES currencies(id)
+
+  );
+
+CREATE TABLE project_parts_list_lines (
+
+    id SERIAL PRIMARY KEY,
+
+    project_id INTEGER NOT NULL,
+
+    line_number NUMERIC(10,2) NOT NULL,
+    customer_part_number TEXT NOT NULL,
+    description TEXT,
+    category TEXT,
+    comment TEXT,
+    line_type TEXT NOT NULL DEFAULT 'normal',
+    total_quantity INTEGER,
+    usage_by_year TEXT,
+    status TEXT DEFAULT 'pending',
+    parts_list_id INTEGER REFERENCES parts_lists(id) ON DELETE SET NULL,
+
+    DATE_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    DATE_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+
+    CONSTRAINT project_parts_list_lines_status_check
+        CHECK (status IN ('pending', 'linked', 'no_bid', 'ignore'))
 
 );
 
