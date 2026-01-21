@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block title %}Project Parts List{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4 mb-5">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+            <h4 class="mb-1">Project Parts List</h4>
+            <div class="text-muted">Project: {{ project.name }} ({{ project.id }})</div>
+        </div>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-secondary" href="{{ url_for('projects.edit_project', project_id=project.id) }}">
+                Back to Project
+            </a>
+            <a class="btn btn-outline-primary" href="{{ url_for('projects.project_parts_list_report', project_id=project.id) }}">
+                Full Report
+            </a>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="projectPartsSearch" class="form-label">Search</label>
+                    <input type="text" id="projectPartsSearch" class="form-control" placeholder="Filter by part number, description, comment...">
+                </div>
+                <div class="col-md-3">
+                    <label for="projectPartsListFilter" class="form-label">Parts List</label>
+                    <select id="projectPartsListFilter" class="form-select">
+                        <option value="">All lists</option>
+                        {% for pl in parts_lists %}
+                            <option value="{{ pl.id }}">PL #{{ pl.id }} - {{ pl.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-5 d-flex flex-wrap gap-2 align-items-end">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="selectAllProjectParts">
+                        <label class="form-check-label" for="selectAllProjectParts">Select visible</label>
+                    </div>
+                    <span class="text-muted" id="selectedPartsCount">0 selected</span>
+                    <button class="btn btn-primary btn-sm" id="createPartsListBtn" type="button" disabled data-bs-toggle="modal" data-bs-target="#createPartsListModal">
+                        Create linked parts list
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-striped mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th scope="col"></th>
+                            <th scope="col">PL</th>
+                            <th scope="col">List Name</th>
+                            <th scope="col">Line #</th>
+                            <th scope="col">Customer PN</th>
+                            <th scope="col">Base PN</th>
+                            <th scope="col">Description</th>
+                            <th scope="col">Qty</th>
+                            <th scope="col">Comment</th>
+                            <th scope="col">Type</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if rows %}
+                            {% for row in rows %}
+                                <tr data-line-row
+                                    data-list-id="{{ row.parts_list_id }}"
+                                    data-search="{{ (row.customer_part_number or '')|lower }} {{ (row.base_part_number or '')|lower }} {{ (row.description or '')|lower }} {{ (row.customer_notes or '')|lower }} {{ (row.parts_list_name or '')|lower }}">
+                                    <td>
+                                        <input class="form-check-input project-line-checkbox" type="checkbox" value="{{ row.parts_list_line_id }}">
+                                    </td>
+                                    <td>
+                                        <a href="{{ url_for('parts_list.view_parts_list', list_id=row.parts_list_id) }}">{{ row.parts_list_id }}</a>
+                                    </td>
+                                    <td>{{ row.parts_list_name }}</td>
+                                    <td>{{ row.line_number }}</td>
+                                    <td>{{ row.customer_part_number }}</td>
+                                    <td>{{ row.base_part_number }}</td>
+                                    <td>{{ row.description }}</td>
+                                    <td>{{ row.quantity }}</td>
+                                    <td>{{ row.customer_notes }}</td>
+                                    <td>{{ row.line_type }}</td>
+                                </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="10" class="text-center text-muted py-4">No parts list lines linked to this project.</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="createPartsListModal" tabindex="-1" aria-labelledby="createPartsListModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="createPartsListModalLabel">Create Linked Parts List</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <label for="newPartsListName" class="form-label">Parts list name</label>
+                <input type="text" id="newPartsListName" class="form-control" placeholder="Enter a list name">
+                <div class="text-muted small mt-2">Selected lines will be copied into a new parts list linked to this project.</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirmCreatePartsList">Create</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const searchInput = document.getElementById('projectPartsSearch');
+    const listFilter = document.getElementById('projectPartsListFilter');
+    const selectAll = document.getElementById('selectAllProjectParts');
+    const lineCheckboxes = Array.from(document.querySelectorAll('.project-line-checkbox'));
+    const rows = Array.from(document.querySelectorAll('[data-line-row]'));
+    const selectedCount = document.getElementById('selectedPartsCount');
+    const createBtn = document.getElementById('createPartsListBtn');
+    const confirmCreateBtn = document.getElementById('confirmCreatePartsList');
+    const listNameInput = document.getElementById('newPartsListName');
+    const projectId = {{ project.id }};
+
+    function updateSelectedCount() {
+        const selected = lineCheckboxes.filter((checkbox) => checkbox.checked);
+        const count = selected.length;
+        selectedCount.textContent = `${count} selected`;
+        createBtn.disabled = count === 0;
+    }
+
+    function applyFilters() {
+        const query = (searchInput.value || '').trim().toLowerCase();
+        const listValue = listFilter.value;
+        rows.forEach((row) => {
+            const matchesList = !listValue || row.dataset.listId === listValue;
+            const matchesQuery = !query || row.dataset.search.includes(query);
+            row.classList.toggle('d-none', !(matchesList && matchesQuery));
+        });
+        const visibleCheckboxes = rows
+            .filter((row) => !row.classList.contains('d-none'))
+            .map((row) => row.querySelector('.project-line-checkbox'))
+            .filter(Boolean);
+        if (selectAll) {
+            selectAll.checked = visibleCheckboxes.length > 0 && visibleCheckboxes.every((checkbox) => checkbox.checked);
+            selectAll.indeterminate = visibleCheckboxes.length > 0 && visibleCheckboxes.some((checkbox) => checkbox.checked) && !selectAll.checked;
+        }
+    }
+
+    if (searchInput) {
+        searchInput.addEventListener('input', applyFilters);
+    }
+
+    if (listFilter) {
+        listFilter.addEventListener('change', applyFilters);
+    }
+
+    if (selectAll) {
+        selectAll.addEventListener('change', () => {
+            const shouldSelect = selectAll.checked;
+            rows.forEach((row) => {
+                if (row.classList.contains('d-none')) {
+                    return;
+                }
+                const checkbox = row.querySelector('.project-line-checkbox');
+                if (checkbox) {
+                    checkbox.checked = shouldSelect;
+                }
+            });
+            updateSelectedCount();
+            applyFilters();
+        });
+    }
+
+    lineCheckboxes.forEach((checkbox) => {
+        checkbox.addEventListener('change', () => {
+            updateSelectedCount();
+            applyFilters();
+        });
+    });
+
+    if (confirmCreateBtn) {
+        confirmCreateBtn.addEventListener('click', async () => {
+            const listName = (listNameInput.value || '').trim();
+            if (!listName) {
+                alert('Please enter a list name.');
+                return;
+            }
+
+            const selectedIds = lineCheckboxes
+                .filter((checkbox) => checkbox.checked)
+                .map((checkbox) => Number.parseInt(checkbox.value, 10))
+                .filter(Number.isFinite);
+
+            if (selectedIds.length === 0) {
+                alert('Please select at least one line.');
+                return;
+            }
+
+            confirmCreateBtn.disabled = true;
+            confirmCreateBtn.textContent = 'Creating...';
+
+            try {
+                const response = await fetch(`/projects/${projectId}/parts-lists/create-from-lines`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        name: listName,
+                        line_ids: selectedIds
+                    })
+                });
+
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || 'Unable to create parts list');
+                }
+
+                if (data.redirect) {
+                    window.location.href = data.redirect;
+                } else {
+                    window.location.reload();
+                }
+            } catch (error) {
+                alert(error.message || 'Unable to create parts list');
+            } finally {
+                confirmCreateBtn.disabled = false;
+                confirmCreateBtn.textContent = 'Create';
+            }
+        });
+    }
+
+    updateSelectedCount();
+    applyFilters();
+</script>
+{% endblock %}

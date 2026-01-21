@@ -1636,6 +1636,7 @@ CREATE TABLE parts_list_lines (
     customer_part_number TEXT NOT NULL,  -- Raw part number as customer provided it
 
     base_part_number TEXT,  -- Normalized part number for lookups
+    description TEXT,
 
       quantity INTEGER NOT NULL DEFAULT 1,
 
