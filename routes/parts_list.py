@@ -4543,6 +4543,123 @@ def add_suggested_supplier(list_id, line_id):
         return jsonify(success=False, message=str(e)), 500
 
 
+@parts_list_bp.route('/parts-lists/<int:list_id>/suggested-suppliers/bulk-add', methods=['POST'])
+def bulk_add_suggested_suppliers(list_id):
+    """
+    Bulk add suggested suppliers to multiple lines.
+    Body JSON: { entries: [{ line_id, supplier_id, source_type }] }
+    """
+    try:
+        data = request.get_json() or {}
+        entries = data.get('entries') or []
+
+        if not isinstance(entries, list) or not entries:
+            return jsonify(success=False, message='Entries required'), 400
+
+        sanitized = []
+        line_ids = []
+        for entry in entries:
+            line_id = entry.get('line_id')
+            supplier_id = entry.get('supplier_id')
+            source_type = entry.get('source_type') or 'bulk'
+
+            if not line_id or not supplier_id:
+                continue
+
+            sanitized.append({
+                'line_id': int(line_id),
+                'supplier_id': int(supplier_id),
+                'source_type': source_type,
+            })
+            line_ids.append(int(line_id))
+
+        if not sanitized:
+            return jsonify(success=False, message='No valid entries'), 400
+
+        unique_line_ids = sorted(set(line_ids))
+        line_placeholders = ','.join(['?'] * len(unique_line_ids))
+
+        inserted = []
+        existing_count = 0
+        skipped_count = 0
+
+        with db_cursor(commit=True) as cur:
+            valid_lines = _execute_with_cursor(
+                cur,
+                f"""
+                SELECT id
+                FROM parts_list_lines
+                WHERE parts_list_id = ?
+                  AND id IN ({line_placeholders})
+                """,
+                (list_id, *unique_line_ids),
+            ).fetchall()
+
+            valid_line_ids = {row['id'] for row in valid_lines}
+
+            for entry in sanitized:
+                if entry['line_id'] not in valid_line_ids:
+                    skipped_count += 1
+                    continue
+
+                row = _execute_with_cursor(
+                    cur,
+                    """
+                    INSERT INTO parts_list_line_suggested_suppliers
+                        (parts_list_line_id, supplier_id, source_type, date_added)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(parts_list_line_id, supplier_id) DO NOTHING
+                    RETURNING id
+                    """,
+                    (entry['line_id'], entry['supplier_id'], entry['source_type']),
+                ).fetchone()
+
+                if row:
+                    inserted.append({
+                        'line_id': entry['line_id'],
+                        'supplier_id': entry['supplier_id'],
+                        'source_type': entry['source_type'],
+                        'suggested_id': row['id'],
+                    })
+                else:
+                    existing_count += 1
+
+            supplier_name_map = {}
+            if inserted:
+                supplier_ids = sorted({item['supplier_id'] for item in inserted})
+                supplier_placeholders = ','.join(['?'] * len(supplier_ids))
+                supplier_rows = _execute_with_cursor(
+                    cur,
+                    f"""
+                    SELECT id, name
+                    FROM suppliers
+                    WHERE id IN ({supplier_placeholders})
+                    """,
+                    supplier_ids,
+                ).fetchall()
+                supplier_name_map = {row['id']: row['name'] for row in supplier_rows}
+
+        response_items = [
+            {
+                **item,
+                'supplier_name': supplier_name_map.get(item['supplier_id']),
+            }
+            for item in inserted
+        ]
+
+        return jsonify(
+            success=True,
+            added_count=len(inserted),
+            existing_count=existing_count,
+            skipped_count=skipped_count,
+            items=response_items,
+        )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
 @parts_list_bp.route('/parts-lists/<int:list_id>/lines/<int:line_id>/suggested-suppliers', methods=['GET'])
 def get_suggested_suppliers(list_id, line_id):
     """
