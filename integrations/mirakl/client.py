@@ -84,6 +84,11 @@ class MiraklClient:
         data = {'import_mode': import_mode}
         return self.request('POST', '/api/offers/imports', data=data, files=files)
 
+    def import_products(self, csv_bytes: bytes, *, import_mode: str = 'NORMAL') -> Dict[str, Any]:
+        files = {'file': ('products.csv', csv_bytes, 'text/csv')}
+        data = {'import_mode': import_mode}
+        return self.request('POST', '/api/products/imports', data=data, files=files)
+
     def get_offers_import(self, import_id: str) -> Dict[str, Any]:
         return self.request('GET', f'/api/offers/imports/{import_id}')
 

@@ -3,11 +3,180 @@ Export parts to Airbus Marketplace format
 """
 import logging
 from datetime import datetime
+import csv
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 import io
 
 logger = logging.getLogger(__name__)
+
+
+AIRBUS_MARKETPLACE_HEADERS = [
+    "mkpCategory",
+    "manufacturerBrand",
+    "code",
+    "description [en]",
+    "ean",
+    "name",
+    "alternativePartRefList",
+    "description [fr]",
+    "description [de]",
+    "description [es]",
+    "description [pt]",
+    "productSummary [fr]",
+    "productSummary [en]",
+    "productSummary [de]",
+    "productSummary [es]",
+    "productSummary [pt]",
+    "productPresentation [fr]",
+    "productPresentation [en]",
+    "productPresentation [de]",
+    "productPresentation [es]",
+    "productPresentation [pt]",
+    "natoCode",
+    "productUnit",
+    "packageContent",
+    "packageContentUnit",
+    "thirdLevel",
+    "dangerous",
+    "cm_code",
+    "MSDS",
+    "TDS",
+    "OEM",
+    "color",
+    "size_usi",
+    "weight_usi",
+    "size_us",
+    "weight_us",
+    "image2",
+    "image3",
+    "image4",
+    "eccn",
+    "serialized",
+    "logCard",
+    "easaf1",
+    "sku",
+    "product-id",
+    "product-id-type",
+    "description",
+    "internal-description",
+    "price",
+    "price-additional-info",
+    "quantity",
+    "min-quantity-alert",
+    "state",
+    "available-start-date",
+    "available-end-date",
+    "logistic-class",
+    "favorite-rank",
+    "discount-price",
+    "discount-start-date",
+    "discount-end-date",
+    "allow-quote-requests",
+    "leadtime-to-ship",
+    "min-order-quantity",
+    "package-quantity",
+    "update-delete",
+    "commercial-on-collection",
+    "plt",
+    "plt-unit",
+    "shelflife",
+    "shelflife-unit",
+    "warranty",
+    "warranty-unit",
+    "up-sell",
+    "cross-sell",
+    "standards",
+]
+
+
+def _build_airbus_row(part):
+    part_number = part.get('part_number', '')
+    mkp_category = part.get('mkp_category', '')
+    description = part.get('description', '')
+    manufacturer = part.get('manufacturer', '')
+    quantity = part.get('quantity', '')
+    price = part.get('price', '')
+    condition = part.get('condition', 'New')
+    lead_time_days = part.get('lead_time_days', '')
+
+    return [
+        mkp_category,  # mkpCategory
+        manufacturer,  # manufacturerBrand
+        part_number,  # code
+        description,  # description [en]
+        "",  # ean
+        part_number,  # name
+        "",  # alternativePartRefList
+        "",  # description [fr]
+        "",  # description [de]
+        "",  # description [es]
+        "",  # description [pt]
+        "",  # productSummary [fr]
+        description,  # productSummary [en]
+        "",  # productSummary [de]
+        "",  # productSummary [es]
+        "",  # productSummary [pt]
+        "",  # productPresentation [fr]
+        description,  # productPresentation [en]
+        "",  # productPresentation [de]
+        "",  # productPresentation [es]
+        "",  # productPresentation [pt]
+        "",  # natoCode
+        "EA",  # productUnit
+        1,  # packageContent
+        "EA",  # packageContentUnit
+        "EA",  # thirdLevel
+        "false",  # dangerous
+        "",  # cm_code
+        "",  # MSDS
+        "",  # TDS
+        "",  # OEM
+        "",  # color
+        "",  # size_usi
+        "",  # weight_usi
+        "",  # size_us
+        "",  # weight_us
+        "",  # image2
+        "",  # image3
+        "",  # image4
+        "",  # eccn
+        "false",  # serialized
+        "false",  # logCard
+        "false",  # easaf1
+        part_number,  # sku
+        part_number,  # product-id
+        "MPN",  # product-id-type
+        description,  # description
+        description,  # internal-description
+        price if price else "",  # price
+        "",  # price-additional-info
+        quantity if quantity else "",  # quantity
+        "",  # min-quantity-alert
+        condition,  # state
+        "",  # available-start-date
+        "",  # available-end-date
+        "",  # logistic-class
+        "",  # favorite-rank
+        "",  # discount-price
+        "",  # discount-start-date
+        "",  # discount-end-date
+        "true",  # allow-quote-requests
+        lead_time_days if lead_time_days else "",  # leadtime-to-ship
+        "",  # min-order-quantity
+        "",  # package-quantity
+        "",  # update-delete
+        "ON_COLLECTION",  # commercial-on-collection
+        14,  # plt
+        "DAY",  # plt-unit
+        "",  # shelflife
+        "",  # shelflife-unit
+        "",  # warranty
+        "",  # warranty-unit
+        "",  # up-sell
+        "",  # cross-sell
+        "",  # standards
+    ]
 
 
 def export_parts_to_airbus_marketplace(parts_data):
@@ -38,84 +207,7 @@ def export_parts_to_airbus_marketplace(parts_data):
         ws.title = "Data"
 
         # Define headers matching Airbus format
-        headers = [
-            "Category",  # Column A
-            "Internal part reference",  # Column B
-            "Description [en]",  # Column C
-            "Manufacturer",  # Column D
-            "EAN or GTIN code",  # Column E
-            "Manufacturer Part Number",  # Column F
-            "Alternative Part References",  # Column G
-            "Description [fr]",  # Column H
-            "Description [de]",  # Column I
-            "Description [es]",  # Column J
-            "Description [pt]",  # Column K
-            "Product Summary [fr]",  # Column L
-            "Product Summary [en]",  # Column M
-            "Product Summary [de]",  # Column N
-            "Product Summary [es]",  # Column O
-            "Product Summary [pt]",  # Column P
-            "Product Presentation [fr]",  # Column Q
-            "Product Presentation [en]",  # Column R
-            "Product Presentation [de]",  # Column S
-            "Product Presentation [es]",  # Column T
-            "Product Presentation [pt]",  # Column U
-            "NATO Code",  # Column V
-            "Product Unit",  # Column W
-            "Package Content Quantity",  # Column X
-            "Package Content Unit",  # Column Y
-            "Third Level",  # Column Z
-            "Hazardous",  # Column AA
-            "Consumable Material Code (CMXXXX)",  # Column AB
-            "MSDS",  # Column AC
-            "TDS",  # Column AD
-            "OEM code",  # Column AE
-            "Color",  # Column AF
-            "Size USI (cm)",  # Column AG
-            "Weight USI (kg)",  # Column AH
-            "Size US (ft)",  # Column AI
-            "Weight US (lbs)",  # Column AJ
-            "Main media",  # Column AK
-            "Additional media",  # Column AL
-            "Additional media",  # Column AM
-            "Export Control Classification Number (ECCN)",  # Column AN
-            "Serialized",  # Column AO
-            "Log Card",  # Column AP
-            "EASA Form 1",  # Column AQ
-            "Internal Unit",  # Column AR
-            "Offer SKU",  # Column AS
-            "Product ID",  # Column AT
-            "Product ID Type",  # Column AU
-            "Offer Description",  # Column AV
-            "Offer Internal Description",  # Column AW
-            "Offer Price",  # Column AX
-            "Offer Price Additional Info",  # Column AY
-            "Offer Quantity",  # Column AZ
-            "Minimum Quantity Alert",  # Column BA
-            "Offer State",  # Column BB
-            "Availability Start Date",  # Column BC
-            "Availability End Date",  # Column BD
-            "Logistic Class",  # Column BE
-            "Favorite Rank",  # Column BF
-            "Discount Price",  # Column BG
-            "Discount Start Date",  # Column BH
-            "Discount End Date",  # Column BI
-            "Quote Enabled",  # Column BJ
-            "Lead Time to Ship (in days)",  # Column BK
-            "Min Order Quantity",  # Column BL
-            "Order quantity increment",  # Column BM
-            "Update/Delete",  # Column BN
-            "On collection or On demand ",  # Column BO
-            "Procurement Lead Time",  # Column BP
-            "Procurement Lead Time Unit",  # Column BQ
-            "Shelf Life",  # Column BR
-            "Shelf Life Unit",  # Column BS
-            "Warranty",  # Column BT
-            "Warranty Unit",  # Column BU
-            "Up Selling",  # Column BV
-            "Cross Selling",  # Column BW
-            "Standards",  # Column BX
-        ]
+        headers = AIRBUS_MARKETPLACE_HEADERS
 
         # Write headers
         ws.append(headers)
@@ -127,96 +219,7 @@ def export_parts_to_airbus_marketplace(parts_data):
 
         # Process each part
         for part in parts_data:
-            part_number = part.get('part_number', '')
-            mkp_category = part.get('mkp_category', '')
-            description = part.get('description', '')
-            manufacturer = part.get('manufacturer', '')
-            quantity = part.get('quantity', '')
-            price = part.get('price', '')
-            condition = part.get('condition', 'New')
-            lead_time_days = part.get('lead_time_days', '')
-
-            # Build row matching the header structure
-            row = [
-                mkp_category,  # Category
-                part_number,  # Internal part reference
-                description,  # Description [en]
-                manufacturer,  # Manufacturer
-                "",  # EAN or GTIN code
-                part_number,  # Manufacturer Part Number
-                "",  # Alternative Part References
-                "",  # Description [fr]
-                "",  # Description [de]
-                "",  # Description [es]
-                "",  # Description [pt]
-                "",  # Product Summary [fr]
-                description,  # Product Summary [en]
-                "",  # Product Summary [de]
-                "",  # Product Summary [es]
-                "",  # Product Summary [pt]
-                "",  # Product Presentation [fr]
-                description,  # Product Presentation [en]
-                "",  # Product Presentation [de]
-                "",  # Product Presentation [es]
-                "",  # Product Presentation [pt]
-                "",  # NATO Code
-                "EA",  # Product Unit
-                1,  # Package Content Quantity
-                "EA",  # Package Content Unit
-                "EA",  # Third Level
-                "false",  # Hazardous
-                "",  # Consumable Material Code
-                "",  # MSDS
-                "",  # TDS
-                "",  # OEM code
-                "",  # Color
-                "",  # Size USI (cm)
-                "",  # Weight USI (kg)
-                "",  # Size US (ft)
-                "",  # Weight US (lbs)
-                "",  # Main media
-                "",  # Additional media
-                "",  # Additional media
-                "",  # ECCN
-                "false",  # Serialized
-                "false",  # Log Card
-                "false",  # EASA Form 1
-                "",  # Internal Unit
-                part_number,  # Offer SKU
-                part_number,  # Product ID
-                "MPN",  # Product ID Type
-                description,  # Offer Description
-                description,  # Offer Internal Description
-                price if price else "",  # Offer Price
-                "",  # Offer Price Additional Info
-                quantity if quantity else "",  # Offer Quantity
-                "",  # Minimum Quantity Alert
-                condition,  # Offer State
-                "",  # Availability Start Date
-                "",  # Availability End Date
-                "",  # Logistic Class
-                "",  # Favorite Rank
-                "",  # Discount Price
-                "",  # Discount Start Date
-                "",  # Discount End Date
-                "true",  # Quote Enabled
-                lead_time_days if lead_time_days else "",  # Lead Time to Ship
-                "",  # Min Order Quantity
-                "",  # Order quantity increment
-                "",  # Update/Delete
-                "ON_COLLECTION",  # On collection or On demand
-                14,  # Procurement Lead Time
-                "DAY",  # Procurement Lead Time Unit
-                "",  # Shelf Life
-                "",  # Shelf Life Unit
-                "",  # Warranty
-                "",  # Warranty Unit
-                "",  # Up Selling
-                "",  # Cross Selling
-                "",  # Standards
-            ]
-
-            ws.append(row)
+            ws.append(_build_airbus_row(part))
 
         # Save to BytesIO
         output = io.BytesIO()
@@ -228,4 +231,26 @@ def export_parts_to_airbus_marketplace(parts_data):
 
     except Exception as e:
         logger.exception(f"Error exporting to Airbus Marketplace format: {e}")
+        raise
+
+
+def export_parts_to_airbus_marketplace_csv(parts_data):
+    """
+    Export parts to Airbus Marketplace CSV format.
+    """
+    try:
+        logger.info(f"Exporting {len(parts_data)} parts to Airbus Marketplace CSV format")
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(AIRBUS_MARKETPLACE_HEADERS)
+        for part in parts_data:
+            writer.writerow(_build_airbus_row(part))
+
+        payload = io.BytesIO(output.getvalue().encode('utf-8'))
+        payload.seek(0)
+        logger.info("Airbus Marketplace CSV export completed successfully")
+        return payload
+    except Exception as e:
+        logger.exception(f"Error exporting to Airbus Marketplace CSV format: {e}")
         raise

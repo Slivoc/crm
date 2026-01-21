@@ -4,7 +4,9 @@ Airbus Marketplace routes
 
 from flask import Blueprint, jsonify, request, send_file, render_template
 import calendar
+import csv
 from datetime import datetime, date
+import io
 import logging
 import os
 import time
@@ -16,7 +18,7 @@ from airbus_marketplace_helper import (
     suggest_categories_batch,
     get_available_categories
 )
-from airbus_marketplace_export import export_parts_to_airbus_marketplace
+from airbus_marketplace_export import export_parts_to_airbus_marketplace_csv
 from models import get_db
 from routes.portal_api import _analyze_quote_internal, get_portal_setting
 from integrations.mirakl.client import MiraklClient, MiraklError
@@ -58,6 +60,15 @@ def _get_mirakl_client():
     return MiraklClient(base_url, api_key, shop_id=shop_id), None
 
 
+def _mask_api_key(value):
+    if not value:
+        return ''
+    text = str(value)
+    if len(text) <= 8:
+        return '*' * len(text)
+    return f"{text[:4]}...{text[-4:]}"
+
+
 def _upsert_portal_setting(cursor, key, value):
     cursor.execute(
         "UPDATE portal_settings SET setting_value = ?, date_modified = CURRENT_TIMESTAMP WHERE setting_key = ?",
@@ -93,6 +104,85 @@ def _extract_json_object(raw_content):
         return None
     return raw_content[start:end + 1]
 
+
+def _coerce_int(value, *, default=0):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(round(value))
+    text = str(value).strip()
+    if not text:
+        return default
+    try:
+        return int(round(float(text.replace(',', '.'))))
+    except ValueError:
+        return default
+
+
+def _coerce_price(value):
+    if value is None:
+        return ''
+    if isinstance(value, bool):
+        return ''
+    if isinstance(value, (int, float)):
+        return round(float(value), 2)
+    text = str(value).strip()
+    if not text:
+        return ''
+    try:
+        return round(float(text.replace(',', '.')), 2)
+    except ValueError:
+        return ''
+
+
+def _dedupe_csv_headers(csv_bytes):
+    text = csv_bytes.decode('utf-8-sig', errors='replace')
+    if not text:
+        return csv_bytes
+
+    newline_index = text.find('\n')
+    if newline_index == -1:
+        header_line = text
+        remainder = ''
+        line_ending = '\n'
+    else:
+        header_line = text[:newline_index].rstrip('\r')
+        remainder = text[newline_index + 1:]
+        line_ending = '\n'
+
+    if '\t' in header_line:
+        delimiter = '\t'
+    elif ',' in header_line:
+        delimiter = ','
+    elif ';' in header_line:
+        delimiter = ';'
+    else:
+        return csv_bytes
+
+    header = next(csv.reader([header_line], delimiter=delimiter))
+    seen = {}
+    updated_header = []
+    changed = False
+    for name in header:
+        normalized = " ".join(str(name).split())
+        count = seen.get(normalized, 0) + 1
+        seen[normalized] = count
+        if count > 1:
+            updated_header.append(f"{normalized} {count}")
+            changed = True
+        else:
+            updated_header.append(normalized)
+
+    if not changed:
+        return csv_bytes
+
+    updated_line = delimiter.join(updated_header)
+    rebuilt = f"{updated_line}{line_ending}{remainder}"
+    return rebuilt.encode('utf-8')
 
 def _normalize_prefixes(prefixes):
     cleaned = []
@@ -160,6 +250,26 @@ def export_page():
         mirakl_base_url=mirakl_base_url,
         mirakl_shop_id=mirakl_shop_id,
         mirakl_api_key_set=bool(mirakl_api_key),
+    )
+
+
+@marketplace_bp.route('/mirakl', methods=['GET'])
+def mirakl_connection_page():
+    """Render the Mirakl connection page."""
+    portal_base_url = get_portal_setting('mirakl_base_url')
+    portal_shop_id = get_portal_setting('mirakl_shop_id')
+    portal_api_key = get_portal_setting('mirakl_api_key')
+    env_base_url = os.getenv('MIRAKL_BASE_URL')
+    env_shop_id = os.getenv('MIRAKL_SHOP_ID')
+    env_api_key = os.getenv('MIRAKL_API_KEY')
+    display_base_url = portal_base_url or env_base_url
+    display_shop_id = portal_shop_id or env_shop_id
+    return render_template(
+        'marketplace_mirakl.html',
+        mirakl_base_url=display_base_url,
+        mirakl_shop_id=display_shop_id,
+        mirakl_api_key_set=bool(portal_api_key or env_api_key),
+        mirakl_env_configured=bool(env_base_url or env_shop_id or env_api_key),
     )
 
 
@@ -568,14 +678,18 @@ def get_parts_for_export():
         category_filter = data.get('category_filter', 'all')
         pricing_only = data.get('pricing_only', False)
         part_number_search = data.get('part_number_search', '').strip()
+        max_results = _coerce_int(data.get('max_results'), default=0)
+        if max_results < 0:
+            max_results = 0
 
         logger.info(
             "Marketplace export parts request: stock_filter=%s category_filter=%s "
-            "pricing_only=%s part_number_search=%s",
+            "pricing_only=%s part_number_search=%s max_results=%s",
             stock_filter,
             category_filter,
             pricing_only,
             part_number_search or "<none>",
+            max_results or "<none>",
         )
 
         customer_id = _get_marketplace_customer_id()
@@ -730,6 +844,9 @@ def get_parts_for_export():
             params.append(f"%{part_number_search}%")
 
         query += " ORDER BY pn.part_number"
+        if max_results:
+            query += " LIMIT ?"
+            params.append(max_results)
 
         cursor.execute(query, params)
         rows = cursor.fetchall()
@@ -851,7 +968,7 @@ def export_to_marketplace():
         ]
         estimates = _get_portal_estimates(parts_payload, customer_id)
 
-        default_lead_days = int(get_portal_setting('default_lead_time_days', 7))
+        default_lead_days = _coerce_int(get_portal_setting('default_lead_time_days', 7), default=7)
 
         # Calculate prices based on portal estimates
         parts_data = []
@@ -863,11 +980,13 @@ def export_to_marketplace():
             stock_qty = estimate.get('stock_quantity') if estimate else None
 
             quantity = default_quantity
-            if in_stock and stock_qty:
-                quantity = stock_qty
+            stock_qty_value = _coerce_int(stock_qty, default=0)
+            if in_stock and stock_qty_value:
+                quantity = stock_qty_value
 
             if lead_time is None:
                 lead_time = 0 if in_stock else default_lead_days
+            lead_time_value = _coerce_int(lead_time, default=default_lead_days)
 
             parts_data.append({
                 'base_part_number': row['base_part_number'],
@@ -876,21 +995,21 @@ def export_to_marketplace():
                 'description': '',
                 'manufacturer': '',
                 'quantity': quantity,
-                'price': round(price, 2) if price is not None else '',
+                'price': _coerce_price(price),
                 'condition': 'New',
-                'lead_time_days': lead_time,
+                'lead_time_days': lead_time_value,
             })
 
-        # Generate Excel file
-        excel_file = export_parts_to_airbus_marketplace(parts_data)
+        # Generate CSV file
+        csv_file = export_parts_to_airbus_marketplace_csv(parts_data)
 
         # Generate filename with timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"AH_Marketplace_Upload_{timestamp}.xlsx"
+        filename = f"AH_Marketplace_Upload_{timestamp}.csv"
 
         return send_file(
-            excel_file,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            csv_file,
+            mimetype='text/csv',
             as_attachment=True,
             download_name=filename
         )
@@ -1018,15 +1137,36 @@ def auto_categorize_parts():
 @marketplace_bp.route('/mirakl/health', methods=['GET'])
 def mirakl_health():
     client, error = _get_mirakl_client()
+    env_base_url = os.getenv('MIRAKL_BASE_URL')
+    env_shop_id = os.getenv('MIRAKL_SHOP_ID')
+    env_api_key = os.getenv('MIRAKL_API_KEY')
+    portal_base_url = get_portal_setting('mirakl_base_url')
+    portal_shop_id = get_portal_setting('mirakl_shop_id')
+    portal_api_key = get_portal_setting('mirakl_api_key')
+    base_url = env_base_url or portal_base_url
+    shop_id = env_shop_id or portal_shop_id
+    api_key = env_api_key or portal_api_key
+    diagnostics = {
+        'base_url': base_url,
+        'shop_id': shop_id,
+        'api_key_masked': _mask_api_key(api_key),
+        'api_key_length': len(api_key) if api_key else 0,
+        'sources': {
+            'base_url': 'env' if env_base_url else ('portal' if portal_base_url else None),
+            'shop_id': 'env' if env_shop_id else ('portal' if portal_shop_id else None),
+            'api_key': 'env' if env_api_key else ('portal' if portal_api_key else None),
+        },
+        'headers': ['Authorization'] + (['X-Mirakl-Shop-Id'] if shop_id else []),
+    }
     if error:
-        return jsonify({'success': False, 'error': error}), 400
+        return jsonify({'success': False, 'error': error, 'diagnostics': diagnostics}), 400
 
     try:
         data = client.get_account()
-        return jsonify({'success': True, 'account': data}), 200
+        return jsonify({'success': True, 'account': data, 'diagnostics': diagnostics}), 200
     except MiraklError as exc:
         logger.exception("Mirakl health check failed")
-        return jsonify({'success': False, 'error': str(exc)}), 502
+        return jsonify({'success': False, 'error': str(exc), 'diagnostics': diagnostics}), 502
 
 
 @marketplace_bp.route('/mirakl/offers/import', methods=['POST'])
@@ -1052,6 +1192,61 @@ def mirakl_import_offers():
         return jsonify({'success': True, 'result': result}), 200
     except MiraklError as exc:
         logger.exception("Mirakl offer import failed")
+        return jsonify({'success': False, 'error': str(exc)}), 502
+
+
+@marketplace_bp.route('/mirakl/offers/import-file', methods=['POST'])
+def mirakl_import_offers_file():
+    client, error = _get_mirakl_client()
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+
+    file = request.files.get('file')
+    import_mode = (request.form.get('import_mode') or 'NORMAL').strip() or 'NORMAL'
+
+    if not file or not file.filename:
+        return jsonify({'success': False, 'error': 'CSV file is required'}), 400
+
+    if not file.filename.lower().endswith('.csv'):
+        return jsonify({'success': False, 'error': 'Only .csv files are supported'}), 400
+
+    csv_bytes = file.read()
+    if not csv_bytes:
+        return jsonify({'success': False, 'error': 'CSV file is empty'}), 400
+    csv_bytes = _dedupe_csv_headers(csv_bytes)
+
+    try:
+        result = client.import_offers(csv_bytes, import_mode=import_mode)
+        return jsonify({'success': True, 'result': result}), 200
+    except MiraklError as exc:
+        logger.exception("Mirakl offer import (file) failed")
+        return jsonify({'success': False, 'error': str(exc)}), 502
+
+
+@marketplace_bp.route('/mirakl/products/import-file', methods=['POST'])
+def mirakl_import_products_file():
+    client, error = _get_mirakl_client()
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+
+    file = request.files.get('file')
+    import_mode = (request.form.get('import_mode') or 'NORMAL').strip() or 'NORMAL'
+
+    if not file or not file.filename:
+        return jsonify({'success': False, 'error': 'CSV file is required'}), 400
+
+    if not file.filename.lower().endswith('.csv'):
+        return jsonify({'success': False, 'error': 'Only .csv files are supported'}), 400
+
+    csv_bytes = file.read()
+    if not csv_bytes:
+        return jsonify({'success': False, 'error': 'CSV file is empty'}), 400
+
+    try:
+        result = client.import_products(csv_bytes, import_mode=import_mode)
+        return jsonify({'success': True, 'result': result}), 200
+    except MiraklError as exc:
+        logger.exception("Mirakl product import (file) failed")
         return jsonify({'success': False, 'error': str(exc)}), 502
 
 
