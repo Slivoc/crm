@@ -2899,7 +2899,7 @@ def email_suppliers():
         # Fetch supplier contact details (common for both modes)
         for supplier_id, supplier_data in suppliers_map.items():
             supplier_info = _execute_with_cursor(cursor, '''
-                SELECT contact_name, contact_email
+                SELECT contact_name, contact_email, warning
                 FROM suppliers
                 WHERE id = ?
             ''', (supplier_id,)).fetchone()
@@ -2907,6 +2907,7 @@ def email_suppliers():
             if supplier_info:
                 supplier_data['contact_name'] = supplier_info['contact_name']
                 supplier_data['contact_email'] = supplier_info['contact_email']
+                supplier_data['warning'] = supplier_info['warning']
 
         recent_no_bid_lookup = _get_recent_no_bid_lookup(
             cursor,
@@ -3157,6 +3158,7 @@ def process_ils_suppliers(email_data, cursor, cutoff_date):
                     'supplier_name': ils.get('supplier_name', 'Unknown'),
                     'contact_email': None,
                     'contact_name': None,
+                    'warning': None,
                     'parts': []
                 }
 
@@ -3259,6 +3261,7 @@ def process_suggested_suppliers(email_data, cursor):
                     'supplier_name': sugg['supplier_name'],
                     'contact_email': None,
                     'contact_name': None,
+                    'warning': None,
                     'parts': []
                 }
 

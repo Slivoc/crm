@@ -152,6 +152,18 @@
           </div>
         </div>
 
+        <!-- Warnings -->
+        <div class="form-section">
+          <h3 class="form-section-title">Warnings</h3>
+          <div class="form-grid">
+            <div class="mb-3">
+              <label for="warning" class="form-label">Supplier Warning</label>
+              <textarea class="form-control" id="warning" name="warning" rows="3">{{ supplier.warning or '' }}</textarea>
+              <small class="form-text text-muted">Shown next to the supplier name on email supplier cards.</small>
+            </div>
+          </div>
+        </div>
+
         <!-- Preferences -->
         <div class="form-section">
           <h3 class="form-section-title">Preferences</h3>

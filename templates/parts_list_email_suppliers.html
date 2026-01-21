@@ -28,6 +28,17 @@
     font-weight: 600;
     color: #212529;
 }
+.supplier-warning {
+    color: #856404;
+    background: #fff3cd;
+    border: 1px solid #ffeeba;
+    border-radius: 0.25rem;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    margin-left: 0.5rem;
+    display: inline-block;
+}
 .supplier-email {
     color: #6c757d;
     font-size: 0.9rem;
@@ -277,6 +288,9 @@
                 <div>
                     <div class="supplier-name">
                         {{ supplier.supplier_name }}
+                        {% if supplier.warning %}
+                            <span class="supplier-warning">⚠ {{ supplier.warning }}</span>
+                        {% endif %}
                     </div>
                     {% if supplier.contact_email %}
                         <div class="supplier-email">
