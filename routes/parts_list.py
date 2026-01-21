@@ -33,6 +33,11 @@ client = OpenAI()
 
 parts_list_bp = Blueprint('parts_list', __name__)
 
+AI_PARTS_MAX_CHARS = 15000
+AI_PARTS_RESPONSE_TOKENS = 3000
+AI_PARTS_HEADER_LINES = 20
+AI_PARTS_HEADER_CHAR_LIMIT = 2000
+
 
 def _execute_with_cursor(cur, query, params=None):
     """Execute a query on the given cursor with Postgres placeholder translation."""
@@ -1488,13 +1493,95 @@ def extract_parts_data():
 
         logging.debug(f"Extracting data from: {request_data}")
 
-        extracted_parts = extract_part_numbers_and_quantities(request_data)
+        extracted_parts, warnings, batched = extract_part_numbers_and_quantities_batched(request_data)
         logging.debug(f"Extracted parts: {extracted_parts}")
 
-        return jsonify({'success': True, 'parts': extracted_parts})
+        if not extracted_parts:
+            error_message = "AI did not return any part numbers."
+            if batched:
+                error_message = (
+                    "AI did not return any part numbers. The text was large, so it was split into batches. "
+                    "Try removing headers/signatures or splitting the request into smaller chunks."
+                )
+            if warnings:
+                error_message = f"{error_message} {' '.join(warnings)}"
+            return jsonify({'success': False, 'error': error_message, 'warnings': warnings, 'batched': batched})
+
+        return jsonify({'success': True, 'parts': extracted_parts, 'warnings': warnings, 'batched': batched})
     except Exception as e:
         logging.exception(f'Error in extract_parts_data: {str(e)}')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _split_parts_ai_chunks(request_data):
+    if isinstance(request_data, bytes):
+        request_data = request_data.decode(errors='ignore')
+    request_text = str(request_data or "")
+    if len(request_text) <= AI_PARTS_MAX_CHARS:
+        return [request_text]
+
+    lines = request_text.splitlines()
+    header_lines = lines[:AI_PARTS_HEADER_LINES]
+    header_text = "\n".join(header_lines).strip()
+    if len(header_text) > AI_PARTS_HEADER_CHAR_LIMIT:
+        header_text = header_text[:AI_PARTS_HEADER_CHAR_LIMIT].rstrip()
+    header_prefix = f"{header_text}\n\n" if header_text else ""
+
+    body_lines = lines[AI_PARTS_HEADER_LINES:]
+    chunks = []
+    chunk_body_max = max(AI_PARTS_MAX_CHARS - len(header_prefix), 1000)
+    current_lines = []
+    current_len = 0
+    for line in body_lines:
+        line_len = len(line) + 1
+        if current_lines and current_len + line_len > chunk_body_max:
+            chunks.append(header_prefix + "\n".join(current_lines))
+            current_lines = [line]
+            current_len = line_len
+        else:
+            current_lines.append(line)
+            current_len += line_len
+    if current_lines:
+        chunks.append(header_prefix + "\n".join(current_lines))
+
+    return chunks or [request_text[:AI_PARTS_MAX_CHARS]]
+
+
+def _dedupe_extracted_parts(parts):
+    deduped = []
+    seen = set()
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        part_number = str(part.get('part_number', '')).strip()
+        if not part_number:
+            continue
+        quantity = part.get('quantity', 1)
+        key = (part_number.lower(), str(quantity))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(part)
+    return deduped
+
+
+def extract_part_numbers_and_quantities_batched(request_data):
+    chunks = _split_parts_ai_chunks(request_data)
+    warnings = []
+    parts = []
+    if len(chunks) > 1:
+        logging.info("AI parts extraction: splitting input into %s batches", len(chunks))
+        warnings.append(f"Input was split into {len(chunks)} batches to avoid token limits.")
+
+    for index, chunk in enumerate(chunks, start=1):
+        try:
+            extracted = extract_part_numbers_and_quantities(chunk)
+            parts.extend(extracted or [])
+        except Exception as exc:
+            warnings.append(f"Batch {index} failed: {exc}")
+            logging.exception("AI parts extraction failed on batch %s", index)
+
+    return _dedupe_extracted_parts(parts), warnings, len(chunks) > 1
 
 
 def extract_part_numbers_and_quantities(request_data):
@@ -1507,13 +1594,12 @@ def extract_part_numbers_and_quantities(request_data):
 
     try:
         # Hard cap content sent to the model to avoid context blowups from huge emails
-        MAX_CHARS = 15000
         if isinstance(request_data, bytes):
             request_data = request_data.decode(errors='ignore')
         request_data = str(request_data)
-        if len(request_data) > MAX_CHARS:
-            print(f"Trimming request_data from {len(request_data)} to {MAX_CHARS} characters for AI call")
-            request_data = request_data[:MAX_CHARS]
+        if len(request_data) > AI_PARTS_MAX_CHARS:
+            print(f"Trimming request_data from {len(request_data)} to {AI_PARTS_MAX_CHARS} characters for AI call")
+            request_data = request_data[:AI_PARTS_MAX_CHARS]
 
         print("Attempting to send request to OpenAI API")
         response = client.chat.completions.create(
@@ -1532,7 +1618,7 @@ def extract_part_numbers_and_quantities(request_data):
                 {"role": "user",
                  "content": f"Please extract part numbers and quantities from the following text:\n\n{request_data}"}
             ],
-            max_tokens=2000,
+            max_tokens=AI_PARTS_RESPONSE_TOKENS,
             temperature=0.2,
         )
         print("Successfully received response from OpenAI API")
