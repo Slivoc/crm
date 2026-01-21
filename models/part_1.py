@@ -597,35 +597,35 @@ def get_supplier_buffer(supplier_id):
         return 0
 
 def insert_supplier(name, contact_name, contact_email, contact_phone, buffer, currency, fornitore,
-                   standard_condition=None, standard_certs=None):
+                   standard_condition=None, standard_certs=None, warning=None):
     query = '''
         INSERT INTO suppliers (
             name, contact_name, contact_email, contact_phone, buffer, currency,
-            fornitore, standard_condition, standard_certs
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            fornitore, standard_condition, standard_certs, warning
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id
     '''
     params = (
         name, contact_name, contact_email, contact_phone, buffer, currency, fornitore,
-        standard_condition, standard_certs
+        standard_condition, standard_certs, warning
     )
     row = db_execute(query, params, fetch='one', commit=True)
     return row.get('id', list(row.values())[0]) if row else None
 
 
 def update_supplier(supplier_id, name, contact_name, contact_email, contact_phone, buffer, currency, fornitore,
-                    standard_condition=None, standard_certs=None):
+                    standard_condition=None, standard_certs=None, warning=None):
     logging.info(f"Executing database update for supplier ID: {supplier_id}")
     db_execute(
         '''
         UPDATE suppliers
         SET name = ?, contact_name = ?, contact_email = ?, contact_phone = ?,
-            buffer = ?, currency = ?, fornitore = ?, standard_condition = ?, standard_certs = ?
+            buffer = ?, currency = ?, fornitore = ?, standard_condition = ?, standard_certs = ?, warning = ?
         WHERE id = ?
         ''',
         (
             name, contact_name, contact_email, contact_phone, buffer, currency,
-            fornitore, standard_condition, standard_certs, supplier_id
+            fornitore, standard_condition, standard_certs, warning, supplier_id
         ),
         commit=True,
     )

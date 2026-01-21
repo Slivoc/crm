@@ -2803,7 +2803,7 @@ CREATE TABLE suppliers (
     buffer INTEGER,
     currency INTEGER REFERENCES currencies(id),
     fornitore TEXT
-, delivery_cost DECIMAL(10, 2) DEFAULT 0, minimum_line_value DECIMAL(10, 2) DEFAULT 0, standard_condition TEXT, standard_certs TEXT);
+, delivery_cost DECIMAL(10, 2) DEFAULT 0, minimum_line_value DECIMAL(10, 2) DEFAULT 0, standard_condition TEXT, standard_certs TEXT, warning TEXT);
 
 CREATE TABLE sync_metadata (
 

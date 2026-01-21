@@ -4825,7 +4825,8 @@ CREATE TABLE public.suppliers (
     delivery_cost numeric(10,2) DEFAULT 0,
     minimum_line_value numeric(10,2) DEFAULT 0,
     standard_condition text,
-    standard_certs text
+    standard_certs text,
+    warning text
 );
 
 

@@ -119,6 +119,7 @@ def create_supplier():
             contact_phone = data.get('contact_phone', '')  # Get phone from form
             standard_condition = data.get('standard_condition')
             standard_certs = data.get('standard_certs')
+            warning = data.get('warning')
 
             if not name:
                 return jsonify({
@@ -129,8 +130,8 @@ def create_supplier():
         try:
             insert_query = _with_returning_clause('''
                 INSERT INTO suppliers 
-                (name, contact_name, contact_email, contact_phone, buffer, currency, delivery_cost, fornitore, standard_condition, standard_certs)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (name, contact_name, contact_email, contact_phone, buffer, currency, delivery_cost, fornitore, standard_condition, standard_certs, warning)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''')
             params = (
                 name,
@@ -142,7 +143,8 @@ def create_supplier():
                 delivery_cost if delivery_cost else 0,
                 '',
                 standard_condition,
-                standard_certs
+                standard_certs,
+                warning
             )
             with db_cursor(commit=True) as cur:
                 _execute_with_cursor(cur, insert_query, params)
@@ -195,6 +197,7 @@ def update_supplier_route(supplier_id):
         fornitore = request.form['fornitore']
         standard_condition = request.form.get('standard_condition')
         standard_certs = request.form.get('standard_certs')
+        warning = request.form.get('warning')
         auto_email = 'auto_email' in request.form
         preferred = 'preferred' in request.form
 
@@ -214,7 +217,8 @@ def update_supplier_route(supplier_id):
             currency,
             fornitore,
             standard_condition,
-            standard_certs
+            standard_certs,
+            warning
         )
 
         # Update the new boolean fields separately
@@ -259,7 +263,7 @@ def update_field(supplier_id):
 
     valid_fields = [
         'name', 'contact_name', 'contact_email', 'contact_phone', 'buffer', 'currency',
-        'delivery_cost', 'fornitore', 'standard_condition', 'standard_certs', 'auto_email', 'preferred'
+        'delivery_cost', 'fornitore', 'standard_condition', 'standard_certs', 'warning', 'auto_email', 'preferred'
     ]
 
     if field_name not in valid_fields:
