@@ -118,10 +118,16 @@
                         <!-- Parts Lists Section -->
                         <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
                             <span class="text-muted">Parts Lists</span>
-                            <a class="btn btn-outline-primary btn-sm"
-                               href="{{ url_for('projects.project_parts_list_report', project_id=project.id) }}">
-                                Report
-                            </a>
+                            <div class="btn-group btn-group-sm" role="group" aria-label="Parts list actions">
+                                <a class="btn btn-outline-primary"
+                                   href="{{ url_for('projects.project_parts_list_overview', project_id=project.id) }}">
+                                    Project Parts List
+                                </a>
+                                <a class="btn btn-outline-secondary"
+                                   href="{{ url_for('projects.project_parts_list_report', project_id=project.id) }}">
+                                    Report
+                                </a>
+                            </div>
                         </div>
                         <div class="p-3">
                             <div class="list-group">
