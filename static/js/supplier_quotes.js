@@ -6,6 +6,59 @@ let currentSupplierId = window.PRESELECTED_SUPPLIER_ID || null;
 let showSentOnly = false;
 let partNumberFilterValue = '';
 let emailedSuppliersCache = null;
+let activePdfPreviewUrl = null;
+
+function getPdfPreviewElements() {
+    return {
+        frame: document.getElementById('pdf-preview-frame'),
+        empty: document.getElementById('pdf-preview-empty'),
+        filename: document.getElementById('pdf-preview-filename')
+    };
+}
+
+function clearQuotePdfPreview(message = 'No PDF selected yet.') {
+    const { frame, empty, filename } = getPdfPreviewElements();
+    if (!frame || !empty) return;
+
+    if (activePdfPreviewUrl) {
+        URL.revokeObjectURL(activePdfPreviewUrl);
+        activePdfPreviewUrl = null;
+    }
+
+    frame.hidden = true;
+    frame.removeAttribute('src');
+    empty.textContent = message;
+    empty.classList.remove('text-danger');
+    empty.classList.add('text-muted');
+    empty.hidden = false;
+    if (filename) filename.textContent = '';
+}
+
+function setQuotePdfPreview(blob, filename = '') {
+    const { frame, empty, filename: filenameEl } = getPdfPreviewElements();
+    if (!frame || !empty) return;
+
+    if (!blob || !(blob instanceof Blob)) {
+        clearQuotePdfPreview('Unable to preview the selected file.');
+        if (empty) {
+            empty.classList.remove('text-muted');
+            empty.classList.add('text-danger');
+        }
+        return;
+    }
+
+    if (activePdfPreviewUrl) {
+        URL.revokeObjectURL(activePdfPreviewUrl);
+    }
+    activePdfPreviewUrl = URL.createObjectURL(blob);
+    frame.src = activePdfPreviewUrl;
+    frame.hidden = false;
+    empty.hidden = true;
+    if (filenameEl) filenameEl.textContent = filename || '';
+}
+
+window.setQuotePdfPreview = setQuotePdfPreview;
+window.clearQuotePdfPreview = clearQuotePdfPreview;
 
 function getProponentSupplierId() {
     const id = parseInt(window.PROPONENT_SUPPLIER_ID, 10);
@@ -57,6 +110,10 @@ function updateQuoteDropZoneUI() {
         } else {
             title.textContent = config.isProponent ? 'Drop XLSX Quote Here' : 'Drop PDF Quote Here';
         }
+    }
+
+    if (config.isProponent) {
+        clearQuotePdfPreview('Preview available for PDF files only.');
     }
 }
 
@@ -219,6 +276,11 @@ function initializePdfDropZone() {
         const file = e.dataTransfer.files[0];
         const config = getQuoteUploadConfig();
         if (file && isValidQuoteFile(file, config)) {
+            if (!config.isProponent && isPdfFile(file)) {
+                setQuotePdfPreview(file, file.name);
+            } else if (config.isProponent) {
+                clearQuotePdfPreview('Preview available for PDF files only.');
+            }
             uploadAndExtractQuoteFile(file, config);
         } else {
             showToast(`Please drop a ${config.label} file`, 'warning');
@@ -231,6 +293,11 @@ function initializePdfDropZone() {
         if (fileInput.files[0]) {
             const config = getQuoteUploadConfig();
             if (isValidQuoteFile(fileInput.files[0], config)) {
+                if (!config.isProponent && isPdfFile(fileInput.files[0])) {
+                    setQuotePdfPreview(fileInput.files[0], fileInput.files[0].name);
+                } else if (config.isProponent) {
+                    clearQuotePdfPreview('Preview available for PDF files only.');
+                }
                 uploadAndExtractQuoteFile(fileInput.files[0], config);
             } else {
                 showToast(`Please select a ${config.label} file`, 'warning');
@@ -335,6 +402,11 @@ function isValidQuoteFile(file, config) {
             file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     }
     return name.endsWith('.pdf') || file.type === 'application/pdf';
+}
+
+function isPdfFile(file) {
+    const name = (file?.name || '').toLowerCase();
+    return name.endsWith('.pdf') || file?.type === 'application/pdf';
 }
 
 function uploadAndExtractQuoteFile(file, config) {
