@@ -3877,9 +3877,11 @@ def view_parts_lists():
                    pl.customer_id,
                    pl.contact_id,
                    pl.salesperson_id,
+                   pl.project_id,
                    COALESCE(c.name, '') AS customer_name,
                  COALESCE(ct.name, '') AS contact_name,
                  pls.name AS status_name,
+                 p.name AS project_name,
                  (SELECT COUNT(*) FROM parts_list_lines pll WHERE pll.parts_list_id = pl.id) AS line_count,
                  (SELECT COUNT(*)
                  FROM parts_list_lines pll
@@ -3912,6 +3914,7 @@ def view_parts_lists():
             LEFT JOIN customers c ON c.id = pl.customer_id
             LEFT JOIN contacts ct ON ct.id = pl.contact_id
             LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
+            LEFT JOIN projects p ON p.id = pl.project_id
         """
 
         where_clauses = []
@@ -3985,10 +3988,12 @@ def view_parts_lists():
                 selected_customer_name = customer_row['name']
 
         statuses = db_execute("SELECT id, name FROM parts_list_statuses ORDER BY display_order ASC", fetch='all')
+        projects = db_execute("SELECT id, name FROM projects ORDER BY name", fetch='all')
 
         return render_template('parts_lists.html',
                                lists=lists_data,
                                statuses=[dict(s) for s in statuses],
+                               projects=[dict(p) for p in projects] if projects else [],
                                all_salespeople=[dict(sp) for sp in all_salespeople],
                                current_salesperson=dict(current_salesperson) if current_salesperson else None,
                                current_user_salesperson_id=current_user_salesperson_id,
@@ -4004,6 +4009,7 @@ def view_parts_lists():
         # Fallback to the original simple rendering if there's an error
         return render_template('parts_lists.html',
                                lists=[],
+                               projects=[],
                                all_salespeople=[],
                                current_salesperson=None,
                                current_user_salesperson_id=None,

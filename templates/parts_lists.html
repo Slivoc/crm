@@ -181,20 +181,20 @@
                     </ul>
                 </div>
 
-                <!-- Customer Filter -->
+                <!-- Customer/List Name Filter -->
                 <div class="col-md-6">
-                    <label for="customerSearchInput" class="form-label">Customer</label>
+                    <label for="listSearchInput" class="form-label">Customer or List Name</label>
                     <div class="d-flex align-items-center gap-2 flex-nowrap">
                         <input type="text"
-                               id="customerSearchInput"
+                               id="listSearchInput"
                                class="form-control"
-                               placeholder="Type to filter by customer name..."
+                               placeholder="Type to filter by customer or list name..."
                                autocomplete="off">
-                        <button class="btn btn-outline-secondary text-nowrap" type="button" onclick="clearCustomerSearch()">
+                        <button class="btn btn-outline-secondary text-nowrap" type="button" onclick="clearListSearch()">
                             <i class="bi bi-x-circle"></i> Clear
                         </button>
                     </div>
-                    <small class="text-muted">Live filter on the customer column of the table below.</small>
+                    <small class="text-muted">Live filter on the customer and list name columns of the table below.</small>
                 </div>
 
             </div>
@@ -258,6 +258,7 @@
     <tr>
         <th>Name</th>
         <th>Customer</th>
+        <th>Project</th>
         <th>Contact</th>
         <th>Status</th>
         <th class="text-center" style="width: 18%;">Lines / Costed / Quoted</th>
@@ -277,6 +278,19 @@
         </span>
     </td>
     <td>{{ list.customer_name or '-' }}</td>
+    <td onclick="event.stopPropagation();">
+        <select class="form-select form-select-sm"
+                style="min-width: 180px;"
+                onchange="updateProject({{ list.id }}, this)"
+                data-original-project="{{ list.project_id or '' }}">
+            <option value="">No project</option>
+            {% for proj in projects %}
+                <option value="{{ proj.id }}" {% if list.project_id and proj.id == list.project_id %}selected{% endif %}>
+                    {{ proj.name }}
+                </option>
+            {% endfor %}
+        </select>
+    </td>
     <td>{{ list.contact_name or '-' }}</td>
     <td onclick="event.stopPropagation();">
         <select class="form-select form-select-sm"
@@ -445,6 +459,7 @@ function filterByCustomer(customerId) {
 }
 
 let partsListDataTable = null;
+let partsListTextFilter = '';
 
 function getDateAge(dateStr) {
     const parsed = new Date(dateStr);
@@ -527,11 +542,12 @@ function formatDateCell(dateStr) {
     return `<span class="date-indicator" data-date="${dataDate}"></span>`;
 }
 
-function applyCustomerTextFilter(term) {
+function applyListTextFilter(term) {
     const normalized = (term || '').toLowerCase();
+    partsListTextFilter = normalized;
 
     if (partsListDataTable) {
-        partsListDataTable.column(1).search(term, false, true).draw();
+        partsListDataTable.draw();
         return;
     }
 
@@ -540,17 +556,19 @@ function applyCustomerTextFilter(term) {
     if (!table) return;
     const rows = table.querySelectorAll('tbody tr');
     rows.forEach(row => {
+        const nameCell = row.cells[0];
         const customerCell = row.cells[1];
-        const text = customerCell ? customerCell.textContent.toLowerCase() : '';
-        row.style.display = text.includes(normalized) ? '' : 'none';
+        const nameText = nameCell ? nameCell.textContent.toLowerCase() : '';
+        const customerText = customerCell ? customerCell.textContent.toLowerCase() : '';
+        row.style.display = nameText.includes(normalized) || customerText.includes(normalized) ? '' : 'none';
     });
 }
 
-function clearCustomerSearch() {
-    const input = document.getElementById('customerSearchInput');
+function clearListSearch() {
+    const input = document.getElementById('listSearchInput');
     if (input) {
         input.value = '';
-        applyCustomerTextFilter('');
+        applyListTextFilter('');
         input.focus();
     }
 }
@@ -606,6 +624,39 @@ function deleteList(listId, listName) {
     .catch(error => {
         console.error('Error:', error);
         alert('Error deleting list');
+    });
+}
+
+function updateProject(listId, selectElement) {
+    const originalValue = selectElement.dataset.originalProject || '';
+    const rawValue = selectElement.value;
+    const projectId = rawValue ? Number(rawValue) : null;
+    selectElement.disabled = true;
+
+    fetch("{{ url_for('parts_list.update_parts_list_header', list_id=0) }}".replace(/0$/, listId), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ project_id: Number.isFinite(projectId) ? projectId : null })
+    })
+    .then(response => response.json())
+    .then(data => {
+        selectElement.disabled = false;
+        if (data.success) {
+            selectElement.dataset.originalProject = rawValue;
+            selectElement.classList.add('border-success');
+            setTimeout(() => {
+                selectElement.classList.remove('border-success');
+            }, 500);
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+            selectElement.value = originalValue;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error updating project');
+        selectElement.disabled = false;
+        selectElement.value = originalValue;
     });
 }
 
@@ -817,8 +868,20 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     if (typeof $.fn.DataTable !== 'undefined') {
-            partsListDataTable = $('#partsListsTable').DataTable({
-            order: [[8, 'desc']],
+        $.fn.dataTable.ext.search.push(function(settings, data) {
+            if (!settings.nTable || settings.nTable.id !== 'partsListsTable') {
+                return true;
+            }
+            if (!partsListTextFilter) {
+                return true;
+            }
+            const nameText = (data[0] || '').toLowerCase();
+            const customerText = (data[1] || '').toLowerCase();
+            return nameText.includes(partsListTextFilter) || customerText.includes(partsListTextFilter);
+        });
+
+        partsListDataTable = $('#partsListsTable').DataTable({
+            order: [[9, 'desc']],
             pageLength: 25,
             language: {
                 search: "Search lists:"
@@ -828,10 +891,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     applyDateIndicators();
 
-    const customerSearchInput = document.getElementById('customerSearchInput');
-    if (customerSearchInput) {
-        customerSearchInput.addEventListener('input', function() {
-            applyCustomerTextFilter(this.value);
+    const listSearchInput = document.getElementById('listSearchInput');
+    if (listSearchInput) {
+        listSearchInput.addEventListener('input', function() {
+            applyListTextFilter(this.value);
         });
     }
 
