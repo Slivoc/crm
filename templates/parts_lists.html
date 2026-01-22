@@ -633,7 +633,7 @@ function updateProject(listId, selectElement) {
     const projectId = rawValue ? Number(rawValue) : null;
     selectElement.disabled = true;
 
-    fetch("{{ url_for('parts_list.update_parts_list_header', list_id=0) }}".replace(/0$/, listId), {
+    fetch("{{ url_for('parts_list.update_parts_list_header', list_id=0) }}".replace('/0/', `/${listId}/`), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ project_id: Number.isFinite(projectId) ? projectId : null })
