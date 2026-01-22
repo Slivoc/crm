@@ -1696,14 +1696,15 @@ CREATE TABLE project_parts_list_lines (
     comment TEXT,
     line_type TEXT NOT NULL DEFAULT 'normal',
     total_quantity INTEGER,
-    usage_by_year TEXT,
-    status TEXT DEFAULT 'pending',
-    parts_list_id INTEGER REFERENCES parts_lists(id) ON DELETE SET NULL,
+      usage_by_year TEXT,
+      status TEXT DEFAULT 'pending',
+      parts_list_id INTEGER REFERENCES parts_lists(id) ON DELETE SET NULL,
+      parts_list_line_id INTEGER REFERENCES parts_list_lines(id) ON DELETE SET NULL,
 
     DATE_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     DATE_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
 
     CONSTRAINT project_parts_list_lines_status_check
         CHECK (status IN ('pending', 'linked', 'no_bid', 'ignore'))

@@ -9,6 +9,7 @@ from db import db_cursor, execute as db_execute
 from models import get_rfqs_for_project, insert_stage_update, get_stage_updates, insert_file_for_project_stage, insert_project, get_stage, get_stage_by_id, insert_project_stage, get_project_stages, generate_breadcrumbs, update_project, get_project_by_id, get_projects, insert_project_update, \
     get_project_updates, get_project_statuses, get_customers, get_salespeople, insert_file_for_project, link_file_to_project, get_files_for_project, get_file_by_id
 from routes.auth import login_required, current_user
+from backfill_project_parts_list_lines import run_backfill
 
 projects_bp = Blueprint('projects', __name__)
 
@@ -132,6 +133,27 @@ def _fetch_project_parts_list_overview(project_id):
             ppl.usage_by_year,
             ppl.status,
             ppl.parts_list_id,
+            ppl.parts_list_line_id,
+            CASE
+                WHEN ppl.parts_list_line_id IS NOT NULL
+                     AND EXISTS (
+                        SELECT 1
+                        FROM customer_quote_lines cql
+                        WHERE cql.parts_list_line_id = ppl.parts_list_line_id
+                          AND cql.quoted_status = 'quoted'
+                     )
+                THEN 1 ELSE 0
+            END AS is_quoted,
+            CASE
+                WHEN ppl.parts_list_line_id IS NOT NULL
+                     AND EXISTS (
+                        SELECT 1
+                        FROM parts_list_lines pll_cost
+                        WHERE pll_cost.id = ppl.parts_list_line_id
+                          AND pll_cost.chosen_cost IS NOT NULL
+                     )
+                THEN 1 ELSE 0
+            END AS is_costed,
             pl.name AS parts_list_name
         FROM project_parts_list_lines ppl
         LEFT JOIN parts_lists pl ON pl.id = ppl.parts_list_id
@@ -150,6 +172,8 @@ def _fetch_project_parts_list_overview(project_id):
         # Default status for rows without the column yet
         if not data.get('status'):
             data['status'] = 'linked' if data.get('parts_list_id') else 'pending'
+        data['is_quoted'] = bool(data.get('is_quoted'))
+        data['is_costed'] = bool(data.get('is_costed'))
         formatted.append(data)
     return formatted
 
@@ -286,6 +310,40 @@ def project_parts_list_overview(project_id):
         project=project,
         rows=rows,
         max_usage_years=max_usage_years,
+    )
+
+
+@projects_bp.route('/<int:project_id>/project-parts-list/backfill', methods=['POST'])
+def project_parts_list_backfill(project_id):
+    project = get_project_by_id(project_id)
+    if not project:
+        return jsonify(success=False, message='Project not found'), 404
+
+    os.makedirs('logs', exist_ok=True)
+    ambiguous_csv = os.path.join(
+        'logs',
+        f'backfill_project_parts_list_lines_project_{project_id}.csv'
+    )
+
+    try:
+        result = run_backfill(
+            project_id=project_id,
+            dry_run=False,
+            import_lines=True,
+            ambiguous_csv=ambiguous_csv,
+            verbose=False,
+        )
+    except Exception as exc:
+        current_app.logger.exception("Backfill failed for project %s", project_id)
+        return jsonify(success=False, message=str(exc)), 500
+
+    return jsonify(
+        success=True,
+        inserted=result.get('inserted', 0),
+        linked=result.get('linked', 0),
+        ambiguous=result.get('ambiguous', 0),
+        unmatched=result.get('unmatched', 0),
+        ambiguous_csv=result.get('ambiguous_csv', ''),
     )
 
 
@@ -451,8 +509,6 @@ def project_parts_list_create_from_lines(project_id):
         )
         parts_list_id = header_row['id'] if header_row else getattr(cur, 'lastrowid', None)
 
-        project_line_ids_to_update = []
-
         for index, line in enumerate(lines, start=1):
             usage_values = _parse_usage_by_year(line.get('usage_by_year'))
             usage_total = sum(value for value in usage_values if isinstance(value, (int, float)))
@@ -486,41 +542,64 @@ def project_parts_list_create_from_lines(project_id):
             if chosen_quantity is None:
                 chosen_quantity = 1
 
+            parts_list_line_id = None
+            if _using_postgres():
+                insert_row = _execute_with_cursor(
+                    cur,
+                    """
+                    INSERT INTO parts_list_lines
+                        (parts_list_id, line_number, customer_part_number, base_part_number, description, category,
+                         quantity, customer_notes, internal_notes, line_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
+                    """,
+                    (
+                        parts_list_id,
+                        index,
+                        line['customer_part_number'],
+                        line['description'],
+                        None,
+                        line.get('category'),
+                        chosen_quantity,
+                        line.get('comment'),
+                        None,
+                        line['line_type'] or 'normal',
+                    ),
+                    fetch='one',
+                )
+                parts_list_line_id = insert_row['id'] if insert_row else None
+            else:
+                _execute_with_cursor(
+                    cur,
+                    """
+                    INSERT INTO parts_list_lines
+                        (parts_list_id, line_number, customer_part_number, base_part_number, description, category,
+                         quantity, customer_notes, internal_notes, line_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        parts_list_id,
+                        index,
+                        line['customer_part_number'],
+                        line['description'],
+                        None,
+                        line.get('category'),
+                        chosen_quantity,
+                        line.get('comment'),
+                        None,
+                        line['line_type'] or 'normal',
+                    ),
+                )
+                parts_list_line_id = getattr(cur, 'lastrowid', None)
+
             _execute_with_cursor(
                 cur,
                 """
-                INSERT INTO parts_list_lines
-                    (parts_list_id, line_number, customer_part_number, base_part_number, description, category,
-                     quantity, customer_notes, internal_notes, line_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    parts_list_id,
-                    index,
-                    line['customer_part_number'],
-                    line['description'],
-                    None,
-                    line.get('category'),
-                    chosen_quantity,
-                    line.get('comment'),
-                    None,
-                    line['line_type'] or 'normal',
-                ),
-            )
-
-            project_line_ids_to_update.append(line['id'])
-
-        # Update project lines to link them to the new parts list
-        if project_line_ids_to_update:
-            update_placeholders = ','.join(['?'] * len(project_line_ids_to_update))
-            _execute_with_cursor(
-                cur,
-                f"""
                 UPDATE project_parts_list_lines
-                SET parts_list_id = ?, status = 'linked', date_modified = CURRENT_TIMESTAMP
-                WHERE id IN ({update_placeholders})
+                SET parts_list_id = ?, parts_list_line_id = ?, status = 'linked', date_modified = CURRENT_TIMESTAMP
+                WHERE id = ?
                 """,
-                [parts_list_id, *project_line_ids_to_update],
+                (parts_list_id, parts_list_line_id, line['id']),
             )
 
     return jsonify(

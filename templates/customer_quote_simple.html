@@ -703,7 +703,7 @@
         <td>
             <input type="number" class="form-control form-control-sm editable-field"
                    data-field="delivery_per_line"
-                   value="{{ '%.2f'|format(line.delivery_per_line or 0) }}"
+                   value="{{ '%.2f'|format(line.delivery_per_line) if line.delivery_per_line is not none else '' }}"
                    min="0" step="0.01">
         </td>
 

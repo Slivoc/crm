@@ -413,6 +413,7 @@ document.addEventListener('DOMContentLoaded', function() {
         requestAnimationFrame(() => {
             updateRowVisuals(row, cached.elements, newFins, status, isNoBid);
             updateSummaryDisplay();
+            updateEmailQuoteWarnings();
             if (!skipUnsavedFlag) {
                 markUnsaved();
             }
@@ -1107,6 +1108,16 @@ document.addEventListener('DOMContentLoaded', function() {
         return Number.isNaN(Number.parseFloat(value));
     }
 
+    function isMissingPositiveValue(value) {
+        if (isMissingNumericValue(value)) return true;
+        const parsed = Number.parseFloat(value);
+        return !Number.isFinite(parsed) || parsed <= 0;
+    }
+
+    function isStockLine(lineData) {
+        return lineData?.chosen_source_type === 'stock';
+    }
+
     function getEmailQuoteMissingFields() {
         const missingMarginLines = [];
         const missingShippingLines = [];
@@ -1122,10 +1133,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (quotePrice <= 0) return;
 
             const lineNumber = lineData.line_number || '';
-            if (isMissingNumericValue(elements.marginPercent?.value)) {
+            if (isMissingPositiveValue(elements.marginPercent?.value)) {
                 missingMarginLines.push(lineNumber);
             }
-            if (isMissingNumericValue(elements.deliveryPerLine?.value)) {
+            if (!isStockLine(lineData) && isMissingPositiveValue(elements.deliveryPerLine?.value)) {
                 missingShippingLines.push(lineNumber);
             }
         });
@@ -1136,15 +1147,39 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    let lastEmailWarningsKey = '';
+    let emailWarningsAcknowledged = true;
+
+    function setEmailQuoteActionsEnabled(enabled) {
+        const copyBtn = document.getElementById('copyEmailQuoteBtn');
+        const sendBtn = document.getElementById('sendEmailQuoteBtn');
+        if (copyBtn) copyBtn.disabled = !enabled;
+        if (sendBtn) sendBtn.disabled = !enabled;
+    }
+
     function updateEmailQuoteWarnings() {
         const warningBox = document.getElementById('emailQuoteWarnings');
         if (!warningBox) return;
+        const ackRow = document.getElementById('emailQuoteWarningAckRow');
+        const ackCheckbox = document.getElementById('emailQuoteWarningAck');
 
         const { missingMarginLines, missingShippingLines } = getEmailQuoteMissingFields();
+        const warningsKey = `${missingMarginLines.join(',')}|${missingShippingLines.join(',')}`;
         if (missingMarginLines.length === 0 && missingShippingLines.length === 0) {
             warningBox.classList.add('d-none');
             warningBox.innerHTML = '';
+            if (ackRow) ackRow.classList.add('d-none');
+            if (ackCheckbox) ackCheckbox.checked = false;
+            emailWarningsAcknowledged = true;
+            lastEmailWarningsKey = '';
+            setEmailQuoteActionsEnabled(true);
             return;
+        }
+
+        if (warningsKey !== lastEmailWarningsKey) {
+            emailWarningsAcknowledged = false;
+            if (ackCheckbox) ackCheckbox.checked = false;
+            lastEmailWarningsKey = warningsKey;
         }
 
         let html = '<strong>Missing values for quoted lines:</strong><ul class="mb-0">';
@@ -1157,6 +1192,16 @@ document.addEventListener('DOMContentLoaded', function() {
         html += '</ul>';
         warningBox.innerHTML = html;
         warningBox.classList.remove('d-none');
+        if (ackRow) ackRow.classList.remove('d-none');
+        setEmailQuoteActionsEnabled(emailWarningsAcknowledged);
+    }
+
+    const warningAckCheckbox = document.getElementById('emailQuoteWarningAck');
+    if (warningAckCheckbox) {
+        warningAckCheckbox.addEventListener('change', () => {
+            emailWarningsAcknowledged = warningAckCheckbox.checked;
+            setEmailQuoteActionsEnabled(emailWarningsAcknowledged);
+        });
     }
 
     function buildEmailBodyHtml() {

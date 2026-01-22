@@ -13,6 +13,8 @@
     .status-linked { background: #d4edda; color: #155724; }
     .status-no_bid { background: #f8d7da; color: #721c24; }
     .status-ignore { background: #e2e3e5; color: #383d41; }
+    .status-yes { background: #d1e7dd; color: #0f5132; }
+    .status-no { background: #f8d7da; color: #842029; }
     .editable-cell {
         cursor: pointer;
         position: relative;
@@ -158,9 +160,30 @@
                     <span class="text-muted" id="selectedPartsCount">0 selected</span>
                 </div>
             </div>
+            <div class="row g-3 align-items-end mt-1">
+                <div class="col-md-3">
+                    <label for="quotedFilter" class="form-label">Quoted</label>
+                    <select id="quotedFilter" class="form-select form-select-sm">
+                        <option value="all" selected>All</option>
+                        <option value="yes">Quoted</option>
+                        <option value="no">Not quoted</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="costedFilter" class="form-label">Costed</label>
+                    <select id="costedFilter" class="form-select form-select-sm">
+                        <option value="all" selected>All</option>
+                        <option value="yes">Costed</option>
+                        <option value="no">Not costed</option>
+                    </select>
+                </div>
+            </div>
             <div class="d-flex gap-2 mt-3 flex-wrap">
                 <button class="btn btn-primary btn-sm" id="createPartsListBtn" type="button" disabled data-bs-toggle="modal" data-bs-target="#createPartsListModal">
                     Create linked parts list
+                </button>
+                <button class="btn btn-outline-primary btn-sm" id="backfillProjectPartsBtn" type="button">
+                    Backfill linked lines
                 </button>
                 <button class="btn btn-outline-info btn-sm" id="setCategoryBtn" type="button" disabled data-bs-toggle="modal" data-bs-target="#setCategoryModal">
                     Set Category
@@ -195,6 +218,8 @@
                             {% for year_index in range(1, max_usage_years + 1) %}
                                 <th scope="col">Yr {{ year_index }}</th>
                             {% endfor %}
+                            <th scope="col">Quoted</th>
+                            <th scope="col">Costed</th>
                             <th scope="col">Status</th>
                             <th scope="col">Linked List</th>
                         </tr>
@@ -207,6 +232,8 @@
                                 <tr data-line-row
                                     data-line-id="{{ row.project_line_id }}"
                                     data-status="{{ row_status }}"
+                                    data-quoted="{{ 1 if row.is_quoted else 0 }}"
+                                    data-costed="{{ 1 if row.is_costed else 0 }}"
                                     class="table-row-{{ row_status }}"
                                     data-search="{{ (row.customer_part_number or '')|lower }} {{ (row.description or '')|lower }} {{ (row.category or '')|lower }} {{ (row.comment or '')|lower }} {{ (row.line_type or '')|lower }}">
                                     <td>
@@ -224,6 +251,16 @@
                                         <td>{{ usage_value }}</td>
                                     {% endfor %}
                                     <td>
+                                        <span class="status-badge status-{{ 'yes' if row.is_quoted else 'no' }}">
+                                            {{ 'Yes' if row.is_quoted else 'No' }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="status-badge status-{{ 'yes' if row.is_costed else 'no' }}">
+                                            {{ 'Yes' if row.is_costed else 'No' }}
+                                        </span>
+                                    </td>
+                                    <td>
                                         <span class="status-badge status-{{ row_status }}">{{ row_status|replace('_', ' ')|title }}</span>
                                     </td>
                                     <td>
@@ -239,7 +276,7 @@
                             {% endfor %}
                         {% else %}
                             <tr>
-                                <td colspan="{{ 10 + max_usage_years }}" class="text-center text-muted py-4">No project parts added yet.</td>
+                                <td colspan="{{ 12 + max_usage_years }}" class="text-center text-muted py-4">No project parts added yet.</td>
                             </tr>
                         {% endif %}
                     </tbody>
@@ -324,12 +361,15 @@
     const markIgnoreBtn = document.getElementById('markIgnoreBtn');
     const markPendingBtn = document.getElementById('markPendingBtn');
     const setCategoryBtn = document.getElementById('setCategoryBtn');
+    const backfillBtn = document.getElementById('backfillProjectPartsBtn');
     const confirmCreateBtn = document.getElementById('confirmCreatePartsList');
     const confirmSetCategoryBtn = document.getElementById('confirmSetCategory');
     const listNameInput = document.getElementById('newPartsListName');
     const quantitySourceSelect = document.getElementById('quantitySource');
     const categoryInput = document.getElementById('categoryInput');
     const setCategoryCountEl = document.getElementById('setCategoryCount');
+    const quotedFilter = document.getElementById('quotedFilter');
+    const costedFilter = document.getElementById('costedFilter');
     const projectId = {{ project.id }};
 
     const quickCustomerPn = document.getElementById('quickCustomerPn');
@@ -361,10 +401,20 @@
 
     function applyFilters() {
         const query = (searchInput.value || '').trim().toLowerCase();
+        const quotedValue = quotedFilter ? quotedFilter.value : 'all';
+        const costedValue = costedFilter ? costedFilter.value : 'all';
         rows.forEach((row) => {
             const matchesQuery = !query || row.dataset.search.includes(query);
             const matchesStatus = currentStatusFilter === 'all' || row.dataset.status === currentStatusFilter;
-            row.classList.toggle('d-none', !matchesQuery || !matchesStatus);
+            const isQuoted = row.dataset.quoted === '1';
+            const isCosted = row.dataset.costed === '1';
+            const matchesQuoted = quotedValue === 'all'
+                || (quotedValue === 'yes' && isQuoted)
+                || (quotedValue === 'no' && !isQuoted);
+            const matchesCosted = costedValue === 'all'
+                || (costedValue === 'yes' && isCosted)
+                || (costedValue === 'no' && !isCosted);
+            row.classList.toggle('d-none', !matchesQuery || !matchesStatus || !matchesQuoted || !matchesCosted);
         });
         const visibleCheckboxes = rows
             .filter((row) => !row.classList.contains('d-none'))
@@ -570,6 +620,14 @@
         searchInput.addEventListener('input', applyFilters);
     }
 
+    if (quotedFilter) {
+        quotedFilter.addEventListener('change', applyFilters);
+    }
+
+    if (costedFilter) {
+        costedFilter.addEventListener('change', applyFilters);
+    }
+
     if (selectAll) {
         selectAll.addEventListener('change', () => {
             const shouldSelect = selectAll.checked;
@@ -643,6 +701,46 @@
             } finally {
                 confirmCreateBtn.disabled = false;
                 confirmCreateBtn.textContent = 'Create';
+            }
+        });
+    }
+
+    if (backfillBtn) {
+        backfillBtn.addEventListener('click', async () => {
+            const confirmed = window.confirm(
+                'Backfill project parts list lines from existing parts lists for this project?'
+            );
+            if (!confirmed) {
+                return;
+            }
+
+            backfillBtn.disabled = true;
+            backfillBtn.textContent = 'Backfilling...';
+
+            try {
+                const response = await fetch(`/projects/${projectId}/project-parts-list/backfill`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || 'Backfill failed');
+                }
+
+                let message = `Inserted ${data.inserted} lines, linked ${data.linked} lines.`;
+                if (data.ambiguous) {
+                    message += ` ${data.ambiguous} ambiguous matches (see ${data.ambiguous_csv}).`;
+                }
+                if (data.unmatched) {
+                    message += ` ${data.unmatched} unmatched lines.`;
+                }
+                alert(message);
+                window.location.reload();
+            } catch (error) {
+                alert(error.message || 'Backfill failed.');
+            } finally {
+                backfillBtn.disabled = false;
+                backfillBtn.textContent = 'Backfill linked lines';
             }
         });
     }
