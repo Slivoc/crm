@@ -1101,10 +1101,69 @@ document.addEventListener('DOMContentLoaded', function() {
         return escaped.replace(/\n/g, '<br>');
     }
 
+    function isMissingNumericValue(value) {
+        if (value === null || value === undefined) return true;
+        if (typeof value === 'string' && value.trim() === '') return true;
+        return Number.isNaN(Number.parseFloat(value));
+    }
+
+    function getEmailQuoteMissingFields() {
+        const missingMarginLines = [];
+        const missingShippingLines = [];
+
+        document.querySelectorAll('.quote-row').forEach(row => {
+            const cached = rowCache.get(row);
+            if (!cached) return;
+            const { lineData, elements, lastIsNoBid } = cached;
+
+            if (lastIsNoBid) return;
+
+            const quotePrice = Number.parseFloat(elements.quotePriceGbp.value) || 0;
+            if (quotePrice <= 0) return;
+
+            const lineNumber = lineData.line_number || '';
+            if (isMissingNumericValue(elements.marginPercent?.value)) {
+                missingMarginLines.push(lineNumber);
+            }
+            if (isMissingNumericValue(elements.deliveryPerLine?.value)) {
+                missingShippingLines.push(lineNumber);
+            }
+        });
+
+        return {
+            missingMarginLines,
+            missingShippingLines
+        };
+    }
+
+    function updateEmailQuoteWarnings() {
+        const warningBox = document.getElementById('emailQuoteWarnings');
+        if (!warningBox) return;
+
+        const { missingMarginLines, missingShippingLines } = getEmailQuoteMissingFields();
+        if (missingMarginLines.length === 0 && missingShippingLines.length === 0) {
+            warningBox.classList.add('d-none');
+            warningBox.innerHTML = '';
+            return;
+        }
+
+        let html = '<strong>Missing values for quoted lines:</strong><ul class="mb-0">';
+        if (missingMarginLines.length) {
+            html += `<li>Margin missing on line(s): ${missingMarginLines.join(', ')}</li>`;
+        }
+        if (missingShippingLines.length) {
+            html += `<li>Shipping missing on line(s): ${missingShippingLines.join(', ')}</li>`;
+        }
+        html += '</ul>';
+        warningBox.innerHTML = html;
+        warningBox.classList.remove('d-none');
+    }
+
     function buildEmailBodyHtml() {
         const messageText = document.getElementById('emailQuoteMessage')?.value || '';
         const messageHtml = formatMessageToHtml(messageText);
         const tableHtml = buildEmailQuoteTable();
+        updateEmailQuoteWarnings();
         return `${messageHtml}<br><br>${tableHtml}`;
     }
 
