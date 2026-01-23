@@ -699,8 +699,64 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function collectPurchasingInstructionRows() {
+        const rows = [];
+        document.querySelectorAll('.quote-row').forEach(row => {
+            const cached = rowCache.get(row);
+            if (!cached) return;
+            const { lineData, elements, lastIsNoBid } = cached;
+
+            if (lastIsNoBid) return;
+            const supplierDisplay = getSupplierDisplay(lineData);
+            if (!supplierDisplay) return;
+
+            const effectiveQty = parseFloat(elements.chosenQty.value) || lineData.quantity;
+            const unitCost = parseFloat(lineData.chosen_cost || 0);
+            if (unitCost <= 0) return;
+
+            rows.push({
+                lineData,
+                effectiveQty,
+                unitCost,
+                supplierDisplay
+            });
+        });
+        return rows;
+    }
+
+    function updatePurchasingSupplierFilter(rows) {
+        const filterSelect = document.getElementById('purchasingSupplierFilter');
+        if (!filterSelect) return;
+
+        const previousValue = filterSelect.value;
+        const suppliers = Array.from(new Set(rows.map(row => row.supplierDisplay))).sort();
+
+        filterSelect.innerHTML = '<option value="">All suppliers</option>';
+        suppliers.forEach(supplier => {
+            const option = document.createElement('option');
+            option.value = supplier;
+            option.textContent = supplier;
+            filterSelect.appendChild(option);
+        });
+
+        if (previousValue && suppliers.includes(previousValue)) {
+            filterSelect.value = previousValue;
+        }
+    }
+
+    function renderPurchasingInstructionsTable(filterSupplier) {
+        const rows = collectPurchasingInstructionRows();
+        updatePurchasingSupplierFilter(rows);
+        const resolvedFilter = filterSupplier ?? document.getElementById('purchasingSupplierFilter')?.value ?? '';
+        const filteredRows = resolvedFilter
+            ? rows.filter(row => row.supplierDisplay === resolvedFilter)
+            : rows;
+
+        document.getElementById('purchasingInstructionsBody').innerHTML = buildPurchasingInstructionsTable(filteredRows);
+    }
+
     // Build Purchasing Instructions Table
-    function buildPurchasingInstructionsTable() {
+    function buildPurchasingInstructionsTable(rows) {
         let html = `
 <table class="table table-sm table-bordered" style="border-collapse:collapse;font-family:Arial, sans-serif;font-size:0.9rem;margin:auto;max-width:1200px;">
   <thead>
@@ -717,19 +773,8 @@ document.addEventListener('DOMContentLoaded', function() {
   </thead>
   <tbody>`;
 
-        document.querySelectorAll('.quote-row').forEach(row => {
-            const cached = rowCache.get(row);
-            if (!cached) return;
-            const { lineData, elements, lastIsNoBid } = cached;
-
-            if (lastIsNoBid) return;
-            const supplierDisplay = getSupplierDisplay(lineData);
-            if (!supplierDisplay) return;
-
-            const effectiveQty = parseFloat(elements.chosenQty.value) || lineData.quantity;
-            const unitCost = parseFloat(lineData.chosen_cost || 0);
-            if (unitCost <= 0) return;
-
+        rows.forEach(row => {
+            const { lineData, effectiveQty, unitCost, supplierDisplay } = row;
             const lineTotal = unitCost * effectiveQty;
             const currency = lineData.chosen_currency_code || 'GBP';
             const leadDays = lineData.chosen_lead_days || '';
@@ -909,10 +954,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Purchasing Instructions
     document.getElementById('purchasing-instructions-btn').addEventListener('click', function() {
-        const tableHtml = buildPurchasingInstructionsTable();
-        document.getElementById('purchasingInstructionsBody').innerHTML = tableHtml;
+        renderPurchasingInstructionsTable();
         new bootstrap.Modal(document.getElementById('purchasingModal')).show();
     });
+
+    const purchasingSupplierFilter = document.getElementById('purchasingSupplierFilter');
+    if (purchasingSupplierFilter) {
+        purchasingSupplierFilter.addEventListener('change', function() {
+            renderPurchasingInstructionsTable(this.value);
+        });
+    }
 
     // Copy Purchasing
     document.getElementById('copyPurchasingBtn').addEventListener('click', async function() {
