@@ -294,6 +294,36 @@
     </div>
 </div>
 
+<!-- File to Folder Modal -->
+<div class="modal fade" id="mailboxFolderModal" tabindex="-1" aria-labelledby="mailboxFolderLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="mailboxFolderLabel">
+                    <i class="bi bi-folder me-2"></i>File sender to folder
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-2 text-muted small">Choose a folder for</div>
+                <div class="fw-semibold mb-3" id="mailboxFolderEmail">—</div>
+                <label for="mailboxFolderSelect" class="form-label">Mailbox folder</label>
+                <select class="form-select" id="mailboxFolderSelect" disabled>
+                    <option value="">Loading folders...</option>
+                </select>
+                <div class="form-text" id="mailboxFolderHint">This saves the sender-to-folder rule for your mailbox.</div>
+                <div class="alert alert-danger mt-3 d-none" id="mailboxFolderFeedback"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="mailboxFolderSaveBtn" disabled>
+                    <i class="bi bi-check2-circle me-1"></i>Save & File
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 const graphSeed = {{ graph | tojson }};
 const graphStatusEl = document.getElementById('graphStatus');
@@ -364,6 +394,11 @@ const mailboxTriageStatus = document.getElementById('mailboxTriageStatus');
 const mailboxTriageClassification = document.getElementById('mailboxTriageClassification');
 const mailboxTriageReasons = document.getElementById('mailboxTriageReasons');
 const mailboxTriageRaw = document.getElementById('mailboxTriageRaw');
+const mailboxFolderModal = document.getElementById('mailboxFolderModal');
+const mailboxFolderSelect = document.getElementById('mailboxFolderSelect');
+const mailboxFolderEmail = document.getElementById('mailboxFolderEmail');
+const mailboxFolderSaveBtn = document.getElementById('mailboxFolderSaveBtn');
+const mailboxFolderFeedback = document.getElementById('mailboxFolderFeedback');
 
 let messageCache = [];
 let selectedMessage = null;
@@ -384,6 +419,9 @@ let selectedMessageText = null;
 let selectedMessageResolvedHtml = null;
 let mailboxNextToken = null;
 let mailboxIsLoading = false;
+let mailboxFolderRules = new Map();
+let mailboxFolderList = null;
+let mailboxFolderListLoading = false;
 const MAILBOX_PAGE_SIZE = 25;
 let mailboxLoadImages = localStorage.getItem('mailboxLoadImages');
 mailboxLoadImages = mailboxLoadImages === null ? true : mailboxLoadImages === 'true';
@@ -645,6 +683,26 @@ function htmlToPlainText(html) {
     text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     text = text.replace(/\n{3,}/g, '\n\n');
     return text.trim();
+}
+
+function normalizeEmailAddress(address) {
+    return (address || '').trim().toLowerCase();
+}
+
+function getFolderRuleForEmail(address) {
+    const key = normalizeEmailAddress(address);
+    if (!key) return null;
+    return mailboxFolderRules.get(key) || null;
+}
+
+function setFolderRuleForEmail(address, rule) {
+    const key = normalizeEmailAddress(address);
+    if (!key) return;
+    if (rule) {
+        mailboxFolderRules.set(key, rule);
+    } else {
+        mailboxFolderRules.delete(key);
+    }
 }
 
 function setContactActionsVisible(isVisible) {
@@ -1360,6 +1418,7 @@ function renderEmailList(messages, append = false) {
     const html = messages.map(message => {
         const from = message.from?.emailAddress?.name || message.from?.emailAddress?.address || 'Unknown';
         const fromEmail = message.from_email || '';
+        const normalizedFromEmail = normalizeEmailAddress(fromEmail);
         const company = message.lookup?.company_name || '';
         const subject = message.subject || '(no subject)';
         const preview = message.bodyPreview || '';
@@ -1367,14 +1426,26 @@ function renderEmailList(messages, append = false) {
         const initials = getInitials(from);
         const avatarColor = getAvatarColor(from);
         const isSelected = selectedMessageId === message.id;
+        if (message.folder_rule && normalizedFromEmail) {
+            setFolderRuleForEmail(normalizedFromEmail, message.folder_rule);
+        }
+        const folderRule = getFolderRuleForEmail(normalizedFromEmail);
+        const folderTitle = folderRule?.graph_folder_name
+            ? `File to ${folderRule.graph_folder_name}`
+            : 'File to folder';
+        const folderButton = normalizedFromEmail
+            ? `<button type="button" class="email-badge email-badge-folder email-folder-btn${folderRule ? ' email-folder-has-rule' : ''}" data-message-id="${message.id}" data-email="${normalizedFromEmail}" title="${folderTitle}">
+                   <i class="bi bi-folder"></i>
+               </button>`
+            : '';
         const ticketBadge = message.ticket_id
             ? `<a class="email-badge email-badge-ticket" href="/tickets/${message.ticket_id}" target="_blank" rel="noopener" onclick="event.stopPropagation();">Ticket #${message.ticket_id}</a>`
             : '';
         const partsListBadge = message.parts_list_id
             ? `<a class="email-badge email-badge-parts" href="/parts_list/view/${message.parts_list_id}" target="_blank" rel="noopener" onclick="event.stopPropagation();">Parts List #${message.parts_list_id}</a>`
             : '';
-        const badges = ticketBadge || partsListBadge
-            ? `<div class="email-badges">${ticketBadge}${partsListBadge}</div>`
+        const badges = ticketBadge || partsListBadge || folderButton
+            ? `<div class="email-badges">${ticketBadge}${partsListBadge}${folderButton}</div>`
             : '';
         
         return `
@@ -1398,6 +1469,164 @@ function renderEmailList(messages, append = false) {
         emailListContainer.innerHTML = html;
     } else if (html) {
         emailListContainer.insertAdjacentHTML('beforeend', html);
+    }
+}
+
+function updateFolderButtonsForEmail(address, rule) {
+    if (!emailListContainer || !address) return;
+    const normalized = normalizeEmailAddress(address);
+    if (!normalized) return;
+    const safeEmail = window.CSS && CSS.escape ? CSS.escape(normalized) : normalized.replace(/"/g, '\\"');
+    emailListContainer.querySelectorAll(`.email-folder-btn[data-email="${safeEmail}"]`).forEach(btn => {
+        btn.classList.toggle('email-folder-has-rule', Boolean(rule));
+        const title = rule?.graph_folder_name ? `File to ${rule.graph_folder_name}` : 'File to folder';
+        btn.setAttribute('title', title);
+    });
+}
+
+function updateFolderRuleInCache(address, rule) {
+    const normalized = normalizeEmailAddress(address);
+    if (!normalized) return;
+    messageCache = messageCache.map(message => {
+        const messageEmail = normalizeEmailAddress(message?.from_email);
+        if (messageEmail && messageEmail === normalized) {
+            return { ...message, folder_rule: rule };
+        }
+        return message;
+    });
+}
+
+function removeMessageFromList(messageId) {
+    if (!messageId) return;
+    messageCache = messageCache.filter(msg => msg?.id !== messageId);
+    const item = emailListContainer?.querySelector(`.email-item[data-id="${messageId}"]`);
+    if (item) {
+        item.remove();
+    }
+    if (mailboxCount) {
+        mailboxCount.textContent = messageCache.length;
+    }
+    if (selectedMessageId === messageId) {
+        selectedMessageId = null;
+        selectedMessage = null;
+        emptyReadingState.style.display = 'flex';
+        readingContent.style.display = 'none';
+    }
+}
+
+function resetMailboxFolderModal() {
+    if (mailboxFolderFeedback) {
+        mailboxFolderFeedback.classList.add('d-none');
+        mailboxFolderFeedback.textContent = '';
+    }
+    if (mailboxFolderSaveBtn) {
+        mailboxFolderSaveBtn.disabled = true;
+    }
+    if (mailboxFolderSelect) {
+        mailboxFolderSelect.value = '';
+    }
+}
+
+function setMailboxFolderFeedback(message) {
+    if (!mailboxFolderFeedback) return;
+    if (!message) {
+        mailboxFolderFeedback.classList.add('d-none');
+        mailboxFolderFeedback.textContent = '';
+        return;
+    }
+    mailboxFolderFeedback.textContent = message;
+    mailboxFolderFeedback.classList.remove('d-none');
+}
+
+function populateMailboxFolderSelect(folders) {
+    if (!mailboxFolderSelect) return;
+    if (!Array.isArray(folders) || !folders.length) {
+        mailboxFolderSelect.innerHTML = '<option value="">No folders found</option>';
+        mailboxFolderSelect.disabled = true;
+        return;
+    }
+    const options = folders.map(folder => {
+        const name = folder.display_name || folder.displayName || 'Unnamed folder';
+        return `<option value="${folder.id}">${name}</option>`;
+    }).join('');
+    mailboxFolderSelect.innerHTML = `<option value="">Select a folder...</option>${options}`;
+    mailboxFolderSelect.disabled = false;
+}
+
+async function loadMailboxFolderList() {
+    if (mailboxFolderList || mailboxFolderListLoading) {
+        return mailboxFolderList;
+    }
+    mailboxFolderListLoading = true;
+    try {
+        const response = await fetch('/emails/graph/mail-folders');
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error?.message || 'Failed to load folders');
+        }
+        mailboxFolderList = data.folders || [];
+        populateMailboxFolderSelect(mailboxFolderList);
+        return mailboxFolderList;
+    } catch (error) {
+        populateMailboxFolderSelect([]);
+        setMailboxFolderFeedback(error.message || 'Failed to load folders');
+        return null;
+    } finally {
+        mailboxFolderListLoading = false;
+    }
+}
+
+async function openMailboxFolderModal(messageId, emailAddress) {
+    if (!mailboxFolderModal) return;
+    mailboxFolderModal.dataset.messageId = messageId || '';
+    mailboxFolderModal.dataset.emailAddress = normalizeEmailAddress(emailAddress || '');
+    if (mailboxFolderEmail) {
+        mailboxFolderEmail.textContent = emailAddress || 'Unknown sender';
+    }
+    resetMailboxFolderModal();
+    await loadMailboxFolderList();
+    const modal = bootstrap.Modal.getOrCreateInstance(mailboxFolderModal);
+    modal.show();
+}
+
+async function moveMessageToFolder(messageId, folderId, folderName) {
+    if (!messageId || !folderId) return false;
+    const response = await fetch(`/emails/graph/message/${encodeURIComponent(messageId)}/move`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ destination_id: folderId })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+        throw new Error(data.error?.message || 'Failed to file message');
+    }
+    removeMessageFromList(messageId);
+    showToast(`Filed email to ${folderName || 'folder'}`, 'success');
+    return true;
+}
+
+async function handleFolderButtonClick(folderBtn) {
+    if (!folderBtn) return;
+    const messageId = folderBtn.getAttribute('data-message-id');
+    const email = folderBtn.getAttribute('data-email');
+    if (!messageId || !email) {
+        showToast('No sender email available to file', 'warning');
+        return;
+    }
+    const rule = getFolderRuleForEmail(email);
+    if (!rule?.graph_folder_id) {
+        await openMailboxFolderModal(messageId, email);
+        return;
+    }
+    const original = folderBtn.innerHTML;
+    folderBtn.disabled = true;
+    folderBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    try {
+        await moveMessageToFolder(messageId, rule.graph_folder_id, rule.graph_folder_name);
+    } catch (error) {
+        showToast(error.message || 'Failed to file email', 'error');
+        folderBtn.disabled = false;
+        folderBtn.innerHTML = original;
     }
 }
 
@@ -1808,11 +2037,68 @@ emailSearch.addEventListener('input', (e) => {
 });
 
 emailListContainer?.addEventListener('click', (event) => {
+    const folderBtn = event.target.closest('.email-folder-btn');
+    if (folderBtn) {
+        event.stopPropagation();
+        handleFolderButtonClick(folderBtn);
+        return;
+    }
     const item = event.target.closest('.email-item');
     if (!item) return;
     const messageId = item.getAttribute('data-id');
     if (messageId) {
         selectMessage(messageId);
+    }
+});
+
+mailboxFolderSelect?.addEventListener('change', () => {
+    if (mailboxFolderSaveBtn) {
+        mailboxFolderSaveBtn.disabled = !mailboxFolderSelect.value;
+    }
+    setMailboxFolderFeedback('');
+});
+
+mailboxFolderSaveBtn?.addEventListener('click', async () => {
+    const folderId = mailboxFolderSelect?.value || '';
+    if (!folderId) {
+        setMailboxFolderFeedback('Select a folder before saving.');
+        return;
+    }
+    const emailAddress = mailboxFolderModal?.dataset.emailAddress || '';
+    const messageId = mailboxFolderModal?.dataset.messageId || '';
+    const folderName = mailboxFolderSelect?.selectedOptions?.[0]?.textContent?.trim() || '';
+    mailboxFolderSaveBtn.disabled = true;
+    const original = mailboxFolderSaveBtn.innerHTML;
+    mailboxFolderSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
+    try {
+        const response = await fetch('/emails/mailbox/folder-rules', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                email_address: emailAddress,
+                graph_folder_id: folderId,
+                graph_folder_name: folderName
+            })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || data.error?.message || 'Failed to save folder rule');
+        }
+        const rule = data.rule || {
+            graph_folder_id: folderId,
+            graph_folder_name: folderName
+        };
+        setFolderRuleForEmail(emailAddress, rule);
+        updateFolderButtonsForEmail(emailAddress, rule);
+        updateFolderRuleInCache(emailAddress, rule);
+        await moveMessageToFolder(messageId, folderId, folderName);
+        const modalInstance = bootstrap.Modal.getInstance(mailboxFolderModal);
+        modalInstance?.hide();
+    } catch (error) {
+        setMailboxFolderFeedback(error.message || 'Failed to save folder rule');
+    } finally {
+        mailboxFolderSaveBtn.innerHTML = original;
+        mailboxFolderSaveBtn.disabled = !mailboxFolderSelect?.value;
     }
 });
 
@@ -2426,6 +2712,28 @@ loadMailboxMessages({ reset: true });
     background: #e2f0ff;
     color: #084298;
     border: 1px solid #b6d4fe;
+}
+
+.email-badge-folder {
+    background: #f8f9fa;
+    color: #495057;
+    border: 1px solid #ced4da;
+    cursor: pointer;
+}
+
+.email-badge-folder i {
+    font-size: 0.8rem;
+}
+
+.email-folder-has-rule {
+    background: #d1e7dd;
+    border-color: #badbcc;
+    color: #0f5132;
+}
+
+.email-badge-folder:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .email-badge:hover {

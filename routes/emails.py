@@ -1466,6 +1466,12 @@ def _current_graph_user_id():
     return None
 
 
+def _normalize_email_address(address):
+    if not address:
+        return ""
+    return address.strip().lower()
+
+
 def _load_graph_cache_for_request():
     user_id = _current_graph_user_id()
     if user_id:
@@ -1478,6 +1484,78 @@ def _save_graph_cache_for_request(user_id, cache):
         _save_graph_cache_for_user(user_id, cache)
     else:
         _save_graph_cache(cache)
+
+
+def _fetch_mailbox_folder_rules(user_id, email_addresses):
+    if not user_id or not email_addresses:
+        return {}
+    normalized = sorted({addr for addr in (_normalize_email_address(a) for a in email_addresses) if addr})
+    if not normalized:
+        return {}
+    placeholders = ",".join(["?"] * len(normalized))
+    query = f"""
+        SELECT email_address, graph_folder_id, graph_folder_name
+        FROM graph_mailbox_folder_rules
+        WHERE user_id = ?
+          AND email_address IN ({placeholders})
+    """
+    rows = db_execute(query, (user_id, *normalized), fetch="all") or []
+    rules = {}
+    for row in rows:
+        email_address = row.get("email_address") if isinstance(row, dict) else row[0]
+        graph_folder_id = row.get("graph_folder_id") if isinstance(row, dict) else row[1]
+        graph_folder_name = row.get("graph_folder_name") if isinstance(row, dict) else row[2]
+        if not email_address:
+            continue
+        rules[email_address] = {
+            "graph_folder_id": graph_folder_id,
+            "graph_folder_name": graph_folder_name,
+        }
+    return rules
+
+
+def _fetch_graph_mail_folders(headers):
+    params = {
+        "$select": "id,displayName,parentFolderId,childFolderCount,wellKnownName",
+        "$top": "200",
+        "$expand": "childFolders($select=id,displayName,parentFolderId,childFolderCount)",
+    }
+    resp = requests.get(
+        "https://graph.microsoft.com/v1.0/me/mailFolders",
+        headers=headers,
+        params=params,
+        timeout=20,
+    )
+    try:
+        body = resp.json() if resp.content else None
+    except ValueError:
+        body = resp.text
+    if resp.status_code >= 400:
+        return None, body
+    folders = body.get("value", []) if isinstance(body, dict) else []
+    flat = []
+    for folder in folders:
+        if not isinstance(folder, dict):
+            continue
+        display_name = folder.get("displayName") or "Unnamed folder"
+        flat.append({
+            "id": folder.get("id"),
+            "display_name": display_name,
+            "parent_id": folder.get("parentFolderId"),
+            "well_known_name": folder.get("wellKnownName"),
+        })
+        for child in folder.get("childFolders") or []:
+            if not isinstance(child, dict):
+                continue
+            child_name = child.get("displayName") or "Unnamed folder"
+            flat.append({
+                "id": child.get("id"),
+                "display_name": f"{display_name} / {child_name}",
+                "parent_id": child.get("parentFolderId"),
+                "well_known_name": child.get("wellKnownName"),
+            })
+    flat.sort(key=lambda item: item.get("display_name") or "")
+    return flat, None
 
 
 def _get_salesperson_id_for_user(user_id):
@@ -3139,6 +3217,16 @@ def graph_messages():
                     or supplier_parts_by_conversation.get(conversation_id)
                 )
 
+            rules_by_email = _fetch_mailbox_folder_rules(
+                user_id,
+                [message.get("from_email") for message in cached_messages],
+            )
+            if rules_by_email:
+                for message in cached_messages:
+                    from_email = _normalize_email_address(message.get("from_email"))
+                    if from_email and from_email in rules_by_email:
+                        message["folder_rule"] = rules_by_email[from_email]
+
             # Check if there are more cached messages
             count_row = db_execute(
                 "SELECT COUNT(*) as count FROM graph_email_cache WHERE user_id = ?",
@@ -3254,6 +3342,16 @@ def graph_messages():
             or supplier_parts_by_conversation.get(conversation_id)
         )
 
+    rules_by_email = _fetch_mailbox_folder_rules(
+        user_id,
+        [message.get("from_email") for message in messages],
+    )
+    if rules_by_email:
+        for message in messages:
+            from_email = _normalize_email_address(message.get("from_email"))
+            if from_email and from_email in rules_by_email:
+                message["folder_rule"] = rules_by_email[from_email]
+
     try:
         salesperson_id = None
         if hasattr(current_user, "get_salesperson_id"):
@@ -3340,6 +3438,216 @@ def graph_message_detail(message_id):
         "success": True,
         "message": body,
         "lookup": lookup,
+    })
+
+
+@emails_bp.route('/emails/graph/mail-folders', methods=['GET'])
+def graph_mail_folders():
+    settings = _get_graph_settings(include_secret=True)
+    cache, user_id = _load_graph_cache_for_request()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache_for_request(user_id, cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token",
+            },
+            "debug": token,
+        }), 400
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    folders, error = _fetch_graph_mail_folders(headers)
+    if error is not None:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to load folders",
+            },
+            "debug": error,
+        }), 400
+
+    return jsonify({
+        "success": True,
+        "folders": folders,
+    })
+
+
+@emails_bp.route('/emails/graph/message/<path:message_id>/move', methods=['POST'])
+def graph_move_message(message_id):
+    payload = request.get_json(silent=True) or {}
+    destination_id = (payload.get("destination_id") or "").strip()
+    if not message_id or not destination_id:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Destination folder is required.",
+            },
+        }), 400
+
+    settings = _get_graph_settings(include_secret=True)
+    cache, user_id = _load_graph_cache_for_request()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache_for_request(user_id, cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token",
+            },
+            "debug": token,
+        }), 400
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    safe_message_id = quote(message_id, safe="")
+    resp = requests.post(
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/move",
+        headers=headers,
+        json={"destinationId": destination_id},
+        timeout=20,
+    )
+    try:
+        body = resp.json() if resp.content else None
+    except ValueError:
+        body = resp.text
+
+    if resp.status_code >= 400:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Graph move failed",
+                "status": resp.status_code,
+            },
+            "debug": body,
+        }), 400
+
+    if user_id:
+        db_execute(
+            "DELETE FROM graph_email_cache WHERE user_id = ? AND message_id = ?",
+            (user_id, message_id),
+            commit=True,
+        )
+
+    return jsonify({
+        "success": True,
+        "message": body,
+    })
+
+
+@emails_bp.route('/emails/mailbox/folder-rules', methods=['GET', 'POST'])
+def mailbox_folder_rules():
+    user_id = _current_graph_user_id()
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "error": "User not authenticated",
+        }), 401
+
+    if request.method == "GET":
+        email_address = _normalize_email_address(request.args.get("email"))
+        if email_address:
+            row = db_execute(
+                """
+                SELECT email_address, graph_folder_id, graph_folder_name
+                FROM graph_mailbox_folder_rules
+                WHERE user_id = ? AND email_address = ?
+                """,
+                (user_id, email_address),
+                fetch="one",
+            )
+            if not row:
+                return jsonify({
+                    "success": True,
+                    "rule": None,
+                })
+            rule = {
+                "email_address": row.get("email_address") if isinstance(row, dict) else row[0],
+                "graph_folder_id": row.get("graph_folder_id") if isinstance(row, dict) else row[1],
+                "graph_folder_name": row.get("graph_folder_name") if isinstance(row, dict) else row[2],
+            }
+            return jsonify({
+                "success": True,
+                "rule": rule,
+            })
+
+        rows = db_execute(
+            """
+            SELECT email_address, graph_folder_id, graph_folder_name
+            FROM graph_mailbox_folder_rules
+            WHERE user_id = ?
+            ORDER BY email_address
+            """,
+            (user_id,),
+            fetch="all",
+        ) or []
+        rules = [
+            {
+                "email_address": row.get("email_address") if isinstance(row, dict) else row[0],
+                "graph_folder_id": row.get("graph_folder_id") if isinstance(row, dict) else row[1],
+                "graph_folder_name": row.get("graph_folder_name") if isinstance(row, dict) else row[2],
+            }
+            for row in rows
+        ]
+        return jsonify({
+            "success": True,
+            "rules": rules,
+        })
+
+    payload = request.get_json(silent=True) or {}
+    email_address = _normalize_email_address(payload.get("email_address"))
+    graph_folder_id = (payload.get("graph_folder_id") or payload.get("folder_id") or "").strip()
+    graph_folder_name = (payload.get("graph_folder_name") or payload.get("folder_name") or "").strip() or None
+    if not email_address or not graph_folder_id:
+        return jsonify({
+            "success": False,
+            "error": "Email address and folder are required.",
+        }), 400
+
+    db_execute(
+        """
+        INSERT INTO graph_mailbox_folder_rules
+            (user_id, email_address, graph_folder_id, graph_folder_name, created_at, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, email_address) DO UPDATE
+        SET graph_folder_id = EXCLUDED.graph_folder_id,
+            graph_folder_name = EXCLUDED.graph_folder_name,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (user_id, email_address, graph_folder_id, graph_folder_name),
+        commit=True,
+    )
+
+    return jsonify({
+        "success": True,
+        "rule": {
+            "email_address": email_address,
+            "graph_folder_id": graph_folder_id,
+            "graph_folder_name": graph_folder_name,
+        },
     })
 
 
