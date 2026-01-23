@@ -1600,6 +1600,11 @@ async function moveMessageToFolder(messageId, folderId, folderName) {
     if (!response.ok || !data.success) {
         throw new Error(data.error?.message || 'Failed to file message');
     }
+    if (data.missing) {
+        removeMessageFromList(messageId);
+        showToast(data.message || 'Message already moved or deleted.', 'info');
+        return true;
+    }
     removeMessageFromList(messageId);
     showToast(`Filed email to ${folderName || 'folder'}`, 'success');
     return true;

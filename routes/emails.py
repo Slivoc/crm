@@ -1515,47 +1515,130 @@ def _fetch_mailbox_folder_rules(user_id, email_addresses):
 
 
 def _fetch_graph_mail_folders(headers):
+    def _fetch(url, params):
+        resp = requests.get(
+            url,
+            headers=headers,
+            params=params,
+            timeout=20,
+        )
+        try:
+            body = resp.json() if resp.content else None
+        except ValueError:
+            body = resp.text
+        request_id = resp.headers.get("request-id") or resp.headers.get("client-request-id")
+        if resp.status_code >= 400:
+            return None, body, resp.status_code, request_id
+        return body, None, resp.status_code, request_id
+
+    def _fetch_paged(url, params):
+        items = []
+        status_code = None
+        request_id = None
+        next_url = url
+        next_params = params
+
+        for _ in range(20):
+            body, error, status_code, request_id = _fetch(next_url, next_params)
+            if error is not None:
+                return None, error, status_code, request_id
+            if not isinstance(body, dict):
+                break
+            items.extend(body.get("value", []) or [])
+            next_url = body.get("@odata.nextLink")
+            next_params = None
+            if not next_url:
+                break
+        return items, None, status_code, request_id
+
+    def _flatten_folder_list(folders, child_params):
+        flat = []
+        queue = []
+        seen = set()
+
+        for folder in folders:
+            if not isinstance(folder, dict):
+                continue
+            display_name = folder.get("displayName") or "Unnamed folder"
+            folder_id = folder.get("id")
+            flat.append({
+                "id": folder_id,
+                "display_name": display_name,
+                "parent_id": folder.get("parentFolderId"),
+                "well_known_name": folder.get("wellKnownName"),
+            })
+            if folder_id and folder.get("childFolderCount"):
+                queue.append((folder_id, display_name))
+
+        while queue:
+            folder_id, parent_path = queue.pop(0)
+            if folder_id in seen:
+                continue
+            seen.add(folder_id)
+            children, child_error, _child_status, _child_request_id = _fetch_paged(
+                f"https://graph.microsoft.com/v1.0/me/mailFolders/{quote(folder_id, safe='')}/childFolders",
+                child_params,
+            )
+            if child_error is not None:
+                continue
+            for child in children or []:
+                if not isinstance(child, dict):
+                    continue
+                child_name = child.get("displayName") or "Unnamed folder"
+                child_id = child.get("id")
+                child_path = f"{parent_path} / {child_name}"
+                flat.append({
+                    "id": child_id,
+                    "display_name": child_path,
+                    "parent_id": child.get("parentFolderId"),
+                    "well_known_name": child.get("wellKnownName"),
+                })
+                if child_id and child.get("childFolderCount"):
+                    queue.append((child_id, child_path))
+
+        flat.sort(key=lambda item: item.get("display_name") or "")
+        return flat
+
     params = {
         "$select": "id,displayName,parentFolderId,childFolderCount,wellKnownName",
-        "$top": "200",
-        "$expand": "childFolders($select=id,displayName,parentFolderId,childFolderCount)",
     }
-    resp = requests.get(
+    folders, error, status_code, request_id = _fetch_paged(
         "https://graph.microsoft.com/v1.0/me/mailFolders",
-        headers=headers,
-        params=params,
-        timeout=20,
+        params,
     )
-    try:
-        body = resp.json() if resp.content else None
-    except ValueError:
-        body = resp.text
-    if resp.status_code >= 400:
-        return None, body
-    folders = body.get("value", []) if isinstance(body, dict) else []
-    flat = []
-    for folder in folders:
-        if not isinstance(folder, dict):
-            continue
-        display_name = folder.get("displayName") or "Unnamed folder"
-        flat.append({
-            "id": folder.get("id"),
-            "display_name": display_name,
-            "parent_id": folder.get("parentFolderId"),
-            "well_known_name": folder.get("wellKnownName"),
-        })
-        for child in folder.get("childFolders") or []:
-            if not isinstance(child, dict):
-                continue
-            child_name = child.get("displayName") or "Unnamed folder"
-            flat.append({
-                "id": child.get("id"),
-                "display_name": f"{display_name} / {child_name}",
-                "parent_id": child.get("parentFolderId"),
-                "well_known_name": child.get("wellKnownName"),
-            })
-    flat.sort(key=lambda item: item.get("display_name") or "")
-    return flat, None
+    if error is None:
+        return _flatten_folder_list(folders or [], params), None
+
+    fallback_params = {
+        "$select": "id,displayName,parentFolderId,childFolderCount,wellKnownName",
+    }
+    folders, error, fallback_status, fallback_request_id = _fetch_paged(
+        "https://graph.microsoft.com/v1.0/me/mailFolders",
+        fallback_params,
+    )
+    if error is None:
+        return _flatten_folder_list(folders or [], fallback_params), None
+
+    folders, error, minimal_status, minimal_request_id = _fetch_paged(
+        "https://graph.microsoft.com/v1.0/me/mailFolders",
+        None,
+    )
+    if error is not None:
+        current_app.logger.warning(
+            "Graph mailFolders failed: primary=%s fallback=%s minimal=%s body=%s request_ids=%s",
+            status_code,
+            fallback_status,
+            minimal_status,
+            error,
+            {
+                "primary": request_id,
+                "fallback": fallback_request_id,
+                "minimal": minimal_request_id,
+            },
+        )
+        return None, error
+
+    return _flatten_folder_list(folders or [], None), None
 
 
 def _get_salesperson_id_for_user(user_id):
@@ -2184,6 +2267,30 @@ def _get_cached_emails(user_id, limit=25, offset=0):
                 pass
 
     return messages
+
+
+def _is_graph_cache_fresh(user_id, max_age_minutes=5):
+    if not user_id:
+        return False
+    row = db_execute(
+        "SELECT MAX(updated_at) as latest FROM graph_email_cache WHERE user_id = ?",
+        (user_id,),
+        fetch="one",
+    )
+    if not row:
+        return False
+    latest = row.get("latest") if isinstance(row, dict) else row[0]
+    if not latest:
+        return False
+    try:
+        latest_dt = latest
+        if isinstance(latest, str):
+            latest_dt = parser.parse(latest)
+        if hasattr(latest_dt, "tzinfo") and latest_dt.tzinfo:
+            latest_dt = latest_dt.astimezone(timezone.utc).replace(tzinfo=None)
+    except (TypeError, ValueError):
+        return False
+    return (datetime.utcnow() - latest_dt) <= timedelta(minutes=max_age_minutes)
 
 
 def _get_cached_latest_message_for_email(user_id, email_addr, limit=200):
@@ -3190,8 +3297,8 @@ def graph_messages():
     page_token = request.args.get("page_token")
     use_cache_only = request.args.get("use_cache", "").lower() == "true"
 
-    # If no page_token and not explicitly forcing cache, try to serve from cache first
-    if not page_token and not use_cache_only and user_id:
+    # If no page_token and explicitly forcing cache, or cache is fresh, serve from cache.
+    if not page_token and user_id and (use_cache_only or _is_graph_cache_fresh(user_id)):
         cached_messages = _get_cached_emails(user_id, limit=page_size)
         if cached_messages:
             # We have cached data, enrich it and return
@@ -3288,6 +3395,15 @@ def graph_messages():
         body = resp.json() if resp.content else None
     except ValueError:
         body = resp.text
+
+    if resp.status_code == 404:
+        attachments = []
+        _set_inline_attachment_cache(message_id, attachments)
+        return jsonify({
+            "success": True,
+            "attachments": attachments,
+            "missing": True,
+        })
 
     if resp.status_code >= 400:
         return jsonify({
@@ -3420,6 +3536,13 @@ def graph_message_detail(message_id):
     except ValueError:
         body = resp.text
 
+    if resp.status_code == 404:
+        return jsonify({
+            "success": True,
+            "attachments": [],
+            "missing": True,
+        })
+
     if resp.status_code >= 400:
         return jsonify({
             "success": False,
@@ -3535,7 +3658,28 @@ def graph_move_message(message_id):
     except ValueError:
         body = resp.text
 
+    if resp.status_code == 404:
+        if user_id:
+            db_execute(
+                "DELETE FROM graph_email_cache WHERE user_id = ? AND message_id = ?",
+                (user_id, message_id),
+                commit=True,
+            )
+        return jsonify({
+            "success": True,
+            "missing": True,
+            "message": "Message already moved or deleted.",
+            "debug": body,
+        })
+
     if resp.status_code >= 400:
+        request_id = resp.headers.get("request-id") or resp.headers.get("client-request-id")
+        current_app.logger.warning(
+            "Graph move failed: status=%s request_id=%s body=%s",
+            resp.status_code,
+            request_id,
+            body,
+        )
         return jsonify({
             "success": False,
             "error": {
@@ -4596,6 +4740,15 @@ def graph_message_inline_attachments(message_id):
     except ValueError:
         body = resp.text
 
+    if resp.status_code == 404:
+        attachments = []
+        _set_inline_attachment_cache(message_id, attachments)
+        return jsonify({
+            "success": True,
+            "attachments": attachments,
+            "missing": True,
+        })
+
     if resp.status_code >= 400:
         return jsonify({
             "success": False,
@@ -4684,6 +4837,13 @@ def graph_message_attachments(message_id):
         body = resp.json() if resp.content else None
     except ValueError:
         body = resp.text
+
+    if resp.status_code == 404:
+        return jsonify({
+            "success": True,
+            "attachments": [],
+            "missing": True,
+        })
 
     if resp.status_code >= 400:
         return jsonify({
