@@ -234,6 +234,36 @@ document.addEventListener('DOMContentLoaded', function () {
         useStockForAllAvailable();
     });
 
+    const applyAutoAssignBtn = document.getElementById('apply-auto-assign-btn');
+    if (applyAutoAssignBtn) {
+        applyAutoAssignBtn.addEventListener('click', async function() {
+            const scope = document.querySelector('input[name="auto-assign-scope"]:checked')?.value || 'missing';
+            const includeOther = document.getElementById('auto-assign-include-other')?.checked;
+            const originalHtml = this.innerHTML;
+
+            this.disabled = true;
+            this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Applying';
+
+            try {
+                await autoAssignCheapestOffers({
+                    scope: scope,
+                    includeOtherOffers: includeOther
+                });
+                const modalEl = document.getElementById('autoAssignCheapestModal');
+                if (modalEl) {
+                    const modalInstance = bootstrap.Modal.getInstance(modalEl);
+                    if (modalInstance) modalInstance.hide();
+                }
+            } catch (error) {
+                console.error('Auto-assign failed:', error);
+                showToast('Auto-assign failed. Please try again.', 'danger');
+            } finally {
+                this.disabled = false;
+                this.innerHTML = originalHtml;
+            }
+        });
+    }
+
 }); // <-- END OF DOMContentLoaded
 
 function loadEmailedSuppliersForCosting() {
@@ -374,6 +404,47 @@ function updateLineTotal(lineId) {
     if (!totalEl) return;
 
     totalEl.textContent = total > 0 ? `£${total.toFixed(2)}` : '-';
+}
+
+function parseUnitPrice(value) {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatPrice(value, currencyCode) {
+    const parsed = parseUnitPrice(value);
+    if (parsed === null) return '-';
+    const prefix = currencyCode ? `${currencyCode} ` : '';
+    return `${prefix}${parsed.toFixed(2)}`;
+}
+
+function getRequiredQtyForRow(row) {
+    if (!row) return 1;
+    const chosenQtyInput = row.querySelector('.chosen-qty-input');
+    const requestedQty = row.querySelector('.badge[data-requested-qty]');
+    return parseInt((chosenQtyInput && chosenQtyInput.value) ||
+        (requestedQty && requestedQty.dataset.requestedQty)) || 1;
+}
+
+function normalizeOfferQty(value, piecesPerPound, convertFromLb) {
+    const parsed = parseFloat(value);
+    if (!Number.isFinite(parsed)) return null;
+    if (convertFromLb && piecesPerPound && piecesPerPound > 0) {
+        return Math.round(parsed * piecesPerPound);
+    }
+    return Math.round(parsed);
+}
+
+function offerCoversRequiredQty(offer, requiredQty, piecesPerPound, convertFromLb) {
+    const availableQty = normalizeOfferQty(offer.qty_available, piecesPerPound, convertFromLb);
+    if (Number.isFinite(availableQty)) {
+        return availableQty >= requiredQty;
+    }
+    const quotedQty = normalizeOfferQty(offer.quantity_quoted, piecesPerPound, convertFromLb);
+    if (Number.isFinite(quotedQty)) {
+        return quotedQty >= requiredQty;
+    }
+    return true;
 }
 
 function saveLineCost(lineId) {
@@ -768,18 +839,6 @@ function displayQuotes(quotes, lineId, requiredQty) {
     tbody.innerHTML = '';
     requiredQty = requiredQty || 1;
 
-    const parseUnitPrice = (value) => {
-        const parsed = parseFloat(value);
-        return Number.isFinite(parsed) ? parsed : null;
-    };
-
-    const formatPrice = (value, currencyCode) => {
-        const parsed = parseUnitPrice(value);
-        if (parsed === null) return '-';
-        const prefix = currencyCode ? `${currencyCode} ` : '';
-        return `${prefix}${parsed.toFixed(2)}`;
-    };
-
     const validQuotes = quotes.filter(q => !q.is_no_bid && parseUnitPrice(q.unit_price) !== null);
     const cheapestPrice = validQuotes.length > 0
         ? Math.min(...validQuotes.map(q => parseUnitPrice(q.unit_price)))
@@ -1146,9 +1205,11 @@ function displayOtherOffers(offers, lineId, requiredQty) {
     });
 }
 
-function useQuoteForLine(lineId, quoteLineId, supplierId, supplierName, cost, currencyId, leadDays, quotedQuantity, quoteNotes) {
+function useQuoteForLine(lineId, quoteLineId, supplierId, supplierName, cost, currencyId, leadDays, quotedQuantity, quoteNotes, options) {
     const row = document.querySelector(`tr[data-line-id="${lineId}"]`);
     if (!row) return;
+
+    const opts = options || {};
 
     const supplierNotes = quoteNotes || '';
 
@@ -1212,17 +1273,23 @@ function useQuoteForLine(lineId, quoteLineId, supplierId, supplierName, cost, cu
     // Update line total
     updateLineTotal(lineId);
 
-    // Save immediately
-    saveLineCost(lineId);
-
-    // Close modal
-    const modalEl = document.getElementById('quoteSelectionModal');
-    if (modalEl) {
-        const modalInstance = bootstrap.Modal.getInstance(modalEl);
-        if (modalInstance) modalInstance.hide();
+    if (!opts.skipSave) {
+        // Save immediately
+        saveLineCost(lineId);
     }
 
-    showToast(`Applied quote from ${supplierName}`, 'success');
+    if (!opts.skipModalClose) {
+        // Close modal
+        const modalEl = document.getElementById('quoteSelectionModal');
+        if (modalEl) {
+            const modalInstance = bootstrap.Modal.getInstance(modalEl);
+            if (modalInstance) modalInstance.hide();
+        }
+    }
+
+    if (!opts.skipToast) {
+        showToast(`Applied quote from ${supplierName}`, 'success');
+    }
 }
 
 function filterRows(filterType) {
@@ -1344,4 +1411,168 @@ function useStockForAllAvailable() {
             }
         }, index * 100);
     });
+}
+
+async function autoAssignCheapestOffers(options) {
+    const listId = window.PARTS_LIST_ID;
+    if (!listId) {
+        showToast('Parts list ID not found. Please refresh.', 'danger');
+        return;
+    }
+
+    const rows = Array.from(document.querySelectorAll('tr[data-line-id]'));
+    if (rows.length === 0) {
+        showToast('No lines available to assign.', 'info');
+        return;
+    }
+
+    const scope = options?.scope || 'missing';
+    const includeOtherOffers = Boolean(options?.includeOtherOffers);
+
+    const candidateRows = rows.filter(row => {
+        const costInput = row.querySelector('.cost-input');
+        const costValue = parseFloat(costInput?.value);
+        const hasCost = row.classList.contains('has-cost') || (Number.isFinite(costValue) && costValue > 0);
+        return !hasCost;
+    });
+
+    if (candidateRows.length === 0) {
+        showToast('No matching lines for auto-assign.', 'info');
+        return;
+    }
+
+    let appliedCount = 0;
+    let skippedCount = 0;
+    let insufficientQtyCount = 0;
+    let errorCount = 0;
+
+    for (const row of candidateRows) {
+        const lineId = row.dataset.lineId;
+        if (!lineId) {
+            skippedCount++;
+            continue;
+        }
+
+        const requiredQty = getRequiredQtyForRow(row);
+
+        try {
+            const response = await fetch(`/parts_list/parts-lists/${listId}/lines/${lineId}/quotes`);
+            const data = await response.json();
+
+            if (!data.success) {
+                errorCount++;
+                continue;
+            }
+
+            const piecesPerPound = data.pieces_per_pound;
+            const hasPPP = piecesPerPound && piecesPerPound > 0;
+            const offers = [];
+            let lineHadQtyBlock = false;
+
+            (data.quotes || []).forEach(quote => {
+                if (quote.is_no_bid) return;
+                const unitPriceRaw = parseUnitPrice(quote.unit_price);
+                if (unitPriceRaw === null) return;
+
+                const quotedQtyRaw = parseFloat(quote.quantity_quoted);
+                const quotedQty = Number.isFinite(quotedQtyRaw) ? quotedQtyRaw : requiredQty;
+
+                if (!offerCoversRequiredQty(quote, requiredQty, piecesPerPound, hasPPP)) {
+                    lineHadQtyBlock = true;
+                    return;
+                }
+
+                let displayUnitPrice = unitPriceRaw;
+                let displayQty = quotedQty;
+
+                if (hasPPP) {
+                    const converted = convertLbToPieces(unitPriceRaw, quotedQty, piecesPerPound);
+                    if (converted) {
+                        displayUnitPrice = converted.pieceCost;
+                        displayQty = converted.pieceQty;
+                    }
+                }
+
+                offers.push({
+                    sourcePriority: 0,
+                    unitPrice: displayUnitPrice,
+                    quoteLineId: quote.quote_line_id,
+                    supplierId: quote.supplier_id,
+                    supplierName: quote.supplier_name,
+                    currencyId: quote.currency_id,
+                    leadDays: quote.lead_time_days,
+                    quotedQuantity: displayQty,
+                    quoteNotes: quote.line_notes || ''
+                });
+            });
+
+            if (includeOtherOffers) {
+                (data.other_offers || []).forEach(offer => {
+                    const unitPriceRaw = parseUnitPrice(offer.unit_price);
+                    if (unitPriceRaw === null) return;
+
+                    if (!offerCoversRequiredQty(offer, requiredQty, piecesPerPound, false)) {
+                        lineHadQtyBlock = true;
+                        return;
+                    }
+
+                    const quotedQtyRaw = parseFloat(offer.quantity_quoted);
+                    const quotedQty = Number.isFinite(quotedQtyRaw) ? quotedQtyRaw : requiredQty;
+
+                    offers.push({
+                        sourcePriority: 1,
+                        unitPrice: unitPriceRaw,
+                        quoteLineId: offer.quote_line_id,
+                        supplierId: offer.supplier_id,
+                        supplierName: offer.supplier_name,
+                        currencyId: offer.currency_id,
+                        leadDays: offer.lead_time_days,
+                        quotedQuantity: quotedQty,
+                        quoteNotes: offer.line_notes || ''
+                    });
+                });
+            }
+
+            if (offers.length === 0) {
+                if (lineHadQtyBlock) {
+                    insufficientQtyCount++;
+                } else {
+                    skippedCount++;
+                }
+                continue;
+            }
+
+            offers.sort((a, b) => {
+                if (a.unitPrice !== b.unitPrice) return a.unitPrice - b.unitPrice;
+                return a.sourcePriority - b.sourcePriority;
+            });
+
+            const chosen = offers[0];
+            useQuoteForLine(
+                lineId,
+                chosen.quoteLineId,
+                chosen.supplierId,
+                chosen.supplierName,
+                chosen.unitPrice,
+                chosen.currencyId,
+                chosen.leadDays || null,
+                chosen.quotedQuantity || null,
+                chosen.quoteNotes,
+                { skipToast: true, skipModalClose: true }
+            );
+            appliedCount++;
+        } catch (error) {
+            console.error('Auto-assign error for line', lineId, error);
+            errorCount++;
+        }
+    }
+
+    const summary = [
+        `Applied ${appliedCount} line${appliedCount === 1 ? '' : 's'}.`,
+        skippedCount ? `Skipped ${skippedCount}.` : '',
+        insufficientQtyCount ? `Insufficient qty ${insufficientQtyCount}.` : '',
+        errorCount ? `Errors ${errorCount}.` : ''
+    ].filter(Boolean).join(' ');
+
+    showToast(summary || 'Auto-assign complete.', appliedCount > 0 ? 'success' : 'info');
 }

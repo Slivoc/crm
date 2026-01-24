@@ -198,6 +198,10 @@
         <i class="bi bi-boxes me-1"></i>Use Stock for All Available
     </button>
 
+    <button id="auto-assign-cheapest-btn" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#autoAssignCheapestModal">
+        <i class="bi bi-lightning-charge me-1"></i>Auto-Assign Cheapest
+    </button>
+
     <button id="email-suppliers-btn" class="btn btn-sm btn-success" style="display: none;">
         <i class="bi bi-envelope-at me-1"></i>Email ILS Suppliers
     </button>
@@ -705,6 +709,55 @@
                         </small>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Auto-Assign Cheapest Offers Modal -->
+<div class="modal fade" id="autoAssignCheapestModal" tabindex="-1" aria-labelledby="autoAssignCheapestLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="autoAssignCheapestLabel">
+                    <i class="bi bi-lightning-charge me-2"></i>Auto-Assign Cheapest Offers
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Scope</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="auto-assign-scope" id="auto-assign-scope-missing" value="missing" checked>
+                        <label class="form-check-label" for="auto-assign-scope-missing">
+                            Only lines without cost
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="auto-assign-scope" id="auto-assign-scope-all" value="all">
+                        <label class="form-check-label" for="auto-assign-scope-all">
+                            All lines
+                        </label>
+                    </div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Sources</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="auto-assign-include-other" checked>
+                        <label class="form-check-label" for="auto-assign-include-other">
+                            Include offers from other parts lists
+                        </label>
+                    </div>
+                </div>
+                <div class="text-muted small">
+                    Only assigns offers that cover the full requested quantity. If available quantity is missing, the offer is treated as fully available. Lines with existing costs are skipped.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="apply-auto-assign-btn">
+                    <i class="bi bi-check2-circle me-1"></i>Apply
+                </button>
             </div>
         </div>
     </div>
