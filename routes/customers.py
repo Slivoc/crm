@@ -57,6 +57,10 @@ def _execute_with_cursor(cur, query, params=None):
     return cur
 
 
+def _reviewed_flag(value: bool):
+    return value if _using_postgres() else int(value)
+
+
 def _call_list_has_snoozed_until():
     try:
         with db_cursor() as cur:
@@ -3553,6 +3557,7 @@ def start_enrichment():
 def get_enrichment_status():
     """Get current enrichment status"""
     with db_cursor() as cur:
+        reviewed_false = _reviewed_flag(False)
         status = _execute_with_cursor(
             cur,
             '''
@@ -3572,8 +3577,9 @@ def get_enrichment_status():
             '''
             SELECT COUNT(DISTINCT suggested_tag) as count
             FROM ai_tag_suggestions
-            WHERE reviewed = 0
-            '''
+            WHERE reviewed = ?
+            ''',
+            (reviewed_false,)
         ).fetchone().get('count', 0)
 
         recent_activity = _execute_with_cursor(
@@ -3592,16 +3598,16 @@ def get_enrichment_status():
             '''
         ).fetchall()
 
-        recent_updates = _execute_with_cursor(
-            cur,
-            '''
+        industry_tags_agg = "STRING_AGG(DISTINCT it.tag, ', ')" if _using_postgres() else "GROUP_CONCAT(DISTINCT it.tag)"
+        company_types_agg = "STRING_AGG(DISTINCT ct.type, ', ')" if _using_postgres() else "GROUP_CONCAT(DISTINCT ct.type)"
+        recent_updates_query = f'''
             SELECT 
                 c.name,
                 c.estimated_revenue,
                 c.country,
                 c.updated_at,
-                GROUP_CONCAT(DISTINCT it.tag) as industry_tags,
-                GROUP_CONCAT(DISTINCT ct.type) as company_types
+                {industry_tags_agg} as industry_tags,
+                {company_types_agg} as company_types
             FROM customers c
             LEFT JOIN customer_industry_tags cit ON c.id = cit.customer_id
             LEFT JOIN industry_tags it ON cit.tag_id = it.id
@@ -3612,7 +3618,7 @@ def get_enrichment_status():
             ORDER BY c.updated_at DESC
             LIMIT 10
             '''
-        ).fetchall()
+        recent_updates = _execute_with_cursor(cur, recent_updates_query).fetchall()
 
     return jsonify({
         'status': 'success',
@@ -3629,18 +3635,18 @@ def get_enrichment_status():
 def view_suggestions():
     """View tag suggestions"""
     with db_cursor() as cur:
-        suggestions = _execute_with_cursor(
-            cur,
-            '''
+        reviewed_false = _reviewed_flag(False)
+        companies_agg = "STRING_AGG(DISTINCT c.name, ', ')" if _using_postgres() else "GROUP_CONCAT(DISTINCT c.name)"
+        suggestions_query = f'''
             WITH suggestion_counts AS (
                 SELECT 
                     suggested_tag,
                     COUNT(*) as frequency,
-                    GROUP_CONCAT(DISTINCT c.name) as companies,
+                    {companies_agg} as companies,
                     MIN(ats.created_at) as first_suggested
                 FROM ai_tag_suggestions ats
                 JOIN customers c ON ats.customer_id = c.id
-                WHERE reviewed = 0
+                WHERE reviewed = ?
                 GROUP BY suggested_tag
             )
             SELECT *
@@ -3653,7 +3659,7 @@ def view_suggestions():
             )
             ORDER BY frequency DESC
             '''
-        ).fetchall()
+        suggestions = _execute_with_cursor(cur, suggestions_query, (reviewed_false,)).fetchall()
 
     return render_template('customers/enrich/suggestions.html', suggestions=suggestions)
 
@@ -3688,6 +3694,8 @@ def approve_tag_suggestion():
             }), 400
 
         with db_cursor(commit=True) as cur:
+            reviewed_false = _reviewed_flag(False)
+            reviewed_true = _reviewed_flag(True)
             _execute_with_cursor(
                 cur,
                 '''
@@ -3709,9 +3717,9 @@ def approve_tag_suggestion():
                 '''
                 SELECT DISTINCT customer_id 
                 FROM ai_tag_suggestions 
-                WHERE suggested_tag = ? AND reviewed = 0
+                WHERE suggested_tag = ? AND reviewed = ?
                 ''',
-                (data['tag'],)
+                (data['tag'], reviewed_false)
             ).fetchall()
 
             for customer in customers:
@@ -3728,10 +3736,10 @@ def approve_tag_suggestion():
                 cur,
                 '''
                 UPDATE ai_tag_suggestions 
-                SET reviewed = 1
-                WHERE suggested_tag = ? AND reviewed = 0
+                SET reviewed = ?
+                WHERE suggested_tag = ? AND reviewed = ?
                 ''',
-                (data['tag'],)
+                (reviewed_true, data['tag'], reviewed_false)
             )
 
         return jsonify({
@@ -3759,14 +3767,16 @@ def reject_tag_suggestion():
             }), 400
 
         with db_cursor(commit=True) as cur:
+            reviewed_false = _reviewed_flag(False)
+            reviewed_true = _reviewed_flag(True)
             _execute_with_cursor(
                 cur,
                 '''
                 UPDATE ai_tag_suggestions 
-                SET reviewed = 1
-                WHERE suggested_tag = ? AND reviewed = 0
+                SET reviewed = ?
+                WHERE suggested_tag = ? AND reviewed = ?
                 ''',
-                (data['tag'],)
+                (reviewed_true, data['tag'], reviewed_false)
             )
 
         return jsonify({
@@ -4062,22 +4072,24 @@ def country_name_to_code(name):
 
 @customers_bp.route('/market-coverage', methods=['GET'])
 def market_coverage():
+    countries_agg = "STRING_AGG(DISTINCT c.country, ', ')" if _using_postgres() else "GROUP_CONCAT(DISTINCT c.country)"
+    sales_cutoff = "CURRENT_DATE - INTERVAL '1 year'" if _using_postgres() else "date('now', '-1 year')"
     with db_cursor() as cur:
         tag_data = _execute_with_cursor(
             cur,
-            """
+            f"""
             SELECT 
                 it.id, 
                 it.tag,
                 COUNT(DISTINCT c.id) as customer_count,
-                GROUP_CONCAT(DISTINCT c.country) as countries,
+                {countries_agg} as countries,
                 MAX(SUM(CASE 
-                    WHEN so.date_entered >= date('now', '-1 year') 
+                    WHEN so.date_entered >= {sales_cutoff} 
                     THEN so.total_value 
                     ELSE 0 
                 END)) OVER () as max_sales_last_year,
                 COALESCE(SUM(CASE 
-                    WHEN so.date_entered >= date('now', '-1 year') 
+                    WHEN so.date_entered >= {sales_cutoff} 
                     THEN so.total_value 
                     ELSE 0 
                 END), 0) as sales_last_year
@@ -4284,8 +4296,17 @@ def get_tag_customers(tag_id):
             WHERE ct.tag_id = ?
         """
 
+        if _using_postgres():
+            email_date_expr = "CAST(e.sent_date AS timestamp)"
+            rfq_date_expr = "CAST(r.entered_date AS timestamp)"
+            order_date_expr = "CAST(so.date_entered AS timestamp)"
+        else:
+            email_date_expr = "e.sent_date"
+            rfq_date_expr = "r.entered_date"
+            order_date_expr = "so.date_entered"
+
         # Your existing activity query from the prospecting route
-        activity_query = """
+        activity_query = f"""
         WITH latest_activity AS (
             SELECT 
                 customer_id,
@@ -4299,7 +4320,7 @@ def get_tag_customers(tag_id):
                     SELECT DISTINCT
                         c.customer_id,
                         'email' as activity_type,
-                        e.sent_date as activity_date,
+                        {email_date_expr} as activity_date,
                         CASE 
                             WHEN LOWER(e.sender_email) IN (SELECT LOWER(email) FROM users) THEN 'outbound'
                             ELSE 'received'
@@ -4313,7 +4334,7 @@ def get_tag_customers(tag_id):
                     SELECT 
                         r.customer_id,
                         'rfq' as activity_type,
-                        r.entered_date as activity_date,
+                        {rfq_date_expr} as activity_date,
                         r.status,
                         r.id as activity_id
                     FROM rfqs r
@@ -4323,7 +4344,7 @@ def get_tag_customers(tag_id):
                     SELECT 
                         so.customer_id,
                         'order' as activity_type,
-                        so.date_entered as activity_date,
+                        {order_date_expr} as activity_date,
                         ss.status_name as status,
                         so.id as activity_id
                     FROM sales_orders so
@@ -4476,6 +4497,10 @@ def create_customer_from_suggestion():
 @customers_bp.route('/api/tags/<int:tag_id>/suggestions', methods=['GET'])
 def get_tag_suggestions(tag_id):
     try:
+        refresh = str(request.args.get('refresh', '')).lower() in ('1', 'true', 'yes')
+        prompt = (request.args.get('prompt') or '').strip()
+        if prompt:
+            refresh = True
         with db_cursor() as cur:
             existing_customers = _execute_with_cursor(
                 cur,
@@ -4498,8 +4523,37 @@ def get_tag_suggestions(tag_id):
                 (tag_id,)
             ).fetchone()
 
+            cached = None
+            if not refresh and not prompt:
+                cached = _execute_with_cursor(
+                    cur,
+                    """
+                    SELECT analysis, suggestions, updated_at
+                    FROM market_intelligence_cache
+                    WHERE tag_id = ?
+                    """,
+                    (tag_id,)
+                ).fetchone()
+
         if not tag_info:
             return jsonify({"error": "Tag not found"}), 404
+
+        if cached:
+            cached_suggestions = cached.get('suggestions') or []
+            if isinstance(cached_suggestions, str):
+                try:
+                    cached_suggestions = json.loads(cached_suggestions)
+                except Exception:
+                    cached_suggestions = []
+            return jsonify({
+                "success": True,
+                "suggestions": cached_suggestions,
+                "description": tag_info['description'],
+                "tag": tag_info['tag'],
+                "analysis": cached.get('analysis', ''),
+                "cached": True,
+                "cached_at": cached.get('updated_at')
+            })
 
         # Format existing customer data for analysis
         country_breakdown = {}
@@ -4522,32 +4576,22 @@ def get_tag_suggestions(tag_id):
                     country_breakdown[country]['customer_count'] / total_customers * 100
             )
 
-        # Prepare system message for Perplexity (keep your existing message)
+        # Prepare system message for Perplexity (overview only, no company recommendations)
         system_message = (
             f"You are a market analyst specializing in {tag_info['tag']}. "
-            "Based on the current customer distribution data, first tell the user if the current customer list and geographical penetration is in ine with the real world landscape for this market. Then provide as many suggested customers as possible in Europe:\n\n"
+            "Based on the current customer distribution data, assess whether the coverage matches the real-world landscape for this market. "
+            "Then highlight the biggest geographic gaps, underrepresented regions, and notable concentration risks. "
+            "Do NOT provide specific company recommendations.\n\n"
             "Include:\n"
-            "   - Target company name\n"
-            "   - Company website URL\n"
-            "   - Country (official name)\n"
-            "   - Annual revenue (EUR raw number)\n"
-            "   - Main product/industry focus\n"
-            "DO NOT under any circumstances:\n"
-            "   - include customers that are already suggested\n"
-            "   - suggest customers for the sake of it. If the list is comprehensive then please say so instead of giving needless suggestions.\n"
-            f"   - generalise about growth markets (geographical or industry-wise). Focus solely on {tag_info['tag']}\n"
+            "   - Coverage assessment (aligned / partial / misaligned) with a short justification\n"
+            "   - Top 3-6 geographic gaps or underrepresented regions (countries or subregions)\n"
+            "   - Any over-concentration risks (if applicable)\n"
+            "   - Suggested next steps for deeper research (no company names)\n"
+            f"Focus solely on {tag_info['tag']}.\n"
             "Format your response using a structured narrative list, NOT tables.\n\n"
             "## Market Analysis\n"
-            "[Write about whether the existing customers align with the real-world landscape.]\n\n"
-            "## Growth Opportunities\n"
-            "Provide company suggestions in this format:\n\n"
-            "**Company Name:** [Company Name]\n"
-            "**Website:** <a href=\"[URL]\" target=\"_blank\">[Website]</a> (If no website exists, write 'N/A')\n"
-            "**Country:** [Country]\n"
-            "**Annual Revenue:** [Revenue in EUR]\n"
-            "**Main Focus:** [Main industry focus]\n\n"
+            "[Assess alignment and explain the biggest gaps and risks.]\n"
             "DO NOT use tables under any circumstances.\n"
-            "When providing company suggestions, format website links as raw HTML instead of Markdown.\n"
         )
 
         # Prepare user prompt with current distribution
@@ -4565,6 +4609,8 @@ def get_tag_suggestions(tag_id):
             for country, data in country_breakdown.items()
         )
         )
+        if prompt:
+            user_prompt += f"\n\nUser focus: {prompt}"
 
         # Initialize Perplexity client
         client = OpenAI(
@@ -4605,41 +4651,44 @@ def get_tag_suggestions(tag_id):
         else:
             formatted_analysis = raw_analysis  # No OpenAI key, use raw analysis
 
-        # Use the enhanced parse_ai_suggestions function to extract companies
-        from utils import parse_ai_suggestions
-        suggestions = parse_ai_suggestions(formatted_analysis)
+        # Strip any Growth Opportunities-style sections to avoid company recommendations.
+        formatted_analysis = re.sub(
+            r"\n?##?\s*Growth Opportunities\b[\s\S]*",
+            "",
+            formatted_analysis,
+            flags=re.IGNORECASE
+        ).strip()
 
-        # Format suggestions for the response
         formatted_suggestions = []
-        for suggestion in suggestions:
-            country_code = None
-            # Get country code if possible
-            try:
-                import pycountry
-                for country in pycountry.countries:
-                    if country.name == suggestion.get('country'):
-                        country_code = country.alpha_2
-                        break
-            except:
-                pass  # If pycountry fails, we'll have an empty country_code
 
-            formatted_suggestions.append({
-                "company_name": suggestion.get('company_name', ''),
-                "description": suggestion.get('justification', ''),
-                "estimated_revenue": suggestion.get('estimated_revenue', 0),
-                "country": suggestion.get('country', ''),
-                "country_code": country_code or '',
-                "tag_id": tag_id,
-                "product_focus": suggestion.get('product_focus', ''),
-                "website": suggestion.get('website', '')
-            })
+        try:
+            from psycopg2.extras import Json
+            suggestions_payload = Json(formatted_suggestions)
+        except Exception:
+            suggestions_payload = json.dumps(formatted_suggestions)
+
+        if not prompt:
+            with db_cursor(commit=True) as cur:
+                _execute_with_cursor(
+                    cur,
+                    """
+                    INSERT INTO market_intelligence_cache (tag_id, analysis, suggestions, updated_at, created_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (tag_id) DO UPDATE
+                    SET analysis = EXCLUDED.analysis,
+                        suggestions = EXCLUDED.suggestions,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (tag_id, formatted_analysis, suggestions_payload)
+                )
 
         return jsonify({
             "success": True,
             "suggestions": formatted_suggestions,
             "description": tag_info['description'],
             "tag": tag_info['tag'],
-            "analysis": formatted_analysis
+            "analysis": formatted_analysis,
+            "cached": False
         })
 
     except Exception as e:

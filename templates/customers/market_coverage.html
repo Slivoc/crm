@@ -111,14 +111,29 @@
         <strong>Market Intelligence</strong>
         <div>
             <button id="refreshMarketIntelligenceBtn" class="btn btn-sm btn-outline-secondary"
-                    style="display: none;" onclick="loadMarketIntelligence(currentTagId)">
+                    style="display: none;" onclick="loadMarketIntelligence(currentTagId, { refresh: true })">
                 <i class="bi bi-arrow-clockwise"></i> Refresh
             </button>
         </div>
     </div>
-    <div class="card-body" id="aiInsights">
-        <div class="text-center">
-            <p class="text-muted">Select an industry sector to get started</p>
+    <div class="card-body">
+        <div class="d-flex flex-wrap gap-2 align-items-end mb-3">
+            <div class="flex-grow-1">
+                <label for="marketIntelligencePrompt" class="form-label mb-1">Focus note (optional)</label>
+                <input type="text" class="form-control" id="marketIntelligencePrompt"
+                       placeholder="e.g. Focus only on Europe or highlight biggest gaps">
+            </div>
+            <div class="d-flex gap-2">
+                <button id="loadMarketIntelligenceBtn" class="btn btn-primary" disabled
+                        onclick="loadMarketIntelligence(currentTagId)">
+                    <i class="bi bi-graph-up me-2"></i>Run
+                </button>
+            </div>
+        </div>
+        <div id="aiInsights">
+            <div class="text-center">
+                <p class="text-muted">Select an industry sector to get started</p>
+            </div>
         </div>
     </div>
 </div>
@@ -335,15 +350,22 @@ async function loadTagDetails(tagId, tagName) {
         document.getElementById('categoriesChartPlaceholder').style.display = 'block';
         document.getElementById('categoriesChart').style.display = 'none';
 
-        // Set market intelligence placeholder with button to load
+        // Set market intelligence placeholder
         document.getElementById('aiInsights').innerHTML = `
             <div class="text-center my-4">
-                <p class="mb-3">Click below to get market intelligence for ${tagName}</p>
-                <button id="loadMarketIntelligenceBtn" class="btn btn-primary" onclick="loadMarketIntelligence(${tagId})">
-                    <i class="bi bi-graph-up me-2"></i>Get Market Intelligence
-                </button>
+                <p class="mb-0">Run market intelligence for ${tagName} to see an overview.</p>
             </div>
         `;
+
+        const refreshBtn = document.getElementById('refreshMarketIntelligenceBtn');
+        if (refreshBtn) {
+            refreshBtn.style.display = 'inline-block';
+            refreshBtn.disabled = false;
+        }
+        const loadBtn = document.getElementById('loadMarketIntelligenceBtn');
+        if (loadBtn) {
+            loadBtn.disabled = false;
+        }
 
         // Start loading customers right away
         loadCustomers(tagId);
@@ -495,13 +517,23 @@ async function loadTagDetails(tagId, tagName) {
 }
 
 // New function to load market intelligence on demand
-async function loadMarketIntelligence(tagId) {
+async function loadMarketIntelligence(tagId, options = {}) {
+    if (!tagId) {
+        return;
+    }
+
+    const button = document.getElementById('loadMarketIntelligenceBtn');
+    const refreshButton = document.getElementById('refreshMarketIntelligenceBtn');
+    const promptInput = document.getElementById('marketIntelligencePrompt');
+    const promptValue = promptInput ? promptInput.value.trim() : '';
+
     try {
-        // Update the button to show loading state
-        const button = document.getElementById('loadMarketIntelligenceBtn');
         if (button) {
             button.disabled = true;
             button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Loading...';
+        }
+        if (refreshButton) {
+            refreshButton.disabled = true;
         }
 
         // Show loading state in the insights area
@@ -513,8 +545,15 @@ async function loadMarketIntelligence(tagId) {
             </div>
         `;
 
-        // Fetch the market intelligence data
-        const insightsResponse = await fetch(`/customers/api/tags/${tagId}/suggestions`);
+        const params = new URLSearchParams();
+        if (options.refresh) {
+            params.set('refresh', '1');
+        }
+        if (promptValue) {
+            params.set('prompt', promptValue);
+        }
+        const query = params.toString();
+        const insightsResponse = await fetch(`/customers/api/tags/${tagId}/suggestions${query ? `?${query}` : ''}`);
         const data = await insightsResponse.json();
 
         if (!data.success) {
@@ -529,56 +568,7 @@ async function loadMarketIntelligence(tagId) {
         try {
             console.log("Rendering markdown content...");
             const htmlContent = marked.parse(data.analysis || '');
-            aiInsights.innerHTML = htmlContent;
-
-            // Wait for content to render then process company sections
-            setTimeout(() => {
-                console.log("Starting to extract companies...");
-                const companiesFound = extractCompaniesAfterGrowthOpportunities();
-
-                // If no companies found, use suggestions array as fallback
-                if (companiesFound === 0 && data.suggestions && data.suggestions.length > 0) {
-                    console.log("No companies found in content. Adding suggestions directly:", data.suggestions);
-
-                    const suggestionsSection = document.createElement('div');
-                    suggestionsSection.className = 'mt-4 border-top pt-3';
-                    suggestionsSection.innerHTML = '<h5>Suggested Companies</h5>';
-
-                    data.suggestions.forEach(company => {
-                        console.log("Adding suggestion:", company.company_name);
-                        const companyRow = document.createElement('div');
-                        companyRow.className = 'mb-3 p-2 border-start border-primary ps-3';
-                        companyRow.innerHTML = `
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <strong>${company.company_name}</strong>
-                                    <div class="text-muted small">
-                                        ${company.country || ''}
-                                        ${company.estimated_revenue ? '| Revenue: £' + company.estimated_revenue : ''}
-                                        ${company.product_focus ? '| Focus: ' + company.product_focus : ''}
-                                    </div>
-                                </div>
-                                <button class="btn btn-success btn-sm">
-                                    <i class="bi bi-plus-circle"></i> Add
-                                </button>
-                            </div>
-                        `;
-
-                        // Add click handler for the button
-                        const btn = companyRow.querySelector('.btn');
-                        btn.addEventListener('click', function() {
-                            // Add tag ID to the company data
-                            const companyData = {...company, tagId: tagId};
-                            console.log("Fallback button clicked with data:", companyData);
-                            openCustomerModal(companyData);
-                        });
-
-                        suggestionsSection.appendChild(companyRow);
-                    });
-
-                    aiInsights.appendChild(suggestionsSection);
-                }
-            }, 800);
+            aiInsights.innerHTML = htmlContent || 'No analysis available.';
         } catch (parseError) {
             console.error('Markdown parsing error:', parseError);
             aiInsights.innerHTML = data.analysis || 'No analysis available.';
@@ -591,6 +581,14 @@ async function loadMarketIntelligence(tagId) {
                 Error loading suggestions: ${error.message}
             </div>
         `;
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = '<i class="bi bi-graph-up me-2"></i>Run';
+        }
+        if (refreshButton) {
+            refreshButton.disabled = false;
+        }
     }
 }
 

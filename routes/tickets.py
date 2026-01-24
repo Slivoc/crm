@@ -433,7 +433,8 @@ def _fetch_workspace_notifications(user_id):
             tw.id AS workspace_id,
             tw.name AS workspace_name,
             COALESCE(twm.notify_ticket_assignments, FALSE) AS notify_ticket_assignments,
-            COALESCE(twm.notify_task_assignments, FALSE) AS notify_task_assignments
+            COALESCE(twm.notify_task_assignments, FALSE) AS notify_task_assignments,
+            COALESCE(twm.notify_ticket_returns, FALSE) AS notify_ticket_returns
         FROM ticket_workspace_members twm
         JOIN ticket_workspaces tw ON tw.id = twm.workspace_id
         WHERE twm.user_id = ?
@@ -450,7 +451,8 @@ def _get_workspace_notification_preferences(user_id, workspace_id):
         """
         SELECT
             COALESCE(notify_ticket_assignments, FALSE) AS notify_ticket_assignments,
-            COALESCE(notify_task_assignments, FALSE) AS notify_task_assignments
+            COALESCE(notify_task_assignments, FALSE) AS notify_task_assignments,
+            COALESCE(notify_ticket_returns, FALSE) AS notify_ticket_returns
         FROM ticket_workspace_members
         WHERE workspace_id = ? AND user_id = ?
         """,
@@ -460,6 +462,7 @@ def _get_workspace_notification_preferences(user_id, workspace_id):
     return {
         "tickets": bool(row.get("notify_ticket_assignments", False)),
         "tasks": bool(row.get("notify_task_assignments", False)),
+        "returns": bool(row.get("notify_ticket_returns", False)),
     }
 
 
@@ -527,6 +530,9 @@ def _notify_assignment(ticket_id, assignee_id, workspace_id, title, is_task, wor
 def _notify_returned_ticket(ticket_id, creator_id, workspace_id, title, workspace_lookup=None):
     """Send notification to ticket creator when ticket is returned."""
     if not creator_id or not workspace_id:
+        return
+    preferences = _get_workspace_notification_preferences(creator_id, workspace_id)
+    if not preferences.get("returns"):
         return
 
     contact = _get_user_contact(creator_id)
@@ -1600,6 +1606,16 @@ def update_ticket(ticket_id):
             None,
         )
 
+    if status_name and status_name.lower() == 'returned' and ticket.get('created_by_user_id'):
+        if int(status_id) != ticket.get('status_id'):
+            _notify_returned_ticket(
+                ticket_id,
+                ticket.get('created_by_user_id'),
+                int(workspace_id) if workspace_id else ticket.get("workspace_id"),
+                title or "Ticket",
+                None,
+            )
+
     return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
 
@@ -1788,10 +1804,11 @@ def manage_workspaces():
                     user_id,
                     notify_ticket_assignments,
                     notify_task_assignments,
+                    notify_ticket_returns,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, TRUE, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES (?, ?, TRUE, TRUE, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 [(workspace_id, member_id) for member_id in member_ids],
                 many=True,
@@ -1853,7 +1870,8 @@ def update_workspace(workspace_id):
         SELECT
             user_id,
             COALESCE(notify_ticket_assignments, FALSE) AS notify_ticket_assignments,
-            COALESCE(notify_task_assignments, FALSE) AS notify_task_assignments
+            COALESCE(notify_task_assignments, FALSE) AS notify_task_assignments,
+            COALESCE(notify_ticket_returns, FALSE) AS notify_ticket_returns
         FROM ticket_workspace_members
         WHERE workspace_id = ?
         """,
@@ -1864,6 +1882,7 @@ def update_workspace(workspace_id):
         row["user_id"]: {
             "notify_ticket_assignments": bool(row.get("notify_ticket_assignments")),
             "notify_task_assignments": bool(row.get("notify_task_assignments")),
+            "notify_ticket_returns": bool(row.get("notify_ticket_returns")),
         }
         for row in existing_members
     }
@@ -1881,10 +1900,11 @@ def update_workspace(workspace_id):
                 user_id,
                 notify_ticket_assignments,
                 notify_task_assignments,
+                notify_ticket_returns,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             [
                 (
@@ -1892,6 +1912,7 @@ def update_workspace(workspace_id):
                     member_id,
                     existing_pref_map.get(member_id, {}).get("notify_ticket_assignments", False),
                     existing_pref_map.get(member_id, {}).get("notify_task_assignments", False),
+                    existing_pref_map.get(member_id, {}).get("notify_ticket_returns", False),
                 )
                 for member_id in member_ids
             ],
@@ -1927,15 +1948,17 @@ def update_workspace_notifications(workspace_id):
     payload = request.get_json(silent=True) or request.form
     notify_tickets = _parse_bool(payload.get('notify_ticket_assignments'))
     notify_tasks = _parse_bool(payload.get('notify_task_assignments'))
+    notify_returns = _parse_bool(payload.get('notify_ticket_returns'))
     db_execute(
         """
         UPDATE ticket_workspace_members
         SET notify_ticket_assignments = ?,
             notify_task_assignments = ?,
+            notify_ticket_returns = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE workspace_id = ? AND user_id = ?
         """,
-        (notify_tickets, notify_tasks, workspace_id, user_id),
+        (notify_tickets, notify_tasks, notify_returns, workspace_id, user_id),
         commit=True,
     )
     return jsonify({'success': True, 'message': 'Notification preferences saved.'})
@@ -2005,6 +2028,15 @@ def move_ticket(ticket_id):
             ticket.get("workspace_id"),
             ticket.get("title") or "Ticket",
             bool(ticket.get("parent_ticket_id")),
+            None,
+        )
+
+    if status_name.lower() == 'returned' and ticket.get('created_by_user_id'):
+        _notify_returned_ticket(
+            ticket_id,
+            ticket.get('created_by_user_id'),
+            ticket.get("workspace_id"),
+            ticket.get("title") or "Ticket",
             None,
         )
 

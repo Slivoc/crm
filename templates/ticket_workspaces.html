@@ -124,6 +124,12 @@
                                                 Notify for tasks/subtasks
                                             </label>
                                         </div>
+                                        <div class="form-check mb-3">
+                                            <input class="form-check-input" type="checkbox" id="notify-returns-{{ workspace.id }}" name="notify_ticket_returns" value="1" {% if pref_ns.value and pref_ns.value.notify_ticket_returns %}checked{% endif %}>
+                                            <label class="form-check-label small" for="notify-returns-{{ workspace.id }}">
+                                                Notify when my tickets are returned
+                                            </label>
+                                        </div>
                                         <button type="submit" class="btn btn-sm btn-outline-secondary w-100">Save notification preferences</button>
                                         <div class="notification-status text-success small d-none" data-pref-status="success">Saved</div>
                                         <div class="notification-status text-danger small d-none" data-pref-status="error"></div>
@@ -373,9 +379,11 @@ document.querySelectorAll('.notification-pref-form').forEach((form) => {
 
         const ticketsChecked = form.querySelector('input[name="notify_ticket_assignments"]')?.checked;
         const tasksChecked = form.querySelector('input[name="notify_task_assignments"]')?.checked;
+        const returnsChecked = form.querySelector('input[name="notify_ticket_returns"]')?.checked;
         const formData = new FormData();
         formData.set('notify_ticket_assignments', ticketsChecked ? '1' : '0');
         formData.set('notify_task_assignments', tasksChecked ? '1' : '0');
+        formData.set('notify_ticket_returns', returnsChecked ? '1' : '0');
 
         try {
             const response = await fetch(`/tickets/workspaces/${workspaceId}/notifications`, {
