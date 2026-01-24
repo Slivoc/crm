@@ -3765,11 +3765,25 @@ def mailbox_folder_rules():
     email_address = _normalize_email_address(payload.get("email_address"))
     graph_folder_id = (payload.get("graph_folder_id") or payload.get("folder_id") or "").strip()
     graph_folder_name = (payload.get("graph_folder_name") or payload.get("folder_name") or "").strip() or None
-    if not email_address or not graph_folder_id:
+    if not email_address:
         return jsonify({
             "success": False,
-            "error": "Email address and folder are required.",
+            "error": "Email address is required.",
         }), 400
+
+    if not graph_folder_id:
+        db_execute(
+            """
+            DELETE FROM graph_mailbox_folder_rules
+            WHERE user_id = ? AND email_address = ?
+            """,
+            (user_id, email_address),
+            commit=True,
+        )
+        return jsonify({
+            "success": True,
+            "rule": None,
+        })
 
     db_execute(
         """

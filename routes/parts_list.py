@@ -1173,6 +1173,48 @@ def _extract_requested_part_number(text):
     return None
 
 
+def _normalize_part_number_key(value):
+    if not value:
+        return ''
+    return re.sub(r'[^A-Z0-9]', '', str(value).upper())
+
+
+def _is_peerless_quote(text):
+    if not text:
+        return False
+    upper_text = text.upper()
+    return 'PEERLESS AEROSPACE' in upper_text or 'PAFCORP' in upper_text
+
+
+def _extract_peerless_part_pairs(text):
+    if not text:
+        return []
+    pattern = re.compile(r'([A-Z0-9][A-Z0-9\-\.]+)\s*/\s*([A-Z0-9][A-Z0-9\-\.]+)', re.IGNORECASE)
+    pairs = []
+    for match in pattern.finditer(text):
+        left = match.group(1).strip()
+        right = match.group(2).strip()
+        if not re.search(r'[A-Z]', left, re.IGNORECASE):
+            continue
+        if not re.search(r'[A-Z]', right, re.IGNORECASE):
+            continue
+        pairs.append((left, right))
+    return pairs
+
+
+def _build_peerless_part_lookup(text):
+    pairs = _extract_peerless_part_pairs(text)
+    by_requested = {}
+    by_quoted = {}
+    for requested, quoted in pairs:
+        req_key = _normalize_part_number_key(requested)
+        quoted_key = _normalize_part_number_key(quoted)
+        if req_key and quoted_key:
+            by_requested[req_key] = (requested, quoted)
+            by_quoted[quoted_key] = (requested, quoted)
+    return by_requested, by_quoted
+
+
 _CURRENCY_CODE_PATTERN = re.compile(
     r'\b(USD|EUR|GBP|CAD|AUD|NZD|CHF|JPY|CNY|SEK|NOK|DKK|SGD|HKD|INR|KRW|MXN|BRL|AED|SAR|ZAR|TRY|PLN|CZK|HUF|RON)\b',
     re.IGNORECASE,
@@ -1231,6 +1273,11 @@ def extract_supplier_quote_data(quote_text, context_parts=""):
         logger.debug("Quote text (first 1000 chars): %r", quote_text[:1000])
         logger.debug("Context parts (first 1000 chars): %r", context_parts[:1000])
 
+        peerless_lookup_requested = {}
+        peerless_lookup_quoted = {}
+        if _is_peerless_quote(quote_text):
+            peerless_lookup_requested, peerless_lookup_quoted = _build_peerless_part_lookup(quote_text)
+
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -1262,6 +1309,7 @@ Look for common patterns:
 - Condition codes are usually 2 letters
 - Prices might have currency symbols - extract just the number
 - IMPORTANT: When suppliers quote alternative part numbers (e.g., "CR3212-4-04 / Quoting: NAS9301B-5-10"), the part_number field MUST be the alternative/quoted part (NAS9301B-5-10), NOT the requested part (CR3212-4-04)
+- Peerless Aerospace often shows "CUSTOMER PART / PAF PART". In that format, treat the right side as the quoted part_number and include "Requested PN: <left side>" in notes.
 - If MOQ is present, the quoted quantity should be at least the MOQ"""
                 },
                 {
@@ -1386,6 +1434,25 @@ CRITICAL REMINDER: If you see text like "CR3212-4-04 / Quoting: NAS9301B-5-10", 
                     is_no_bid = bool(is_no_bid_raw)
 
                 notes = str(item.get('notes', '')).strip() or None
+
+                if peerless_lookup_requested or peerless_lookup_quoted:
+                    peerless_pair = None
+                    if '/' in part_number:
+                        pairs = _extract_peerless_part_pairs(part_number)
+                        if pairs:
+                            peerless_pair = pairs[0]
+                    if not peerless_pair and notes and '/' in notes:
+                        pairs = _extract_peerless_part_pairs(notes)
+                        if pairs:
+                            peerless_pair = pairs[0]
+                    if not peerless_pair:
+                        key = _normalize_part_number_key(part_number)
+                        peerless_pair = peerless_lookup_quoted.get(key) or peerless_lookup_requested.get(key)
+                    if peerless_pair:
+                        requested_pn, quoted_pn = peerless_pair
+                        part_number = quoted_pn
+                        if not notes or requested_pn not in notes:
+                            notes = f"{notes}; Requested PN: {requested_pn}" if notes else f"Requested PN: {requested_pn}"
 
                 # First, check if the AI already put "Requested PN: XXX" in the notes
                 # This means the AI already identified the quoted vs requested part numbers

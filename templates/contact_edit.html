@@ -210,6 +210,14 @@
                         <input type="email" class="form-control" id="editContactEmail" value="{{ contact.email }}" required>
                     </div>
                     <div class="mb-3">
+                        <label for="editContactFolderRule" class="form-label">Mailbox Folder</label>
+                        <select class="form-select" id="editContactFolderRule" disabled>
+                            <option value="">No folder rule</option>
+                        </select>
+                        <div class="form-text text-muted">Optional: auto-file incoming mail from this contact.</div>
+                        <div id="folderRuleFeedback" class="alert alert-danger mt-2 d-none"></div>
+                    </div>
+                    <div class="mb-3">
                         <label for="editContactCompany" class="form-label">Company</label>
                         <input type="text" class="form-control" id="editContactCompany" value="{{ contact.company or '' }}">
                     </div>
@@ -291,8 +299,91 @@
 {% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    const editContactModalEl = document.getElementById('editContactModal');
+    const folderSelect = document.getElementById('editContactFolderRule');
+    const folderFeedback = document.getElementById('folderRuleFeedback');
+    let mailboxFolders = [];
+    let mailboxFoldersLoaded = false;
+
+    function setFolderSelectOptions(folders, selectedId, existingRule) {
+        if (!folderSelect) return;
+        folderSelect.innerHTML = '';
+        folderSelect.add(new Option('No folder rule', ''));
+
+        if (existingRule && existingRule.graph_folder_id) {
+            const match = (folders || []).some(folder => folder && folder.id === existingRule.graph_folder_id);
+            if (!match) {
+                const label = existingRule.graph_folder_name || 'Current folder';
+                folderSelect.add(new Option(label, existingRule.graph_folder_id));
+            }
+        }
+
+        (folders || []).forEach(folder => {
+            if (!folder || !folder.id) return;
+            folderSelect.add(new Option(folder.display_name || folder.id, folder.id));
+        });
+
+        if (selectedId) {
+            folderSelect.value = selectedId;
+        }
+    }
+
+    async function fetchMailboxFolders() {
+        if (mailboxFoldersLoaded) {
+            return mailboxFolders;
+        }
+        const response = await fetch('/emails/graph/mail-folders');
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error?.message || 'Failed to load folders');
+        }
+        mailboxFolders = Array.isArray(data.folders) ? data.folders : [];
+        mailboxFoldersLoaded = true;
+        return mailboxFolders;
+    }
+
+    async function fetchFolderRule(email) {
+        if (!email) return null;
+        const response = await fetch(`/emails/mailbox/folder-rules?email=${encodeURIComponent(email)}`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to load folder rule');
+        }
+        return data.rule || null;
+    }
+
+    async function loadFolderRuleOptions() {
+        if (!folderSelect) return;
+        folderSelect.disabled = true;
+        folderSelect.innerHTML = '<option value="">Loading folders...</option>';
+        folderFeedback?.classList.add('d-none');
+
+        const email = document.getElementById('editContactEmail')?.value?.trim();
+        let rule = null;
+        try {
+            rule = await fetchFolderRule(email);
+        } catch (error) {
+            folderFeedback.textContent = error.message || 'Failed to load folder rule';
+            folderFeedback.classList.remove('d-none');
+        }
+
+        try {
+            await fetchMailboxFolders();
+        } catch (error) {
+            folderFeedback.textContent = error.message || 'Failed to load folders';
+            folderFeedback.classList.remove('d-none');
+        }
+
+        setFolderSelectOptions(mailboxFolders, rule?.graph_folder_id, rule);
+        folderSelect.disabled = false;
+    }
+
+    editContactModalEl?.addEventListener('show.bs.modal', function() {
+        loadFolderRuleOptions();
+    });
+
     // Update contact
-    document.getElementById('updateContactBtn').addEventListener('click', function() {
+    document.getElementById('updateContactBtn').addEventListener('click', async function() {
         const name = document.getElementById('editContactName').value.trim();
         const secondName = document.getElementById('editContactSecondName').value.trim();
         const email = document.getElementById('editContactEmail').value.trim();
@@ -320,38 +411,62 @@ document.addEventListener('DOMContentLoaded', function() {
         // Clear any previous error messages
         feedbackEl.classList.add('d-none');
 
-        // Send API request to update contact
-        fetch(`/customers/contacts/{{ contact.id }}/edit`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                name: name,
-                second_name: secondName,
-                email: email,
-                company: company,
-                job_title: jobTitle,
-                customer_id: customerId
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                // Close the modal and refresh the page
-                const modal = bootstrap.Modal.getInstance(document.getElementById('editContactModal'));
-                modal.hide();
-                window.location.reload();
-            } else {
+        try {
+            const response = await fetch(`/customers/contacts/{{ contact.id }}/edit`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    name: name,
+                    second_name: secondName,
+                    email: email,
+                    company: company,
+                    job_title: jobTitle,
+                    customer_id: customerId
+                })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
                 feedbackEl.textContent = data.error || 'An error occurred';
                 feedbackEl.classList.remove('d-none');
+                return;
             }
-        })
-        .catch(error => {
+
+            if (folderSelect) {
+                const selectedFolderId = folderSelect.value;
+                const selectedFolder = mailboxFolders.find(folder => folder && folder.id === selectedFolderId);
+                const folderPayload = {
+                    email_address: email,
+                    graph_folder_id: selectedFolderId
+                };
+                if (selectedFolderId) {
+                    folderPayload.graph_folder_name = selectedFolder?.display_name || folderSelect.options[folderSelect.selectedIndex]?.text || '';
+                }
+
+                const folderResponse = await fetch('/emails/mailbox/folder-rules', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(folderPayload)
+                });
+                const folderData = await folderResponse.json();
+                if (!folderResponse.ok || !folderData.success) {
+                    feedbackEl.textContent = folderData.error || 'Failed to update mailbox folder rule';
+                    feedbackEl.classList.remove('d-none');
+                    return;
+                }
+            }
+
+            const modal = bootstrap.Modal.getInstance(document.getElementById('editContactModal'));
+            modal.hide();
+            window.location.reload();
+        } catch (error) {
             console.error('Error:', error);
             feedbackEl.textContent = 'An error occurred. Please try again.';
             feedbackEl.classList.remove('d-none');
-        });
+        }
     });
 
     // Delete contact

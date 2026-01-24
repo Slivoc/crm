@@ -1321,26 +1321,33 @@ function updateLoadMoreState({ hasMore = false, loading = false, error = '' } = 
     mailboxLoadMoreStatus.textContent = '';
 }
 
-async function loadMailboxMessages({ reset = false } = {}) {
+async function loadMailboxMessages({ reset = false, useCache = false, silent = false } = {}) {
     if (mailboxIsLoading) return;
     if (!reset && !mailboxNextToken) return;
     mailboxIsLoading = true;
-    updateLoadMoreState({ loading: true });
+    if (!silent) {
+        updateLoadMoreState({ loading: true });
+    }
     
     try {
         if (reset) {
             mailboxNextToken = null;
-            messageCache = [];
-            emailListContainer.innerHTML = `
-                <div class="email-list-placeholder">
-                    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-                    <p>Loading emails...</p>
-                </div>
-            `;
+            if (!silent) {
+                messageCache = [];
+                emailListContainer.innerHTML = `
+                    <div class="email-list-placeholder">
+                        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                        <p>Loading emails...</p>
+                    </div>
+                `;
+            }
         }
 
         const params = new URLSearchParams();
         params.set('page_size', MAILBOX_PAGE_SIZE);
+        if (useCache) {
+            params.set('use_cache', 'true');
+        }
         if (!reset && mailboxNextToken) {
             params.set('page_token', mailboxNextToken);
         }
@@ -1349,7 +1356,7 @@ async function loadMailboxMessages({ reset = false } = {}) {
         const data = await response.json();
         
         if (!response.ok || !data.success) {
-            if (reset) {
+            if (reset && !silent) {
                 emailListContainer.innerHTML = `
                     <div class="email-list-placeholder text-danger">
                         <i class="bi bi-exclamation-circle"></i>
@@ -1357,10 +1364,12 @@ async function loadMailboxMessages({ reset = false } = {}) {
                         <button class="btn btn-sm btn-outline-primary mt-2" onclick="loadMailboxMessages({ reset: true })">Retry</button>
                     </div>
                 `;
-            } else {
+            } else if (!silent) {
                 showToast(data.error?.message || 'Failed to load emails', 'error');
             }
-            updateLoadMoreState({ error: 'Load failed' });
+            if (!silent) {
+                updateLoadMoreState({ error: 'Load failed' });
+            }
             return;
         }
 
@@ -1385,8 +1394,10 @@ async function loadMailboxMessages({ reset = false } = {}) {
                     <p>No emails found</p>
                 </div>
             `;
-            updateLoadMoreState({ hasMore: false });
-            return;
+            if (!silent) {
+                updateLoadMoreState({ hasMore: false });
+            }
+            return data;
         }
 
         if (reset) {
@@ -1395,9 +1406,12 @@ async function loadMailboxMessages({ reset = false } = {}) {
             renderEmailList(messagesToRender, true);
         }
         prefetchInlineAttachments(messagesToRender);
-        updateLoadMoreState({ hasMore: Boolean(mailboxNextToken) });
+        if (!silent) {
+            updateLoadMoreState({ hasMore: Boolean(mailboxNextToken) });
+        }
+        return data;
     } catch (error) {
-        if (reset) {
+        if (reset && !silent) {
             emailListContainer.innerHTML = `
                 <div class="email-list-placeholder text-danger">
                     <i class="bi bi-wifi-off"></i>
@@ -1405,10 +1419,12 @@ async function loadMailboxMessages({ reset = false } = {}) {
                     <button class="btn btn-sm btn-outline-primary mt-2" onclick="loadMailboxMessages({ reset: true })">Retry</button>
                 </div>
             `;
-        } else {
+        } else if (!silent) {
             showToast('Connection error', 'error');
         }
-        updateLoadMoreState({ error: 'Connection error' });
+        if (!silent) {
+            updateLoadMoreState({ error: 'Connection error' });
+        }
     } finally {
         mailboxIsLoading = false;
     }
@@ -2460,7 +2476,12 @@ console.log('Mailbox initialized');
 console.log('createTicketBtn element:', createTicketBtn);
 renderSupplierMatchState();
 setGraphStatus(graphSeed);
-loadMailboxMessages({ reset: true });
+(async () => {
+    const initial = await loadMailboxMessages({ reset: true, useCache: true });
+    if (initial?.from_cache) {
+        loadMailboxMessages({ reset: true, silent: true });
+    }
+})();
 </script>
 
 <style>
