@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Project Parts Lists{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h2 class="fw-bold mb-1">Project Parts Lists</h2>
+            <p class="text-muted mb-0">
+                Project #{{ project.id }}{% if project.name %} - {{ project.name }}{% endif %}
+            </p>
+        </div>
+        <div>
+            <a class="btn btn-outline-secondary" href="{{ url_for('projects.edit_project', project_id=project.id) }}">
+                Back to Project
+            </a>
+        </div>
+    </div>
+
+    {% if parts_lists|length == 0 %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i> No parts lists linked to this project.
+        </div>
+    {% else %}
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">All Linked Parts Lists</span>
+                <span class="badge bg-secondary bg-opacity-10 text-secondary">{{ parts_lists|length }} lists</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Parts List</th>
+                                <th>Status</th>
+                                <th class="text-center">Lines</th>
+                                <th class="text-center">Costed</th>
+                                <th class="text-center">Quoted</th>
+                                <th>Created</th>
+                                <th>Modified</th>
+                                <th class="text-end">Open</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for parts_list in parts_lists %}
+                                <tr>
+                                    <td>
+                                        <div class="fw-semibold">PL #{{ parts_list.id }}</div>
+                                        <a href="{{ url_for('parts_list.view_parts_list', list_id=parts_list.id) }}"
+                                           target="_blank" rel="noopener" class="text-decoration-none">
+                                            {{ parts_list.name }}
+                                        </a>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-secondary">{{ parts_list.status_name or 'No status' }}</span>
+                                    </td>
+                                    <td class="text-center">{{ parts_list.line_count or 0 }}</td>
+                                    <td class="text-center">{{ parts_list.costed_line_count or 0 }}</td>
+                                    <td class="text-center">{{ parts_list.quoted_line_count or 0 }}</td>
+                                    <td>{{ parts_list.date_created.strftime('%Y-%m-%d') if parts_list.date_created else '-' }}</td>
+                                    <td>{{ parts_list.date_modified.strftime('%Y-%m-%d') if parts_list.date_modified else '-' }}</td>
+                                    <td class="text-end">
+                                        <a href="{{ url_for('parts_list.view_parts_list', list_id=parts_list.id) }}"
+                                           target="_blank" rel="noopener" class="btn btn-link btn-sm">
+                                            <i class="bi bi-box-arrow-up-right"></i>
+                                        </a>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

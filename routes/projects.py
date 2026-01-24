@@ -177,6 +177,40 @@ def _fetch_project_parts_list_overview(project_id):
         formatted.append(data)
     return formatted
 
+
+def _fetch_project_parts_lists_summary(project_id, limit=None):
+    sql = """
+        SELECT
+            pl.id,
+            pl.name,
+            pl.date_created,
+            pl.date_modified,
+            pl.status_id,
+            pls.name AS status_name,
+            (SELECT COUNT(*)
+             FROM parts_list_lines pll
+             WHERE pll.parts_list_id = pl.id) AS line_count,
+            (SELECT COUNT(*)
+             FROM parts_list_lines pll
+             WHERE pll.parts_list_id = pl.id
+               AND pll.chosen_cost IS NOT NULL) AS costed_line_count,
+            (SELECT COUNT(DISTINCT pll.id)
+             FROM parts_list_lines pll
+             LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+             WHERE pll.parts_list_id = pl.id
+               AND cql.quoted_status = 'quoted') AS quoted_line_count
+        FROM parts_lists pl
+        LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
+        WHERE pl.project_id = ?
+        ORDER BY pl.date_modified DESC, pl.date_created DESC
+    """
+    params = [project_id]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    rows = db_execute(sql, params, fetch='all') or []
+    return [dict(row) for row in rows]
+
 @projects_bp.route('/new', methods=['POST'])
 def create_project():
     try:
@@ -224,24 +258,12 @@ def edit_project(project_id):
     )
 
     project_rfqs = get_rfqs_for_project(project_id)
-    project_parts_lists = db_execute(
-        """
-        SELECT
-            pl.id,
-            pl.name,
-            pl.date_created,
-            pl.date_modified,
-            c.name AS customer_name,
-            s.name AS status_name
-        FROM parts_lists pl
-        LEFT JOIN customers c ON c.id = pl.customer_id
-        LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
-        WHERE pl.project_id = ?
-        ORDER BY pl.date_modified DESC, pl.date_created DESC
-        """,
+    project_parts_lists = _fetch_project_parts_lists_summary(project_id, limit=5)
+    project_parts_lists_total = db_execute(
+        "SELECT COUNT(*) AS list_count FROM parts_lists WHERE project_id = ?",
         (project_id,),
-        fetch='all',
-    ) or []
+        fetch='one',
+    ) or {}
 
     return render_template(
         'project_edit.html',
@@ -257,7 +279,8 @@ def edit_project(project_id):
         rendered_stages=rendered_stages,
         get_project_stages=get_project_stages,
         project_rfqs=project_rfqs,  # Add this line to pass RFQs to template
-        project_parts_lists=[dict(row) for row in project_parts_lists]
+        project_parts_lists=project_parts_lists,
+        project_parts_lists_total=project_parts_lists_total.get('list_count', 0),
     )
 
 
@@ -310,6 +333,22 @@ def project_parts_list_overview(project_id):
         project=project,
         rows=rows,
         max_usage_years=max_usage_years,
+    )
+
+
+@projects_bp.route('/<int:project_id>/parts-lists/all', methods=['GET'])
+def project_parts_lists_all(project_id):
+    project = get_project_by_id(project_id)
+    if not project:
+        flash('Project not found', 'error')
+        return redirect(url_for('projects.list_projects'))
+
+    parts_lists = _fetch_project_parts_lists_summary(project_id)
+
+    return render_template(
+        'project_parts_lists.html',
+        project=project,
+        parts_lists=parts_lists,
     )
 
 

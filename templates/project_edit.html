@@ -119,6 +119,10 @@
                         <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
                             <span class="text-muted">Parts Lists</span>
                             <div class="btn-group btn-group-sm" role="group" aria-label="Parts list actions">
+                                <a class="btn btn-outline-secondary"
+                                   href="{{ url_for('projects.project_parts_lists_all', project_id=project.id) }}">
+                                    All Lists
+                                </a>
                                 <a class="btn btn-outline-primary"
                                    href="{{ url_for('projects.project_parts_list_overview', project_id=project.id) }}">
                                     Project Parts List
@@ -135,16 +139,34 @@
                                     {% for parts_list in project_parts_lists %}
                                     <div class="list-group-item d-flex justify-content-between align-items-center">
                                         <div>
-                                            <strong>PL #{{ parts_list.id }}</strong> - {{ parts_list.name }}<br>
-                                            <small class="text-muted">{{ parts_list.customer_name or 'No customer' }} | {{ parts_list.status_name or 'No status' }}</small>
+                                            <strong>PL #{{ parts_list.id }}</strong> -
+                                            <a href="{{ url_for('parts_list.view_parts_list', list_id=parts_list.id) }}"
+                                               target="_blank" rel="noopener">
+                                                {{ parts_list.name }}
+                                            </a><br>
+                                            <small class="text-muted">
+                                                {{ parts_list.status_name or 'No status' }} |
+                                                Lines: {{ parts_list.line_count or 0 }} |
+                                                Costed: {{ parts_list.costed_line_count or 0 }} |
+                                                Quoted: {{ parts_list.quoted_line_count or 0 }}
+                                            </small>
                                         </div>
                                         <div>
-                                            <a href="{{ url_for('parts_list.view_parts_list', list_id=parts_list.id) }}" class="btn btn-link btn-sm">
+                                            <a href="{{ url_for('parts_list.view_parts_list', list_id=parts_list.id) }}"
+                                               class="btn btn-link btn-sm" target="_blank" rel="noopener">
                                                 <i class="bi bi-box-arrow-up-right"></i>
                                             </a>
                                         </div>
                                     </div>
                                     {% endfor %}
+                                    {% if project_parts_lists_total > project_parts_lists|length %}
+                                        <div class="text-muted small mt-2">
+                                            Showing latest {{ project_parts_lists|length }} of {{ project_parts_lists_total }} lists.
+                                            <a href="{{ url_for('projects.project_parts_lists_all', project_id=project.id) }}">
+                                                View all
+                                            </a>
+                                        </div>
+                                    {% endif %}
                                 {% else %}
                                     <p class="text-muted">No parts lists linked to this project.</p>
                                 {% endif %}
