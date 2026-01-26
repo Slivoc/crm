@@ -101,7 +101,18 @@ def _fetch_project_parts_list_rows(project_id):
             sql.condition_code,
             sql.certifications,
             sql.is_no_bid,
-            sql.line_notes
+            sql.line_notes,
+            cql.id AS customer_quote_line_id,
+            cql.quoted_status AS customer_quote_status,
+            cql.quote_price_gbp AS customer_quote_price_gbp,
+            cql.margin_percent AS customer_quote_margin_percent,
+            cql.quoted_part_number AS customer_quote_part_number,
+            cql.manufacturer AS customer_quote_manufacturer,
+            cql.lead_days AS customer_quote_lead_days,
+            cql.standard_condition AS customer_quote_condition,
+            cql.standard_certs AS customer_quote_certs,
+            cql.is_no_bid AS customer_quote_no_bid,
+            cql.line_notes AS customer_quote_notes
         FROM parts_lists pl
         JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
         LEFT JOIN parts_list_supplier_quote_lines sql
@@ -109,6 +120,7 @@ def _fetch_project_parts_list_rows(project_id):
         LEFT JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
         LEFT JOIN suppliers s ON s.id = sq.supplier_id
         LEFT JOIN currencies curr ON curr.id = sq.currency_id
+        LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
         WHERE pl.project_id = ?
         ORDER BY pl.id, pll.line_number, sql.id
         """,
@@ -793,6 +805,17 @@ def project_parts_list_report_csv(project_id):
         'certifications',
         'is_no_bid',
         'line_notes',
+        'customer_quote_line_id',
+        'customer_quote_status',
+        'customer_quote_price_gbp',
+        'customer_quote_margin_percent',
+        'customer_quote_part_number',
+        'customer_quote_manufacturer',
+        'customer_quote_lead_days',
+        'customer_quote_condition',
+        'customer_quote_certs',
+        'customer_quote_no_bid',
+        'customer_quote_notes',
     ])
 
     for row in rows:
@@ -819,6 +842,17 @@ def project_parts_list_report_csv(project_id):
             row.get('certifications'),
             row.get('is_no_bid'),
             row.get('line_notes'),
+            row.get('customer_quote_line_id'),
+            row.get('customer_quote_status'),
+            row.get('customer_quote_price_gbp'),
+            row.get('customer_quote_margin_percent'),
+            row.get('customer_quote_part_number'),
+            row.get('customer_quote_manufacturer'),
+            row.get('customer_quote_lead_days'),
+            row.get('customer_quote_condition'),
+            row.get('customer_quote_certs'),
+            row.get('customer_quote_no_bid'),
+            row.get('customer_quote_notes'),
         ])
 
     filename = f"project_{project_id}_parts_list_report.csv"

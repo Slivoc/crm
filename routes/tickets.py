@@ -1,6 +1,10 @@
+import base64
+import json
 import re
+import uuid
 from datetime import datetime
-from flask import Blueprint, render_template, request, redirect, url_for, abort, flash, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, abort, flash, jsonify, current_app
+import requests
 from db import execute as db_execute
 from routes.auth import login_required, current_user
 from models import Permission
@@ -27,6 +31,465 @@ def _parse_bool(value):
     if value is None:
         return False
     return str(value).lower() in ('1', 'true', 'yes', 'on')
+
+
+def _slugify(value):
+    value = re.sub(r'[^a-z0-9]+', '-', (value or '').lower()).strip('-')
+    return value or 'workspace'
+
+
+def _get_instance_id():
+    row = db_execute(
+        "SELECT value FROM app_settings WHERE key = ?",
+        ("tickets_instance_id",),
+        fetch="one",
+    )
+    if row and row.get("value"):
+        return row["value"]
+    instance_id = str(uuid.uuid4())
+    db_execute(
+        "INSERT INTO app_settings (key, value) VALUES (?, ?)",
+        ("tickets_instance_id", instance_id),
+        commit=True,
+    )
+    return instance_id
+
+
+def _ensure_workspace_identity(workspace):
+    workspace_id = workspace["id"]
+    workspace_key = workspace.get("workspace_key")
+    workspace_uuid = workspace.get("workspace_uuid")
+
+    if not workspace_key:
+        base_key = _slugify(workspace.get("name"))
+        candidate = base_key
+        suffix = 2
+        while True:
+            existing = db_execute(
+                "SELECT id FROM ticket_workspaces WHERE workspace_key = ? AND id != ?",
+                (candidate, workspace_id),
+                fetch="one",
+            )
+            if not existing:
+                workspace_key = candidate
+                break
+            candidate = f"{base_key}-{suffix}"
+            suffix += 1
+
+    if not workspace_uuid:
+        workspace_uuid = str(uuid.uuid4())
+
+    db_execute(
+        """
+        UPDATE ticket_workspaces
+        SET workspace_key = ?, workspace_uuid = ?
+        WHERE id = ?
+        """,
+        (workspace_key, workspace_uuid, workspace_id),
+        commit=True,
+    )
+    workspace["workspace_key"] = workspace_key
+    workspace["workspace_uuid"] = workspace_uuid
+    return workspace
+
+
+def _encode_import_token(payload):
+    encoded = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+    return base64.urlsafe_b64encode(encoded).decode('ascii').rstrip('=')
+
+
+def _decode_import_token(token):
+    padded = token + '=' * (-len(token) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(padded.encode('ascii'))
+        payload = json.loads(raw.decode('utf-8'))
+        return payload
+    except Exception:
+        return None
+
+
+def _register_workspace_user_link(workspace_id, hub_workspace_uuid, local_workspace_key):
+    workspace = db_execute(
+        """
+        SELECT id, workspace_uuid, external_base_url
+        FROM ticket_workspaces
+        WHERE id = ?
+        """,
+        (workspace_id,),
+        fetch="one",
+    )
+    if not workspace:
+        return False, "Workspace not found."
+
+    base_url = (current_app.config.get('TICKETS_BASE_URL') or request.host_url or '').strip().rstrip('/')
+    if not base_url:
+        return False, 'TICKETS_BASE_URL is required.'
+
+    payload = {
+        'local_workspace_uuid': hub_workspace_uuid,
+        'remote_instance_id': _get_instance_id(),
+        'remote_base_url': base_url,
+        'remote_workspace_uuid': workspace.get('workspace_uuid'),
+        'remote_workspace_key': local_workspace_key,
+    }
+    response, error = _external_request(workspace, 'POST', '/api/external/workspace-link-back', payload)
+    if error:
+        return False, error
+    if response.status_code not in (200, 201):
+        return False, f'External hub returned {response.status_code}.'
+    return True, None
+
+
+def _validate_import_payload(payload):
+    required = [
+        'remote_instance_id',
+        'remote_base_url',
+        'remote_workspace_uuid',
+        'remote_workspace_key',
+        'remote_workspace_name',
+    ]
+    missing = [key for key in required if not (payload.get(key) or '').strip()]
+    return missing
+
+
+def _resolve_assignee(value, workspace_id):
+    if value and str(value).startswith('external:'):
+        external_id = str(value).split(':', 1)[1].strip()
+        if not external_id or not workspace_id:
+            return None, None, None
+        row = db_execute(
+            """
+            SELECT
+                u.display_name,
+                w.external_instance_id,
+                w.external_workspace_uuid
+            FROM ticket_workspaces w
+            LEFT JOIN external_ticket_users u
+                ON u.external_instance_id = w.external_instance_id
+                AND u.external_workspace_uuid = w.external_workspace_uuid
+                AND u.external_user_id = ?
+            WHERE w.id = ?
+            """,
+            (external_id, int(workspace_id)),
+            fetch="one",
+        )
+        display_name = row.get('display_name') if row else None
+        return None, external_id, display_name
+    if value and str(value).isdigit():
+        return int(value), None, None
+    return None, None, None
+
+
+def _refresh_external_users(workspace):
+    base_url = (workspace.get('external_base_url') or '').strip().rstrip('/')
+    workspace_uuid = (workspace.get('external_workspace_uuid') or '').strip()
+    instance_id = (workspace.get('external_instance_id') or '').strip()
+    api_key = (current_app.config.get('TICKETS_HUB_API_KEY') or '').strip()
+    if not base_url or not workspace_uuid or not instance_id or not api_key:
+        return False, 'External workspace configuration is incomplete.'
+    try:
+        response = requests.get(
+            f"{base_url}/api/external/workspaces/{workspace_uuid}/users",
+            headers={'Authorization': f'Bearer {api_key}'},
+            timeout=10,
+        )
+    except Exception as exc:
+        return False, f'Failed to reach external workspace: {exc}'
+    if response.status_code != 200:
+        return False, f'External workspace returned {response.status_code}.'
+    try:
+        data = response.json()
+    except ValueError:
+        return False, 'Invalid response from external workspace.'
+    users = data.get('users') or []
+    if not isinstance(users, list):
+        return False, 'Invalid users list.'
+    to_upsert = []
+    for user in users:
+        remote_id = str(user.get('id') or '').strip()
+        display_name = (user.get('display_name') or user.get('name') or user.get('email') or '').strip()
+        if not remote_id or not display_name:
+            continue
+        to_upsert.append((instance_id, workspace_uuid, remote_id, display_name, user.get('email')))
+    if to_upsert:
+        db_execute(
+            """
+            INSERT INTO external_ticket_users (
+                external_instance_id,
+                external_workspace_uuid,
+                external_user_id,
+                display_name,
+                email,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (external_instance_id, external_workspace_uuid, external_user_id)
+            DO UPDATE SET
+                display_name = EXCLUDED.display_name,
+                email = EXCLUDED.email,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            to_upsert,
+            many=True,
+            commit=True,
+        )
+    return True, users
+
+
+def _external_headers():
+    api_key = (current_app.config.get('TICKETS_HUB_API_KEY') or '').strip()
+    if not api_key:
+        return None
+    return {'Authorization': f'Bearer {api_key}'}
+
+
+def _external_api_token():
+    token = request.headers.get('Authorization', '')
+    if token.lower().startswith('bearer '):
+        token = token.split(' ', 1)[1].strip()
+    if not token:
+        token = request.headers.get('X-Api-Key', '').strip()
+    return token
+
+
+def _external_api_authorized():
+    api_key = (current_app.config.get('TICKETS_HUB_API_KEY') or '').strip()
+    token = _external_api_token()
+    if not api_key or not token:
+        return False
+    return token == api_key
+
+
+def _external_request(workspace, method, path, payload=None):
+    base_url = (workspace.get('external_base_url') or '').strip().rstrip('/')
+    headers = _external_headers()
+    if not base_url or not headers:
+        return None, 'External hub configuration is missing.'
+    try:
+        response = requests.request(
+            method,
+            f"{base_url}{path}",
+            json=payload,
+            headers=headers,
+            timeout=10,
+        )
+        return response, None
+    except Exception as exc:
+        return None, f'Failed to reach external hub: {exc}'
+
+
+def _sync_external_workspace_tickets(workspace):
+    response, error = _external_request(
+        workspace,
+        'GET',
+        f"/api/external/workspaces/{workspace.get('external_workspace_uuid')}/tickets",
+    )
+    if error:
+        return False, error
+    if response.status_code != 200:
+        return False, f'External hub returned {response.status_code}.'
+    try:
+        data = response.json()
+    except ValueError:
+        return False, 'Invalid response from external hub.'
+    tickets = data.get('tickets') or []
+    if not isinstance(tickets, list):
+        return False, 'Invalid tickets payload.'
+
+    external_ids = [int(t['id']) for t in tickets if str(t.get('id', '')).isdigit()]
+    existing_rows = db_execute(
+        """
+        SELECT id, external_ticket_id
+        FROM tickets
+        WHERE workspace_id = ? AND external_ticket_id IS NOT NULL
+        """,
+        (workspace['id'],),
+        fetch="all",
+    ) or []
+    existing_map = {row['external_ticket_id']: row['id'] for row in existing_rows}
+
+    id_map = dict(existing_map)
+    created_local_ids = []
+
+    for ticket in tickets:
+        external_id = ticket.get('id')
+        if not str(external_id).isdigit():
+            continue
+        external_id = int(external_id)
+        assigned_external_id = ticket.get('assigned_user_id')
+        if assigned_external_id is not None:
+            assigned_external_id = str(assigned_external_id)
+        assigned_name = (ticket.get('assigned_user_name') or '').strip() or None
+        parent_external_id = ticket.get('parent_ticket_id')
+        if parent_external_id is not None and str(parent_external_id).isdigit():
+            parent_external_id = int(parent_external_id)
+        else:
+            parent_external_id = None
+
+        if external_id in existing_map:
+            db_execute(
+                """
+                UPDATE tickets
+                SET title = ?,
+                    description = ?,
+                    status_id = ?,
+                    due_date = ?,
+                    is_private = ?,
+                    priority = ?,
+                    external_assignee_id = ?,
+                    external_assignee_name = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    ticket.get('title') or '',
+                    ticket.get('description') or None,
+                    ticket.get('status_id'),
+                    ticket.get('due_date') or None,
+                    bool(ticket.get('is_private')),
+                    ticket.get('priority') or 'Medium',
+                    assigned_external_id,
+                    assigned_name,
+                    existing_map[external_id],
+                ),
+                commit=True,
+            )
+        else:
+            row = db_execute(
+                """
+                INSERT INTO tickets (
+                    title,
+                    description,
+                    status_id,
+                    assigned_user_id,
+                    external_assignee_id,
+                    external_assignee_name,
+                    workspace_id,
+                    created_by_user_id,
+                    due_date,
+                    is_private,
+                    priority,
+                    external_ticket_id,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id
+                """,
+                (
+                    ticket.get('title') or '',
+                    ticket.get('description') or None,
+                    ticket.get('status_id'),
+                    None,
+                    assigned_external_id,
+                    assigned_name,
+                    workspace['id'],
+                    current_user.id,
+                    ticket.get('due_date') or None,
+                    bool(ticket.get('is_private')),
+                    ticket.get('priority') or 'Medium',
+                    external_id,
+                ),
+                fetch="one",
+                commit=True,
+            )
+            local_id = row.get('id', list(row.values())[0]) if row else None
+            if local_id:
+                id_map[external_id] = local_id
+                created_local_ids.append(local_id)
+
+    for ticket in tickets:
+        external_id = ticket.get('id')
+        if not str(external_id).isdigit():
+            continue
+        external_id = int(external_id)
+        parent_external_id = ticket.get('parent_ticket_id')
+        if parent_external_id is not None and str(parent_external_id).isdigit():
+            parent_external_id = int(parent_external_id)
+        else:
+            parent_external_id = None
+        local_id = id_map.get(external_id)
+        parent_local_id = id_map.get(parent_external_id) if parent_external_id else None
+        if local_id:
+            db_execute(
+                "UPDATE tickets SET parent_ticket_id = ? WHERE id = ?",
+                (parent_local_id, local_id),
+                commit=True,
+            )
+
+    if external_ids:
+        placeholders = ", ".join(["?"] * len(external_ids))
+        db_execute(
+            f"""
+            DELETE FROM tickets
+            WHERE workspace_id = ?
+              AND external_ticket_id IS NOT NULL
+              AND external_ticket_id NOT IN ({placeholders})
+            """,
+            [workspace['id']] + external_ids,
+            commit=True,
+        )
+
+    return True, None
+
+
+def _create_external_ticket(workspace, payload):
+    response, error = _external_request(workspace, 'POST', '/api/external/tickets', payload)
+    if error:
+        return None, error
+    if response.status_code not in (200, 201):
+        try:
+            data = response.json()
+            return None, data.get('error') or f'External hub returned {response.status_code}.'
+        except ValueError:
+            return None, f'External hub returned {response.status_code}.'
+    try:
+        data = response.json()
+    except ValueError:
+        return None, 'Invalid response from external hub.'
+    return data.get('ticket_id'), None
+
+
+def _update_external_ticket(workspace, external_ticket_id, payload):
+    response, error = _external_request(
+        workspace,
+        'PATCH',
+        f"/api/external/tickets/{external_ticket_id}",
+        payload,
+    )
+    if error:
+        return False, error
+    if response.status_code != 200:
+        return False, f'External hub returned {response.status_code}.'
+    return True, None
+
+
+def _comment_external_ticket(workspace, external_ticket_id, update_text):
+    response, error = _external_request(
+        workspace,
+        'POST',
+        f"/api/external/tickets/{external_ticket_id}/comment",
+        {'update_text': update_text},
+    )
+    if error:
+        return False, error
+    if response.status_code != 200:
+        return False, f'External hub returned {response.status_code}.'
+    return True, None
+
+
+def _move_external_ticket(workspace, external_ticket_id, status_id):
+    response, error = _external_request(
+        workspace,
+        'POST',
+        f"/api/external/tickets/{external_ticket_id}/move",
+        {'status_id': status_id},
+    )
+    if error:
+        return False, error
+    if response.status_code != 200:
+        return False, f'External hub returned {response.status_code}.'
+    return True, None
 
 
 def _wants_json():
@@ -161,7 +624,7 @@ def _fetch_ticket(ticket_id, user_id, is_admin):
             t.*,
             s.name AS status_name,
             s.is_closed AS status_is_closed,
-            au.username AS assigned_user_name,
+            COALESCE(au.username, t.external_assignee_name) AS assigned_user_name,
             cu.username AS created_by_name,
             pt.title AS parent_title,
             pt.is_private AS parent_is_private,
@@ -204,7 +667,7 @@ def _fetch_subjobs(parent_ticket_id, user_id, is_admin):
             t.*,
             s.name AS status_name,
             s.is_closed AS status_is_closed,
-            au.username AS assigned_user_name,
+            COALESCE(au.username, t.external_assignee_name) AS assigned_user_name,
             tw.name AS workspace_name
         FROM tickets t
         JOIN ticket_statuses s ON t.status_id = s.id
@@ -239,7 +702,17 @@ def _fetch_users():
 def _fetch_workspaces():
     rows = db_execute(
         """
-        SELECT id, name, default_assignee_id
+        SELECT
+            id,
+            name,
+            default_assignee_id,
+            workspace_key,
+            workspace_uuid,
+            is_external,
+            external_instance_id,
+            external_base_url,
+            external_workspace_uuid,
+            external_workspace_key
         FROM ticket_workspaces
         ORDER BY name
         """,
@@ -846,7 +1319,7 @@ def list_tickets():
         workspace_lookup = {workspace['id']: workspace for workspace in workspaces}
         title = request.form.get('title', '').strip()
         description = request.form.get('description', '').strip()
-        assigned_user_id = request.form.get('assigned_user_id') or None
+        assigned_user_value = request.form.get('assigned_user_id') or None
         workspace_id = request.form.get('workspace_id') or None
         priority = request.form.get('priority', 'Medium')
         if not workspace_id:
@@ -867,40 +1340,72 @@ def list_tickets():
             flash('Status is required.', 'error')
             return redirect(url_for('tickets.list_tickets'))
 
-        if not assigned_user_id and workspace_id and str(workspace_id).isdigit():
+        assigned_user_id, external_assignee_id, external_assignee_name = _resolve_assignee(
+            assigned_user_value,
+            workspace_id,
+        )
+
+        if not assigned_user_id and not external_assignee_id and workspace_id and str(workspace_id).isdigit():
             workspace = workspace_lookup.get(int(workspace_id))
             default_assignee_id = workspace.get('default_assignee_id') if workspace else None
-            if default_assignee_id:
-                assigned_user_id = str(default_assignee_id)
+            if default_assignee_id and not (workspace or {}).get('is_external'):
+                assigned_user_id = int(default_assignee_id)
+
+        external_ticket_id = None
+        if workspace_id and str(workspace_id).isdigit():
+            workspace = workspace_lookup.get(int(workspace_id))
+        else:
+            workspace = None
+
+        if workspace and workspace.get('is_external'):
+            external_payload = {
+                'title': title,
+                'description': description,
+                'workspace_key': workspace.get('external_workspace_key') or workspace.get('workspace_key'),
+                'priority': priority,
+                'due_date': due_date,
+                'is_private': bool(is_private),
+                'assigned_user_id': external_assignee_id,
+            }
+            external_ticket_id, error = _create_external_ticket(workspace, external_payload)
+            if error or not external_ticket_id:
+                flash(error or 'Unable to create external ticket.', 'error')
+                return redirect(url_for('tickets.list_tickets'))
 
         row = db_execute(
             """
-            INSERT INTO tickets (
-                title,
-                description,
-                status_id,
-                assigned_user_id,
-                workspace_id,
-                created_by_user_id,
-                due_date,
-                is_private,
-                priority,
-                created_at,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            RETURNING id
-            """,
+                INSERT INTO tickets (
+                    title,
+                    description,
+                    status_id,
+                    assigned_user_id,
+                    external_assignee_id,
+                    external_assignee_name,
+                    workspace_id,
+                    created_by_user_id,
+                    due_date,
+                    is_private,
+                    priority,
+                    external_ticket_id,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id
+                """,
             (
                 title,
                 description or None,
                 int(status_id),
                 int(assigned_user_id) if assigned_user_id else None,
+                external_assignee_id,
+                external_assignee_name,
                 int(workspace_id) if workspace_id else None,
                 user_id,
                 due_date,
                 is_private,
                 priority,
+                external_ticket_id,
             ),
             fetch="one",
             commit=True,
@@ -931,6 +1436,13 @@ def list_tickets():
         customer_filter_id = None
     if supplier_filter_id and not str(supplier_filter_id).isdigit():
         supplier_filter_id = None
+
+    if workspace_filter_id and str(workspace_filter_id).isdigit():
+        workspace = next((w for w in _fetch_workspaces() if w['id'] == int(workspace_filter_id)), None)
+        if workspace and workspace.get('is_external'):
+            ok, error = _sync_external_workspace_tickets(workspace)
+            if not ok:
+                flash(error or 'Unable to sync external workspace.', 'error')
 
     visibility_clause, visibility_params = _ticket_visibility_clause(user_id, is_admin)
     closed_clause = "" if show_closed else "AND s.is_closed = FALSE"
@@ -981,13 +1493,13 @@ def list_tickets():
 
     rows = db_execute(
         f"""
-        SELECT
-            t.*,
-            s.name AS status_name,
-            s.is_closed AS status_is_closed,
-            au.username AS assigned_user_name,
-            cu.username AS created_by_name,
-            pt.id AS parent_id,
+          SELECT
+              t.*,
+              s.name AS status_name,
+              s.is_closed AS status_is_closed,
+              COALESCE(au.username, t.external_assignee_name) AS assigned_user_name,
+              cu.username AS created_by_name,
+              pt.id AS parent_id,
             pt.title AS parent_title,
             pt.parent_ticket_id AS parent_parent_id,
             tw.name AS workspace_name,
@@ -1076,6 +1588,10 @@ def list_tickets():
         workspace['id']: workspace.get('default_assignee_id')
         for workspace in workspaces
     }
+    workspace_external_map = {
+        workspace['id']: bool(workspace.get('is_external'))
+        for workspace in workspaces
+    }
     workspace_chips = _fetch_workspace_chips(user_id)
     default_status_id = None
     for status in statuses:
@@ -1160,6 +1676,7 @@ def list_tickets():
         supplier_filter_id=supplier_filter_id,
         default_status_id=default_status_id,
         workspace_defaults=workspace_defaults,
+        workspace_external_map=workspace_external_map,
         customers=customers,
         suppliers=suppliers,
     )
@@ -1387,14 +1904,43 @@ def view_ticket(ticket_id):
     statuses = _fetch_statuses()
     users = _fetch_users()
     workspaces = _fetch_workspaces()
+    workspace_external_map = {
+        workspace['id']: bool(workspace.get('is_external'))
+        for workspace in workspaces
+    }
     subjobs = _fetch_subjobs(ticket_id, user_id, is_admin)
     updates = _fetch_updates(ticket_id)
+    workspace = next((w for w in workspaces if w['id'] == ticket.get('workspace_id')), None)
+    if workspace and workspace.get('is_external') and ticket.get('external_ticket_id'):
+        response, error = _external_request(
+            workspace,
+            'GET',
+            f"/api/external/tickets/{ticket.get('external_ticket_id')}",
+        )
+        if response and response.status_code == 200:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = None
+            if payload and payload.get('ticket'):
+                remote = payload.get('ticket')
+                ticket['title'] = remote.get('title') or ticket['title']
+                ticket['description'] = remote.get('description')
+                ticket['status_id'] = remote.get('status_id')
+                ticket['status_name'] = remote.get('status_name')
+                ticket['status_is_closed'] = remote.get('status_is_closed')
+                ticket['assigned_user_name'] = remote.get('assigned_user_name') or ticket.get('assigned_user_name')
+                ticket['priority'] = remote.get('priority') or ticket.get('priority')
+                ticket['due_date'] = remote.get('due_date')
+                ticket['is_private'] = remote.get('is_private')
+                updates = payload.get('updates') or updates
     return render_template(
         'ticket_edit.html',
         ticket=ticket,
         statuses=statuses,
         users=users,
         workspaces=workspaces,
+        workspace_external_map=workspace_external_map,
         subjobs=subjobs,
         updates=updates,
     )
@@ -1451,6 +1997,24 @@ def quick_status(ticket_id):
         commit=True,
     )
 
+    if ticket.get('workspace_id'):
+        workspace = next((w for w in _fetch_workspaces() if w['id'] == int(ticket.get('workspace_id'))), None)
+    else:
+        workspace = None
+    if workspace and workspace.get('is_external') and ticket.get('external_ticket_id'):
+        ok, error = _move_external_ticket(workspace, ticket.get('external_ticket_id'), int(status_id))
+        if not ok:
+            return jsonify({'success': False, 'error': error or 'External update failed.'}), 502
+
+    if ticket.get('workspace_id'):
+        workspace = next((w for w in _fetch_workspaces() if w['id'] == int(ticket.get('workspace_id'))), None)
+    else:
+        workspace = None
+    if workspace and workspace.get('is_external') and ticket.get('external_ticket_id'):
+        ok, error = _move_external_ticket(workspace, ticket.get('external_ticket_id'), int(status_id))
+        if not ok:
+            return jsonify({'success': False, 'error': error or 'External update failed.'}), 502
+
     changes = [f"Status changed to {status_name}"]
     if status_name.lower() == 'returned':
         changes.append("Returned to creator")
@@ -1492,7 +2056,7 @@ def update_ticket(ticket_id):
 
     title = request.form.get('title', '').strip()
     description = request.form.get('description', '').strip()
-    assigned_user_id = request.form.get('assigned_user_id') or None
+    assigned_user_value = request.form.get('assigned_user_id') or None
     workspace_id = request.form.get('workspace_id') or None
     priority = request.form.get('priority', 'Medium')
     status_id = request.form.get('status_id')
@@ -1518,8 +2082,15 @@ def update_ticket(ticket_id):
     closed_at = datetime.now() if is_closed else None
     status_name = _status_name(status_id)
 
+    assigned_user_id, external_assignee_id, external_assignee_name = _resolve_assignee(
+        assigned_user_value,
+        workspace_id,
+    )
+
     if status_name and status_name.lower() == 'returned':
         assigned_user_id = ticket.get('created_by_user_id')
+        external_assignee_id = None
+        external_assignee_name = None
 
     db_execute(
         """
@@ -1528,6 +2099,8 @@ def update_ticket(ticket_id):
             description = ?,
             status_id = ?,
             assigned_user_id = ?,
+            external_assignee_id = ?,
+            external_assignee_name = ?,
             workspace_id = ?,
             due_date = ?,
             is_private = ?,
@@ -1541,6 +2114,8 @@ def update_ticket(ticket_id):
             description or None,
             int(status_id),
             int(assigned_user_id) if assigned_user_id else None,
+            external_assignee_id,
+            external_assignee_name,
             int(workspace_id) if workspace_id else None,
             due_date,
             is_private,
@@ -1551,15 +2126,35 @@ def update_ticket(ticket_id):
         commit=True,
     )
 
+    workspace = next((w for w in _fetch_workspaces() if w['id'] == int(workspace_id)), None) if workspace_id else None
+    if workspace and workspace.get('is_external') and ticket.get('external_ticket_id'):
+        ok, error = _update_external_ticket(
+            workspace,
+            ticket.get('external_ticket_id'),
+            {
+                'title': title,
+                'description': description or None,
+                'status_id': int(status_id),
+                'assigned_user_id': external_assignee_id,
+                'priority': priority,
+                'due_date': due_date,
+                'is_private': bool(is_private),
+            },
+        )
+        if not ok:
+            flash(error or 'External update failed.', 'error')
+
     changes = []
     if int(status_id) != ticket.get('status_id'):
         changes.append(f"Status changed to {status_name}")
         if status_name and status_name.lower() == 'returned':
             changes.append("Returned to creator")
-    if (int(assigned_user_id) if assigned_user_id else None) != ticket.get('assigned_user_id'):
+    if (int(assigned_user_id) if assigned_user_id else None) != ticket.get('assigned_user_id') or external_assignee_id != ticket.get('external_assignee_id'):
         if assigned_user_id:
             assignee_name = next((u['username'] for u in _fetch_users() if u['id'] == int(assigned_user_id)), None)
             changes.append(f"Assigned to {assignee_name or 'user #' + str(assigned_user_id)}")
+        elif external_assignee_id:
+            changes.append(f"Assigned to {external_assignee_name or 'external user'}")
         else:
             changes.append("Unassigned")
     existing_due = ticket.get('due_date')
@@ -1631,7 +2226,7 @@ def add_subjob(ticket_id):
 
     title = request.form.get('title', '').strip()
     description = request.form.get('description', '').strip()
-    assigned_user_id = request.form.get('assigned_user_id') or None
+    assigned_user_value = request.form.get('assigned_user_id') or None
     status_id = request.form.get('status_id')
     priority = request.form.get('priority', 'Medium')
     due_date = request.form.get('due_date') or None
@@ -1646,6 +2241,29 @@ def add_subjob(ticket_id):
         flash('Status is required.', 'error')
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
+    assigned_user_id, external_assignee_id, external_assignee_name = _resolve_assignee(
+        assigned_user_value,
+        workspace_id,
+    )
+
+    external_ticket_id = None
+    workspace = next((w for w in _fetch_workspaces() if w['id'] == int(workspace_id)), None) if workspace_id else None
+    if workspace and workspace.get('is_external'):
+        external_payload = {
+            'title': title,
+            'description': description,
+            'workspace_key': workspace.get('external_workspace_key') or workspace.get('workspace_key'),
+            'priority': priority,
+            'due_date': due_date,
+            'is_private': bool(is_private),
+            'assigned_user_id': external_assignee_id,
+            'parent_ticket_id': parent.get('external_ticket_id'),
+        }
+        external_ticket_id, error = _create_external_ticket(workspace, external_payload)
+        if error or not external_ticket_id:
+            flash(error or 'Unable to create external subtask.', 'error')
+            return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
+
     row = db_execute(
         """
         INSERT INTO tickets (
@@ -1653,16 +2271,19 @@ def add_subjob(ticket_id):
             description,
             status_id,
             assigned_user_id,
+            external_assignee_id,
+            external_assignee_name,
             workspace_id,
             created_by_user_id,
             due_date,
             is_private,
             parent_ticket_id,
             priority,
+            external_ticket_id,
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING id
         """,
         (
@@ -1670,12 +2291,15 @@ def add_subjob(ticket_id):
             description or None,
             int(status_id),
             int(assigned_user_id) if assigned_user_id else None,
+            external_assignee_id,
+            external_assignee_name,
             int(workspace_id) if workspace_id else None,
             user_id,
             due_date,
             is_private,
             ticket_id,
             priority,
+            external_ticket_id,
         ),
         fetch="one",
         commit=True,
@@ -1751,6 +2375,14 @@ def add_ticket_update(ticket_id):
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
     _add_ticket_update(ticket_id, user_id, update_text)
+    if ticket.get('workspace_id'):
+        workspace = next((w for w in _fetch_workspaces() if w['id'] == int(ticket.get('workspace_id'))), None)
+    else:
+        workspace = None
+    if workspace and workspace.get('is_external') and ticket.get('external_ticket_id'):
+        ok, error = _comment_external_ticket(workspace, ticket.get('external_ticket_id'), update_text)
+        if not ok:
+            flash(error or 'External update failed.', 'error')
 
     # Parse mentions and send notification emails
     mentioned_usernames = _parse_mentions(update_text)
@@ -1836,7 +2468,271 @@ def manage_workspaces():
         workspaces=workspaces,
         users=users,
         notification_prefs=notification_prefs,
+        is_admin=_is_admin(),
     )
+
+
+@tickets_bp.route('/workspaces/<int:workspace_id>/share-external', methods=['POST'])
+@login_required
+def share_workspace_external(workspace_id):
+    if not _is_admin():
+        return _workspace_response(False, 'Admin access required.', status=403)
+
+    workspace = db_execute(
+        """
+        SELECT id, name, workspace_key, workspace_uuid
+        FROM ticket_workspaces
+        WHERE id = ?
+        """,
+        (workspace_id,),
+        fetch="one",
+    )
+    if not workspace:
+        return _workspace_response(False, 'Workspace not found.', status=404)
+
+    workspace = _ensure_workspace_identity(dict(workspace))
+    instance_id = _get_instance_id()
+    base_url = (current_app.config.get('TICKETS_BASE_URL') or request.host_url or '').strip().rstrip('/')
+    if not base_url:
+        return _workspace_response(False, 'TICKETS_BASE_URL is required.', status=400)
+
+    payload = {
+        'remote_instance_id': instance_id,
+        'remote_base_url': base_url,
+        'remote_workspace_uuid': workspace['workspace_uuid'],
+        'remote_workspace_key': workspace['workspace_key'],
+        'remote_workspace_name': workspace['name'],
+    }
+    token = _encode_import_token(payload)
+    return _workspace_response(
+        True,
+        'Import token generated.',
+        status=200,
+        token=token,
+    )
+
+
+@tickets_bp.route('/workspaces/import-external', methods=['POST'])
+@login_required
+def import_external_workspace():
+    if not _is_admin():
+        return _workspace_response(False, 'Admin access required.', status=403)
+
+    token = (request.form.get('token') or '').strip()
+    if not token:
+        return _workspace_response(False, 'Import token is required.', status=400)
+
+    payload = _decode_import_token(token)
+    if not payload:
+        return _workspace_response(False, 'Invalid import token.', status=400)
+
+    missing = _validate_import_payload(payload)
+    if missing:
+        return _workspace_response(False, 'Import token is missing fields.', status=400, missing=missing)
+
+    remote_workspace_key = payload['remote_workspace_key'].strip().lower()
+    local_workspace_key = (request.form.get('local_workspace_key') or remote_workspace_key).strip().lower()
+    local_workspace_name = (request.form.get('local_workspace_name') or payload['remote_workspace_name']).strip()
+
+    if not local_workspace_key:
+        local_workspace_key = _slugify(local_workspace_name)
+
+    existing = db_execute(
+        "SELECT id FROM ticket_workspaces WHERE workspace_key = ?",
+        (local_workspace_key,),
+        fetch="one",
+    )
+    if existing:
+        db_execute(
+            """
+            UPDATE ticket_workspaces
+            SET
+                name = ?,
+                is_external = TRUE,
+                external_instance_id = ?,
+                external_base_url = ?,
+                external_workspace_uuid = ?,
+                external_workspace_key = ?
+            WHERE id = ?
+            """,
+            (
+                local_workspace_name,
+                payload['remote_instance_id'],
+                payload['remote_base_url'],
+                payload['remote_workspace_uuid'],
+                remote_workspace_key,
+                existing['id'],
+            ),
+            commit=True,
+        )
+        ok, error = _register_workspace_user_link(
+            existing['id'],
+            payload['remote_workspace_uuid'],
+            local_workspace_key,
+        )
+        message = 'Workspace updated.'
+        if not ok:
+            message = f'Workspace updated, but user sync link failed: {error}'
+        return _workspace_response(True, message, status=200, workspace_id=existing['id'])
+
+    name_candidate = local_workspace_name
+    suffix = 2
+    while True:
+        name_conflict = db_execute(
+            "SELECT id FROM ticket_workspaces WHERE name = ?",
+            (name_candidate,),
+            fetch="one",
+        )
+        if not name_conflict:
+            local_workspace_name = name_candidate
+            break
+        name_candidate = f"{local_workspace_name} ({suffix})"
+        suffix += 1
+
+    row = db_execute(
+        """
+        INSERT INTO ticket_workspaces (
+            name,
+            created_by_user_id,
+            created_at,
+            workspace_key,
+            workspace_uuid,
+            is_external,
+            external_instance_id,
+            external_base_url,
+            external_workspace_uuid,
+            external_workspace_key
+        )
+        VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, TRUE, ?, ?, ?, ?)
+        RETURNING id
+        """,
+        (
+            local_workspace_name,
+            current_user.id,
+            local_workspace_key,
+            str(uuid.uuid4()),
+            payload['remote_instance_id'],
+            payload['remote_base_url'],
+            payload['remote_workspace_uuid'],
+            remote_workspace_key,
+        ),
+        fetch="one",
+        commit=True,
+    )
+    workspace_id = row.get('id', list(row.values())[0]) if row else None
+    if workspace_id:
+        ok, error = _register_workspace_user_link(
+            workspace_id,
+            payload['remote_workspace_uuid'],
+            local_workspace_key,
+        )
+        message = 'Workspace imported.'
+        if not ok:
+            message = f'Workspace imported, but user sync link failed: {error}'
+        return _workspace_response(True, message, status=201, workspace_id=workspace_id)
+    return _workspace_response(True, 'Workspace imported.', status=201, workspace_id=workspace_id)
+
+
+@tickets_bp.route('/workspaces/<int:workspace_id>/external-users', methods=['GET'])
+@login_required
+def external_workspace_users(workspace_id):
+    workspace = db_execute(
+        """
+        SELECT
+            id,
+            is_external,
+            external_instance_id,
+            external_base_url,
+            external_workspace_uuid
+        FROM ticket_workspaces
+        WHERE id = ?
+        """,
+        (workspace_id,),
+        fetch="one",
+    )
+    if not workspace or not workspace.get('is_external'):
+        return jsonify({'success': True, 'users': []})
+
+    ok, result = _refresh_external_users(dict(workspace))
+    error_message = None
+    if not ok:
+        error_message = result
+
+    rows = db_execute(
+        """
+        SELECT external_user_id AS id, display_name, email
+        FROM external_ticket_users
+        WHERE external_instance_id = ? AND external_workspace_uuid = ?
+        ORDER BY display_name
+        """,
+        (workspace.get('external_instance_id'), workspace.get('external_workspace_uuid')),
+        fetch="all",
+    ) or []
+    users = [dict(row) for row in rows]
+    payload = {'success': True, 'users': users}
+    if error_message:
+        payload['error'] = error_message
+    return jsonify(payload)
+
+
+@tickets_bp.route('/api/external/workspaces/<workspace_uuid>/users', methods=['GET'])
+def external_workspace_users_api(workspace_uuid):
+    if not _external_api_authorized():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    workspace = db_execute(
+        """
+        SELECT id, workspace_uuid
+        FROM ticket_workspaces
+        WHERE workspace_uuid = ?
+        """,
+        (workspace_uuid,),
+        fetch="one",
+    )
+    if not workspace:
+        workspace_key = (request.args.get('workspace_key') or '').strip().lower()
+        if workspace_key:
+            workspace = db_execute(
+                """
+                SELECT id, workspace_uuid
+                FROM ticket_workspaces
+                WHERE workspace_key = ?
+                """,
+                (workspace_key,),
+                fetch="one",
+            )
+            if workspace and not workspace.get('workspace_uuid'):
+                db_execute(
+                    "UPDATE ticket_workspaces SET workspace_uuid = ? WHERE id = ?",
+                    (workspace_uuid, workspace['id']),
+                    commit=True,
+                )
+                workspace['workspace_uuid'] = workspace_uuid
+            elif workspace and workspace.get('workspace_uuid') and workspace.get('workspace_uuid') != workspace_uuid:
+                return jsonify({'error': 'Workspace UUID mismatch.'}), 409
+    if not workspace:
+        return jsonify({'error': 'Workspace not found'}), 404
+
+    rows = db_execute(
+        """
+        SELECT u.id, u.username, u.email
+        FROM ticket_workspace_members twm
+        JOIN users u ON u.id = twm.user_id
+        WHERE twm.workspace_id = ?
+        ORDER BY u.username
+        """,
+        (workspace['id'],),
+        fetch="all",
+    ) or []
+    users = [
+        {
+            'id': str(row['id']),
+            'display_name': row.get('username') or row.get('email') or 'User',
+            'email': row.get('email'),
+        }
+        for row in rows
+    ]
+    return jsonify({'users': users})
 
 
 @tickets_bp.route('/workspaces/<int:workspace_id>', methods=['POST'])

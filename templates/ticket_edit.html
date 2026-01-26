@@ -112,7 +112,7 @@
                     <div class="row g-3 mb-3">
                         <div class="col-md-3">
                             <label class="form-label">Assignee</label>
-                            <select class="form-select" name="assigned_user_id">
+                            <select class="form-select" name="assigned_user_id" id="ticketAssigneeEdit" data-external-assignee="{{ ticket.external_assignee_id or '' }}">
                                 <option value="">Unassigned</option>
                                 {% for user in users %}
                                     <option value="{{ user.id }}" {% if user.id == ticket.assigned_user_id %}selected{% endif %}>
@@ -123,7 +123,7 @@
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Workspace</label>
-                            <select class="form-select" name="workspace_id">
+                            <select class="form-select" name="workspace_id" id="ticketWorkspaceEdit">
                                 <option value="">None</option>
                                 {% for workspace in workspaces %}
                                     <option value="{{ workspace.id }}" {% if workspace.id == ticket.workspace_id %}selected{% endif %}>
@@ -322,7 +322,7 @@
                         </div>
                         <div class="row g-2 mb-2">
                             <div class="col-12">
-                                <select class="form-select form-select-sm" name="assigned_user_id">
+                                <select class="form-select form-select-sm js-subjob-assignee" name="assigned_user_id">
                                     <option value="">Unassigned</option>
                                     {% for user in users %}
                                         <option value="{{ user.id }}">{{ user.username }}</option>
@@ -1492,5 +1492,62 @@ function initMentionInput() {
         setTimeout(hideDropdown, 200);
     });
 }
+
+const workspaceExternalMap = {{ workspace_external_map|tojson }};
+const editWorkspaceSelect = document.getElementById('ticketWorkspaceEdit');
+const editAssigneeSelect = document.getElementById('ticketAssigneeEdit');
+
+const syncExternalAssignees = async (workspaceId, selectEl, selectedExternalId) => {
+    if (!workspaceId || !selectEl) {
+        return;
+    }
+    if (!workspaceExternalMap[workspaceId]) {
+        selectEl.querySelectorAll('option[data-external-option="1"]').forEach(opt => opt.remove());
+        return;
+    }
+    try {
+        const response = await fetch(`/tickets/workspaces/${workspaceId}/external-users`, {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        const payload = await response.json();
+        const users = Array.isArray(payload?.users) ? payload.users : [];
+        selectEl.querySelectorAll('option[data-external-option="1"]').forEach(opt => opt.remove());
+        users.forEach(user => {
+            const option = document.createElement('option');
+            option.value = `external:${user.id}`;
+            option.textContent = user.display_name || user.email || 'External user';
+            option.dataset.externalOption = '1';
+            selectEl.appendChild(option);
+        });
+        if (selectedExternalId) {
+            selectEl.value = `external:${selectedExternalId}`;
+        }
+    } catch (error) {
+        // Keep existing options if refresh fails.
+    }
+};
+
+if (editWorkspaceSelect && editAssigneeSelect) {
+    const selectedExternalId = editAssigneeSelect.dataset.externalAssignee;
+    syncExternalAssignees(editWorkspaceSelect.value, editAssigneeSelect, selectedExternalId);
+    editWorkspaceSelect.addEventListener('change', () => {
+        syncExternalAssignees(editWorkspaceSelect.value, editAssigneeSelect);
+    });
+    editAssigneeSelect.addEventListener('focus', () => {
+        syncExternalAssignees(editWorkspaceSelect.value, editAssigneeSelect);
+    });
+}
+
+document.querySelectorAll('.js-subjob-assignee').forEach((selectEl) => {
+    if (editWorkspaceSelect) {
+        syncExternalAssignees(editWorkspaceSelect.value, selectEl);
+        editWorkspaceSelect.addEventListener('change', () => {
+            syncExternalAssignees(editWorkspaceSelect.value, selectEl);
+        });
+        selectEl.addEventListener('focus', () => {
+            syncExternalAssignees(editWorkspaceSelect.value, selectEl);
+        });
+    }
+});
 </script>
 {% endblock %}

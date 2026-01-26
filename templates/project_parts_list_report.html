@@ -73,6 +73,16 @@
                             <th>Certs</th>
                             <th>No Bid</th>
                             <th>Notes</th>
+                            <th>CQ Status</th>
+                            <th>CQ Price (GBP)</th>
+                            <th>CQ Margin %</th>
+                            <th>CQ Quoted PN</th>
+                            <th>CQ Mfr</th>
+                            <th>CQ Lead Days</th>
+                            <th>CQ Cond</th>
+                            <th>CQ Certs</th>
+                            <th>CQ No Bid</th>
+                            <th>CQ Notes</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -101,11 +111,21 @@
                                     <td>{{ row.certifications }}</td>
                                     <td>{{ 'Yes' if row.is_no_bid else 'No' if row.is_no_bid is not none else '' }}</td>
                                     <td>{{ row.line_notes }}</td>
+                                    <td>{{ row.customer_quote_status }}</td>
+                                    <td>{{ row.customer_quote_price_gbp }}</td>
+                                    <td>{{ row.customer_quote_margin_percent }}</td>
+                                    <td>{{ row.customer_quote_part_number }}</td>
+                                    <td>{{ row.customer_quote_manufacturer }}</td>
+                                    <td>{{ row.customer_quote_lead_days }}</td>
+                                    <td>{{ row.customer_quote_condition }}</td>
+                                    <td>{{ row.customer_quote_certs }}</td>
+                                    <td>{{ 'Yes' if row.customer_quote_no_bid else 'No' if row.customer_quote_no_bid is not none else '' }}</td>
+                                    <td>{{ row.customer_quote_notes }}</td>
                                 </tr>
                             {% endfor %}
                         {% else %}
                             <tr>
-                                <td colspan="18" class="text-center text-muted py-4">No parts list lines linked to this project.</td>
+                                <td colspan="28" class="text-center text-muted py-4">No parts list lines linked to this project.</td>
                             </tr>
                         {% endif %}
                     </tbody>

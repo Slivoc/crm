@@ -1027,13 +1027,46 @@
 
 <script>
 const workspaceDefaults = {{ workspace_defaults|tojson }};
+const workspaceExternalMap = {{ workspace_external_map|tojson }};
 const workspaceFilterId = "{{ workspace_filter_id or '' }}";
 const workspaceSelect = document.getElementById('ticketWorkspace');
 const assigneeSelect = document.getElementById('ticketAssignee');
 let lastAutoAssigned = null;
 
+const syncExternalAssignees = async (workspaceId, selectEl) => {
+    if (!workspaceId || !selectEl) {
+        return;
+    }
+    if (!workspaceExternalMap[workspaceId]) {
+        selectEl.querySelectorAll('option[data-external-option="1"]').forEach(opt => opt.remove());
+        return;
+    }
+    try {
+        const response = await fetch(`/tickets/workspaces/${workspaceId}/external-users`, {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        const payload = await response.json();
+        const users = Array.isArray(payload?.users) ? payload.users : [];
+        selectEl.querySelectorAll('option[data-external-option="1"]').forEach(opt => opt.remove());
+        users.forEach(user => {
+            const option = document.createElement('option');
+            option.value = `external:${user.id}`;
+            option.textContent = user.display_name || user.email || 'External user';
+            option.dataset.externalOption = '1';
+            selectEl.appendChild(option);
+        });
+    } catch (error) {
+        // Keep existing options if refresh fails.
+    }
+};
+
 const applyWorkspaceDefaults = (workspaceId) => {
     if (!assigneeSelect) {
+        return;
+    }
+    if (workspaceExternalMap[workspaceId]) {
+        assigneeSelect.value = '';
+        lastAutoAssigned = null;
         return;
     }
     const defaultAssigneeId = workspaceDefaults[workspaceId];
@@ -1054,6 +1087,7 @@ if (newTicketModalEl) {
         }
         if (workspaceSelect) {
             applyWorkspaceDefaults(workspaceSelect.value || null);
+            syncExternalAssignees(workspaceSelect.value || null, assigneeSelect);
         }
     });
 }
@@ -1061,6 +1095,13 @@ if (newTicketModalEl) {
 if (workspaceSelect) {
     workspaceSelect.addEventListener('change', () => {
         applyWorkspaceDefaults(workspaceSelect.value || null);
+        syncExternalAssignees(workspaceSelect.value || null, assigneeSelect);
+    });
+}
+
+if (assigneeSelect && workspaceSelect) {
+    assigneeSelect.addEventListener('focus', () => {
+        syncExternalAssignees(workspaceSelect.value || null, assigneeSelect);
     });
 }
 

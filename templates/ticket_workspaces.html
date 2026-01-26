@@ -59,6 +59,39 @@
                 </div>
             </div>
         </div>
+        {% if is_admin %}
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Import External Workspace</h5>
+                <form method="post" action="{{ url_for('tickets.import_external_workspace') }}" id="workspaceImportForm">
+                    <div class="mb-3">
+                        <label class="form-label" for="importToken">Import token</label>
+                        <textarea class="form-control" id="importToken" name="token" rows="3" placeholder="Paste token..."></textarea>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Local workspace name (optional)</label>
+                            <input type="text" class="form-control" name="local_workspace_name" placeholder="Sproutt Bugs">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Local workspace key (optional)</label>
+                            <input type="text" class="form-control" name="local_workspace_key" placeholder="sproutt-bugs">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-outline-secondary">
+                        <i class="bi bi-cloud-download me-1"></i>Import Workspace
+                    </button>
+                </form>
+                <div class="workspace-logs mt-3" id="workspaceImportLogCard" hidden>
+                    <div class="workspace-logs-header">
+                        <span>Import result</span>
+                        <span class="workspace-logs-status" id="workspaceImportStatus">Waiting</span>
+                    </div>
+                    <pre class="workspace-logs-body" id="workspaceImportOutput"></pre>
+                </div>
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <div class="workspace-section mt-4">
@@ -136,6 +169,27 @@
                                     </form>
                                 {% else %}
                                     <div class="text-muted small mt-4 pt-2">Join this workspace to manage notification preferences.</div>
+                                {% endif %}
+
+                                {% if is_admin %}
+                                    <div class="mt-4 pt-2 border-top">
+                                        <div class="d-flex align-items-center justify-content-between">
+                                            <h6 class="mb-0">External Share</h6>
+                                            <form method="post" action="{{ url_for('tickets.share_workspace_external', workspace_id=workspace.id) }}" class="js-share-workspace" data-workspace-id="{{ workspace.id }}">
+                                                <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                                    <i class="bi bi-link-45deg"></i>
+                                                </button>
+                                            </form>
+                                        </div>
+                                        <div class="text-muted small mt-2">Key: {{ workspace.workspace_key or 'Auto-generated' }}</div>
+                                        <div class="text-muted small">UUID: {{ workspace.workspace_uuid or 'Auto-generated' }}</div>
+                                        <div class="small mt-2 d-none" data-share-status="{{ workspace.id }}"></div>
+                                        <div class="mt-2 d-none" data-share-token="{{ workspace.id }}">
+                                            <label class="form-label small mb-1">Import token</label>
+                                            <textarea class="form-control form-control-sm" rows="3" readonly></textarea>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary mt-2 w-100" data-copy-token>Copy token</button>
+                                        </div>
+                                    </div>
                                 {% endif %}
                             </div>
                         </div>
@@ -295,6 +349,10 @@ const logCard = document.getElementById('workspaceLogCard');
 const logOutput = document.getElementById('workspaceLogOutput');
 const logStatus = document.getElementById('workspaceLogStatus');
 const createForm = document.getElementById('workspaceCreateForm');
+const importForm = document.getElementById('workspaceImportForm');
+const importLogCard = document.getElementById('workspaceImportLogCard');
+const importLogOutput = document.getElementById('workspaceImportOutput');
+const importLogStatus = document.getElementById('workspaceImportStatus');
 
 const showWorkspaceLogs = (message, logs, isSuccess) => {
     if (!logCard || !logOutput || !logStatus) {
@@ -340,6 +398,43 @@ if (createForm) {
     createForm.addEventListener('submit', (event) => {
         event.preventDefault();
         submitWorkspaceForm(createForm, 'Workspace created.');
+    });
+}
+
+if (importForm) {
+    importForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!importLogCard || !importLogOutput || !importLogStatus) {
+            return;
+        }
+        try {
+            const response = await fetch(importForm.action, {
+                method: 'POST',
+                body: new FormData(importForm),
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            });
+            const payload = await response.json();
+            const isSuccess = response.ok && payload && payload.success;
+            const message = payload?.message || 'Import complete.';
+            importLogStatus.textContent = isSuccess ? 'Success' : 'Error';
+            importLogStatus.classList.toggle('is-error', !isSuccess);
+            const lines = [message];
+            if (payload?.missing?.length) {
+                lines.push(`Missing: ${payload.missing.join(', ')}`);
+            }
+            importLogOutput.textContent = lines.join('\n');
+            importLogCard.hidden = false;
+            if (isSuccess) {
+                importForm.reset();
+            }
+        } catch (error) {
+            importLogStatus.textContent = 'Error';
+            importLogStatus.classList.add('is-error');
+            importLogOutput.textContent = error?.message || 'Import failed.';
+            importLogCard.hidden = false;
+        }
     });
 }
 
@@ -405,6 +500,73 @@ document.querySelectorAll('.notification-pref-form').forEach((form) => {
                 errorEl.textContent = error?.message || 'Unable to save preferences.';
                 errorEl.classList.remove('d-none');
             }
+        }
+    });
+});
+
+document.querySelectorAll('.js-share-workspace').forEach((form) => {
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const workspaceId = form.dataset.workspaceId;
+        const statusEl = document.querySelector(`[data-share-status="${workspaceId}"]`);
+        const tokenWrap = document.querySelector(`[data-share-token="${workspaceId}"]`);
+        const tokenField = tokenWrap?.querySelector('textarea');
+        if (tokenWrap) {
+            tokenWrap.classList.add('d-none');
+        }
+        if (!statusEl) {
+            form.submit();
+            return;
+        }
+        statusEl.classList.remove('d-none', 'text-success', 'text-danger');
+        statusEl.classList.add('text-muted');
+        statusEl.textContent = 'Sharing...';
+
+        try {
+            const response = await fetch(form.action, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload?.success === false) {
+                statusEl.classList.remove('text-muted');
+                statusEl.classList.add('text-danger');
+                statusEl.textContent = payload?.message || payload?.error || 'Share failed.';
+                return;
+            }
+            statusEl.classList.remove('text-muted');
+            statusEl.classList.add('text-success');
+            statusEl.textContent = payload?.message || 'Workspace shared.';
+            if (payload?.token && tokenWrap && tokenField) {
+                tokenField.value = payload.token;
+                tokenWrap.classList.remove('d-none');
+            }
+        } catch (error) {
+            statusEl.classList.remove('text-muted');
+            statusEl.classList.add('text-danger');
+            statusEl.textContent = 'Share failed.';
+        }
+    });
+});
+
+document.querySelectorAll('[data-copy-token]').forEach((button) => {
+    button.addEventListener('click', async () => {
+        const wrapper = button.closest('[data-share-token]');
+        const textarea = wrapper?.querySelector('textarea');
+        if (!textarea) {
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(textarea.value);
+            button.textContent = 'Copied';
+            setTimeout(() => {
+                button.textContent = 'Copy token';
+            }, 1500);
+        } catch (error) {
+            textarea.select();
+            document.execCommand('copy');
         }
     });
 });
