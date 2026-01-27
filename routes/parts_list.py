@@ -7263,6 +7263,40 @@ def use_cost(list_id, line_id):
         return jsonify(success=False, message=str(e)), 500
 
 
+@parts_list_bp.route('/parts-lists/<int:list_id>/lines/<int:line_id>/clear-cost', methods=['POST'])
+def clear_cost(list_id, line_id):
+    """Clear the chosen cost fields for a line."""
+    try:
+        with db_cursor(commit=True) as cur:
+            line = _execute_with_cursor(cur, """
+                SELECT id FROM parts_list_lines
+                WHERE id = ? AND parts_list_id = ?
+            """, (line_id, list_id)).fetchone()
+
+            if not line:
+                logging.warning(f"Line {line_id} not found in list {list_id} for clear_cost")
+                return jsonify(success=False, message="Line not found"), 404
+
+            _execute_with_cursor(cur, """
+                UPDATE parts_list_lines
+                SET chosen_supplier_id = NULL,
+                    chosen_cost = NULL,
+                    chosen_price = NULL,
+                    chosen_currency_id = NULL,
+                    chosen_lead_days = NULL,
+                    chosen_qty = NULL,
+                    chosen_source_type = NULL,
+                    chosen_source_reference = NULL,
+                    date_modified = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (line_id,))
+
+        return jsonify(success=True, message="Cost cleared successfully")
+
+    except Exception as e:
+        logging.exception(f"Error in clear_cost: {e}")
+        return jsonify(success=False, message=str(e)), 500
+
 # UPDATE THE /parse-email ROUTE TO INCLUDE CONTACT MATCHING:
 @parts_list_bp.route('/parse-email', methods=['POST'])
 def parse_email():

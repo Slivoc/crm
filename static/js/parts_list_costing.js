@@ -27,6 +27,14 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+    // Clear assigned cost/supplier
+    document.querySelectorAll('.clear-line-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+            const lineId = this.dataset.lineId;
+            clearLineCost(lineId);
+        });
+    });
+
     // Duplicate line as price break
     document.querySelectorAll('.duplicate-line-btn').forEach(btn => {
         btn.addEventListener('click', function () {
@@ -512,6 +520,95 @@ function saveLineCost(lineId) {
         showToast('Error: ' + (data.message || 'Unknown error'), 'danger');
     }
 })
+}
+
+function resetLineCostUI(row) {
+    if (!row) return;
+    const lineId = row.dataset.lineId;
+
+    const supplierSelect = row.querySelector('.supplier-select');
+    if (supplierSelect) {
+        if (window.jQuery && $(supplierSelect).data('select2')) {
+            if ($(supplierSelect).find('option[value=""]').length === 0) {
+                $(supplierSelect).append(new Option('Select supplier...', '', false, false));
+            }
+            $(supplierSelect).val('').trigger('change');
+        } else {
+            let emptyOption = supplierSelect.querySelector('option[value=""]');
+            if (!emptyOption) {
+                emptyOption = document.createElement('option');
+                emptyOption.value = '';
+                emptyOption.textContent = 'Select supplier...';
+                supplierSelect.insertBefore(emptyOption, supplierSelect.firstChild);
+            }
+            supplierSelect.value = '';
+            supplierSelect.dispatchEvent(new Event('change'));
+        }
+    }
+
+    const costInput = row.querySelector('.cost-input');
+    if (costInput) costInput.value = '';
+
+    const leadInput = row.querySelector('.lead-days-input');
+    if (leadInput) leadInput.value = '';
+
+    const requestedQty = row.querySelector('.badge[data-requested-qty]')?.dataset.requestedQty;
+    const chosenQtyInput = row.querySelector('.chosen-qty-input');
+    if (chosenQtyInput) {
+        chosenQtyInput.value = requestedQty || '';
+        chosenQtyInput.style.backgroundColor = '';
+        chosenQtyInput.style.fontWeight = '500';
+    }
+
+    row.dataset.costSource = '';
+    row.dataset.costSourceRef = '';
+    setSupplierSourceBadge(row, null);
+
+    updateLineTotal(lineId);
+
+    row.classList.remove('has-cost', 'row-modified');
+    row.classList.add('missing-cost');
+
+    const saveBtn = row.querySelector('.save-line-btn');
+    if (saveBtn) {
+        saveBtn.classList.remove('btn-warning');
+        saveBtn.classList.add('btn-success');
+        saveBtn.innerHTML = '<i class="bi bi-check"></i>';
+    }
+}
+
+function clearLineCost(lineId) {
+    const row = document.querySelector(`tr[data-line-id="${lineId}"]`);
+    if (!row) return;
+
+    const listId = window.PARTS_LIST_ID;
+    if (!listId) {
+        showToast('Error: Parts list ID not found. Please refresh the page.', 'danger');
+        return;
+    }
+
+    if (!confirm('Clear supplier and cost for this line?')) {
+        return;
+    }
+
+    fetch(`/parts_list/parts-lists/${listId}/lines/${lineId}/clear-cost`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                showToast('Error: ' + (data.message || 'Unknown error'), 'danger');
+                return;
+            }
+            resetLineCostUI(row);
+            showToast('Cost cleared', 'success');
+        })
+        .catch(error => {
+            console.error('Error clearing cost:', error);
+            showToast('Error clearing cost', 'danger');
+        });
 }
 
 function duplicateLine(lineId, button) {
