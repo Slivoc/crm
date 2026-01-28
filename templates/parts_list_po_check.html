@@ -53,18 +53,28 @@
     }
 
     .terms-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
     }
     .terms-card .term-label {
         font-size: 0.7rem;
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        opacity: 0.8;
+        color: #6c757d;
     }
     .terms-card .term-value {
-        font-size: 1.1rem;
+        font-size: 1rem;
         font-weight: 600;
+        color: #212529;
+    }
+
+    .total-value-card {
+        background: #198754;
+        color: white;
+    }
+    .total-value-card .value-amount {
+        font-size: 1.8rem;
+        font-weight: 700;
     }
 
     .summary-card {
@@ -131,7 +141,7 @@
     </div>
 
     <!-- Upload Section -->
-    <div class="card mb-4">
+    <div class="card mb-4" id="uploadCard">
         <div class="card-body">
             <div class="row g-3">
                 <!-- Customer Selector -->
@@ -171,14 +181,20 @@
 
     <!-- Results Section (hidden until extraction) -->
     <div id="resultsSection">
-        <!-- Extracted Terms -->
-        <div class="card terms-card mb-4">
-            <div class="card-body">
-                <div class="row align-items-center">
-                    <div class="col-auto">
-                        <h5 class="mb-0"><i class="bi bi-receipt me-2"></i>PO Details</h5>
+        <!-- Total Value + PO Details Row -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card total-value-card h-100">
+                    <div class="card-body text-center d-flex flex-column justify-content-center">
+                        <div class="small text-white-50">PO Total Value</div>
+                        <div class="value-amount" id="poTotalValue">-</div>
+                        <div class="small text-white-50" id="poTotalCurrency"></div>
                     </div>
-                    <div class="col">
+                </div>
+            </div>
+            <div class="col-md-9">
+                <div class="card terms-card h-100">
+                    <div class="card-body py-2">
                         <div class="row text-center">
                             <div class="col">
                                 <div class="term-label">PO Reference</div>
@@ -208,83 +224,81 @@
 
         <!-- Summary Stats -->
         <div class="row mb-4" id="summaryStats">
-            <div class="col-md-3">
+            <div class="col">
                 <div class="card summary-card total">
-                    <div class="card-body text-center py-3">
+                    <div class="card-body text-center py-2">
                         <div class="text-muted small">Total Lines</div>
-                        <h3 class="mb-0" id="statTotal">0</h3>
+                        <h4 class="mb-0" id="statTotal">0</h4>
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="card summary-card exact">
-                    <div class="card-body text-center py-3">
+                    <div class="card-body text-center py-2">
                         <div class="text-muted small">Exact Matches</div>
-                        <h3 class="mb-0 text-success" id="statExact">0</h3>
+                        <h4 class="mb-0 text-success" id="statExact">0</h4>
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="card summary-card partial">
-                    <div class="card-body text-center py-3">
-                        <div class="text-muted small">With Discrepancies</div>
-                        <h3 class="mb-0 text-warning" id="statPartial">0</h3>
+                    <div class="card-body text-center py-2">
+                        <div class="text-muted small">Discrepancies</div>
+                        <h4 class="mb-0 text-warning" id="statPartial">0</h4>
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="card summary-card unmatched">
-                    <div class="card-body text-center py-3">
+                    <div class="card-body text-center py-2">
                         <div class="text-muted small">Unmatched</div>
-                        <h3 class="mb-0 text-danger" id="statUnmatched">0</h3>
+                        <h4 class="mb-0 text-danger" id="statUnmatched">0</h4>
                     </div>
                 </div>
             </div>
-        </div>
-
-        <!-- Affected Parts Lists -->
-        <div class="card mb-4" id="affectedListsCard" style="display: none;">
-            <div class="card-header">
-                <h6 class="mb-0"><i class="bi bi-collection me-2"></i>Affected Parts Lists</h6>
-            </div>
-            <div class="card-body">
-                <div id="affectedLists" class="d-flex flex-wrap gap-2"></div>
+            <div class="col">
+                <div class="card summary-card" style="border-color: #6c757d;">
+                    <div class="card-body text-center py-2">
+                        <div class="text-muted small">Parts Lists</div>
+                        <h4 class="mb-0" id="statPartsLists">0</h4>
+                    </div>
+                </div>
             </div>
         </div>
 
         <!-- Results Table -->
         <div class="card mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center">
+            <div class="card-header d-flex justify-content-between align-items-center py-2">
                 <h6 class="mb-0"><i class="bi bi-table me-2"></i>Line Matching Results</h6>
                 <div>
-                    <button class="btn btn-sm btn-outline-secondary me-2" id="toggleRawText">
-                        <i class="bi bi-code me-1"></i>View Raw Text
+                    <button class="btn btn-sm btn-outline-secondary" id="toggleRawText">
+                        <i class="bi bi-code me-1"></i>Raw Text
                     </button>
                 </div>
             </div>
             <div class="table-responsive">
-                <table class="table table-hover mb-0 results-table">
+                <table class="table table-hover table-sm mb-0 results-table">
                     <thead class="table-light">
                         <tr>
                             <th colspan="5" class="text-center bg-light border-end">PO Line (Customer Order)</th>
-                            <th class="text-center bg-light border-end">Match</th>
-                            <th colspan="4" class="text-center bg-light border-end" style="background: #e8f4e8 !important;">Sales Side (Our Quote)</th>
+                            <th colspan="2" class="text-center bg-light border-end">Match Status</th>
+                            <th colspan="3" class="text-center bg-light border-end" style="background: #e8f4e8 !important;">Sales Side (Our Quote)</th>
                             <th colspan="3" class="text-center bg-light" style="background: #e8f0f8 !important;">Supplier Side</th>
                         </tr>
                         <tr>
-                            <th style="width: 50px;">#</th>
+                            <th style="width: 40px;">#</th>
                             <th>Part Number</th>
                             <th>Description</th>
                             <th class="text-end">Qty</th>
-                            <th class="text-end border-end">Unit Price</th>
-                            <th class="text-center border-end" style="width: 100px;">Status</th>
-                            <th style="background: #f0f8f0;">Parts List</th>
-                            <th class="text-end" style="background: #f0f8f0;">Our Price</th>
+                            <th class="text-end border-end">Price</th>
+                            <th class="text-center" style="width: 60px;">PL</th>
+                            <th class="border-end">Status / Discrepancies</th>
+                            <th class="text-end" style="background: #f0f8f0;">Price</th>
                             <th class="text-end" style="background: #f0f8f0;">Qty</th>
-                            <th class="text-end border-end" style="background: #f0f8f0;">Lead Time</th>
+                            <th class="text-end border-end" style="background: #f0f8f0;">LT</th>
                             <th style="background: #f0f4f8;">Supplier</th>
                             <th class="text-end" style="background: #f0f4f8;">Cost</th>
-                            <th class="text-end" style="background: #f0f4f8;">Lead Time</th>
+                            <th class="text-end" style="background: #f0f4f8;">LT</th>
                         </tr>
                     </thead>
                     <tbody id="resultsTableBody">
@@ -573,8 +587,23 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     function displayResults() {
-        // Show results section
+        // Show results section, hide upload section
         resultsSection.style.display = 'block';
+        document.getElementById('uploadCard').style.display = 'none';
+
+        // Calculate total PO value
+        let totalValue = 0;
+        if (extractedData && extractedData.lines) {
+            extractedData.lines.forEach(line => {
+                if (line.total_price) {
+                    totalValue += line.total_price;
+                } else if (line.unit_price && line.quantity) {
+                    totalValue += line.unit_price * line.quantity;
+                }
+            });
+        }
+        document.getElementById('poTotalValue').textContent = formatCurrency(totalValue);
+        document.getElementById('poTotalCurrency').textContent = extractedData?.currency || '';
 
         // Update summary stats
         const summary = matchResults.summary;
@@ -582,25 +611,7 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('statExact').textContent = summary.exact_matches;
         document.getElementById('statPartial').textContent = summary.partial_matches;
         document.getElementById('statUnmatched').textContent = summary.unmatched;
-
-        // Show affected parts lists
-        const affectedListsCard = document.getElementById('affectedListsCard');
-        const affectedListsContainer = document.getElementById('affectedLists');
-        affectedListsContainer.innerHTML = '';
-
-        if (summary.affected_parts_lists && summary.affected_parts_lists.length > 0) {
-            affectedListsCard.style.display = 'block';
-            summary.affected_parts_lists.forEach(pl => {
-                const badge = document.createElement('a');
-                badge.href = `/parts_list/parts-lists/${pl.id}/view`;
-                badge.target = '_blank';
-                badge.className = 'badge bg-primary text-decoration-none';
-                badge.innerHTML = `<i class="bi bi-list-check me-1"></i>${pl.name}`;
-                affectedListsContainer.appendChild(badge);
-            });
-        } else {
-            affectedListsCard.style.display = 'none';
-        }
+        document.getElementById('statPartsLists').textContent = summary.affected_parts_lists?.length || 0;
 
         // Populate table
         const tbody = document.getElementById('resultsTableBody');
@@ -616,35 +627,32 @@ document.addEventListener('DOMContentLoaded', function() {
             const row = document.createElement('tr');
             row.className = `match-${conf}`;
 
+            // Build discrepancy text inline
+            const discrepancyText = match.discrepancies.length > 0
+                ? match.discrepancies.map(d => `<div class="small text-warning">${escapeHtml(d)}</div>`).join('')
+                : '';
+
             // PO Line columns
             row.innerHTML = `
                 <td>${po.line_number || index + 1}</td>
                 <td><code>${escapeHtml(po.part_number)}</code></td>
-                <td class="text-muted small">${escapeHtml(po.description || '-')}</td>
+                <td class="text-muted small" style="max-width: 150px; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(po.description || '')}</td>
                 <td class="text-end">${po.quantity}</td>
                 <td class="text-end border-end">${po.unit_price ? formatCurrency(po.unit_price) : '-'}</td>
 
-                <td class="text-center border-end">
+                <td class="text-center">
+                    ${pl ? `<a href="/parts_list/view/${pl.id}" target="_blank" class="fw-bold">${pl.id}</a>` : '-'}
+                </td>
+                <td class="border-end">
                     <span class="status-badge status-${conf}">
                         ${conf === 'exact' ? 'Match' : conf === 'partial' ? 'Discrepancy' : 'No Match'}
                     </span>
-                    ${match.discrepancies.length > 0 ? `
-                        <ul class="discrepancy-list mt-1">
-                            ${match.discrepancies.map(d => `<li>${escapeHtml(d)}</li>`).join('')}
-                        </ul>
-                    ` : ''}
+                    ${m && m.quote_status === 'quoted' ? '<span class="badge bg-success ms-1" style="font-size:0.6rem">Q</span>' : ''}
+                    ${discrepancyText}
                 </td>
 
-                <td style="background: #f8fcf8;">
-                    ${pl ? `
-                        <a href="/parts_list/parts-lists/${pl.id}/view" target="_blank" class="parts-list-link">
-                            ${escapeHtml(pl.name)}
-                        </a>
-                        <div class="small text-muted">Line ${m.line_number}${m.quote_status === 'quoted' ? ' <span class="badge bg-success" style="font-size:0.65rem">Quoted</span>' : m.quote_status ? ' <span class="badge bg-secondary" style="font-size:0.65rem">'+m.quote_status+'</span>' : ''}</div>
-                    ` : '<span class="text-muted">-</span>'}
-                </td>
                 <td class="text-end" style="background: #f8fcf8;">
-                    ${m && m.price ? formatCurrency(m.price) + ' <small class="text-muted">GBP</small>' : '<span class="text-muted small">not quoted</span>'}
+                    ${m && m.price ? formatCurrency(m.price) : '<span class="text-muted small">-</span>'}
                 </td>
                 <td class="text-end" style="background: #f8fcf8;">
                     ${m ? (m.quantity || '-') : '-'}
@@ -679,9 +687,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!matchResults || !matchResults.summary.affected_parts_lists) return;
 
         const listIds = matchResults.summary.affected_parts_lists.map(pl => pl.id);
-        const listNames = matchResults.summary.affected_parts_lists.map(pl => pl.name);
 
-        if (!confirm(`Mark the following parts lists as "Won"?\n\n${listNames.join('\n')}`)) {
+        if (!confirm(`Mark ${listIds.length} parts list(s) as "Won"?\n\nPL IDs: ${listIds.join(', ')}`)) {
             return;
         }
 
@@ -719,6 +726,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (confirm('Start over? This will clear all results.')) {
             clearFile();
             resultsSection.style.display = 'none';
+            document.getElementById('uploadCard').style.display = 'block'; // Show upload card again
             extractedData = null;
             matchResults = null;
             rawText = '';
