@@ -1395,23 +1395,36 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     const buildMonthlyGoalDataset = (goalData, labelSet) => {
-        if (!goalData || !goalData.amount || goalData.amount <= 0) {
+        if (!goalData) {
             return null;
         }
 
-        const goalSeries = new Array(labelSet.length).fill(null);
-        let goalIndex = goalData.month_index;
-        if (goalIndex === null || goalIndex === undefined || goalIndex < 0 || goalIndex >= labelSet.length) {
-            if (goalData.month_label) {
-                goalIndex = labelSet.indexOf(goalData.month_label);
+        let goalSeries = null;
+        if (Array.isArray(goalData.series)) {
+            goalSeries = goalData.series.slice(0, labelSet.length);
+        } else if (Array.isArray(goalData)) {
+            goalSeries = goalData.slice(0, labelSet.length);
+        }
+
+        if (!goalSeries) {
+            if (!goalData.amount || goalData.amount <= 0) {
+                return null;
+            }
+            goalSeries = new Array(labelSet.length).fill(null);
+            let goalIndex = goalData.month_index;
+            if (goalIndex === null || goalIndex === undefined || goalIndex < 0 || goalIndex >= labelSet.length) {
+                if (goalData.month_label) {
+                    goalIndex = labelSet.indexOf(goalData.month_label);
+                }
+            }
+
+            if (goalIndex !== null && goalIndex !== undefined && goalIndex >= 0) {
+                goalSeries[goalIndex] = goalData.amount;
             }
         }
 
-        if (goalIndex !== null && goalIndex !== undefined && goalIndex >= 0) {
-            const lastIndex = Math.min(goalIndex, labelSet.length - 1);
-            for (let idx = 0; idx <= lastIndex; idx += 1) {
-                goalSeries[idx] = goalData.amount;
-            }
+        if (!goalSeries.some(value => value !== null && value !== undefined)) {
+            return null;
         }
 
         return {
@@ -2241,7 +2254,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
 
-                monthlyGoal = data.monthly_goal || null;
+                monthlyGoal = data.monthly_goal_series || data.monthly_goal || null;
 
                 if (personalUpdated) {
                     applyMonthlyGoalDataset(personalSalesData);

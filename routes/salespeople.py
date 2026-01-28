@@ -2482,6 +2482,7 @@ def sales_data(salesperson_id):
 
             # 3. Generate month labels for the past 24 months (changed from 12)
             chart_labels = []
+            month_keys = []
             month_dict = {}  # For mapping month strings to positions
 
             for i in range(24):  # Changed from 12 to 24
@@ -2492,24 +2493,39 @@ def sales_data(salesperson_id):
 
                 # Add to the start of the lists (to get chronological order)
                 chart_labels.insert(0, month_label)
+                month_keys.insert(0, month_key)
                 month_dict[month_key] = 23 - i  # Map SQL month format to array position (changed from 11-i)
 
             db = get_db_connection()
             goal_month_key = today.strftime('%Y-%m')
-            goal_row = db.execute(
-                "SELECT goal_amount FROM salesperson_monthly_goals WHERE salesperson_id = ? AND target_month = ?",
-                (salesperson_id, goal_month_key)
-            ).fetchone()
-            goal_amount = float(goal_row['goal_amount'] or 0) if goal_row else 0
+            goal_rows = db.execute(
+                """
+                SELECT target_month, goal_amount
+                FROM salesperson_monthly_goals
+                WHERE salesperson_id = ? AND target_month BETWEEN ? AND ?
+                """,
+                (salesperson_id, month_keys[0], month_keys[-1])
+            ).fetchall()
+            goal_series = [None] * len(month_keys)
+            goal_map = {}
+            for row in goal_rows or []:
+                try:
+                    amount = float(row['goal_amount'] or 0)
+                except (ValueError, TypeError):
+                    amount = 0
+                goal_map[row['target_month']] = amount
+                if amount > 0 and row['target_month'] in month_dict:
+                    goal_series[month_dict[row['target_month']]] = amount
+
             goal_month_index = month_dict.get(goal_month_key)
-            goal_month_label = (
-                chart_labels[goal_month_index] if goal_month_index is not None else None
-            )
+            goal_amount = goal_map.get(goal_month_key, 0) if goal_month_index is not None else 0
+            goal_month_label = chart_labels[goal_month_index] if goal_month_index is not None else None
             result['monthly_goal'] = {
                 'amount': goal_amount,
                 'month_index': goal_month_index,
                 'month_label': goal_month_label
             }
+            result['monthly_goal_series'] = goal_series
 
             # 4. Personal sales data with customer breakdown
             start_date = (today.replace(day=1) - timedelta(days=730)).strftime(
