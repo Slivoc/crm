@@ -101,6 +101,14 @@
     letter-spacing: 0.02em;
 }
 
+.icon-action-btn.text-success {
+    color: #198754;
+}
+
+.icon-action-btn.text-danger {
+    color: #dc3545;
+}
+
 /* Additional styles for quote availability indicators */
 
 /* Tooltip styling for additional context */
@@ -428,12 +436,12 @@
                                 title="Add price break">
                             <i class="bi bi-plus-square"></i>
                         </button>
-                        <button class="btn btn-sm btn-outline-danger clear-line-btn"
+                        <button class="btn btn-sm icon-action-btn text-danger clear-line-btn"
                                 data-line-id="{{ line.id }}"
                                 title="Clear supplier and cost">
                             <i class="bi bi-x-circle"></i>
                         </button>
-                        <button class="btn btn-sm btn-success save-line-btn"
+                        <button class="btn btn-sm icon-action-btn text-success save-line-btn"
                                 data-line-id="{{ line.id }}"
                                 title="Save changes">
                             <i class="bi bi-check"></i>

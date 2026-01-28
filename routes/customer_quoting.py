@@ -246,7 +246,7 @@ def customer_quote(list_id):
                                 SELECT sql.certifications
                                 FROM parts_list_supplier_quote_lines sql
                                 JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                                WHERE sql.id = pll.chosen_source_reference
+                                WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference
                                   AND sql.is_no_bid = FALSE
                                   AND sql.certifications IS NOT NULL
                                   AND TRIM(sql.certifications) != ''
@@ -1851,7 +1851,7 @@ def customer_quote_simple(list_id):
                             SELECT sql.certifications
                             FROM parts_list_supplier_quote_lines sql
                             JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                            WHERE sql.id = pll.chosen_source_reference
+                            WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference
                               AND sql.is_no_bid = FALSE
                               AND sql.certifications IS NOT NULL
                               AND TRIM(sql.certifications) != ''
