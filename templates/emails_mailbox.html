@@ -977,6 +977,9 @@ function renderSupplierMatchState() {
     // Update PDF attachments dropdown
     renderPdfAttachmentsDropdown();
 
+    // Update Check PO button to show PDF indicator
+    updateCheckPoButton();
+
     renderSupplierRequests();
     renderPartScanResults();
 }
@@ -1060,11 +1063,27 @@ async function fetchMessageAttachments(messageId) {
 
         selectedMessagePdfAttachments = (data.attachments || []).filter(att => att.is_pdf && !att.is_inline);
         renderPdfAttachmentsDropdown();
+        updateCheckPoButton();
         return selectedMessagePdfAttachments;
     } catch (error) {
         console.error('Failed to fetch attachments:', error);
     }
 }
+
+function updateCheckPoButton() {
+    if (!checkCustomerPoBtn) return;
+    const pdfs = selectedMessagePdfAttachments || [];
+    if (pdfs.length > 0) {
+        const pdfName = pdfs[0].name || 'PDF';
+        const shortName = pdfName.length > 15 ? pdfName.substring(0, 12) + '...' : pdfName;
+        checkCustomerPoBtn.innerHTML = `<i class="bi bi-file-earmark-check me-1"></i>Check PO <span class="badge bg-info ms-1">${shortName}</span>`;
+        checkCustomerPoBtn.title = `Check Customer PO - will extract from: ${pdfName}`;
+    } else {
+        checkCustomerPoBtn.innerHTML = '<i class="bi bi-file-earmark-check me-1"></i>Check PO';
+        checkCustomerPoBtn.title = 'Check Customer PO (no PDF attached)';
+    }
+}
+
 function updateLoadImagesButton() {
     if (!loadImagesToggle) return;
     loadImagesToggle.checked = mailboxLoadImages;
@@ -2436,21 +2455,60 @@ createTicketBtn.addEventListener('click', async () => {
     }
 });
 
-// Check Customer PO button - opens PO check page with sender email as customer lookup
-checkCustomerPoBtn.addEventListener('click', () => {
+// Check Customer PO button - extracts PDF from email and opens PO check page
+checkCustomerPoBtn.addEventListener('click', async () => {
     if (!selectedMessage) return;
 
     const senderEmail = selectedMessage.from?.emailAddress?.address || '';
-    if (!senderEmail) {
-        showToast('No sender email found', 'warning');
+    const pdfs = selectedMessagePdfAttachments || [];
+
+    // If no PDF attachments, just open the page with email param
+    if (pdfs.length === 0) {
+        const url = new URL('/parts-list/po-check', window.location.origin);
+        if (senderEmail) url.searchParams.set('email', senderEmail);
+        window.open(url.toString(), '_blank');
         return;
     }
 
-    // Open the PO check page in a new tab with the email parameter
-    const url = new URL('/parts-list/po-check', window.location.origin);
-    url.searchParams.set('email', senderEmail);
+    // If multiple PDFs, use the first one (or could show a picker)
+    const pdfAttachment = pdfs[0];
 
-    window.open(url.toString(), '_blank');
+    checkCustomerPoBtn.disabled = true;
+    checkCustomerPoBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Extracting...';
+
+    try {
+        const response = await fetch('/parts-list/po-check/from-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message_id: selectedMessage.id,
+                attachment_id: pdfAttachment.id,
+                sender_email: senderEmail
+            })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            throw new Error(result.message || 'Extraction failed');
+        }
+
+        // Open the PO check page - it will pick up the preloaded data from session
+        window.open(result.redirect_url, '_blank');
+        showToast(result.message, 'success');
+
+    } catch (error) {
+        console.error('Error extracting PO:', error);
+        showToast('Error: ' + error.message, 'error');
+
+        // Fall back to just opening the page with email
+        const url = new URL('/parts-list/po-check', window.location.origin);
+        if (senderEmail) url.searchParams.set('email', senderEmail);
+        window.open(url.toString(), '_blank');
+    } finally {
+        checkCustomerPoBtn.disabled = false;
+        checkCustomerPoBtn.innerHTML = '<i class="bi bi-file-earmark-check me-1"></i>Check PO';
+    }
 });
 
 function showToast(message, type = 'success') {

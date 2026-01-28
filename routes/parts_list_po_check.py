@@ -8,12 +8,15 @@ This module provides functionality to:
 4. Highlight discrepancies and allow marking parts lists as "Won"
 """
 
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for
 from db import execute as db_execute, db_cursor
 import logging
 import json
 import re
 import os
+import base64
+import requests
+from urllib.parse import quote
 from openai import OpenAI
 from flask_login import login_required
 
@@ -700,3 +703,133 @@ def search_customers():
     except Exception as e:
         logger.exception("Customer search failed")
         return jsonify([])
+
+
+@parts_list_po_check_bp.route('/po-check/from-email', methods=['POST'])
+@login_required
+def extract_po_from_email():
+    """
+    Extract PO from an email attachment (called from mailbox).
+    Fetches the PDF from Graph API, extracts data, stores in session,
+    and returns URL to redirect to.
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        message_id = data.get('message_id')
+        attachment_id = data.get('attachment_id')
+        sender_email = data.get('sender_email', '').strip()
+
+        if not message_id or not attachment_id:
+            return jsonify(success=False, message="message_id and attachment_id are required"), 400
+
+        # Import Graph API helpers from emails module
+        from routes.emails import _get_graph_settings, _load_graph_cache, _build_msal_app, _save_graph_cache
+
+        # Get the attachment content from Graph
+        settings = _get_graph_settings(include_secret=True)
+        cache = _load_graph_cache()
+        app = _build_msal_app(settings, cache=cache)
+        accounts = app.get_accounts()
+
+        if not accounts:
+            return jsonify(success=False, message="No Graph account connected"), 400
+
+        token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+        _save_graph_cache(cache)
+
+        if not token or "access_token" not in token:
+            return jsonify(success=False, message="Failed to refresh access token"), 400
+
+        headers = {"Authorization": f"Bearer {token['access_token']}"}
+        safe_message_id = quote(message_id, safe="")
+        safe_attachment_id = quote(attachment_id, safe="")
+
+        resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments/{safe_attachment_id}",
+            headers=headers,
+            timeout=30,
+        )
+
+        if resp.status_code >= 400:
+            return jsonify(success=False, message="Failed to fetch attachment from Graph"), 400
+
+        try:
+            attachment_data = resp.json()
+        except ValueError:
+            return jsonify(success=False, message="Invalid attachment response"), 400
+
+        # Decode the base64 content
+        content_bytes = attachment_data.get("contentBytes")
+        if not content_bytes:
+            return jsonify(success=False, message="No content in attachment"), 400
+
+        pdf_bytes = base64.b64decode(content_bytes)
+
+        # Extract text from PDF
+        import pdfplumber
+        import io
+
+        text = ""
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n\n"
+
+        if not text.strip():
+            return jsonify(success=False, message="No text found in PDF (might be scanned/image-only)"), 400
+
+        # Extract PO data via AI
+        po_data = extract_customer_po_data(text)
+
+        if po_data.get('error'):
+            return jsonify(success=False, message=po_data['error']), 400
+
+        # Look up customer from sender email
+        preselected_customer = None
+        if sender_email:
+            contact = db_execute(
+                """
+                SELECT c.customer_id, cust.name as customer_name
+                FROM contacts c
+                JOIN customers cust ON cust.id = c.customer_id
+                WHERE LOWER(c.email) = LOWER(?)
+                """,
+                (sender_email,),
+                fetch='one'
+            )
+            if contact:
+                preselected_customer = {
+                    'id': contact['customer_id'],
+                    'name': contact['customer_name']
+                }
+
+        # Store extracted data in session for the PO check page to pick up
+        session['po_check_preload'] = {
+            'po_data': po_data,
+            'raw_text': text[:5000] + ("..." if len(text) > 5000 else ""),
+            'customer': preselected_customer,
+            'attachment_name': attachment_data.get('name', 'attachment.pdf')
+        }
+
+        return jsonify(
+            success=True,
+            redirect_url=url_for('parts_list_po_check.po_check_page'),
+            message=f"Extracted {len(po_data.get('lines', []))} lines from PO"
+        )
+
+    except Exception as e:
+        logger.exception("Failed to extract PO from email attachment")
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_po_check_bp.route('/po-check/preload-data')
+@login_required
+def get_preload_data():
+    """
+    Get pre-loaded PO data from session (used when coming from mailbox).
+    """
+    preload = session.pop('po_check_preload', None)
+    if preload:
+        return jsonify(success=True, **preload)
+    return jsonify(success=False, message="No preloaded data")

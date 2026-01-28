@@ -389,6 +389,71 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    // Check for preloaded data from mailbox
+    checkForPreloadedData();
+
+    async function checkForPreloadedData() {
+        try {
+            const response = await fetch('{{ url_for("parts_list_po_check.get_preload_data") }}');
+            const result = await response.json();
+
+            if (result.success && result.po_data) {
+                // We have preloaded data from mailbox!
+                extractedData = result.po_data;
+                rawText = result.raw_text || '';
+
+                // Set customer if provided
+                if (result.customer) {
+                    const option = new Option(result.customer.name, result.customer.id, true, true);
+                    $(customerSelect).append(option).trigger('change');
+                }
+
+                // Show file info
+                if (result.attachment_name) {
+                    fileName.textContent = result.attachment_name + ' (from email)';
+                    fileInfo.style.display = 'block';
+                    dropZone.classList.add('has-file');
+                }
+
+                // Update PO details display
+                document.getElementById('poReference').textContent = extractedData.po_reference || '-';
+                document.getElementById('poDate').textContent = extractedData.po_date || '-';
+                document.getElementById('poCurrency').textContent = extractedData.currency || '-';
+                document.getElementById('poIncoterms').textContent = extractedData.incoterms || '-';
+                document.getElementById('poPaymentTerms').textContent = extractedData.payment_terms || '-';
+
+                // If customer is set, auto-run matching
+                if (result.customer && extractedData.lines && extractedData.lines.length > 0) {
+                    showLoading('Matching PO lines to parts lists...');
+                    try {
+                        const matchResponse = await fetch('{{ url_for("parts_list_po_check.match_po") }}', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                customer_id: result.customer.id,
+                                lines: extractedData.lines
+                            })
+                        });
+
+                        const matchResult = await matchResponse.json();
+
+                        if (matchResult.success) {
+                            matchResults = matchResult;
+                            displayResults();
+                        }
+                    } catch (error) {
+                        console.error('Auto-matching failed:', error);
+                    } finally {
+                        hideLoading();
+                    }
+                }
+            }
+        } catch (error) {
+            // No preloaded data, that's fine
+            console.log('No preloaded data');
+        }
+    }
+
     // File drop zone handlers
     dropZone.addEventListener('click', () => fileInput.click());
 
