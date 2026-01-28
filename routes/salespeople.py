@@ -2494,6 +2494,23 @@ def sales_data(salesperson_id):
                 chart_labels.insert(0, month_label)
                 month_dict[month_key] = 23 - i  # Map SQL month format to array position (changed from 11-i)
 
+            db = get_db_connection()
+            goal_month_key = today.strftime('%Y-%m')
+            goal_row = db.execute(
+                "SELECT goal_amount FROM salesperson_monthly_goals WHERE salesperson_id = ? AND target_month = ?",
+                (salesperson_id, goal_month_key)
+            ).fetchone()
+            goal_amount = float(goal_row['goal_amount'] or 0) if goal_row else 0
+            goal_month_index = month_dict.get(goal_month_key)
+            goal_month_label = (
+                chart_labels[goal_month_index] if goal_month_index is not None else None
+            )
+            result['monthly_goal'] = {
+                'amount': goal_amount,
+                'month_index': goal_month_index,
+                'month_label': goal_month_label
+            }
+
             # 4. Personal sales data with customer breakdown
             start_date = (today.replace(day=1) - timedelta(days=730)).strftime(
                 '%Y-%m-%d')  # Changed from 365 to 730 days
@@ -2515,7 +2532,6 @@ def sales_data(salesperson_id):
             """
 
             personal_values = [0] * 24  # Changed from 12 to 24
-            db = get_db_connection()
             t_step = time.perf_counter()
             rows = db.execute(query, (salesperson_id, start_date, today_str)).fetchall()
             timings['personal_totals'] = time.perf_counter() - t_step
