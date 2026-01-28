@@ -93,9 +93,17 @@
     background: #6c757d;
     color: white;
 }
+.bg-requested {
+    background: #0d6efd;
+    color: white;
+}
+.bg-supplier-quoted {
+    background: #20c997;
+    color: white;
+}
 .bg-no-bid {
-    background: #ffc107;
-    color: #212529;
+    background: #dc3545;
+    color: white;
 }
 .bg-source {
     background: #fd7e14;
@@ -392,6 +400,18 @@
                                 {% endif %}
                                 {% if part.has_quotes %}
                                     <span class="badge badge-sm bg-quoted">{{ part.quote_count }} Quote{{ 's' if part.quote_count != 1 else '' }}</span>
+                                {% endif %}
+                                {% if part.recent_request_date %}
+                                    <span class="badge badge-sm bg-requested"
+                                          title="Supplier requested in last 30 days{% if part.recent_request_date %} ({{ part.recent_request_date }}){% endif %}">
+                                        Recent Request{% if part.recent_request_date %} · {{ part.recent_request_date }}{% endif %}
+                                    </span>
+                                {% endif %}
+                                {% if part.supplier_has_quote %}
+                                    <span class="badge badge-sm bg-supplier-quoted"
+                                          title="Supplier quoted this line{% if part.supplier_last_quote_date %} ({{ part.supplier_last_quote_date }}){% endif %}">
+                                        Supplier Quoted{% if part.supplier_last_quote_date %} · {{ part.supplier_last_quote_date }}{% endif %}
+                                    </span>
                                 {% endif %}
                                 {% if part.recent_no_bid %}
                                     <span class="badge badge-sm bg-no-bid"

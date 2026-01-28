@@ -2952,15 +2952,16 @@ def email_suppliers():
             """, (list_id,)).fetchone()
 
         # Branch based on mode
+        request_cutoff = datetime.now() - timedelta(days=30)
         if mode == 'suggested':
-            suppliers_map = process_suggested_suppliers(email_data, cursor)
+            suppliers_map = process_suggested_suppliers(email_data, cursor, request_cutoff)
             page_title = 'Email Suggested Suppliers'
             days_back = None
         else:
             # ILS mode (existing logic)
             days_back = request.args.get('days', 7, type=int)
             cutoff_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-            suppliers_map = process_ils_suppliers(email_data, cursor, cutoff_date)
+            suppliers_map = process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff)
             page_title = 'Email ILS Suppliers'
 
         # Fetch supplier contact details (common for both modes)
@@ -3145,6 +3146,14 @@ def clear_ils_copy_queue(entry_id):
     return jsonify(success=True)
 
 
+def _format_date_display(value):
+    if hasattr(value, 'date'):
+        return value.date().isoformat()
+    if isinstance(value, str):
+        return value.split()[0]
+    return None
+
+
 def _get_recent_no_bid_lookup(cursor, supplier_ids, base_part_numbers, days=30):
     if not supplier_ids or not base_part_numbers:
         return {}
@@ -3176,18 +3185,13 @@ def _get_recent_no_bid_lookup(cursor, supplier_ids, base_part_numbers, days=30):
     lookup = {}
     for row in rows:
         last_no_bid_date = _safe_row_get(row, 'last_no_bid_date')
-        if hasattr(last_no_bid_date, 'date'):
-            display_date = last_no_bid_date.date().isoformat()
-        elif isinstance(last_no_bid_date, str):
-            display_date = last_no_bid_date.split()[0]
-        else:
-            display_date = None
+        display_date = _format_date_display(last_no_bid_date)
         lookup[(row['supplier_id'], row['base_part_number'])] = display_date
 
     return lookup
 
 
-def process_ils_suppliers(email_data, cursor, cutoff_date):
+def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff):
     """
     Process ILS supplier data (existing logic)
     """
@@ -3254,7 +3258,7 @@ def process_ils_suppliers(email_data, cursor, cutoff_date):
             # Query status flags including supplier-specific email tracking
             if line_id:
                 status = _execute_with_cursor(cursor, """
-                    SELECT 
+                    SELECT
                         (chosen_cost IS NOT NULL) as has_chosen_cost,
                         (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
                          JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
@@ -3262,19 +3266,44 @@ def process_ils_suppliers(email_data, cursor, cutoff_date):
                         (SELECT COUNT(*) FROM parts_list_line_supplier_emails
                          WHERE parts_list_line_id = line.id) as email_count,
                         (SELECT COUNT(*) FROM parts_list_line_supplier_emails
-                         WHERE parts_list_line_id = line.id AND supplier_id = ?) as sent_to_this_supplier
-                    FROM 
+                         WHERE parts_list_line_id = line.id AND supplier_id = ?) as sent_to_this_supplier,
+                        (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
+                         JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                         WHERE sql.parts_list_line_id = line.id
+                           AND sql.is_no_bid = FALSE
+                           AND sq.supplier_id = ?) as supplier_quote_count,
+                        (SELECT MAX(sql.date_created) FROM parts_list_supplier_quote_lines sql
+                         JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                         WHERE sql.parts_list_line_id = line.id
+                           AND sql.is_no_bid = FALSE
+                           AND sq.supplier_id = ?) as supplier_last_quote_date,
+                        (SELECT MAX(se.date_sent) FROM parts_list_line_supplier_emails se
+                         WHERE se.parts_list_line_id = line.id
+                           AND se.supplier_id = ?
+                           AND se.date_sent >= ?) as recent_request_date
+                    FROM
                         parts_list_lines line
                     WHERE
                         line.id = ?
-                """, (supplier_id, line_id)).fetchone()
+                """, (
+                    supplier_id,
+                    supplier_id,
+                    supplier_id,
+                    supplier_id,
+                    request_cutoff,
+                    line_id,
+                )).fetchone()
 
                 part_data.update({
                     'quote_count': status['quote_count'],
                     'has_quotes': bool(status['quote_count']),
                     'has_chosen_cost': bool(status['has_chosen_cost']),
                     'has_email_sent': bool(status['email_count']),
-                    'sent_to_this_supplier': bool(status['sent_to_this_supplier'])
+                    'sent_to_this_supplier': bool(status['sent_to_this_supplier']),
+                    'supplier_quote_count': status['supplier_quote_count'],
+                    'supplier_has_quote': bool(status['supplier_quote_count']),
+                    'supplier_last_quote_date': _format_date_display(status['supplier_last_quote_date']),
+                    'recent_request_date': _format_date_display(status['recent_request_date']),
                 })
             else:
                 part_data.update({
@@ -3282,7 +3311,11 @@ def process_ils_suppliers(email_data, cursor, cutoff_date):
                     'has_quotes': False,
                     'has_chosen_cost': False,
                     'has_email_sent': False,
-                    'sent_to_this_supplier': False
+                    'sent_to_this_supplier': False,
+                    'supplier_quote_count': 0,
+                    'supplier_has_quote': False,
+                    'supplier_last_quote_date': None,
+                    'recent_request_date': None,
                 })
 
             # Append part data to the supplier
@@ -3291,7 +3324,7 @@ def process_ils_suppliers(email_data, cursor, cutoff_date):
     return suppliers_map
 
 
-def process_suggested_suppliers(email_data, cursor):
+def process_suggested_suppliers(email_data, cursor, request_cutoff):
     """
     Process suggested suppliers from parts_list_line_suggested_suppliers
     """
@@ -3341,7 +3374,7 @@ def process_suggested_suppliers(email_data, cursor):
 
             # Get status flags
             status = _execute_with_cursor(cursor, """
-                SELECT 
+                SELECT
                     (chosen_cost IS NOT NULL) as has_chosen_cost,
                     (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
                      JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
@@ -3349,12 +3382,33 @@ def process_suggested_suppliers(email_data, cursor):
                     (SELECT COUNT(*) FROM parts_list_line_supplier_emails
                      WHERE parts_list_line_id = line.id) as email_count,
                     (SELECT COUNT(*) FROM parts_list_line_supplier_emails
-                     WHERE parts_list_line_id = line.id AND supplier_id = ?) as sent_to_this_supplier
-                FROM 
+                     WHERE parts_list_line_id = line.id AND supplier_id = ?) as sent_to_this_supplier,
+                    (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
+                     JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                     WHERE sql.parts_list_line_id = line.id
+                       AND sql.is_no_bid = FALSE
+                       AND sq.supplier_id = ?) as supplier_quote_count,
+                    (SELECT MAX(sql.date_created) FROM parts_list_supplier_quote_lines sql
+                     JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                     WHERE sql.parts_list_line_id = line.id
+                       AND sql.is_no_bid = FALSE
+                       AND sq.supplier_id = ?) as supplier_last_quote_date,
+                    (SELECT MAX(se.date_sent) FROM parts_list_line_supplier_emails se
+                     WHERE se.parts_list_line_id = line.id
+                       AND se.supplier_id = ?
+                       AND se.date_sent >= ?) as recent_request_date
+                FROM
                     parts_list_lines line
                 WHERE
                     line.id = ?
-            """, (supplier_id, line_id)).fetchone()
+            """, (
+                supplier_id,
+                supplier_id,
+                supplier_id,
+                supplier_id,
+                request_cutoff,
+                line_id,
+            )).fetchone()
 
             part_data = {
                 'part_number': part['input_part_number'],
@@ -3369,7 +3423,11 @@ def process_suggested_suppliers(email_data, cursor):
                 'has_quotes': bool(status['quote_count']),
                 'has_chosen_cost': bool(status['has_chosen_cost']),
                 'has_email_sent': bool(status['email_count']),
-                'sent_to_this_supplier': bool(status['sent_to_this_supplier'])
+                'sent_to_this_supplier': bool(status['sent_to_this_supplier']),
+                'supplier_quote_count': status['supplier_quote_count'],
+                'supplier_has_quote': bool(status['supplier_quote_count']),
+                'supplier_last_quote_date': _format_date_display(status['supplier_last_quote_date']),
+                'recent_request_date': _format_date_display(status['recent_request_date']),
             }
 
             suppliers_map[supplier_id]['parts'].append(part_data)
