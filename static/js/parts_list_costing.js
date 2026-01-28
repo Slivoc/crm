@@ -1334,8 +1334,8 @@ function useQuoteForLine(lineId, quoteLineId, supplierId, supplierName, cost, cu
         }
     }
 
-    row.dataset.costSource = '';
-    row.dataset.costSourceRef = '';
+    row.dataset.costSource = quoteLineId ? 'quote' : '';
+    row.dataset.costSourceRef = quoteLineId || '';
     setSupplierSourceBadge(row, null);
 
     // Update cost
