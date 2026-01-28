@@ -2991,6 +2991,21 @@ def email_suppliers():
                 part['recent_no_bid'] = bool(last_no_bid_date)
                 part['recent_no_bid_date'] = last_no_bid_date
 
+        recent_no_bid_lookup = _get_recent_no_bid_lookup(
+            cursor,
+            suppliers_map.keys(),
+            [part.get('base_part_number') for supplier in suppliers_map.values() for part in supplier['parts']],
+            days=30,
+        )
+
+        for supplier_data in suppliers_map.values():
+            supplier_id = supplier_data['supplier_id']
+            for part in supplier_data['parts']:
+                base_part_number = part.get('base_part_number')
+                last_no_bid_date = recent_no_bid_lookup.get((supplier_id, base_part_number))
+                part['recent_no_bid'] = bool(last_no_bid_date)
+                part['recent_no_bid_date'] = last_no_bid_date
+
     # Convert to list and sort by number of parts
     suppliers_list = sorted(suppliers_map.values(),
                             key=lambda x: len(x['parts']),
