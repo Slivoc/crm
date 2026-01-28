@@ -2954,14 +2954,14 @@ def email_suppliers():
         # Branch based on mode
         request_cutoff = datetime.now() - timedelta(days=30)
         if mode == 'suggested':
-            suppliers_map = process_suggested_suppliers(email_data, cursor, request_cutoff)
+            suppliers_map = process_suggested_suppliers(email_data, cursor, request_cutoff, list_id=list_id)
             page_title = 'Email Suggested Suppliers'
             days_back = None
         else:
             # ILS mode (existing logic)
             days_back = request.args.get('days', 7, type=int)
             cutoff_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-            suppliers_map = process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff)
+            suppliers_map = process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_id=list_id)
             page_title = 'Email ILS Suppliers'
 
         # Fetch supplier contact details (common for both modes)
@@ -3191,11 +3191,16 @@ def _get_recent_no_bid_lookup(cursor, supplier_ids, base_part_numbers, days=30):
     return lookup
 
 
-def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff):
+def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_id=None):
     """
     Process ILS supplier data (existing logic)
     """
     suppliers_map = {}
+    recent_request_filter = ""
+    recent_request_params = []
+    if list_id:
+        recent_request_filter = "AND pll.parts_list_id != ?"
+        recent_request_params.append(list_id)
 
     logging.info(f"Total parts in email_data: {len(email_data['results'])}")
     parts_with_ils = sum(1 for p in email_data['results'] if p.get('ils_details'))
@@ -3257,7 +3262,7 @@ def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff):
 
             # Query status flags including supplier-specific email tracking
             if line_id:
-                status = _execute_with_cursor(cursor, """
+                status = _execute_with_cursor(cursor, f"""
                     SELECT
                         (chosen_cost IS NOT NULL) as has_chosen_cost,
                         (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
@@ -3278,9 +3283,11 @@ def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff):
                            AND sql.is_no_bid = FALSE
                            AND sq.supplier_id = ?) as supplier_last_quote_date,
                         (SELECT MAX(se.date_sent) FROM parts_list_line_supplier_emails se
-                         WHERE se.parts_list_line_id = line.id
+                         JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
+                         WHERE pll.base_part_number = line.base_part_number
                            AND se.supplier_id = ?
-                           AND se.date_sent >= ?) as recent_request_date
+                           AND se.date_sent >= ?
+                           {recent_request_filter}) as recent_request_date
                     FROM
                         parts_list_lines line
                     WHERE
@@ -3291,6 +3298,7 @@ def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff):
                     supplier_id,
                     supplier_id,
                     request_cutoff,
+                    *recent_request_params,
                     line_id,
                 )).fetchone()
 
@@ -3324,11 +3332,16 @@ def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff):
     return suppliers_map
 
 
-def process_suggested_suppliers(email_data, cursor, request_cutoff):
+def process_suggested_suppliers(email_data, cursor, request_cutoff, list_id=None):
     """
     Process suggested suppliers from parts_list_line_suggested_suppliers
     """
     suppliers_map = {}
+    recent_request_filter = ""
+    recent_request_params = []
+    if list_id:
+        recent_request_filter = "AND pll.parts_list_id != ?"
+        recent_request_params.append(list_id)
 
     logging.info(f"Total parts in email_data: {len(email_data['results'])}")
 
@@ -3373,9 +3386,9 @@ def process_suggested_suppliers(email_data, cursor, request_cutoff):
                 continue
 
             # Get status flags
-            status = _execute_with_cursor(cursor, """
-                SELECT
-                    (chosen_cost IS NOT NULL) as has_chosen_cost,
+                status = _execute_with_cursor(cursor, f"""
+                    SELECT
+                        (chosen_cost IS NOT NULL) as has_chosen_cost,
                     (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
                      JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
                      WHERE sql.parts_list_line_id = line.id AND sql.is_no_bid = FALSE) as quote_count,
@@ -3394,9 +3407,11 @@ def process_suggested_suppliers(email_data, cursor, request_cutoff):
                        AND sql.is_no_bid = FALSE
                        AND sq.supplier_id = ?) as supplier_last_quote_date,
                     (SELECT MAX(se.date_sent) FROM parts_list_line_supplier_emails se
-                     WHERE se.parts_list_line_id = line.id
+                     JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
+                     WHERE pll.base_part_number = line.base_part_number
                        AND se.supplier_id = ?
-                       AND se.date_sent >= ?) as recent_request_date
+                       AND se.date_sent >= ?
+                       {recent_request_filter}) as recent_request_date
                 FROM
                     parts_list_lines line
                 WHERE
@@ -3407,6 +3422,7 @@ def process_suggested_suppliers(email_data, cursor, request_cutoff):
                 supplier_id,
                 supplier_id,
                 request_cutoff,
+                *recent_request_params,
                 line_id,
             )).fetchone()
 
