@@ -243,6 +243,7 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
 
     # Get all quoted parts list lines for this customer, ordered by recency
     # We look at parts lists with status "Quoted" or similar active statuses
+    # Join customer_quote_lines to get the actual quoted price and lead time
     parts_list_lines = db_execute(
         """
         SELECT
@@ -252,7 +253,6 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
             pll.customer_part_number,
             pll.base_part_number,
             pll.quantity,
-            pll.chosen_price,
             pll.chosen_cost,
             pll.chosen_lead_days,
             pll.chosen_supplier_id,
@@ -262,12 +262,21 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
             pl.status_id,
             pls.name as status_name,
             s.name as supplier_name,
-            cur.currency_code
+            cur.currency_code as cost_currency,
+            -- Customer quote line data (the actual quoted price/lead time to customer)
+            cql.id as quote_line_id,
+            cql.quote_price_gbp,
+            cql.lead_days as quoted_lead_days,
+            cql.base_cost_gbp,
+            cql.margin_percent,
+            cql.quoted_status,
+            cql.is_no_bid
         FROM parts_list_lines pll
         JOIN parts_lists pl ON pl.id = pll.parts_list_id
         LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
         LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
         LEFT JOIN currencies cur ON cur.id = pll.chosen_currency_id
+        LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
         WHERE pl.customer_id = ?
           AND pls.name IN ('Quoted', 'Sent to Suppliers', 'New')
         ORDER BY pl.date_created DESC, pll.line_number ASC
@@ -331,16 +340,30 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                     best_match = candidate
 
             if best_match:
+                # Use customer quote price/lead time if available, otherwise fall back to parts list line data
+                quoted_price = None
+                quoted_lead_days = None
+                quote_status = best_match.get('quoted_status')
+
+                # Prefer customer_quote_lines data (actual quoted price to customer)
+                if best_match.get('quote_price_gbp'):
+                    quoted_price = float(best_match['quote_price_gbp'])
+
+                if best_match.get('quoted_lead_days'):
+                    quoted_lead_days = best_match['quoted_lead_days']
+                elif best_match.get('chosen_lead_days'):
+                    quoted_lead_days = best_match['chosen_lead_days']
+
                 match_result['match'] = {
                     'line_id': best_match['line_id'],
                     'parts_list_id': best_match['parts_list_id'],
                     'line_number': float(best_match['line_number']) if best_match['line_number'] else None,
                     'part_number': best_match['customer_part_number'],
                     'quantity': best_match['chosen_qty'] or best_match['quantity'],
-                    'price': float(best_match['chosen_price']) if best_match['chosen_price'] else None,
-                    'cost': float(best_match['chosen_cost']) if best_match['chosen_cost'] else None,
-                    'lead_days': best_match['chosen_lead_days'],
-                    'currency': best_match['currency_code']
+                    'price': quoted_price,  # Customer quoted price from customer_quote_lines
+                    'lead_days': quoted_lead_days,  # Lead days from customer_quote_lines
+                    'quote_status': quote_status,
+                    'is_no_bid': best_match.get('is_no_bid', False)
                 }
 
                 match_result['parts_list'] = {
@@ -350,11 +373,13 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                     'status': best_match['status_name']
                 }
 
+                # Supplier info (cost side)
                 if best_match['supplier_name']:
                     match_result['supplier_info'] = {
                         'name': best_match['supplier_name'],
                         'cost': float(best_match['chosen_cost']) if best_match['chosen_cost'] else None,
-                        'lead_days': best_match['chosen_lead_days']
+                        'cost_currency': best_match.get('cost_currency'),
+                        'lead_days': best_match.get('chosen_lead_days')
                     }
 
                 # Check for discrepancies
@@ -366,8 +391,8 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                     else:
                         match_result['discrepancies'].append(f"Qty: PO has {po_qty}, quoted {matched_qty} ({diff})")
 
-                if po_price and best_match['chosen_price']:
-                    quoted_price = float(best_match['chosen_price'])
+                # Compare PO price to our quoted price (from customer_quote_lines)
+                if po_price and quoted_price:
                     if abs(po_price - quoted_price) > 0.01:
                         diff = po_price - quoted_price
                         match_result['discrepancies'].append(

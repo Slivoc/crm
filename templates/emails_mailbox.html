@@ -71,6 +71,9 @@
                             <button type="button" class="btn btn-sm btn-warning" id="createTicketBtn" disabled title="Create Ticket">
                                 <i class="bi bi-ticket-detailed me-1"></i>Ticket
                             </button>
+                            <button type="button" class="btn btn-sm btn-outline-info" id="checkCustomerPoBtn" disabled title="Check Customer PO">
+                                <i class="bi bi-file-earmark-check me-1"></i>Check PO
+                            </button>
                             <button type="button" class="btn btn-sm btn-outline-dark" id="mailboxTriageBtn" disabled title="Preview triage decision">
                                 <i class="bi bi-diagram-3 me-1"></i>Triage
                             </button>
@@ -347,6 +350,7 @@ const createPartsListBtn = document.getElementById('createPartsListBtn');
 const createExcessListBtn = document.getElementById('createExcessListBtn');
 const createSupplierQuoteBtn = document.getElementById('createSupplierQuoteBtn');
 const createTicketBtn = document.getElementById('createTicketBtn');
+const checkCustomerPoBtn = document.getElementById('checkCustomerPoBtn');
 const mailboxTriageBtn = document.getElementById('mailboxTriageBtn');
 const openOutlookBtn = document.getElementById('openOutlookBtn');
 const loadImagesToggle = document.getElementById('loadImagesToggle');
@@ -1774,6 +1778,7 @@ async function selectMessage(messageId) {
         createPartsListBtn.disabled = false;
         createExcessListBtn.disabled = false;
         createTicketBtn.disabled = false;
+        checkCustomerPoBtn.disabled = false;
         mailboxTriageBtn.disabled = false;
         renderSupplierMatchState();
 
@@ -2429,6 +2434,23 @@ createTicketBtn.addEventListener('click', async () => {
         createTicketBtn.disabled = false;
         createTicketBtn.innerHTML = '<i class="bi bi-ticket-detailed me-1"></i>Ticket';
     }
+});
+
+// Check Customer PO button - opens PO check page with sender email as customer lookup
+checkCustomerPoBtn.addEventListener('click', () => {
+    if (!selectedMessage) return;
+
+    const senderEmail = selectedMessage.from?.emailAddress?.address || '';
+    if (!senderEmail) {
+        showToast('No sender email found', 'warning');
+        return;
+    }
+
+    // Open the PO check page in a new tab with the email parameter
+    const url = new URL('/parts-list/po-check', window.location.origin);
+    url.searchParams.set('email', senderEmail);
+
+    window.open(url.toString(), '_blank');
 });
 
 function showToast(message, type = 'success') {

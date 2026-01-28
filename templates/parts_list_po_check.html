@@ -575,11 +575,11 @@ document.addEventListener('DOMContentLoaded', function() {
                         <a href="/parts_list/parts-lists/${pl.id}/view" target="_blank" class="parts-list-link">
                             ${escapeHtml(pl.name)}
                         </a>
-                        <div class="small text-muted">Line ${m.line_number}</div>
+                        <div class="small text-muted">Line ${m.line_number}${m.quote_status === 'quoted' ? ' <span class="badge bg-success" style="font-size:0.65rem">Quoted</span>' : m.quote_status ? ' <span class="badge bg-secondary" style="font-size:0.65rem">'+m.quote_status+'</span>' : ''}</div>
                     ` : '<span class="text-muted">-</span>'}
                 </td>
                 <td class="text-end" style="background: #f8fcf8;">
-                    ${m && m.price ? formatCurrency(m.price) : '-'}
+                    ${m && m.price ? formatCurrency(m.price) + ' <small class="text-muted">GBP</small>' : '<span class="text-muted small">not quoted</span>'}
                 </td>
                 <td class="text-end" style="background: #f8fcf8;">
                     ${m ? (m.quantity || '-') : '-'}
