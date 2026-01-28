@@ -1373,6 +1373,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let allCustomers = [];
     let originalPersonalSalesData = null;
     let originalAccountSalesData = null;
+    let monthlyGoal = null;
 
     // Create labels for last 24 months
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -1391,6 +1392,49 @@ document.addEventListener('DOMContentLoaded', function() {
         gradient.addColorStop(0, colorStart);
         gradient.addColorStop(1, colorEnd);
         return gradient;
+    };
+
+    const buildMonthlyGoalDataset = (goalData, labelSet) => {
+        if (!goalData || !goalData.amount || goalData.amount <= 0) {
+            return null;
+        }
+
+        const goalSeries = new Array(labelSet.length).fill(null);
+        let goalIndex = goalData.month_index;
+        if (goalIndex === null || goalIndex === undefined || goalIndex < 0 || goalIndex >= labelSet.length) {
+            if (goalData.month_label) {
+                goalIndex = labelSet.indexOf(goalData.month_label);
+            }
+        }
+
+        if (goalIndex !== null && goalIndex !== undefined && goalIndex >= 0) {
+            goalSeries[goalIndex] = goalData.amount;
+        }
+
+        return {
+            label: 'Monthly Goal',
+            data: goalSeries,
+            pointStyle: 'crossRot',
+            pointRadius: 9,
+            pointHoverRadius: 11,
+            pointBorderWidth: 3,
+            pointBorderColor: 'rgb(249, 115, 22)',
+            pointBackgroundColor: 'rgba(255, 255, 255, 0.95)',
+            showLine: false,
+            order: 99,
+            isMonthlyGoal: true
+        };
+    };
+
+    const applyMonthlyGoalDataset = (chartData) => {
+        if (!chartData || !Array.isArray(chartData.datasets)) {
+            return;
+        }
+        chartData.datasets = chartData.datasets.filter(dataset => !dataset.isMonthlyGoal);
+        const goalDataset = buildMonthlyGoalDataset(monthlyGoal, chartData.labels || []);
+        if (goalDataset) {
+            chartData.datasets.push(goalDataset);
+        }
     };
 
     // Initialize chart data with modern styling
@@ -1938,6 +1982,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 pointHitRadius: 20
             }]
         };
+        const goalDataset = buildMonthlyGoalDataset(monthlyGoal, customerSalesData.labels || []);
+        if (goalDataset) {
+            customerChartData.datasets.push(goalDataset);
+        }
         salesChart.data = customerChartData;
                 scheduleRender(() => {
                     salesChart.update();
@@ -2062,6 +2110,11 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    const goalDataset = buildMonthlyGoalDataset(monthlyGoal, labels);
+    if (goalDataset) {
+        datasets.push(goalDataset);
+    }
+
     salesChart.data = {
         labels: labels,
         datasets: datasets
@@ -2164,10 +2217,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
 
                 // Store original data
+                let personalUpdated = false;
+                let accountUpdated = false;
+
                 if (data.personal_sales && data.personal_sales.labels && data.personal_sales.values) {
                     personalSalesData.labels = data.personal_sales.labels;
                     personalSalesData.datasets[0].data = data.personal_sales.values;
-                    originalPersonalSalesData = JSON.parse(JSON.stringify(personalSalesData));
+                    personalUpdated = true;
                     if (data.personal_sales.monthly_customers) {
                         monthlyCustomerData.personal = data.personal_sales.monthly_customers;
                     }
@@ -2176,10 +2232,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.account_sales && data.account_sales.labels && data.account_sales.values) {
                     accountSalesData.labels = data.account_sales.labels;
                     accountSalesData.datasets[0].data = data.account_sales.values;
-                    originalAccountSalesData = JSON.parse(JSON.stringify(accountSalesData));
+                    accountUpdated = true;
                     if (data.account_sales.monthly_customers) {
                         monthlyCustomerData.account = data.account_sales.monthly_customers;
                     }
+                }
+
+                monthlyGoal = data.monthly_goal || null;
+
+                if (personalUpdated) {
+                    applyMonthlyGoalDataset(personalSalesData);
+                    originalPersonalSalesData = JSON.parse(JSON.stringify(personalSalesData));
+                }
+
+                if (accountUpdated) {
+                    applyMonthlyGoalDataset(accountSalesData);
+                    originalAccountSalesData = JSON.parse(JSON.stringify(accountSalesData));
                 }
 
                 scheduleRender(() => {
