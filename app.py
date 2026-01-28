@@ -72,6 +72,7 @@ from routes.portal_api import portal_api_bp
 from routes.portal_admin import portal_admin_bp
 from routes.news_email import send_news_email
 from routes.parts_list_ai import parts_list_ai_bp
+from routes.parts_list_po_check import parts_list_po_check_bp
 from routes.tickets import tickets_bp
 from routes.manufacturer_approvals import manufacturer_approvals_bp
 from routes.supplier_portal import supplier_portal_bp
@@ -200,6 +201,7 @@ app.register_blueprint(ils_bp, url_prefix='/ils')
 app.register_blueprint(customer_quoting_bp, url_prefix='/customer-quoting')
 app.register_blueprint(marketplace_bp, url_prefix='/marketplace')
 app.register_blueprint(parts_list_ai_bp, url_prefix='/parts-list-ai')
+app.register_blueprint(parts_list_po_check_bp, url_prefix='/parts-list')
 app.register_blueprint(tickets_bp, url_prefix='/tickets')
 app.secret_key = 'your-secret-key-here'  # Required for sessions
 app.register_blueprint(portal_api_bp)

@@ -1,0 +1,698 @@
+{% extends "base.html" %}
+
+{% block title %}Check Customer PO{% endblock %}
+
+{% block content %}
+<style>
+    .drop-zone {
+        border: 2px dashed #dee2e6;
+        border-radius: 8px;
+        padding: 40px 20px;
+        text-align: center;
+        background: #f8f9fa;
+        transition: all 0.2s ease;
+        cursor: pointer;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+        border-color: #0d6efd;
+        background: #e7f1ff;
+    }
+    .drop-zone.has-file {
+        border-color: #198754;
+        background: #d1e7dd;
+    }
+    .drop-zone i {
+        font-size: 2.5rem;
+        color: #6c757d;
+        margin-bottom: 10px;
+    }
+    .drop-zone.has-file i {
+        color: #198754;
+    }
+
+    .match-exact { background-color: #d1e7dd !important; }
+    .match-partial { background-color: #fff3cd !important; }
+    .match-none { background-color: #f8d7da !important; }
+
+    .status-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    .status-exact { background: #198754; color: white; }
+    .status-partial { background: #ffc107; color: #000; }
+    .status-none { background: #dc3545; color: white; }
+
+    .discrepancy-list {
+        font-size: 0.8rem;
+        margin: 0;
+        padding-left: 1rem;
+        color: #856404;
+    }
+
+    .terms-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    .terms-card .term-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        opacity: 0.8;
+    }
+    .terms-card .term-value {
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+
+    .summary-card {
+        border-left: 4px solid;
+    }
+    .summary-card.total { border-color: #0d6efd; }
+    .summary-card.exact { border-color: #198754; }
+    .summary-card.partial { border-color: #ffc107; }
+    .summary-card.unmatched { border-color: #dc3545; }
+
+    .results-table th {
+        position: sticky;
+        top: 0;
+        background: white;
+        z-index: 10;
+    }
+
+    .supplier-info {
+        font-size: 0.85rem;
+        color: #6c757d;
+    }
+
+    .parts-list-link {
+        font-weight: 500;
+        text-decoration: none;
+    }
+    .parts-list-link:hover {
+        text-decoration: underline;
+    }
+
+    #resultsSection {
+        display: none;
+    }
+
+    .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(255,255,255,0.8);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+    }
+    .loading-overlay.show {
+        display: flex;
+    }
+</style>
+
+<div class="container-fluid mt-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <h2 class="mb-1"><i class="bi bi-file-earmark-check me-2"></i>Check Customer PO</h2>
+            <p class="text-muted mb-0">Upload a customer purchase order PDF to match against quoted parts lists</p>
+        </div>
+        <div class="col-auto">
+            <a href="{{ url_for('parts_list.view_parts_lists') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i> Back to Parts Lists
+            </a>
+        </div>
+    </div>
+
+    <!-- Upload Section -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row g-3">
+                <!-- Customer Selector -->
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Customer</label>
+                    <select id="customerSelect" class="form-select" style="width: 100%;">
+                        {% if preselected_customer %}
+                        <option value="{{ preselected_customer.id }}" selected>{{ preselected_customer.name }}</option>
+                        {% endif %}
+                    </select>
+                    <small class="text-muted">Search by company name or contact email</small>
+                </div>
+
+                <!-- File Upload -->
+                <div class="col-md-8">
+                    <label class="form-label fw-semibold">Purchase Order PDF</label>
+                    <div id="dropZone" class="drop-zone">
+                        <i class="bi bi-cloud-arrow-up"></i>
+                        <p class="mb-1">Drag and drop a PDF here, or click to browse</p>
+                        <small class="text-muted">Supported format: PDF</small>
+                        <input type="file" id="fileInput" accept=".pdf" style="display: none;">
+                    </div>
+                    <div id="fileInfo" class="mt-2" style="display: none;">
+                        <span class="badge bg-success"><i class="bi bi-file-pdf me-1"></i><span id="fileName"></span></span>
+                        <button type="button" class="btn btn-sm btn-link text-danger" id="clearFile">Clear</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-4 text-end">
+                <button id="extractBtn" class="btn btn-primary btn-lg" disabled>
+                    <i class="bi bi-magic me-2"></i>Extract & Match PO Lines
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Section (hidden until extraction) -->
+    <div id="resultsSection">
+        <!-- Extracted Terms -->
+        <div class="card terms-card mb-4">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-auto">
+                        <h5 class="mb-0"><i class="bi bi-receipt me-2"></i>PO Details</h5>
+                    </div>
+                    <div class="col">
+                        <div class="row text-center">
+                            <div class="col">
+                                <div class="term-label">PO Reference</div>
+                                <div class="term-value" id="poReference">-</div>
+                            </div>
+                            <div class="col">
+                                <div class="term-label">Date</div>
+                                <div class="term-value" id="poDate">-</div>
+                            </div>
+                            <div class="col">
+                                <div class="term-label">Currency</div>
+                                <div class="term-value" id="poCurrency">-</div>
+                            </div>
+                            <div class="col">
+                                <div class="term-label">Incoterms</div>
+                                <div class="term-value" id="poIncoterms">-</div>
+                            </div>
+                            <div class="col">
+                                <div class="term-label">Payment Terms</div>
+                                <div class="term-value" id="poPaymentTerms">-</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary Stats -->
+        <div class="row mb-4" id="summaryStats">
+            <div class="col-md-3">
+                <div class="card summary-card total">
+                    <div class="card-body text-center py-3">
+                        <div class="text-muted small">Total Lines</div>
+                        <h3 class="mb-0" id="statTotal">0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card exact">
+                    <div class="card-body text-center py-3">
+                        <div class="text-muted small">Exact Matches</div>
+                        <h3 class="mb-0 text-success" id="statExact">0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card partial">
+                    <div class="card-body text-center py-3">
+                        <div class="text-muted small">With Discrepancies</div>
+                        <h3 class="mb-0 text-warning" id="statPartial">0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card unmatched">
+                    <div class="card-body text-center py-3">
+                        <div class="text-muted small">Unmatched</div>
+                        <h3 class="mb-0 text-danger" id="statUnmatched">0</h3>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Affected Parts Lists -->
+        <div class="card mb-4" id="affectedListsCard" style="display: none;">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-collection me-2"></i>Affected Parts Lists</h6>
+            </div>
+            <div class="card-body">
+                <div id="affectedLists" class="d-flex flex-wrap gap-2"></div>
+            </div>
+        </div>
+
+        <!-- Results Table -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0"><i class="bi bi-table me-2"></i>Line Matching Results</h6>
+                <div>
+                    <button class="btn btn-sm btn-outline-secondary me-2" id="toggleRawText">
+                        <i class="bi bi-code me-1"></i>View Raw Text
+                    </button>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 results-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th colspan="5" class="text-center bg-light border-end">PO Line (Customer Order)</th>
+                            <th class="text-center bg-light border-end">Match</th>
+                            <th colspan="4" class="text-center bg-light border-end" style="background: #e8f4e8 !important;">Sales Side (Our Quote)</th>
+                            <th colspan="3" class="text-center bg-light" style="background: #e8f0f8 !important;">Supplier Side</th>
+                        </tr>
+                        <tr>
+                            <th style="width: 50px;">#</th>
+                            <th>Part Number</th>
+                            <th>Description</th>
+                            <th class="text-end">Qty</th>
+                            <th class="text-end border-end">Unit Price</th>
+                            <th class="text-center border-end" style="width: 100px;">Status</th>
+                            <th style="background: #f0f8f0;">Parts List</th>
+                            <th class="text-end" style="background: #f0f8f0;">Our Price</th>
+                            <th class="text-end" style="background: #f0f8f0;">Qty</th>
+                            <th class="text-end border-end" style="background: #f0f8f0;">Lead Time</th>
+                            <th style="background: #f0f4f8;">Supplier</th>
+                            <th class="text-end" style="background: #f0f4f8;">Cost</th>
+                            <th class="text-end" style="background: #f0f4f8;">Lead Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsTableBody">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="text-muted">Ready to update parts lists to "Won" status?</span>
+                    </div>
+                    <div>
+                        <button class="btn btn-outline-secondary me-2" id="resetBtn">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i>Start Over
+                        </button>
+                        <button class="btn btn-success btn-lg" id="confirmBtn" disabled>
+                            <i class="bi bi-check-circle me-2"></i>Accept Matches & Mark Won
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Raw Text Modal -->
+    <div class="modal fade" id="rawTextModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Extracted PDF Text</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <pre id="rawTextContent" class="bg-light p-3 rounded" style="white-space: pre-wrap; font-size: 0.85rem; max-height: 60vh; overflow: auto;"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="text-center">
+        <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;"></div>
+        <div id="loadingText" class="text-muted">Processing...</div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // State
+    let selectedFile = null;
+    let extractedData = null;
+    let matchResults = null;
+    let rawText = '';
+
+    // Elements
+    const customerSelect = document.getElementById('customerSelect');
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileInfo = document.getElementById('fileInfo');
+    const fileName = document.getElementById('fileName');
+    const clearFileBtn = document.getElementById('clearFile');
+    const extractBtn = document.getElementById('extractBtn');
+    const resultsSection = document.getElementById('resultsSection');
+    const confirmBtn = document.getElementById('confirmBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const loadingText = document.getElementById('loadingText');
+
+    // Initialize Select2 for customer dropdown
+    $(customerSelect).select2({
+        theme: 'bootstrap-5',
+        placeholder: 'Search for a customer...',
+        allowClear: true,
+        minimumInputLength: 2,
+        ajax: {
+            url: '{{ url_for("parts_list_po_check.search_customers") }}',
+            dataType: 'json',
+            delay: 250,
+            data: function(params) {
+                return { q: params.term };
+            },
+            processResults: function(data) {
+                return {
+                    results: data.map(c => ({ id: c.id, text: c.name }))
+                };
+            },
+            cache: true
+        }
+    });
+
+    // File drop zone handlers
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-over');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleFile(files[0]);
+        }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleFile(e.target.files[0]);
+        }
+    });
+
+    clearFileBtn.addEventListener('click', clearFile);
+
+    function handleFile(file) {
+        if (!file.name.toLowerCase().endsWith('.pdf')) {
+            alert('Please select a PDF file');
+            return;
+        }
+        selectedFile = file;
+        fileName.textContent = file.name;
+        fileInfo.style.display = 'block';
+        dropZone.classList.add('has-file');
+        updateExtractBtn();
+    }
+
+    function clearFile() {
+        selectedFile = null;
+        fileInput.value = '';
+        fileInfo.style.display = 'none';
+        dropZone.classList.remove('has-file');
+        updateExtractBtn();
+    }
+
+    function updateExtractBtn() {
+        const customerId = $(customerSelect).val();
+        extractBtn.disabled = !selectedFile || !customerId;
+    }
+
+    $(customerSelect).on('change', updateExtractBtn);
+
+    // Extract button handler
+    extractBtn.addEventListener('click', async () => {
+        const customerId = $(customerSelect).val();
+        if (!selectedFile || !customerId) return;
+
+        showLoading('Extracting text from PDF...');
+
+        try {
+            // Step 1: Extract from PDF
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            const extractResponse = await fetch('{{ url_for("parts_list_po_check.extract_po") }}', {
+                method: 'POST',
+                body: formData
+            });
+
+            const extractResult = await extractResponse.json();
+
+            if (!extractResult.success) {
+                throw new Error(extractResult.message || 'Extraction failed');
+            }
+
+            extractedData = extractResult.po_data;
+            rawText = extractResult.raw_text || '';
+
+            // Update PO details display
+            document.getElementById('poReference').textContent = extractedData.po_reference || '-';
+            document.getElementById('poDate').textContent = extractedData.po_date || '-';
+            document.getElementById('poCurrency').textContent = extractedData.currency || '-';
+            document.getElementById('poIncoterms').textContent = extractedData.incoterms || '-';
+            document.getElementById('poPaymentTerms').textContent = extractedData.payment_terms || '-';
+
+            // Step 2: Match lines
+            showLoading('Matching PO lines to parts lists...');
+
+            const matchResponse = await fetch('{{ url_for("parts_list_po_check.match_po") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    customer_id: customerId,
+                    lines: extractedData.lines
+                })
+            });
+
+            const matchResult = await matchResponse.json();
+
+            if (!matchResult.success) {
+                throw new Error(matchResult.message || 'Matching failed');
+            }
+
+            matchResults = matchResult;
+            displayResults();
+
+        } catch (error) {
+            alert('Error: ' + error.message);
+            console.error(error);
+        } finally {
+            hideLoading();
+        }
+    });
+
+    function displayResults() {
+        // Show results section
+        resultsSection.style.display = 'block';
+
+        // Update summary stats
+        const summary = matchResults.summary;
+        document.getElementById('statTotal').textContent = summary.total_lines;
+        document.getElementById('statExact').textContent = summary.exact_matches;
+        document.getElementById('statPartial').textContent = summary.partial_matches;
+        document.getElementById('statUnmatched').textContent = summary.unmatched;
+
+        // Show affected parts lists
+        const affectedListsCard = document.getElementById('affectedListsCard');
+        const affectedListsContainer = document.getElementById('affectedLists');
+        affectedListsContainer.innerHTML = '';
+
+        if (summary.affected_parts_lists && summary.affected_parts_lists.length > 0) {
+            affectedListsCard.style.display = 'block';
+            summary.affected_parts_lists.forEach(pl => {
+                const badge = document.createElement('a');
+                badge.href = `/parts_list/parts-lists/${pl.id}/view`;
+                badge.target = '_blank';
+                badge.className = 'badge bg-primary text-decoration-none';
+                badge.innerHTML = `<i class="bi bi-list-check me-1"></i>${pl.name}`;
+                affectedListsContainer.appendChild(badge);
+            });
+        } else {
+            affectedListsCard.style.display = 'none';
+        }
+
+        // Populate table
+        const tbody = document.getElementById('resultsTableBody');
+        tbody.innerHTML = '';
+
+        matchResults.matches.forEach((match, index) => {
+            const po = match.po_line;
+            const m = match.match;
+            const pl = match.parts_list;
+            const sup = match.supplier_info;
+            const conf = match.match_confidence;
+
+            const row = document.createElement('tr');
+            row.className = `match-${conf}`;
+
+            // PO Line columns
+            row.innerHTML = `
+                <td>${po.line_number || index + 1}</td>
+                <td><code>${escapeHtml(po.part_number)}</code></td>
+                <td class="text-muted small">${escapeHtml(po.description || '-')}</td>
+                <td class="text-end">${po.quantity}</td>
+                <td class="text-end border-end">${po.unit_price ? formatCurrency(po.unit_price) : '-'}</td>
+
+                <td class="text-center border-end">
+                    <span class="status-badge status-${conf}">
+                        ${conf === 'exact' ? 'Match' : conf === 'partial' ? 'Discrepancy' : 'No Match'}
+                    </span>
+                    ${match.discrepancies.length > 0 ? `
+                        <ul class="discrepancy-list mt-1">
+                            ${match.discrepancies.map(d => `<li>${escapeHtml(d)}</li>`).join('')}
+                        </ul>
+                    ` : ''}
+                </td>
+
+                <td style="background: #f8fcf8;">
+                    ${pl ? `
+                        <a href="/parts_list/parts-lists/${pl.id}/view" target="_blank" class="parts-list-link">
+                            ${escapeHtml(pl.name)}
+                        </a>
+                        <div class="small text-muted">Line ${m.line_number}</div>
+                    ` : '<span class="text-muted">-</span>'}
+                </td>
+                <td class="text-end" style="background: #f8fcf8;">
+                    ${m && m.price ? formatCurrency(m.price) : '-'}
+                </td>
+                <td class="text-end" style="background: #f8fcf8;">
+                    ${m ? (m.quantity || '-') : '-'}
+                </td>
+                <td class="text-end border-end" style="background: #f8fcf8;">
+                    ${m && m.lead_days ? `${m.lead_days}d` : '-'}
+                </td>
+
+                <td style="background: #f8fafc;">
+                    ${sup ? `<span class="supplier-info">${escapeHtml(sup.name)}</span>` : '<span class="text-muted">-</span>'}
+                </td>
+                <td class="text-end" style="background: #f8fafc;">
+                    ${sup && sup.cost ? formatCurrency(sup.cost) : '-'}
+                </td>
+                <td class="text-end" style="background: #f8fafc;">
+                    ${sup && sup.lead_days ? `${sup.lead_days}d` : '-'}
+                </td>
+            `;
+
+            tbody.appendChild(row);
+        });
+
+        // Enable confirm button if there are matches
+        confirmBtn.disabled = !summary.affected_parts_lists || summary.affected_parts_lists.length === 0;
+
+        // Scroll to results
+        resultsSection.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // Confirm button
+    confirmBtn.addEventListener('click', async () => {
+        if (!matchResults || !matchResults.summary.affected_parts_lists) return;
+
+        const listIds = matchResults.summary.affected_parts_lists.map(pl => pl.id);
+        const listNames = matchResults.summary.affected_parts_lists.map(pl => pl.name);
+
+        if (!confirm(`Mark the following parts lists as "Won"?\n\n${listNames.join('\n')}`)) {
+            return;
+        }
+
+        showLoading('Updating parts lists...');
+
+        try {
+            const response = await fetch('{{ url_for("parts_list_po_check.confirm_matches") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ parts_list_ids: listIds })
+            });
+
+            const result = await response.json();
+
+            if (!result.success) {
+                throw new Error(result.message || 'Update failed');
+            }
+
+            alert(`Successfully updated ${result.updated_lists.length} parts list(s) to "Won" status!`);
+
+            // Disable confirm button after success
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i>Completed';
+
+        } catch (error) {
+            alert('Error: ' + error.message);
+            console.error(error);
+        } finally {
+            hideLoading();
+        }
+    });
+
+    // Reset button
+    resetBtn.addEventListener('click', () => {
+        if (confirm('Start over? This will clear all results.')) {
+            clearFile();
+            resultsSection.style.display = 'none';
+            extractedData = null;
+            matchResults = null;
+            rawText = '';
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = '<i class="bi bi-check-circle me-2"></i>Accept Matches & Mark Won';
+        }
+    });
+
+    // Raw text modal
+    document.getElementById('toggleRawText').addEventListener('click', () => {
+        document.getElementById('rawTextContent').textContent = rawText || 'No text extracted';
+        new bootstrap.Modal(document.getElementById('rawTextModal')).show();
+    });
+
+    // Helper functions
+    function showLoading(text) {
+        loadingText.textContent = text;
+        loadingOverlay.classList.add('show');
+    }
+
+    function hideLoading() {
+        loadingOverlay.classList.remove('show');
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    function formatCurrency(value) {
+        if (value === null || value === undefined) return '-';
+        return new Intl.NumberFormat('en-GB', {
+            style: 'decimal',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(value);
+    }
+});
+</script>
+{% endblock %}
