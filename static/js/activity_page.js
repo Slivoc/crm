@@ -1408,7 +1408,10 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         if (goalIndex !== null && goalIndex !== undefined && goalIndex >= 0) {
-            goalSeries[goalIndex] = goalData.amount;
+            const lastIndex = Math.min(goalIndex, labelSet.length - 1);
+            for (let idx = 0; idx <= lastIndex; idx += 1) {
+                goalSeries[idx] = goalData.amount;
+            }
         }
 
         return {
