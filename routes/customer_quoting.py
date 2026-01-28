@@ -240,19 +240,32 @@ def customer_quote(list_id):
                                      sql.id DESC
                             LIMIT 1
                         ) AS supplier_condition_code,
-                        (
-                            SELECT sql.certifications
-                            FROM parts_list_supplier_quote_lines sql
-                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                            WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
-                              AND sql.is_no_bid = FALSE
-                              AND sql.certifications IS NOT NULL
-                              AND TRIM(sql.certifications) != ''
-                            ORDER BY sq.quote_date DESC,
-                                     sql.date_modified DESC,
-                                     sql.id DESC
-                            LIMIT 1
-                        ) AS supplier_certifications,
+                        CASE
+                            WHEN pll.chosen_source_type = 'quote'
+                                 AND pll.chosen_source_reference IS NOT NULL THEN (
+                                SELECT sql.certifications
+                                FROM parts_list_supplier_quote_lines sql
+                                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                                WHERE sql.id = pll.chosen_source_reference
+                                  AND sql.is_no_bid = FALSE
+                                  AND sql.certifications IS NOT NULL
+                                  AND TRIM(sql.certifications) != ''
+                                LIMIT 1
+                            )
+                            ELSE (
+                                SELECT sql.certifications
+                                FROM parts_list_supplier_quote_lines sql
+                                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                                WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                                  AND sql.is_no_bid = FALSE
+                                  AND sql.certifications IS NOT NULL
+                                  AND TRIM(sql.certifications) != ''
+                                ORDER BY sq.quote_date DESC,
+                                         sql.date_modified DESC,
+                                         sql.id DESC
+                                LIMIT 1
+                            )
+                        END AS supplier_certifications,
                         s.standard_condition AS supplier_standard_condition,
                         s.standard_certs AS supplier_standard_certs,
 
@@ -1832,19 +1845,32 @@ def customer_quote_simple(list_id):
                                  sql.id DESC
                         LIMIT 1
                     ) AS supplier_condition_code,
-                    (
-                        SELECT sql.certifications
-                        FROM parts_list_supplier_quote_lines sql
-                        JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                        WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
-                          AND sql.is_no_bid = FALSE
-                          AND sql.certifications IS NOT NULL
-                          AND TRIM(sql.certifications) != ''
-                        ORDER BY sq.quote_date DESC,
-                                 sql.date_modified DESC,
-                                 sql.id DESC
-                        LIMIT 1
-                    ) AS supplier_certifications,
+                    CASE
+                        WHEN pll.chosen_source_type = 'quote'
+                             AND pll.chosen_source_reference IS NOT NULL THEN (
+                            SELECT sql.certifications
+                            FROM parts_list_supplier_quote_lines sql
+                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                            WHERE sql.id = pll.chosen_source_reference
+                              AND sql.is_no_bid = FALSE
+                              AND sql.certifications IS NOT NULL
+                              AND TRIM(sql.certifications) != ''
+                            LIMIT 1
+                        )
+                        ELSE (
+                            SELECT sql.certifications
+                            FROM parts_list_supplier_quote_lines sql
+                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                            WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                              AND sql.is_no_bid = FALSE
+                              AND sql.certifications IS NOT NULL
+                              AND TRIM(sql.certifications) != ''
+                            ORDER BY sq.quote_date DESC,
+                                     sql.date_modified DESC,
+                                     sql.id DESC
+                            LIMIT 1
+                        )
+                    END AS supplier_certifications,
                     (
                         SELECT sql.manufacturer
                         FROM parts_list_supplier_quote_lines sql
