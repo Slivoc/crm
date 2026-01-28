@@ -109,6 +109,13 @@
     color: #dc3545;
 }
 
+.costing-table .action-buttons {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    white-space: nowrap;
+}
+
 /* Additional styles for quote availability indicators */
 
 /* Tooltip styling for additional context */
@@ -431,21 +438,23 @@
                     <!-- Actions -->
                     <!-- Actions -->
                     <td>
-                        <button class="btn btn-sm icon-action-btn duplicate-line-btn"
-                                data-line-id="{{ line.id }}"
-                                title="Add price break">
-                            <i class="bi bi-plus-square"></i>
-                        </button>
-                        <button class="btn btn-sm icon-action-btn text-danger clear-line-btn"
-                                data-line-id="{{ line.id }}"
-                                title="Clear supplier and cost">
-                            <i class="bi bi-x-circle"></i>
-                        </button>
-                        <button class="btn btn-sm icon-action-btn text-success save-line-btn"
-                                data-line-id="{{ line.id }}"
-                                title="Save changes">
-                            <i class="bi bi-check"></i>
-                        </button>
+                        <div class="action-buttons">
+                            <button class="btn btn-sm icon-action-btn duplicate-line-btn"
+                                    data-line-id="{{ line.id }}"
+                                    title="Add price break">
+                                <i class="bi bi-plus-square"></i>
+                            </button>
+                            <button class="btn btn-sm icon-action-btn text-danger clear-line-btn"
+                                    data-line-id="{{ line.id }}"
+                                    title="Clear supplier and cost">
+                                <i class="bi bi-x-circle"></i>
+                            </button>
+                            <button class="btn btn-sm icon-action-btn text-success save-line-btn"
+                                    data-line-id="{{ line.id }}"
+                                    title="Save changes">
+                                <i class="bi bi-check"></i>
+                            </button>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}
