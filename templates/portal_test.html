@@ -455,6 +455,27 @@ function createResultCard(result) {
                     <div class="debug-value">${sourceDetails.cost}</div>
                 </div>`;
         }
+        if (sourceDetails.margin_pct !== undefined && sourceDetails.margin_pct !== null) {
+            sourceDetailsHTML += `
+                <div class="debug-item">
+                    <div class="debug-label">Margin</div>
+                    <div class="debug-value">${sourceDetails.margin_pct}%</div>
+                </div>`;
+        }
+        if (sourceDetails.target_price !== undefined && sourceDetails.target_price !== null) {
+            sourceDetailsHTML += `
+                <div class="debug-item">
+                    <div class="debug-label">Target Price</div>
+                    <div class="debug-value">${formatMoney(sourceDetails.target_price, result.currency)}</div>
+                </div>`;
+        }
+        if (sourceDetails.rounded_price !== undefined && sourceDetails.rounded_price !== null) {
+            sourceDetailsHTML += `
+                <div class="debug-item">
+                    <div class="debug-label">Rounded Price</div>
+                    <div class="debug-value">${formatMoney(sourceDetails.rounded_price, result.currency)}</div>
+                </div>`;
+        }
 
         // Date
         if (sourceDetails.date || sourceDetails.date_created) {
@@ -558,6 +579,15 @@ function formatSourceName(source) {
         'none': 'No Source'
     };
     return names[cleanSource] || source;
+}
+
+function formatMoney(value, currency) {
+    const num = parseFloat(value);
+    if (Number.isNaN(num)) {
+        return value;
+    }
+    const code = currency || 'GBP';
+    return `${code} £${num.toFixed(2)}`;
 }
 
 // Helper function to format dates nicely

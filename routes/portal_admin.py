@@ -1,6 +1,7 @@
 # this is portal_admin.py - it also lives in the office and serves the core CRM. It administers the settings for the office CRM side of the portal
 
 import os
+import re
 
 from flask import Blueprint, render_template, request, jsonify, flash, redirect, url_for, session
 from db import db_cursor, execute as db_execute, get_currency_rate_column
@@ -1645,18 +1646,25 @@ def test_portal_analyze():
             quantity = 1
             part_number = line
 
-            if 'x' in line.lower():
-                parts_split = line.lower().split('x')
-                if len(parts_split) == 2:
-                    try:
-                        quantity = int(parts_split[0].strip())
-                        part_number = parts_split[1].strip()
-                    except ValueError:
-                        try:
-                            quantity = int(parts_split[1].strip())
-                            part_number = parts_split[0].strip()
-                        except ValueError:
-                            part_number = line
+            match = re.match(r'^\s*(\d+)\s*[xX]\s*(.+?)\s*$', line)
+            if match:
+                quantity = int(match.group(1))
+                part_number = match.group(2).strip()
+            else:
+                match = re.match(r'^\s*(.+?)\s*[xX]\s*(\d+)\s*$', line)
+                if match:
+                    part_number = match.group(1).strip()
+                    quantity = int(match.group(2))
+                else:
+                    match = re.match(r'^\s*(\d+)\s+(.+?)\s*$', line)
+                    if match:
+                        quantity = int(match.group(1))
+                        part_number = match.group(2).strip()
+                    else:
+                        match = re.match(r'^\s*(.+?)\s+(\d+)\s*$', line)
+                        if match:
+                            part_number = match.group(1).strip()
+                            quantity = int(match.group(2))
 
             parts.append({
                 'part_number': part_number.upper(),
@@ -1698,6 +1706,7 @@ def test_portal_analyze():
                 # Preserve existing source_details from _analyze_quote_internal if available
                 existing_debug = result_item.get('debug_info', {})
                 source_details = existing_debug.get('source_details', {})
+                existing_source_details = dict(source_details) if source_details else {}
                 winning_source = price_source if price_source else 'none'
 
                 if base_pn and price_source:
@@ -1854,6 +1863,11 @@ def test_portal_analyze():
                                 'price': f"{po['currency_code']} {po['unit_price']:.2f}",
                                 'date': po['date_created']
                             }
+
+                if existing_source_details:
+                    for key, value in existing_source_details.items():
+                        if key not in source_details:
+                            source_details[key] = value
 
                 result_data['results'][idx]['debug_info'] = {
                     'winning_source': winning_source,

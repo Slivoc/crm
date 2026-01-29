@@ -6,6 +6,7 @@ import logging
 import os
 import secrets
 from datetime import datetime, timedelta, date
+from decimal import Decimal, InvalidOperation, ROUND_UP
 
 import jwt
 from flask import Blueprint, current_app, jsonify, request
@@ -39,6 +40,39 @@ def _to_float(value):
     try:
         return float(value)
     except (TypeError, ValueError):
+        return None
+
+
+def _apply_margin(value, margin_pct, places=2):
+    """Apply margin and round up so the resulting price meets or exceeds margin."""
+    if value is None:
+        return None
+    try:
+        base = Decimal(str(value))
+        margin = Decimal(str(margin_pct or 0))
+        if margin >= 100:
+            return None
+        total = base / (Decimal('1') - (margin / Decimal('100')))
+        quant = Decimal('1').scaleb(-places)
+        return float(total.quantize(quant, rounding=ROUND_UP))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _apply_margin_debug(value, margin_pct, places=2):
+    """Return both target (pre-round) and rounded prices for margin visibility."""
+    if value is None:
+        return None
+    try:
+        base = Decimal(str(value))
+        margin = Decimal(str(margin_pct or 0))
+        if margin >= 100:
+            return None
+        total = base / (Decimal('1') - (margin / Decimal('100')))
+        quant = Decimal('1').scaleb(-places)
+        rounded = total.quantize(quant, rounding=ROUND_UP)
+        return {'target': float(total), 'rounded': float(rounded)}
+    except (InvalidOperation, TypeError, ValueError):
         return None
 
 
@@ -482,7 +516,8 @@ def analyze_quote():
                     total_stock = stock['total_stock'] if stock and stock['total_stock'] else 0
                     has_stock = total_stock >= quantity
                     avg_cost_value = _to_float(stock['avg_cost']) if stock and stock['avg_cost'] else None
-                    stock_price = round(avg_cost_value * (1 + stock_margin / 100), 2) if (has_stock and avg_cost_value is not None) else None
+                    stock_margin_debug = _apply_margin_debug(avg_cost_value, stock_margin) if (has_stock and avg_cost_value is not None) else None
+                    stock_price = stock_margin_debug['rounded'] if stock_margin_debug else None
 
                     cq_price = _execute_with_cursor(cursor, f"""
                         SELECT cl.unit_price as most_recent_price,
@@ -521,6 +556,7 @@ def analyze_quote():
                     pl_supplier_quote_price = None
                     pl_supplier_quote_date = None
                     pl_supplier_details = {}
+                    pl_supplier_margin = None
 
                     pl_supplier_quote = _execute_with_cursor(cursor, f"""
                         SELECT
@@ -552,12 +588,17 @@ def analyze_quote():
                             base_currency=base_currency
                         )
                         if cost_base is not None:
-                            pl_supplier_quote_price = round(cost_base * (1 + vq_margin / 100), 2)
+                            pl_supplier_margin = _apply_margin_debug(cost_base, vq_margin)
+                            if pl_supplier_margin:
+                                pl_supplier_quote_price = pl_supplier_margin['rounded']
                         pl_supplier_details = {
                             'supplier': pl_supplier_quote['supplier_name'],
                             'cost': _to_float(pl_supplier_quote['supplier_cost']),
                             'reference': pl_supplier_quote['quote_reference'],
-                            'date': pl_supplier_quote_date
+                            'date': pl_supplier_quote_date,
+                            'margin_pct': vq_margin,
+                            'target_price': pl_supplier_margin['target'] if cost_base is not None and pl_supplier_margin else None,
+                            'rounded_price': pl_supplier_margin['rounded'] if cost_base is not None and pl_supplier_margin else None
                         }
 
                     vq_price = None
@@ -577,12 +618,16 @@ def analyze_quote():
                         """, (base_part_number, vq_cutoff)).fetchone()
                         if vq_data:
                             vendor_price = _to_float(vq_data['vendor_price'])
-                            vq_price = round(vendor_price * (1 + vq_margin / 100), 2)
+                            vq_margin_debug = _apply_margin_debug(vendor_price, vq_margin)
+                            vq_price = vq_margin_debug['rounded'] if vq_margin_debug else None
                             vq_date = vq_data['entry_date']
                             vq_details = {
                                 'supplier': vq_data['supplier_name'],
                                 'cost': vendor_price,
-                                'reference': vq_data['vq_number']
+                                'reference': vq_data['vq_number'],
+                                'margin_pct': vq_margin,
+                                'target_price': vq_margin_debug['target'] if vq_margin_debug else None,
+                                'rounded_price': vq_margin_debug['rounded'] if vq_margin_debug else None
                             }
 
                         po_data = _execute_with_cursor(cursor, """
@@ -594,12 +639,16 @@ def analyze_quote():
                         """, (base_part_number, po_cutoff)).fetchone()
                         if po_data:
                             po_price_base = _to_float(po_data['price'])
-                            po_price = round(po_price_base * (1 + po_margin / 100), 2)
+                            po_margin_debug = _apply_margin_debug(po_price_base, po_margin)
+                            po_price = po_margin_debug['rounded'] if po_margin_debug else None
                             po_date = po_data['date_issued']
                             po_details = {
                                 'supplier': po_data['supplier_name'],
                                 'cost': po_price_base,
-                                'reference': po_data['purchase_order_ref']
+                                'reference': po_data['purchase_order_ref'],
+                                'margin_pct': po_margin,
+                                'target_price': po_margin_debug['target'] if po_margin_debug else None,
+                                'rounded_price': po_margin_debug['rounded'] if po_margin_debug else None
                             }
 
                     estimated_lead_days = default_lead_days
@@ -642,7 +691,13 @@ def analyze_quote():
                         result['status'] = 'available'
                         debug_info = {
                             'winning_source': 'stock',
-                            'source_details': {'cost': avg_cost_value, 'type': 'Inventory'}
+                            'source_details': {
+                                'cost': avg_cost_value,
+                                'type': 'Inventory',
+                                'margin_pct': stock_margin,
+                                'target_price': stock_margin_debug['target'] if stock_margin_debug else None,
+                                'rounded_price': stock_margin_debug['rounded'] if stock_margin_debug else None
+                            }
                         }
                     else:
                         price_candidates = []
@@ -680,14 +735,16 @@ def analyze_quote():
                                     'details': {'reference': sales_price['sales_order_ref'], 'type': 'Historic Sale'}
                                 })
                         if pl_customer_quote and pl_customer_quote['most_recent_price']:
-                            price_candidates.append({
-                                'price': round(pl_customer_quote['most_recent_price'], 2),
-                                'source': 'parts_list_customer_quote',
-                                'currency': base_currency_code,
-                                'date': pl_customer_quote['quote_date'],
-                                'priority': 1,
-                                'details': {'type': 'Previous Quote Request'}
-                            })
+                            pl_customer_quote_price = _to_float(pl_customer_quote['most_recent_price'])
+                            if pl_customer_quote_price is not None:
+                                price_candidates.append({
+                                    'price': round(pl_customer_quote_price, 2),
+                                    'source': 'parts_list_customer_quote',
+                                    'currency': base_currency_code,
+                                    'date': pl_customer_quote['quote_date'],
+                                    'priority': 1,
+                                    'details': {'type': 'Previous Quote Request'}
+                                })
                         if pl_supplier_quote_price:
                             price_candidates.append({
                                 'price': pl_supplier_quote_price,
@@ -1078,7 +1135,7 @@ def get_common_parts():
                 currency = base_currency_code
 
                 if has_stock and avg_cost_value is not None:
-                    estimated_price = round(avg_cost_value * (1 + stock_margin / 100), 2)
+                    estimated_price = _apply_margin(avg_cost_value, stock_margin)
                     price_source = 'stock'
                 else:
                     raw_avg_price = part.get('avg_price')
@@ -1302,7 +1359,7 @@ def get_suggested_parts():
 
                 avg_cost_value = _to_float(stock['avg_cost']) if stock and stock['avg_cost'] else None
                 if has_stock and avg_cost_value is not None:
-                    estimated_price = round(avg_cost_value * (1 + stock_margin / 100), 2)
+                    estimated_price = _apply_margin(avg_cost_value, stock_margin)
                     price_source = 'stock'
 
                 estimated_price = _to_float(estimated_price)
