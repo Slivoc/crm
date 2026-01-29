@@ -77,6 +77,8 @@ def extract_customer_po_data(po_text):
     - currency: Currency (USD, GBP, EUR, etc.)
     - incoterms: Incoterms if stated (EXW, FOB, DDP, etc.)
     - payment_terms: Payment terms if stated
+    - delivery_address: Ship-to / delivery address
+    - invoice_address: Bill-to / invoice address
     - lines: List of line items with part_number, description, quantity, unit_price, total_price
     """
     try:
@@ -105,6 +107,8 @@ The JSON object should have these fields:
 - currency: The currency code like "USD", "GBP", "EUR" (string, null if not stated)
 - incoterms: Incoterms like "EXW", "FOB", "DDP", "CIF", "DAP" (string, null if not stated)
 - payment_terms: Payment terms like "Net 30", "30 days", "COD" (string, null if not stated)
+- delivery_address: The ship-to/delivery address as a single string with line breaks (string, null if not found)
+- invoice_address: The bill-to/invoice address as a single string with line breaks (string, null if not found)
 - lines: Array of line items, each with:
   - line_number: Line number on the PO (integer, starting from 1 if not specified)
   - part_number: The part number being ordered (string)
@@ -120,7 +124,10 @@ Important notes:
 - If total is given but not unit, calculate unit_price = total / quantity
 - Currency symbols ($, £, €) should be converted to currency codes (USD, GBP, EUR)
 - Look for common PO header fields: "Purchase Order", "PO Number", "Order No", "Ship To", "Bill To"
-- Payment terms might appear as "Terms:", "Payment:", "Net 30", etc."""
+- Payment terms might appear as "Terms:", "Payment:", "Net 30", etc.
+- Delivery address may appear as "Ship To:", "Deliver To:", "Delivery Address:", or similar
+- Invoice address may appear as "Bill To:", "Invoice To:", "Billing Address:", or similar
+- Include full address with company name, street, city, postal code, country if available"""
                 },
                 {
                     "role": "user",
@@ -128,7 +135,7 @@ Important notes:
 
 {po_text}
 
-Return a JSON object with customer_name, po_reference, po_date, currency, incoterms, payment_terms, and lines array."""
+Return a JSON object with customer_name, po_reference, po_date, currency, incoterms, payment_terms, delivery_address, invoice_address, and lines array."""
                 }
             ],
             max_tokens=6000,
@@ -167,6 +174,8 @@ Return a JSON object with customer_name, po_reference, po_date, currency, incote
                 'currency': None,
                 'incoterms': None,
                 'payment_terms': None,
+                'delivery_address': None,
+                'invoice_address': None,
                 'lines': []
             }
 
@@ -178,6 +187,8 @@ Return a JSON object with customer_name, po_reference, po_date, currency, incote
             'currency': data.get('currency'),
             'incoterms': data.get('incoterms'),
             'payment_terms': data.get('payment_terms'),
+            'delivery_address': data.get('delivery_address'),
+            'invoice_address': data.get('invoice_address'),
             'lines': []
         }
 
@@ -223,6 +234,8 @@ Return a JSON object with customer_name, po_reference, po_date, currency, incote
             'currency': None,
             'incoterms': None,
             'payment_terms': None,
+            'delivery_address': None,
+            'invoice_address': None,
             'lines': []
         }
 
@@ -281,7 +294,7 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
         LEFT JOIN currencies cur ON cur.id = pll.chosen_currency_id
         LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
         WHERE pl.customer_id = ?
-          AND pls.name IN ('Quoted', 'Sent to Suppliers', 'New')
+          AND pls.name IN ('Quoted', 'Sent to Suppliers', 'New', 'Won')
         ORDER BY pl.date_created DESC, pll.line_number ASC
         """,
         (customer_id,),
@@ -333,6 +346,11 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                     ratio = min(candidate_qty, po_qty) / max(candidate_qty, po_qty)
                     score += int(ratio * 50)
 
+                # Prefer non-Won parts lists (active quotes) over Won ones (repeat orders)
+                if candidate['status_name'] != 'Won':
+                    score += 50
+                # Won parts lists still get some score so they can be matched if no active quotes
+
                 # More recent parts lists get a bonus
                 # (already sorted by date, so first match gets slight preference)
                 if best_match is None:
@@ -373,7 +391,8 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                     'id': best_match['parts_list_id'],
                     'name': best_match['parts_list_name'],
                     'date': best_match['parts_list_date'].isoformat() if best_match['parts_list_date'] else None,
-                    'status': best_match['status_name']
+                    'status': best_match['status_name'],
+                    'is_repeat': best_match['status_name'] == 'Won'
                 }
 
                 # Supplier info (cost side)
