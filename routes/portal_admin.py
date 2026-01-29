@@ -1622,6 +1622,14 @@ def test_portal_analyze():
     try:
         data = request.get_json()
         customer_id = data.get('customer_id')
+        # Convert customer_id to int if provided (JavaScript sends it as string)
+        if customer_id and customer_id != '':
+            try:
+                customer_id = int(customer_id)
+            except (ValueError, TypeError):
+                customer_id = None
+        else:
+            customer_id = None
         parts_input = data.get('parts', '').strip()
 
         if not parts_input:
@@ -1659,7 +1667,7 @@ def test_portal_analyze():
             return jsonify({'success': False, 'error': 'No valid parts found'}), 400
 
         # If no customer selected, pick the first available customer
-        if not customer_id or customer_id == '':
+        if not customer_id:
             first_customer = db_execute("""
                 SELECT DISTINCT c.id
                 FROM customers c
@@ -1687,7 +1695,9 @@ def test_portal_analyze():
                 base_pn = result_item.get('base_part_number')
                 price_source = result_item.get('price_source')
 
-                source_details = {}
+                # Preserve existing source_details from _analyze_quote_internal if available
+                existing_debug = result_item.get('debug_info', {})
+                source_details = existing_debug.get('source_details', {})
                 winning_source = price_source if price_source else 'none'
 
                 if base_pn and price_source:
@@ -1773,27 +1783,22 @@ def test_portal_analyze():
 
                     elif actual_source == 'stock':
                         stock = db_execute("""
-                            SELECT 
-                                sm.reference_number,
-                                sm.unit_cost_gbp,
-                                sm.date_created,
-                                s.name as supplier_name
+                            SELECT
+                                sm.cost_per_unit,
+                                sm.movement_date
                             FROM stock_movements sm
-                            LEFT JOIN suppliers s ON s.id = sm.supplier_id
                             WHERE sm.base_part_number = ?
                             AND sm.movement_type = 'IN'
                             AND sm.available_quantity > 0
-                            ORDER BY sm.date_created DESC
+                            ORDER BY sm.movement_date DESC
                             LIMIT 1
                         """, (base_pn,), fetch='one')
 
                         if stock:
                             source_details = {
-                                'type': 'Stock Movement',
-                                'reference': stock['reference_number'] or 'N/A',
-                                'supplier': stock['supplier_name'] or 'Unknown',
-                                'cost': f"£{stock['unit_cost_gbp']:.2f}" if stock['unit_cost_gbp'] else 'N/A',
-                                'date': stock['date_created']
+                                'type': 'Stock',
+                                'cost': f"£{stock['cost_per_unit']:.2f}" if stock['cost_per_unit'] else 'N/A',
+                                'date': stock['movement_date']
                             }
 
                     elif actual_source in ['vendor_quote', 'vendor_quote_estimate']:
