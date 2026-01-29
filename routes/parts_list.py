@@ -3386,45 +3386,45 @@ def process_suggested_suppliers(email_data, cursor, request_cutoff, list_id=None
                 continue
 
             # Get status flags
-                status = _execute_with_cursor(cursor, f"""
-                    SELECT
-                        (chosen_cost IS NOT NULL) as has_chosen_cost,
-                    (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
-                     JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                     WHERE sql.parts_list_line_id = line.id AND sql.is_no_bid = FALSE) as quote_count,
-                    (SELECT COUNT(*) FROM parts_list_line_supplier_emails
-                     WHERE parts_list_line_id = line.id) as email_count,
-                    (SELECT COUNT(*) FROM parts_list_line_supplier_emails
-                     WHERE parts_list_line_id = line.id AND supplier_id = ?) as sent_to_this_supplier,
-                    (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
-                     JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                     WHERE sql.parts_list_line_id = line.id
-                       AND sql.is_no_bid = FALSE
-                       AND sq.supplier_id = ?) as supplier_quote_count,
-                    (SELECT MAX(sql.date_created) FROM parts_list_supplier_quote_lines sql
-                     JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                     WHERE sql.parts_list_line_id = line.id
-                       AND sql.is_no_bid = FALSE
-                       AND sq.supplier_id = ?) as supplier_last_quote_date,
-                    (SELECT MAX(se.date_sent) FROM parts_list_line_supplier_emails se
-                     JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
-                     WHERE pll.base_part_number = line.base_part_number
-                       AND se.supplier_id = ?
-                       AND se.date_sent >= ?
-                       {recent_request_filter}) as recent_request_date
-                FROM
-                    parts_list_lines line
-                WHERE
-                    line.id = ?
-            """, (
-                supplier_id,
-                supplier_id,
-                supplier_id,
-                supplier_id,
-                request_cutoff,
-                *recent_request_params,
-                line_id,
-            )).fetchone()
+            status = _execute_with_cursor(cursor, f"""
+                SELECT
+                    (chosen_cost IS NOT NULL) as has_chosen_cost,
+                (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
+                 JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                 WHERE sql.parts_list_line_id = line.id AND sql.is_no_bid = FALSE) as quote_count,
+                (SELECT COUNT(*) FROM parts_list_line_supplier_emails
+                 WHERE parts_list_line_id = line.id) as email_count,
+                (SELECT COUNT(*) FROM parts_list_line_supplier_emails
+                 WHERE parts_list_line_id = line.id AND supplier_id = ?) as sent_to_this_supplier,
+                (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
+                 JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                 WHERE sql.parts_list_line_id = line.id
+                   AND sql.is_no_bid = FALSE
+                   AND sq.supplier_id = ?) as supplier_quote_count,
+                (SELECT MAX(sql.date_created) FROM parts_list_supplier_quote_lines sql
+                 JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                 WHERE sql.parts_list_line_id = line.id
+                   AND sql.is_no_bid = FALSE
+                   AND sq.supplier_id = ?) as supplier_last_quote_date,
+                (SELECT MAX(se.date_sent) FROM parts_list_line_supplier_emails se
+                 JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
+                 WHERE pll.base_part_number = line.base_part_number
+                   AND se.supplier_id = ?
+                   AND se.date_sent >= ?
+                   {recent_request_filter}) as recent_request_date
+            FROM
+                parts_list_lines line
+            WHERE
+                line.id = ?
+        """, (
+            supplier_id,
+            supplier_id,
+            supplier_id,
+            supplier_id,
+            request_cutoff,
+            *recent_request_params,
+            line_id,
+        )).fetchone()
 
             part_data = {
                 'part_number': part['input_part_number'],
