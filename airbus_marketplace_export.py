@@ -100,34 +100,50 @@ def _build_airbus_row(part):
     condition = part.get('condition', 'New')
     lead_time_days = part.get('lead_time_days', '')
 
+    # Marketplace-specific fields (use database values or defaults)
+    mkp_description = part.get('mkp_description') or description or part_number
+    mkp_name = part.get('mkp_name') or part_number
+    # productSummary and productPresentation are required - use part_number as fallback
+    mkp_product_summary = part.get('mkp_product_summary') or description or part_number
+    mkp_product_presentation = part.get('mkp_product_presentation') or description or part_number
+    mkp_product_unit = part.get('mkp_product_unit') or 'EA'
+    mkp_package_content = part.get('mkp_package_content') if part.get('mkp_package_content') is not None else 1
+    mkp_package_content_unit = part.get('mkp_package_content_unit') or 'EA'
+    mkp_third_level = part.get('mkp_third_level') or 'PC'  # PC = piece, valid value
+    mkp_dangerous = 'true' if part.get('mkp_dangerous') else 'false'
+    mkp_eccn = part.get('mkp_eccn') or 'EAR'  # EAR = Export Administration Regulations (default for commercial)
+    mkp_serialized = 'true' if part.get('mkp_serialized') else 'false'
+    mkp_log_card = 'true' if part.get('mkp_log_card') else 'false'
+    mkp_easaf1 = 'true' if part.get('mkp_easaf1') else 'false'
+
     return [
         mkp_category,  # mkpCategory
         manufacturer,  # manufacturerBrand
         part_number,  # code
-        description,  # description [en]
+        mkp_description,  # description [en]
         "",  # ean
-        part_number,  # name
+        mkp_name,  # name
         "",  # alternativePartRefList
         "",  # description [fr]
         "",  # description [de]
         "",  # description [es]
         "",  # description [pt]
         "",  # productSummary [fr]
-        description,  # productSummary [en]
+        mkp_product_summary,  # productSummary [en]
         "",  # productSummary [de]
         "",  # productSummary [es]
         "",  # productSummary [pt]
         "",  # productPresentation [fr]
-        description,  # productPresentation [en]
+        mkp_product_presentation,  # productPresentation [en]
         "",  # productPresentation [de]
         "",  # productPresentation [es]
         "",  # productPresentation [pt]
         "",  # natoCode
-        "EA",  # productUnit
-        1,  # packageContent
-        "EA",  # packageContentUnit
-        "EA",  # thirdLevel
-        "false",  # dangerous
+        mkp_product_unit,  # productUnit
+        mkp_package_content,  # packageContent
+        mkp_package_content_unit,  # packageContentUnit
+        mkp_third_level,  # thirdLevel
+        mkp_dangerous,  # dangerous
         "",  # cm_code
         "",  # MSDS
         "",  # TDS
@@ -140,15 +156,15 @@ def _build_airbus_row(part):
         "",  # image2
         "",  # image3
         "",  # image4
-        "",  # eccn
-        "false",  # serialized
-        "false",  # logCard
-        "false",  # easaf1
+        mkp_eccn,  # eccn
+        mkp_serialized,  # serialized
+        mkp_log_card,  # logCard
+        mkp_easaf1,  # easaf1
         part_number,  # sku
         part_number,  # product-id
         "MPN",  # product-id-type
-        description,  # description
-        description,  # internal-description
+        mkp_description,  # description
+        mkp_description,  # internal-description
         price if price else "",  # price
         "",  # price-additional-info
         quantity if quantity else "",  # quantity

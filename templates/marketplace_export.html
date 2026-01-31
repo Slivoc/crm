@@ -370,6 +370,125 @@
     </div>
 </div>
 
+<!-- Marketplace Fields Modal -->
+<div class="modal fade" id="marketplaceFieldsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Edit Marketplace Fields</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Part Number:</label>
+                    <div id="mkpFieldsPartNumber" class="text-primary fs-5"></div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">Category (mkpCategory)</label>
+                        <select class="form-select" id="mkpFieldsCategory">
+                            <!-- Categories populated via JS -->
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">Name</label>
+                        <input type="text" class="form-control" id="mkpFieldsName" placeholder="Leave blank to use part number">
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Description [en]</label>
+                    <textarea class="form-control" id="mkpFieldsDescription" rows="2" placeholder="Product description for marketplace"></textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Product Summary [en]</label>
+                    <textarea class="form-control" id="mkpFieldsProductSummary" rows="2" placeholder="Brief product summary"></textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Product Presentation [en]</label>
+                    <textarea class="form-control" id="mkpFieldsProductPresentation" rows="3" placeholder="Detailed product presentation"></textarea>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label fw-bold">Product Unit</label>
+                        <select class="form-select" id="mkpFieldsProductUnit">
+                            <option value="EA">EA (Each)</option>
+                            <option value="KG">KG (Kilogram)</option>
+                            <option value="M">M (Meter)</option>
+                            <option value="L">L (Liter)</option>
+                            <option value="SET">SET</option>
+                            <option value="BOX">BOX</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label fw-bold">Package Content</label>
+                        <input type="number" class="form-control" id="mkpFieldsPackageContent" value="1" min="1">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label fw-bold">Package Content Unit</label>
+                        <select class="form-select" id="mkpFieldsPackageContentUnit">
+                            <option value="EA">EA (Each)</option>
+                            <option value="KG">KG (Kilogram)</option>
+                            <option value="M">M (Meter)</option>
+                            <option value="L">L (Liter)</option>
+                            <option value="SET">SET</option>
+                            <option value="BOX">BOX</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">Third Level</label>
+                        <input type="text" class="form-control" id="mkpFieldsThirdLevel" value="EA">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">ECCN</label>
+                        <input type="text" class="form-control" id="mkpFieldsEccn" placeholder="Export Control Classification Number">
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-3 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="mkpFieldsDangerous">
+                            <label class="form-check-label fw-bold" for="mkpFieldsDangerous">Dangerous</label>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="mkpFieldsSerialized">
+                            <label class="form-check-label fw-bold" for="mkpFieldsSerialized">Serialized</label>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="mkpFieldsLogCard">
+                            <label class="form-check-label fw-bold" for="mkpFieldsLogCard">Log Card</label>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="mkpFieldsEasaf1">
+                            <label class="form-check-label fw-bold" for="mkpFieldsEasaf1">EASA F1</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveMarketplaceFieldsBtn">
+                    <i class="bi bi-save"></i> Save All Fields
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Progress Modal -->
 <div class="modal fade" id="progressModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
     <div class="modal-dialog">
@@ -479,6 +598,11 @@ $(document).ready(function() {
 
     $('#saveCategoryBtn').click(function() {
         saveCategoryAssignment();
+    });
+
+    // Marketplace fields modal save button
+    $('#saveMarketplaceFieldsBtn').click(function() {
+        saveMarketplaceFields();
     });
 
 });
@@ -705,7 +829,10 @@ function renderUncategorizedParts() {
                 <td class="text-center ${pricingClass}">${hasPricing}</td>
                 <td>
                     <button class="btn btn-sm btn-outline-primary assign-category-btn" data-part-number="${part.base_part_number}">
-                        <i class="bi bi-tag"></i> Assign Category
+                        <i class="bi bi-tag"></i> Category
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary edit-fields-btn" data-part-number="${part.base_part_number}">
+                        <i class="bi bi-pencil"></i> Edit Fields
                     </button>
                 </td>
             </tr>
@@ -717,6 +844,12 @@ function renderUncategorizedParts() {
     $('.assign-category-btn').click(function() {
         const partNumber = $(this).data('part-number');
         openCategoryModal(partNumber);
+    });
+
+    // Bind edit fields button
+    $('.edit-fields-btn').click(function() {
+        const partNumber = $(this).data('part-number');
+        openMarketplaceFieldsModal(partNumber);
     });
 }
 
@@ -776,6 +909,105 @@ function openCategoryModal(basePartNumber) {
     }
 
     $('#categoryModal').modal('show');
+}
+
+function openMarketplaceFieldsModal(basePartNumber) {
+    currentEditingPartNumber = basePartNumber;
+    const part = allParts.find(p => p.base_part_number === basePartNumber);
+
+    if (!part) return;
+
+    // Populate the category dropdown if not already done
+    if ($('#mkpFieldsCategory option').length <= 1) {
+        const $select = $('#mkpFieldsCategory');
+        $select.empty();
+        $select.append($('<option>', { value: '', text: 'Select category...' }));
+        categories.forEach(cat => {
+            const shortName = cat.replace('Marketplace Categories/Hardware and Electrical/', '');
+            $select.append($('<option>', { value: cat, text: shortName }));
+        });
+    }
+
+    // Populate form fields with current values
+    $('#mkpFieldsPartNumber').text(part.part_number);
+    $('#mkpFieldsCategory').val(part.mkp_category || '');
+    $('#mkpFieldsName').val(part.mkp_name || '');
+    $('#mkpFieldsDescription').val(part.mkp_description || '');
+    $('#mkpFieldsProductSummary').val(part.mkp_product_summary || '');
+    $('#mkpFieldsProductPresentation').val(part.mkp_product_presentation || '');
+    $('#mkpFieldsProductUnit').val(part.mkp_product_unit || 'EA');
+    $('#mkpFieldsPackageContent').val(part.mkp_package_content || 1);
+    $('#mkpFieldsPackageContentUnit').val(part.mkp_package_content_unit || 'EA');
+    $('#mkpFieldsThirdLevel').val(part.mkp_third_level || 'EA');
+    $('#mkpFieldsEccn').val(part.mkp_eccn || '');
+    $('#mkpFieldsDangerous').prop('checked', !!part.mkp_dangerous);
+    $('#mkpFieldsSerialized').prop('checked', !!part.mkp_serialized);
+    $('#mkpFieldsLogCard').prop('checked', !!part.mkp_log_card);
+    $('#mkpFieldsEasaf1').prop('checked', !!part.mkp_easaf1);
+
+    $('#marketplaceFieldsModal').modal('show');
+}
+
+function saveMarketplaceFields() {
+    const data = {
+        mkp_category: $('#mkpFieldsCategory').val() || null,
+        mkp_name: $('#mkpFieldsName').val() || null,
+        mkp_description: $('#mkpFieldsDescription').val() || null,
+        mkp_product_summary: $('#mkpFieldsProductSummary').val() || null,
+        mkp_product_presentation: $('#mkpFieldsProductPresentation').val() || null,
+        mkp_product_unit: $('#mkpFieldsProductUnit').val() || 'EA',
+        mkp_package_content: parseInt($('#mkpFieldsPackageContent').val(), 10) || 1,
+        mkp_package_content_unit: $('#mkpFieldsPackageContentUnit').val() || 'EA',
+        mkp_third_level: $('#mkpFieldsThirdLevel').val() || 'EA',
+        mkp_eccn: $('#mkpFieldsEccn').val() || null,
+        mkp_dangerous: $('#mkpFieldsDangerous').prop('checked'),
+        mkp_serialized: $('#mkpFieldsSerialized').prop('checked'),
+        mkp_log_card: $('#mkpFieldsLogCard').prop('checked'),
+        mkp_easaf1: $('#mkpFieldsEasaf1').prop('checked')
+    };
+
+    $('#saveMarketplaceFieldsBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Saving...');
+
+    $.ajax({
+        url: `/marketplace/update-marketplace-fields/${currentEditingPartNumber}`,
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(data),
+        success: function(response) {
+            if (response.success) {
+                // Update local data
+                const part = allParts.find(p => p.base_part_number === currentEditingPartNumber);
+                if (part) {
+                    part.mkp_category = data.mkp_category;
+                    part.mkp_name = data.mkp_name;
+                    part.mkp_description = data.mkp_description;
+                    part.mkp_product_summary = data.mkp_product_summary;
+                    part.mkp_product_presentation = data.mkp_product_presentation;
+                    part.mkp_product_unit = data.mkp_product_unit;
+                    part.mkp_package_content = data.mkp_package_content;
+                    part.mkp_package_content_unit = data.mkp_package_content_unit;
+                    part.mkp_third_level = data.mkp_third_level;
+                    part.mkp_eccn = data.mkp_eccn;
+                    part.mkp_dangerous = data.mkp_dangerous;
+                    part.mkp_serialized = data.mkp_serialized;
+                    part.mkp_log_card = data.mkp_log_card;
+                    part.mkp_easaf1 = data.mkp_easaf1;
+                }
+
+                $('#marketplaceFieldsModal').modal('hide');
+                updateSummaryStats();
+                renderUncategorizedParts();
+            } else {
+                alert('Error updating fields: ' + (response.error || 'Unknown error'));
+            }
+        },
+        error: function() {
+            alert('Error updating marketplace fields');
+        },
+        complete: function() {
+            $('#saveMarketplaceFieldsBtn').prop('disabled', false).html('<i class="bi bi-save"></i> Save All Fields');
+        }
+    });
 }
 
 function suggestCategoryForPart() {
@@ -1098,35 +1330,52 @@ function pushOffersToMarketplace() {
         return;
     }
 
-    if (!confirm(`Push offers for ${categorizedParts.length} parts to Mirakl now?`)) {
+    if (!confirm(`Push ${categorizedParts.length} products to Airbus Marketplace now?`)) {
         return;
     }
 
     $('#pushToMarketplaceBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Pushing...');
-    $('#exportStatus').text('Submitting offers to Mirakl...');
+    $('#exportStatus').text('Submitting products to Mirakl...');
 
     const defaultQuantity = parseInt($('#defaultQuantity').val(), 10) || 1;
-    const offers = categorizedParts.map((part) => {
+
+    // Build full Airbus template data for each part
+    const parts = categorizedParts.map((part) => {
         const partNumber = part.part_number || part.base_part_number || '';
         const stockQty = parseInt(part.stock_qty, 10);
         const quantity = part.in_stock && Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
-        const leadTime = part.estimated_lead_days ?? '';
+        const leadTime = part.estimated_lead_days ?? 7;
+
         return {
-            'sku': partNumber,
-            'product-id': partNumber,
-            'product-id-type': 'MPN',
-            'price': part.estimated_price ?? '',
+            'part_number': partNumber,
+            'mkp_category': part.mkp_category,
+            'mkp_description': part.mkp_description || '',
+            'mkp_name': part.mkp_name || '',
+            'mkp_product_summary': part.mkp_product_summary || '',
+            'mkp_product_presentation': part.mkp_product_presentation || '',
+            'mkp_product_unit': part.mkp_product_unit || 'EA',
+            'mkp_package_content': part.mkp_package_content || 1,
+            'mkp_package_content_unit': part.mkp_package_content_unit || 'EA',
+            'mkp_third_level': part.mkp_third_level || 'EA',
+            'mkp_dangerous': part.mkp_dangerous || false,
+            'mkp_eccn': part.mkp_eccn || '',
+            'mkp_serialized': part.mkp_serialized || false,
+            'mkp_log_card': part.mkp_log_card || false,
+            'mkp_easaf1': part.mkp_easaf1 || false,
+            'description': part.mkp_description || '',
+            'manufacturer': '',
             'quantity': quantity,
-            'state': '11',
-            'leadtime-to-ship': leadTime
+            'price': part.estimated_price ?? '',
+            'condition': 'New',
+            'lead_time_days': leadTime
         };
     });
 
     $.ajax({
-        url: '/marketplace/mirakl/offers/import',
+        url: '/marketplace/mirakl/products/import',
         method: 'POST',
         contentType: 'application/json',
-        data: JSON.stringify({ offers: offers, import_mode: 'NORMAL' })
+        data: JSON.stringify({ parts: parts, import_mode: 'NORMAL' })
     }).done(function (response) {
         if (response.success) {
             const importId = response.result && response.result.import_id ? response.result.import_id : 'unknown';

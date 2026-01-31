@@ -658,6 +658,82 @@ def update_part_category(base_part_number):
         return jsonify({'error': str(e)}), 500
 
 
+@marketplace_bp.route('/update-marketplace-fields/<base_part_number>', methods=['POST'])
+def update_marketplace_fields(base_part_number):
+    """
+    Update all marketplace fields for a part
+
+    POST body:
+    {
+        "mkp_category": "Marketplace Categories/Hardware and Electrical/Bolts",
+        "mkp_description": "Custom description",
+        "mkp_name": "Custom name",
+        "mkp_product_summary": "Product summary text",
+        "mkp_product_presentation": "Product presentation text",
+        "mkp_product_unit": "EA",
+        "mkp_package_content": 1,
+        "mkp_package_content_unit": "EA",
+        "mkp_third_level": "EA",
+        "mkp_dangerous": false,
+        "mkp_eccn": "",
+        "mkp_serialized": false,
+        "mkp_log_card": false,
+        "mkp_easaf1": false
+    }
+    """
+    db = None
+    try:
+        data = request.get_json() or {}
+
+        # Validate category if provided
+        mkp_category = data.get('mkp_category')
+        if mkp_category:
+            valid_categories = get_available_categories()
+            if mkp_category not in valid_categories:
+                return jsonify({'error': 'Invalid category'}), 400
+
+        # Build update query dynamically based on provided fields
+        allowed_fields = [
+            'mkp_category', 'mkp_description', 'mkp_name', 'mkp_product_summary',
+            'mkp_product_presentation', 'mkp_product_unit', 'mkp_package_content',
+            'mkp_package_content_unit', 'mkp_third_level', 'mkp_dangerous',
+            'mkp_eccn', 'mkp_serialized', 'mkp_log_card', 'mkp_easaf1'
+        ]
+
+        updates = []
+        params = []
+        for field in allowed_fields:
+            if field in data:
+                updates.append(f"{field} = ?")
+                value = data[field]
+                # Convert booleans properly for SQLite
+                if field in ('mkp_dangerous', 'mkp_serialized', 'mkp_log_card', 'mkp_easaf1'):
+                    value = 1 if value else 0
+                params.append(value)
+
+        if not updates:
+            return jsonify({'error': 'No fields to update'}), 400
+
+        params.append(base_part_number)
+        query = f"UPDATE part_numbers SET {', '.join(updates)} WHERE base_part_number = ?"
+
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute(query, params)
+        db.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({'error': 'Part not found'}), 404
+
+        return jsonify({'success': True, 'message': 'Marketplace fields updated'}), 200
+
+    except Exception as e:
+        logger.exception("Error updating marketplace fields")
+        if db:
+            db.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
 @marketplace_bp.route('/get-parts-for-export', methods=['POST'])
 def get_parts_for_export():
     """
@@ -698,10 +774,23 @@ def get_parts_for_export():
         cursor = db.cursor()
 
         query = """
-            SELECT 
+            SELECT
                 pn.base_part_number,
                 pn.part_number,
-                pn.mkp_category
+                pn.mkp_category,
+                pn.mkp_description,
+                pn.mkp_name,
+                pn.mkp_product_summary,
+                pn.mkp_product_presentation,
+                pn.mkp_product_unit,
+                pn.mkp_package_content,
+                pn.mkp_package_content_unit,
+                pn.mkp_third_level,
+                pn.mkp_dangerous,
+                pn.mkp_eccn,
+                pn.mkp_serialized,
+                pn.mkp_log_card,
+                pn.mkp_easaf1
             FROM part_numbers pn
             WHERE 1=1
         """
@@ -890,6 +979,19 @@ def get_parts_for_export():
                 'base_part_number': base_part_number,
                 'part_number': row['part_number'],
                 'mkp_category': row['mkp_category'],
+                'mkp_description': row['mkp_description'],
+                'mkp_name': row['mkp_name'],
+                'mkp_product_summary': row['mkp_product_summary'],
+                'mkp_product_presentation': row['mkp_product_presentation'],
+                'mkp_product_unit': row['mkp_product_unit'],
+                'mkp_package_content': row['mkp_package_content'],
+                'mkp_package_content_unit': row['mkp_package_content_unit'],
+                'mkp_third_level': row['mkp_third_level'],
+                'mkp_dangerous': row['mkp_dangerous'],
+                'mkp_eccn': row['mkp_eccn'],
+                'mkp_serialized': row['mkp_serialized'],
+                'mkp_log_card': row['mkp_log_card'],
+                'mkp_easaf1': row['mkp_easaf1'],
                 'description': '',
                 'manufacturer': '',
                 'estimated_price': estimated_price,
@@ -947,10 +1049,23 @@ def export_to_marketplace():
 
         placeholders = ','.join('?' * len(base_part_numbers))
         query = f"""
-            SELECT 
+            SELECT
                 pn.base_part_number,
                 pn.part_number,
-                pn.mkp_category
+                pn.mkp_category,
+                pn.mkp_description,
+                pn.mkp_name,
+                pn.mkp_product_summary,
+                pn.mkp_product_presentation,
+                pn.mkp_product_unit,
+                pn.mkp_package_content,
+                pn.mkp_package_content_unit,
+                pn.mkp_third_level,
+                pn.mkp_dangerous,
+                pn.mkp_eccn,
+                pn.mkp_serialized,
+                pn.mkp_log_card,
+                pn.mkp_easaf1
             FROM part_numbers pn
             WHERE pn.base_part_number IN ({placeholders})
         """
@@ -992,6 +1107,19 @@ def export_to_marketplace():
                 'base_part_number': row['base_part_number'],
                 'part_number': row['part_number'],
                 'mkp_category': row['mkp_category'],
+                'mkp_description': row['mkp_description'],
+                'mkp_name': row['mkp_name'],
+                'mkp_product_summary': row['mkp_product_summary'],
+                'mkp_product_presentation': row['mkp_product_presentation'],
+                'mkp_product_unit': row['mkp_product_unit'],
+                'mkp_package_content': row['mkp_package_content'],
+                'mkp_package_content_unit': row['mkp_package_content_unit'],
+                'mkp_third_level': row['mkp_third_level'],
+                'mkp_dangerous': row['mkp_dangerous'],
+                'mkp_eccn': row['mkp_eccn'],
+                'mkp_serialized': row['mkp_serialized'],
+                'mkp_log_card': row['mkp_log_card'],
+                'mkp_easaf1': row['mkp_easaf1'],
                 'description': '',
                 'manufacturer': '',
                 'quantity': quantity,
@@ -1189,9 +1317,45 @@ def mirakl_import_offers():
 
     try:
         result = client.import_offers(csv_bytes, import_mode=import_mode)
+        logger.info("Mirakl offer import result: %s", result)
         return jsonify({'success': True, 'result': result}), 200
     except MiraklError as exc:
         logger.exception("Mirakl offer import failed")
+        return jsonify({'success': False, 'error': str(exc)}), 502
+
+
+@marketplace_bp.route('/mirakl/products/import', methods=['POST'])
+def mirakl_import_products():
+    """
+    Import products using the full Airbus template format (products + offers combined).
+    This is the correct endpoint for the Airbus marketplace.
+    """
+    client, error = _get_mirakl_client()
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+
+    data = request.get_json() or {}
+    parts = data.get('parts') or []
+    import_mode = data.get('import_mode', 'NORMAL')
+
+    if not parts:
+        return jsonify({'success': False, 'error': 'parts array is required'}), 400
+
+    try:
+        # Use the Airbus marketplace export function to build the full template CSV
+        csv_file = export_parts_to_airbus_marketplace_csv(parts)
+        csv_bytes = csv_file.read()
+        logger.info("Built Airbus template CSV with %d parts (%d bytes)", len(parts), len(csv_bytes))
+    except Exception as exc:
+        logger.exception("Failed to build Airbus template CSV")
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    try:
+        result = client.import_products(csv_bytes, import_mode=import_mode)
+        logger.info("Mirakl product import result: %s", result)
+        return jsonify({'success': True, 'result': result}), 200
+    except MiraklError as exc:
+        logger.exception("Mirakl product import failed")
         return jsonify({'success': False, 'error': str(exc)}), 502
 
 
@@ -1217,6 +1381,7 @@ def mirakl_import_offers_file():
 
     try:
         result = client.import_offers(csv_bytes, import_mode=import_mode)
+        logger.info("Mirakl offer import (file) result: %s", result)
         return jsonify({'success': True, 'result': result}), 200
     except MiraklError as exc:
         logger.exception("Mirakl offer import (file) failed")
@@ -1244,6 +1409,7 @@ def mirakl_import_products_file():
 
     try:
         result = client.import_products(csv_bytes, import_mode=import_mode)
+        logger.info("Mirakl product import result: %s", result)
         return jsonify({'success': True, 'result': result}), 200
     except MiraklError as exc:
         logger.exception("Mirakl product import (file) failed")

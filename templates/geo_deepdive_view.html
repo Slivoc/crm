@@ -212,6 +212,76 @@
     </div>
   </div>
 </div>
+
+<div class="card mt-3" id="linkedTextPanel">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h6 class="mb-0"><i class="fas fa-link"></i> Linked Text Entries</h6>
+    <span class="badge bg-secondary">{{ customer_links|length }} total</span>
+  </div>
+  <div class="card-body">
+    {% if customer_links %}
+    <div class="table-responsive mb-3">
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr>
+            <th style="width: 40%;">Text</th>
+            <th style="width: 45%;">Customer</th>
+            <th style="width: 15%;">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for linked_text, info in customer_links|dictsort %}
+          <tr>
+            <td><strong>{{ linked_text }}</strong></td>
+            <td>
+              <a href="/customers/{{ info.customer_id }}" class="text-decoration-none">
+                {{ info.customer_name }}
+              </a>
+              <span class="badge badge-sm status-badge clickable ms-1"
+                    data-status="{{ info.status|lower if info.status else 'unknown' }}"
+                    data-status-id="{{ info.status_id or '' }}"
+                    data-customer-id="{{ info.customer_id }}"
+                    title="Click to advance status">
+                {{ info.status or 'Unknown' }}
+              </span>
+            </td>
+            <td>
+              <button class="btn btn-link p-0 text-muted remove-linked-text"
+                      type="button"
+                      title="Remove link"
+                      aria-label="Remove link"
+                      data-customer-id="{{ info.customer_id }}"
+                      data-linked-text="{{ linked_text }}">
+                <i class="fas fa-unlink fa-sm"></i>
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-muted small mb-3">No linked text entries yet.</p>
+    {% endif %}
+
+    <div class="border-top pt-3">
+      <h6 class="mb-2">Add Link Manually</h6>
+      <div class="mb-2">
+        <label class="form-label mb-1">Linked Text</label>
+        <input type="text" class="form-control form-control-sm" id="manualLinkedText" placeholder="Enter the exact text to link">
+      </div>
+      <div class="mb-2">
+        <label class="form-label mb-1">Search Customer</label>
+        <input type="text" class="form-control form-control-sm" id="manualCustomerSearch" placeholder="Type to search customers...">
+        <div id="manualCustomerResults" class="mt-2"></div>
+        <div id="manualSelectedCustomer" class="small text-muted mt-1" style="display: none;"></div>
+      </div>
+      <button class="btn btn-sm btn-primary" id="manualAddLink" disabled>
+        <i class="fas fa-link"></i> Add Link
+      </button>
+    </div>
+  </div>
+</div>
     </div>
 </div>
 <!-- GeoDeepDive Customer Search Modal -->
@@ -384,11 +454,13 @@ let geoSelectedCustomerId = null;
 let textSelectionSelectedCustomer = null;
 let improvedContentData = null;
 let selectedTextForCustomer = '';
+let manualSelectedCustomerId = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeStatusBadgeHandlers();
     initializeImproveContentHandlers();
     initializeTextSelectionHandlers();
+    initializeLinkedTextPanel();
     loadMarketPenetrationData();
     attachSearchListeners();
     makeContentInteractive();
@@ -588,7 +660,8 @@ function handleTextSelectionSearch() {
     fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=10`)
         .then(response => response.json())
         .then(data => {
-            displayTextSelectionResults(data || []);
+            const results = Array.isArray(data) ? data : (data && data.customers ? data.customers : []);
+            displayTextSelectionResults(results);
         })
         .catch(error => {
             console.error('Error:', error);
@@ -598,14 +671,19 @@ function handleTextSelectionSearch() {
 
 function displayTextSelectionResults(customers) {
     const resultsDiv = document.getElementById('textSelectionResults');
+    const customerList = Array.isArray(customers) ? customers : [];
+    const fallbackName = (selectedTextForCustomer || document.getElementById('textSelectionSearch').value || '').trim();
 
-    if (customers.length === 0) {
-        resultsDiv.innerHTML = '<small class="text-muted">No customers found</small>';
+    if (customerList.length === 0) {
+        resultsDiv.innerHTML = `
+            <div class="text-muted small mb-2">No customers found.</div>
+            ${renderCreateNewLinkButton(fallbackName)}
+        `;
         return;
     }
 
     let html = '';
-    customers.forEach(customer => {
+    customerList.forEach(customer => {
         const escapedName = customer.name.replace(/'/g, "\\'");
         html += `
             <div class="search-result p-2 border rounded mb-2 cursor-pointer" onclick="selectTextSelectionCustomer(${customer.id}, '${escapedName}', this)">
@@ -635,6 +713,174 @@ function selectTextSelectionCustomer(customerId, customerName, element) {
         el.classList.remove('selected');
     });
     element.classList.add('selected');
+}
+
+function openCreateNewFromLinkModal(prefillName) {
+    const textSelectionModal = bootstrap.Modal.getInstance(document.getElementById('textSelectionModal'));
+    if (textSelectionModal) {
+        textSelectionModal.hide();
+    }
+    setTimeout(() => {
+        openAddCustomerModal(prefillName || selectedTextForCustomer);
+    }, 300);
+}
+
+function renderCreateNewLinkButton(prefillName) {
+    const safeName = (prefillName || '').replace(/'/g, "\\'");
+    return `
+        <button type="button" class="btn btn-sm btn-outline-primary" onclick="openCreateNewFromLinkModal('${safeName}')">
+            <i class="fas fa-plus"></i> Create New Customer
+        </button>
+    `;
+}
+
+function initializeLinkedTextPanel() {
+    const manualTextInput = document.getElementById('manualLinkedText');
+    const manualSearchInput = document.getElementById('manualCustomerSearch');
+    const manualAddButton = document.getElementById('manualAddLink');
+
+    if (manualTextInput) {
+        manualTextInput.addEventListener('input', updateManualAddLinkState);
+    }
+
+    if (manualSearchInput) {
+        manualSearchInput.addEventListener('input', handleManualCustomerSearch);
+    }
+
+    if (manualAddButton) {
+        manualAddButton.addEventListener('click', function() {
+            const linkedText = (manualTextInput.value || '').trim();
+            if (!manualSelectedCustomerId || linkedText.length < 2) {
+                return;
+            }
+            createCustomerLink(manualSelectedCustomerId, linkedText);
+        });
+    }
+
+    const panel = document.getElementById('linkedTextPanel');
+    if (panel) {
+        panel.addEventListener('click', function(e) {
+            const button = e.target.closest('.remove-linked-text');
+            if (!button) {
+                return;
+            }
+            const linkedText = button.getAttribute('data-linked-text');
+            const customerId = button.getAttribute('data-customer-id');
+            if (linkedText && customerId) {
+                removeCustomerLink(linkedText, customerId);
+            }
+        });
+    }
+}
+
+function updateManualAddLinkState() {
+    const manualTextInput = document.getElementById('manualLinkedText');
+    const manualAddButton = document.getElementById('manualAddLink');
+    if (!manualTextInput || !manualAddButton) {
+        return;
+    }
+    const linkedText = (manualTextInput.value || '').trim();
+    manualAddButton.disabled = !manualSelectedCustomerId || linkedText.length < 2;
+}
+
+function handleManualCustomerSearch() {
+    const query = document.getElementById('manualCustomerSearch').value.trim();
+    const resultsDiv = document.getElementById('manualCustomerResults');
+
+    if (query.length < 2) {
+        const fallbackName = (selectedTextForCustomer || query).trim();
+        resultsDiv.innerHTML = renderCreateNewLinkButton(fallbackName);
+        manualSelectedCustomerId = null;
+        document.getElementById('manualSelectedCustomer').style.display = 'none';
+        updateManualAddLinkState();
+        return;
+    }
+
+    fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=10`)
+        .then(response => response.json())
+        .then(data => {
+            displayManualCustomerResults(data || []);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            resultsDiv.innerHTML = '<small class="text-danger">Error searching customers</small>';
+        });
+}
+
+function displayManualCustomerResults(customers) {
+    const resultsDiv = document.getElementById('manualCustomerResults');
+    const fallbackName = (selectedTextForCustomer || document.getElementById('manualCustomerSearch').value || '').trim();
+
+    if (customers.length === 0) {
+        resultsDiv.innerHTML = `
+            <div class="text-muted small mb-2">No customers found.</div>
+            ${renderCreateNewLinkButton(fallbackName)}
+        `;
+        return;
+    }
+
+    let html = '';
+    customers.forEach(customer => {
+        const escapedName = customer.name.replace(/'/g, "\\'");
+        html += `
+            <div class="search-result p-2 border rounded mb-2 cursor-pointer" onclick="selectManualCustomer(${customer.id}, '${escapedName}', this)">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div class="flex-grow-1">
+                        <strong>${customer.name}</strong>
+                        <span class="badge badge-info badge-sm ml-1">${customer.country || 'Unknown'}</span>
+                        ${customer.assigned_salesperson_name ?
+                            `<br><small class="text-muted">Rep: ${customer.assigned_salesperson_name}</small>` :
+                            `<br><small class="text-muted">No Rep Assigned</small>`
+                        }
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    resultsDiv.innerHTML = html + `
+        <div class="mt-2">
+            ${renderCreateNewLinkButton(fallbackName)}
+        </div>
+    `;
+}
+
+function selectManualCustomer(customerId, customerName, element) {
+    manualSelectedCustomerId = customerId;
+    updateManualAddLinkState();
+
+    const selected = document.getElementById('manualSelectedCustomer');
+    selected.textContent = `Selected: ${customerName}`;
+    selected.style.display = 'block';
+
+    document.querySelectorAll('#manualCustomerResults .search-result').forEach(el => {
+        el.classList.remove('selected');
+    });
+    element.classList.add('selected');
+}
+
+function removeCustomerLink(linkedText, customerId) {
+    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/customer-links`, {
+        method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            customer_id: parseInt(customerId, 10),
+            linked_text: linkedText
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            window.location.reload();
+        } else {
+            console.error('Failed to remove customer link:', data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error removing customer link:', error);
+    });
 }
 
 function attachSearchListeners() {
@@ -983,7 +1229,7 @@ function displayPenetrationChart(data) {
     const chartDiv = document.getElementById('penetrationChart');
 
     if (!data.penetration_data || data.penetration_data.length === 0) {
-        if (data.total_revenue > 0) {
+        if (Number(data.total_revenue) > 0) {
             chartDiv.innerHTML = `
                 <div class="text-center">
                     <div class="mb-2">
@@ -1001,7 +1247,7 @@ function displayPenetrationChart(data) {
         return;
     }
 
-    const totalRevenue = data.total_revenue;
+    const totalRevenue = Number(data.total_revenue) || 0;
     let chartHtml = `
         <div class="mb-3">
             <div class="d-flex justify-content-between align-items-center mb-2">
@@ -1013,9 +1259,9 @@ function displayPenetrationChart(data) {
 
     data.penetration_data.forEach((statusData, index) => {
         const statusLabel = statusData.status_name || statusData.status || `Status ${statusData.status}`;
-        const percentage = statusData.percentage;
-        const revenue = statusData.revenue;
-        const count = statusData.customer_count;
+        const percentage = Number(statusData.percentage) || 0;
+        const revenue = Number(statusData.revenue) || 0;
+        const count = Number(statusData.customer_count) || 0;
         const barColor = getStatusColor(statusData.status);
 
         chartHtml += `
@@ -1043,12 +1289,16 @@ function displayPenetrationChart(data) {
 }
 
 function formatRevenue(amount) {
-    if (amount >= 1000000) {
-        return (amount / 1000000).toFixed(1) + 'M';
-    } else if (amount >= 1000) {
-        return (amount / 1000).toFixed(0) + 'K';
+    const numericAmount = Number(amount);
+    if (!Number.isFinite(numericAmount)) {
+        return '-';
+    }
+    if (numericAmount >= 1000000) {
+        return (numericAmount / 1000000).toFixed(1) + 'M';
+    } else if (numericAmount >= 1000) {
+        return (numericAmount / 1000).toFixed(0) + 'K';
     } else {
-        return amount.toLocaleString();
+        return numericAmount.toLocaleString();
     }
 }
 

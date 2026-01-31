@@ -709,7 +709,8 @@ def process_deepdive_content_with_customer_tags(content, customer_links):
     for linked_text in sorted_texts:
         customer_info = customer_links[linked_text]
 
-        status_text = customer_info.get('status', f"Status {customer_info['status_id']}")
+        status_id = customer_info.get('status_id')
+        status_text = customer_info.get('status') or (f"Status {status_id}" if status_id is not None else "Unknown status")
         status_slug = status_text.lower()
 
         status_badge_html = (
