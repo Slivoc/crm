@@ -524,9 +524,11 @@ def analyze_quote():
                                c.entry_date as quote_date,
                                curr.currency_code,
                                curr.{rate_column} as currency_rate,
-                               c.cq_number
+                               c.cq_number,
+                               cust.name as customer_name
                         FROM cq_lines cl JOIN cqs c ON cl.cq_id = c.id
                         LEFT JOIN currencies curr ON c.currency_id = curr.id
+                        LEFT JOIN customers cust ON c.customer_id = cust.id
                         WHERE cl.base_part_number = ? AND c.entry_date >= ?
                         AND cl.unit_price > 0 AND cl.is_no_quote = FALSE
                         ORDER BY c.entry_date DESC LIMIT 1
@@ -716,7 +718,12 @@ def analyze_quote():
                                     'currency': base_currency_code,
                                     'date': cq_price['quote_date'],
                                     'priority': 1,
-                                    'details': {'reference': cq_price['cq_number'], 'type': 'Historic Quote'}
+                                    'details': {
+                                        'reference': cq_price['cq_number'],
+                                        'type': 'Historic Quote',
+                                        'date': cq_price['quote_date'].strftime('%Y-%m-%d') if cq_price['quote_date'] else None,
+                                        'customer': cq_price['customer_name']
+                                    }
                                 })
                         if sales_price and sales_price['most_recent_price']:
                             sales_price_base = _convert_to_base_currency(

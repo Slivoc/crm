@@ -12,6 +12,7 @@ from routes.portal_admin import send_email
 
 
 tickets_bp = Blueprint('tickets', __name__)
+external_api_bp = Blueprint('tickets_external_api', __name__)
 
 
 @tickets_bp.before_request
@@ -31,6 +32,16 @@ def _parse_bool(value):
     if value is None:
         return False
     return str(value).lower() in ('1', 'true', 'yes', 'on')
+
+
+def _is_external_workspace(workspace):
+    if not workspace:
+        return False
+    return bool(
+        workspace.get('is_external')
+        or workspace.get('external_workspace_uuid')
+        or workspace.get('external_base_url')
+    )
 
 
 def _slugify(value):
@@ -276,6 +287,43 @@ def _external_request(workspace, method, path, payload=None):
         return response, None
     except Exception as exc:
         return None, f'Failed to reach external hub: {exc}'
+
+
+def _parse_external_due_date(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned.endswith('Z'):
+            cleaned = cleaned[:-1]
+        try:
+            return datetime.fromisoformat(cleaned)
+        except ValueError:
+            return None
+    return None
+
+
+def _fetch_external_workspace_tickets(workspace):
+    response, error = _external_request(
+        workspace,
+        'GET',
+        f"/api/external/workspaces/{workspace.get('external_workspace_uuid')}/tickets",
+    )
+    if error:
+        return None, error
+    if response.status_code != 200:
+        return None, f'External hub returned {response.status_code}.'
+    try:
+        data = response.json()
+    except ValueError:
+        return None, 'Invalid response from external hub.'
+    tickets = data.get('tickets') or []
+    statuses = data.get('statuses') or []
+    if not isinstance(tickets, list) or not isinstance(statuses, list):
+        return None, 'Invalid external tickets payload.'
+    return {"tickets": tickets, "statuses": statuses}, None
 
 
 def _sync_external_workspace_tickets(workspace):
@@ -719,6 +767,31 @@ def _fetch_workspaces():
         fetch="all",
     ) or []
     return [dict(row) for row in rows]
+
+
+def _fetch_workspace_by_id(workspace_id):
+    if not workspace_id:
+        return None
+    row = db_execute(
+        """
+        SELECT
+            id,
+            name,
+            default_assignee_id,
+            workspace_key,
+            workspace_uuid,
+            is_external,
+            external_instance_id,
+            external_base_url,
+            external_workspace_uuid,
+            external_workspace_key
+        FROM ticket_workspaces
+        WHERE id = ?
+        """,
+        (workspace_id,),
+        fetch="one",
+    )
+    return dict(row) if row else None
 
 
 def _fetch_linked_filter_options(
@@ -1348,7 +1421,7 @@ def list_tickets():
         if not assigned_user_id and not external_assignee_id and workspace_id and str(workspace_id).isdigit():
             workspace = workspace_lookup.get(int(workspace_id))
             default_assignee_id = workspace.get('default_assignee_id') if workspace else None
-            if default_assignee_id and not (workspace or {}).get('is_external'):
+            if default_assignee_id and not _is_external_workspace(workspace):
                 assigned_user_id = int(default_assignee_id)
 
         external_ticket_id = None
@@ -1357,7 +1430,7 @@ def list_tickets():
         else:
             workspace = None
 
-        if workspace and workspace.get('is_external'):
+        if _is_external_workspace(workspace):
             external_payload = {
                 'title': title,
                 'description': description,
@@ -1371,6 +1444,11 @@ def list_tickets():
             if error or not external_ticket_id:
                 flash(error or 'Unable to create external ticket.', 'error')
                 return redirect(url_for('tickets.list_tickets'))
+            return redirect(url_for(
+                'tickets.external_view_ticket',
+                workspace_id=workspace.get('id'),
+                external_ticket_id=int(external_ticket_id),
+            ))
 
         row = db_execute(
             """
@@ -1437,12 +1515,20 @@ def list_tickets():
     if supplier_filter_id and not str(supplier_filter_id).isdigit():
         supplier_filter_id = None
 
+    workspaces = _fetch_workspaces()
+    external_workspace = None
     if workspace_filter_id and str(workspace_filter_id).isdigit():
-        workspace = next((w for w in _fetch_workspaces() if w['id'] == int(workspace_filter_id)), None)
-        if workspace and workspace.get('is_external'):
-            ok, error = _sync_external_workspace_tickets(workspace)
-            if not ok:
-                flash(error or 'Unable to sync external workspace.', 'error')
+        workspace = next((w for w in workspaces if w['id'] == int(workspace_filter_id)), None)
+        if _is_external_workspace(workspace):
+            external_workspace = workspace
+            external_payload, error = _fetch_external_workspace_tickets(workspace)
+            if error:
+                flash(error or 'Unable to fetch external workspace.', 'error')
+                external_payload = None
+        else:
+            external_payload = None
+    else:
+        external_payload = None
 
     visibility_clause, visibility_params = _ticket_visibility_clause(user_id, is_admin)
     closed_clause = "" if show_closed else "AND s.is_closed = FALSE"
@@ -1589,7 +1675,7 @@ def list_tickets():
         for workspace in workspaces
     }
     workspace_external_map = {
-        workspace['id']: bool(workspace.get('is_external'))
+        workspace['id']: _is_external_workspace(workspace)
         for workspace in workspaces
     }
     workspace_chips = _fetch_workspace_chips(user_id)
@@ -1905,13 +1991,13 @@ def view_ticket(ticket_id):
     users = _fetch_users()
     workspaces = _fetch_workspaces()
     workspace_external_map = {
-        workspace['id']: bool(workspace.get('is_external'))
+        workspace['id']: _is_external_workspace(workspace)
         for workspace in workspaces
     }
     subjobs = _fetch_subjobs(ticket_id, user_id, is_admin)
     updates = _fetch_updates(ticket_id)
     workspace = next((w for w in workspaces if w['id'] == ticket.get('workspace_id')), None)
-    if workspace and workspace.get('is_external') and ticket.get('external_ticket_id'):
+    if _is_external_workspace(workspace) and ticket.get('external_ticket_id'):
         response, error = _external_request(
             workspace,
             'GET',
@@ -1944,6 +2030,200 @@ def view_ticket(ticket_id):
         subjobs=subjobs,
         updates=updates,
     )
+
+
+@tickets_bp.route('/external/<int:workspace_id>/<int:external_ticket_id>', methods=['GET'])
+@login_required
+def external_view_ticket(workspace_id, external_ticket_id):
+    user_id = current_user.id
+    workspace = _fetch_workspace_by_id(workspace_id)
+    if not _is_external_workspace(workspace):
+        abort(404)
+
+    response, error = _external_request(
+        workspace,
+        'GET',
+        f"/api/external/tickets/{external_ticket_id}",
+    )
+    if error or not response or response.status_code != 200:
+        flash(error or 'Unable to load external ticket.', 'error')
+        return redirect(url_for('tickets.list_tickets', workspace_id=workspace_id))
+
+    try:
+        payload = response.json()
+    except ValueError:
+        flash('Invalid response from external hub.', 'error')
+        return redirect(url_for('tickets.list_tickets', workspace_id=workspace_id))
+
+    ticket = payload.get('ticket') or {}
+    ticket['id'] = int(external_ticket_id)
+    ticket['external_ticket_id'] = int(external_ticket_id)
+    ticket['workspace_id'] = workspace_id
+    ticket['workspace_name'] = workspace.get('name') or ticket.get('workspace_name')
+    ticket['assigned_user_name'] = ticket.get('assigned_user_name') or None
+    ticket['due_date'] = _parse_external_due_date(ticket.get('due_date'))
+    ticket['updated_at'] = _parse_external_due_date(ticket.get('updated_at'))
+    ticket['created_at'] = _parse_external_due_date(ticket.get('created_at'))
+    ticket['is_external'] = True
+    ticket['linked_objects'] = []
+
+    updates = payload.get('updates') or []
+    updates = [
+        {
+            "id": update.get("id"),
+            "update_text": update.get("update_text"),
+            "created_at": _parse_external_due_date(update.get("created_at")),
+            "user_name": update.get("author_name") or update.get("user_name"),
+        }
+        for update in updates
+    ]
+    subjobs = []
+
+    external_payload, status_error = _fetch_external_workspace_tickets(workspace)
+    if status_error:
+        flash(status_error or 'Unable to load external statuses.', 'error')
+        statuses = _fetch_statuses()
+    else:
+        statuses = [dict(status) for status in (external_payload.get('statuses') or [])]
+
+    users = _fetch_users()
+    workspaces = _fetch_workspaces()
+    workspace_external_map = {
+        workspace['id']: _is_external_workspace(workspace)
+        for workspace in workspaces
+    }
+    return render_template(
+        'ticket_edit.html',
+        ticket=ticket,
+        statuses=statuses,
+        users=users,
+        workspaces=workspaces,
+        workspace_external_map=workspace_external_map,
+        subjobs=subjobs,
+        updates=updates,
+        update_url=url_for('tickets.external_update_ticket', workspace_id=workspace_id, external_ticket_id=external_ticket_id),
+        comment_url=url_for('tickets.external_add_ticket_update', workspace_id=workspace_id, external_ticket_id=external_ticket_id),
+        subjob_url=url_for('tickets.external_add_subjob', workspace_id=workspace_id, external_ticket_id=external_ticket_id),
+        external_view=True,
+    )
+
+
+@tickets_bp.route('/external/<int:workspace_id>/<int:external_ticket_id>/update', methods=['POST'])
+@login_required
+def external_update_ticket(workspace_id, external_ticket_id):
+    workspace = _fetch_workspace_by_id(workspace_id)
+    if not _is_external_workspace(workspace):
+        abort(404)
+
+    title = request.form.get('title', '').strip()
+    description = request.form.get('description', '').strip()
+    status_id = request.form.get('status_id')
+    priority = request.form.get('priority', 'Medium')
+    due_date = request.form.get('due_date') or None
+    is_private = bool(request.form.get('is_private'))
+    assigned_user_value = request.form.get('assigned_user_id') or None
+    selected_workspace_id = request.form.get('workspace_id') or str(workspace_id)
+    if str(selected_workspace_id) != str(workspace_id):
+        flash('External tickets cannot be moved between workspaces.', 'error')
+        return redirect(url_for('tickets.external_view_ticket', workspace_id=workspace_id, external_ticket_id=external_ticket_id))
+
+    if not title:
+        flash('Title is required.', 'error')
+        return redirect(url_for('tickets.external_view_ticket', workspace_id=workspace_id, external_ticket_id=external_ticket_id))
+
+    assigned_user_id, external_assignee_id, external_assignee_name = _resolve_assignee(
+        assigned_user_value,
+        workspace_id,
+    )
+    payload = {
+        'title': title,
+        'description': description,
+        'status_id': int(status_id) if status_id else None,
+        'priority': priority,
+        'due_date': due_date,
+        'is_private': bool(is_private),
+        'assigned_user_id': external_assignee_id,
+    }
+    ok, error = _update_external_ticket(workspace, external_ticket_id, payload)
+    if not ok:
+        flash(error or 'External update failed.', 'error')
+    return redirect(url_for('tickets.external_view_ticket', workspace_id=workspace_id, external_ticket_id=external_ticket_id))
+
+
+@tickets_bp.route('/external/<int:workspace_id>/<int:external_ticket_id>/comment', methods=['POST'])
+@login_required
+def external_add_ticket_update(workspace_id, external_ticket_id):
+    workspace = _fetch_workspace_by_id(workspace_id)
+    if not _is_external_workspace(workspace):
+        abort(404)
+
+    update_text = request.form.get('update_text', '').strip()
+    if not update_text:
+        flash('Update text is required.', 'error')
+        return redirect(url_for('tickets.external_view_ticket', workspace_id=workspace_id, external_ticket_id=external_ticket_id))
+
+    ok, error = _comment_external_ticket(workspace, external_ticket_id, update_text)
+    if not ok:
+        flash(error or 'External update failed.', 'error')
+    return redirect(url_for('tickets.external_view_ticket', workspace_id=workspace_id, external_ticket_id=external_ticket_id))
+
+
+@tickets_bp.route('/external/<int:workspace_id>/<int:external_ticket_id>/subjobs', methods=['POST'])
+@login_required
+def external_add_subjob(workspace_id, external_ticket_id):
+    workspace = _fetch_workspace_by_id(workspace_id)
+    if not _is_external_workspace(workspace):
+        abort(404)
+
+    title = request.form.get('title', '').strip()
+    description = request.form.get('description', '').strip()
+    status_id = request.form.get('status_id')
+    priority = request.form.get('priority', 'Medium')
+    due_date = request.form.get('due_date') or None
+    is_private = bool(request.form.get('is_private'))
+    assigned_user_value = request.form.get('assigned_user_id') or None
+
+    if not title:
+        flash('Subjob title is required.', 'error')
+        return redirect(url_for('tickets.external_view_ticket', workspace_id=workspace_id, external_ticket_id=external_ticket_id))
+
+    assigned_user_id, external_assignee_id, external_assignee_name = _resolve_assignee(
+        assigned_user_value,
+        workspace_id,
+    )
+    external_payload = {
+        'title': title,
+        'description': description,
+        'workspace_key': workspace.get('external_workspace_key') or workspace.get('workspace_key'),
+        'priority': priority,
+        'due_date': due_date,
+        'is_private': bool(is_private),
+        'assigned_user_id': external_assignee_id,
+        'parent_ticket_id': external_ticket_id,
+        'status_id': int(status_id) if status_id else None,
+    }
+    new_subjob_id, error = _create_external_ticket(workspace, external_payload)
+    if error or not new_subjob_id:
+        flash(error or 'Unable to create external subtask.', 'error')
+    return redirect(url_for('tickets.external_view_ticket', workspace_id=workspace_id, external_ticket_id=external_ticket_id))
+
+
+@tickets_bp.route('/external/<int:workspace_id>/<int:external_ticket_id>/move', methods=['POST'])
+@login_required
+def external_move_ticket(workspace_id, external_ticket_id):
+    workspace = _fetch_workspace_by_id(workspace_id)
+    if not _is_external_workspace(workspace):
+        return jsonify({'success': False, 'error': 'External workspace not found'}), 404
+
+    data = request.get_json(silent=True) or {}
+    status_id = data.get('status_id')
+    if not status_id:
+        return jsonify({'success': False, 'error': 'Status ID is required'}), 400
+
+    ok, error = _move_external_ticket(workspace, external_ticket_id, int(status_id))
+    if not ok:
+        return jsonify({'success': False, 'error': error or 'External update failed.'}), 502
+    return jsonify({'success': True})
 
 
 @tickets_bp.route('/<int:ticket_id>/quick-status', methods=['POST'])
@@ -2001,7 +2281,7 @@ def quick_status(ticket_id):
         workspace = next((w for w in _fetch_workspaces() if w['id'] == int(ticket.get('workspace_id'))), None)
     else:
         workspace = None
-    if workspace and workspace.get('is_external') and ticket.get('external_ticket_id'):
+    if _is_external_workspace(workspace) and ticket.get('external_ticket_id'):
         ok, error = _move_external_ticket(workspace, ticket.get('external_ticket_id'), int(status_id))
         if not ok:
             return jsonify({'success': False, 'error': error or 'External update failed.'}), 502
@@ -2010,7 +2290,7 @@ def quick_status(ticket_id):
         workspace = next((w for w in _fetch_workspaces() if w['id'] == int(ticket.get('workspace_id'))), None)
     else:
         workspace = None
-    if workspace and workspace.get('is_external') and ticket.get('external_ticket_id'):
+    if _is_external_workspace(workspace) and ticket.get('external_ticket_id'):
         ok, error = _move_external_ticket(workspace, ticket.get('external_ticket_id'), int(status_id))
         if not ok:
             return jsonify({'success': False, 'error': error or 'External update failed.'}), 502
@@ -2127,7 +2407,7 @@ def update_ticket(ticket_id):
     )
 
     workspace = next((w for w in _fetch_workspaces() if w['id'] == int(workspace_id)), None) if workspace_id else None
-    if workspace and workspace.get('is_external') and ticket.get('external_ticket_id'):
+    if _is_external_workspace(workspace) and ticket.get('external_ticket_id'):
         ok, error = _update_external_ticket(
             workspace,
             ticket.get('external_ticket_id'),
@@ -2248,7 +2528,7 @@ def add_subjob(ticket_id):
 
     external_ticket_id = None
     workspace = next((w for w in _fetch_workspaces() if w['id'] == int(workspace_id)), None) if workspace_id else None
-    if workspace and workspace.get('is_external'):
+    if _is_external_workspace(workspace):
         external_payload = {
             'title': title,
             'description': description,
@@ -2379,7 +2659,7 @@ def add_ticket_update(ticket_id):
         workspace = next((w for w in _fetch_workspaces() if w['id'] == int(ticket.get('workspace_id'))), None)
     else:
         workspace = None
-    if workspace and workspace.get('is_external') and ticket.get('external_ticket_id'):
+    if _is_external_workspace(workspace) and ticket.get('external_ticket_id'):
         ok, error = _comment_external_ticket(workspace, ticket.get('external_ticket_id'), update_text)
         if not ok:
             flash(error or 'External update failed.', 'error')
@@ -2650,13 +2930,168 @@ def external_workspace_users(workspace_id):
         (workspace_id,),
         fetch="one",
     )
-    if not workspace or not workspace.get('is_external'):
+    if not _is_external_workspace(workspace):
         return jsonify({'success': True, 'users': []})
 
     ok, result = _refresh_external_users(dict(workspace))
     error_message = None
     if not ok:
         error_message = result
+
+    if external_workspace and external_payload:
+        remote_statuses = external_payload.get("statuses") or []
+        status_lookup = {status.get("id"): status for status in remote_statuses}
+        tickets = []
+        for ticket in external_payload.get("tickets") or []:
+            external_id = ticket.get("id")
+            if not str(external_id).isdigit():
+                continue
+            status_id = ticket.get("status_id")
+            status = status_lookup.get(status_id) or {}
+            due_date = _parse_external_due_date(ticket.get("due_date"))
+            tickets.append({
+                "id": int(external_id),
+                "title": ticket.get("title") or "",
+                "description": ticket.get("description"),
+                "status_id": status_id,
+                "status_name": status.get("name"),
+                "status_is_closed": status.get("is_closed"),
+                "assigned_user_id": None,
+                "assigned_user_name": ticket.get("assigned_user_name"),
+                "external_assignee_id": ticket.get("assigned_user_id"),
+                "parent_ticket_id": ticket.get("parent_ticket_id"),
+                "parent_id": ticket.get("parent_ticket_id"),
+                "priority": ticket.get("priority") or "Medium",
+                "due_date": due_date,
+                "is_private": bool(ticket.get("is_private")),
+                "workspace_id": external_workspace.get("id"),
+                "workspace_name": external_workspace.get("name"),
+                "subjob_count": ticket.get("subjob_count") or 0,
+                "closed_subjob_count": ticket.get("closed_subjob_count") or 0,
+                "external_ticket_id": int(external_id),
+                "is_external": True,
+                "view_url": url_for(
+                    "tickets.external_view_ticket",
+                    workspace_id=external_workspace.get("id"),
+                    external_ticket_id=int(external_id),
+                ),
+            })
+
+        ticket_lookup = {ticket["id"]: ticket for ticket in tickets}
+        for ticket in tickets:
+            chain_titles = []
+            parent_id = ticket.get("parent_id")
+            hop_count = 0
+            parent = None
+            while parent_id and hop_count < 5:
+                parent = ticket_lookup.get(parent_id)
+                if not parent:
+                    break
+                chain_titles.append(f"#{parent['id']} {parent['title']}")
+                parent_id = parent.get("parent_id")
+                hop_count += 1
+            ticket["parent_chain"] = " > ".join(reversed(chain_titles)) if chain_titles else None
+            ticket["depth"] = len(chain_titles)
+            if ticket.get("parent_id") and parent:
+                ticket["parent_label"] = f"#{parent['id']} {parent['title']}"
+            else:
+                ticket["parent_label"] = None
+            ticket["is_context_only"] = False
+
+        statuses = [dict(status) for status in remote_statuses]
+        default_status_id = None
+        for status in statuses:
+            if not status.get('is_closed'):
+                default_status_id = status.get('id')
+                break
+        users = _fetch_users()
+        customers = []
+        suppliers = []
+        workspace_defaults = {workspace['id']: workspace.get('default_assignee_id') for workspace in workspaces}
+        workspace_external_map = {workspace['id']: _is_external_workspace(workspace) for workspace in workspaces}
+        workspace_chips = _fetch_workspace_chips(user_id)
+
+        tickets_by_status = {status['id']: [] for status in statuses}
+        status_groups = {}
+        for ticket in tickets:
+            status_groups.setdefault(ticket["status_id"], []).append(ticket)
+
+        for status_id, group in status_groups.items():
+            group_ids = {ticket["id"] for ticket in group}
+            expanded_group = list(group)
+            expanded_ids = set(group_ids)
+
+            for ticket in group:
+                parent_id = ticket.get("parent_id")
+                hop_count = 0
+                while parent_id and hop_count < 5:
+                    parent = ticket_lookup.get(parent_id)
+                    if not parent:
+                        break
+                    if parent_id not in expanded_ids:
+                        context_ticket = dict(parent)
+                        context_ticket["is_context_only"] = True
+                        context_ticket["context_for_status_id"] = status_id
+                        expanded_group.append(context_ticket)
+                        expanded_ids.add(parent_id)
+                    parent_id = parent.get("parent_id")
+                    hop_count += 1
+
+            group = expanded_group
+            group_ids = expanded_ids
+            children_by_parent = {}
+            for ticket in group:
+                parent_id = ticket.get("parent_id")
+                if parent_id:
+                    children_by_parent.setdefault(parent_id, []).append(ticket)
+
+            ordered = []
+            seen = set()
+
+            def append_children(parent_id):
+                for child in children_by_parent.get(parent_id, []):
+                    if child["id"] in seen:
+                        continue
+                    ordered.append(child)
+                    seen.add(child["id"])
+                    append_children(child["id"])
+
+            for ticket in group:
+                if ticket["id"] in seen:
+                    continue
+                if ticket.get("parent_id") and ticket["parent_id"] in group_ids:
+                    continue
+                ordered.append(ticket)
+                seen.add(ticket["id"])
+                append_children(ticket["id"])
+
+            for ticket in group:
+                if ticket["id"] not in seen:
+                    ordered.append(ticket)
+                    seen.add(ticket["id"])
+                    append_children(ticket["id"])
+
+            tickets_by_status[status_id] = ordered
+
+        return render_template(
+            'tickets.html',
+            tickets_by_status=tickets_by_status,
+            statuses=statuses,
+            users=users,
+            workspaces=workspaces,
+            workspace_chips=workspace_chips,
+            show_closed=show_closed,
+            only_mine=only_mine,
+            created_by_me=created_by_me,
+            workspace_filter_id=workspace_filter_id,
+            customer_filter_id=customer_filter_id,
+            supplier_filter_id=supplier_filter_id,
+            default_status_id=default_status_id,
+            workspace_defaults=workspace_defaults,
+            workspace_external_map=workspace_external_map,
+            customers=customers,
+            suppliers=suppliers,
+        )
 
     rows = db_execute(
         """
@@ -2675,8 +3110,7 @@ def external_workspace_users(workspace_id):
     return jsonify(payload)
 
 
-@tickets_bp.route('/api/external/workspaces/<workspace_uuid>/users', methods=['GET'])
-def external_workspace_users_api(workspace_uuid):
+def _external_workspace_users_api(workspace_uuid):
     if not _external_api_authorized():
         return jsonify({'error': 'Unauthorized'}), 401
 
@@ -2733,6 +3167,16 @@ def external_workspace_users_api(workspace_uuid):
         for row in rows
     ]
     return jsonify({'users': users})
+
+
+@tickets_bp.route('/api/external/workspaces/<workspace_uuid>/users', methods=['GET'])
+def external_workspace_users_api(workspace_uuid):
+    return _external_workspace_users_api(workspace_uuid)
+
+
+@external_api_bp.route('/api/external/workspaces/<workspace_uuid>/users', methods=['GET'])
+def external_workspace_users_api_root(workspace_uuid):
+    return _external_workspace_users_api(workspace_uuid)
 
 
 @tickets_bp.route('/workspaces/<int:workspace_id>', methods=['POST'])

@@ -70,7 +70,7 @@
         <div class="ticket-main">
             <!-- Title & Description Card -->
             <div class="detail-card">
-                <form method="post" action="{{ url_for('tickets.update_ticket', ticket_id=ticket.id) }}" id="ticketForm">
+                <form method="post" action="{{ update_url if update_url else url_for('tickets.update_ticket', ticket_id=ticket.id) }}" id="ticketForm">
                     <div class="form-group mb-3">
                         <input type="text" class="form-control form-control-lg title-input" name="title" value="{{ ticket.title }}" placeholder="Ticket title" required>
                     </div>
@@ -123,7 +123,7 @@
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Workspace</label>
-                            <select class="form-select" name="workspace_id" id="ticketWorkspaceEdit">
+                            <select class="form-select" name="workspace_id" id="ticketWorkspaceEdit" {% if external_view %}disabled{% endif %}>
                                 <option value="">None</option>
                                 {% for workspace in workspaces %}
                                     <option value="{{ workspace.id }}" {% if workspace.id == ticket.workspace_id %}selected{% endif %}>
@@ -131,6 +131,9 @@
                                     </option>
                                 {% endfor %}
                             </select>
+                            {% if external_view %}
+                                <input type="hidden" name="workspace_id" value="{{ ticket.workspace_id }}">
+                            {% endif %}
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Due Date</label>
@@ -220,7 +223,7 @@
                     <i class="bi bi-chat-left-text me-2"></i>Activity
                 </h5>
                 
-                <form method="post" action="{{ url_for('tickets.add_ticket_update', ticket_id=ticket.id) }}" class="update-form mb-4" id="updateForm">
+                <form method="post" action="{{ comment_url if comment_url else url_for('tickets.add_ticket_update', ticket_id=ticket.id) }}" class="update-form mb-4" id="updateForm">
                     <div class="input-group position-relative">
                         <input type="text" class="form-control" name="update_text" id="updateTextInput" placeholder="Add an update or comment... Use @ to mention users" autocomplete="off" required>
                         <button type="submit" class="btn btn-outline-primary">
@@ -300,7 +303,7 @@
                 </button>
 
                 <div class="collapse mt-3" id="newSubtaskForm">
-                    <form method="post" action="{{ url_for('tickets.add_subjob', ticket_id=ticket.id) }}">
+                    <form method="post" action="{{ subjob_url if subjob_url else url_for('tickets.add_subjob', ticket_id=ticket.id) }}">
                         <div class="mb-2">
                             <input type="text" class="form-control form-control-sm" name="title" placeholder="Subtask title" required>
                         </div>

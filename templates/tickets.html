@@ -140,7 +140,7 @@
                                     <div class="branch-continuation" style="left: {{ (cd - depth) * 20 }}px;"></div>
                                     {% endif %}
                                 {% endfor %}
-                                <div class="ticket-card{% if is_subtask %} subtask-card{% endif %}{% if ticket.is_context_only %} context-only{% endif %}" data-ticket-id="{{ ticket.id }}">
+                                <div class="ticket-card{% if is_subtask %} subtask-card{% endif %}{% if ticket.is_context_only %} context-only{% endif %}" data-ticket-id="{{ ticket.id }}" data-external-ticket-id="{{ ticket.external_ticket_id or '' }}" data-external-workspace-id="{{ ticket.workspace_id if ticket.is_external else '' }}">
                                     {% if ticket.is_context_only %}
                                         <div class="ticket-context-note">
                                             Parent in {{ ticket.status_name or 'another status' }}
@@ -151,7 +151,7 @@
                                         <i class="bi bi-chevron-down"></i>
                                     </button>
                                     {% endif %}
-                                    <a href="{{ url_for('tickets.view_ticket', ticket_id=ticket.id) }}" class="ticket-title">
+                                    <a href="{{ ticket.view_url if ticket.view_url else url_for('tickets.view_ticket', ticket_id=ticket.id) }}" class="ticket-title">
                                         {% if ticket.email_subject %}
                                             <i class="bi bi-envelope me-1 text-muted"></i>
                                         {% endif %}
@@ -1304,12 +1304,18 @@ document.querySelectorAll('.column-body').forEach(column => {
             const ticketWrapper = evt.item;
             const ticketCard = ticketWrapper.querySelector('.ticket-card');
             const ticketId = ticketCard.dataset.ticketId;
+            const externalTicketId = ticketCard.dataset.externalTicketId;
+            const externalWorkspaceId = ticketCard.dataset.externalWorkspaceId;
+            const isExternalTicket = Boolean(externalTicketId && externalWorkspaceId);
             const newStatusId = evt.to.closest('.ticket-column').dataset.statusId;
             const oldStatusId = evt.from.closest('.ticket-column').dataset.statusId;
 
             if (newStatusId !== oldStatusId) {
+                const moveUrl = isExternalTicket
+                    ? `/tickets/external/${externalWorkspaceId}/${externalTicketId}/move`
+                    : `/tickets/${ticketId}/move`;
                 // Update on server
-                fetch(`/tickets/${ticketId}/move`, {
+                fetch(moveUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1323,7 +1329,7 @@ document.querySelectorAll('.column-body').forEach(column => {
                         updateColumnCounts();
                         
                         // Show a brief toast
-                        showToast(data.message, 'success');
+                        showToast(data.message || 'Ticket moved.', 'success');
                         
                         // If it was closed, we might want to hide it if filters are set
                         const showClosed = document.querySelector('input[name="show_closed"]').checked;
