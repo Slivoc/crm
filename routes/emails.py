@@ -533,42 +533,50 @@ def sync_graph_mailbox_emails():
 
             headers = {"Authorization": f"Bearer {token['access_token']}"}
 
-            # Fetch latest emails (first 50)
-            params = {
-                "$top": "50",
-                "$select": (
-                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
-                    "bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
-                ),
-                "$orderby": "receivedDateTime desc",
-            }
-
-            resp = requests.get(
-                "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages",
-                headers=headers,
-                params=params,
-                timeout=20,
+            select_fields = (
+                "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,"
+                "bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
             )
 
-            if resp.status_code >= 400:
+            def _sync_folder(folder_name, order_by_field):
+                params = {
+                    "$top": "50",
+                    "$select": select_fields,
+                    "$orderby": f"{order_by_field} desc",
+                }
+                resp = requests.get(
+                    f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_name}/messages",
+                    headers=headers,
+                    params=params,
+                    timeout=20,
+                )
+                if resp.status_code >= 400:
+                    return None, f"Graph API error ({folder_name}): {resp.status_code}"
+                try:
+                    body = resp.json() if resp.content else {}
+                except ValueError:
+                    return None, "Invalid JSON response"
+                return body.get("value", []) if isinstance(body, dict) else [], None
+
+            inbox_messages, inbox_error = _sync_folder("Inbox", "receivedDateTime")
+            if inbox_error:
                 totals["errors"] += 1
-                _update_sync_status(user_id, success=False, error=f"Graph API error: {resp.status_code}")
+                _update_sync_status(user_id, success=False, error=inbox_error)
                 continue
 
-            try:
-                body = resp.json() if resp.content else {}
-            except ValueError:
+            sent_messages, sent_error = _sync_folder("SentItems", "sentDateTime")
+            if sent_error:
                 totals["errors"] += 1
-                _update_sync_status(user_id, success=False, error="Invalid JSON response")
+                _update_sync_status(user_id, success=False, error=sent_error)
                 continue
 
-            messages = body.get("value", []) if isinstance(body, dict) else []
+            messages = (inbox_messages or []) + (sent_messages or [])
 
             if messages:
                 _cache_email_messages(user_id, messages)
                 totals["messages_synced"] += len(messages)
                 try:
-                    triage_result = _run_email_triage_for_messages(user_id, messages, headers)
+                    triage_result = _run_email_triage_for_messages(user_id, inbox_messages or [], headers)
                     totals["triage_processed"] += triage_result.get("processed", 0)
                     totals["triage_created"] += triage_result.get("created", 0)
                 except Exception as exc:
@@ -2486,13 +2494,17 @@ def _get_emails_for_contact(user_id, contact_email, limit=5):
         from_data = _parse_json_value(row.get('from_data') if isinstance(row, dict) else row[6])
         to_recipients = _parse_json_value(row.get('to_recipients') if isinstance(row, dict) else row[7])
         cc_recipients = _parse_json_value(row.get('cc_recipients') if isinstance(row, dict) else row[8])
+        raw_msg = row.get('raw_message') if isinstance(row, dict) else row[1]
+        message = _parse_json_value(raw_msg) if raw_msg else {}
+        bcc_recipients = message.get('bccRecipients') if isinstance(message, dict) else None
 
         from_emails = _extract_graph_addresses([from_data] if isinstance(from_data, dict) else from_data or [])
         to_emails = _extract_graph_addresses(to_recipients or [])
         cc_emails = _extract_graph_addresses(cc_recipients or [])
+        bcc_emails = _extract_graph_addresses(bcc_recipients or [])
 
         is_from_contact = any(addr and addr.lower() == needle for addr in from_emails)
-        is_to_contact = any(addr and addr.lower() == needle for addr in (to_emails + cc_emails))
+        is_to_contact = any(addr and addr.lower() == needle for addr in (to_emails + cc_emails + bcc_emails))
 
         if is_from_contact:
             return 'received', True
@@ -3277,30 +3289,43 @@ def graph_sync_cache():
             }), 400
 
         headers = {"Authorization": f"Bearer {token['access_token']}"}
-        params = {
-            "$top": "50",
-            "$select": (
-                "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
-                "bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
-            ),
-            "$orderby": "receivedDateTime desc",
-        }
-
-        resp = requests.get(
-            "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages",
-            headers=headers,
-            params=params,
-            timeout=20,
+        select_fields = (
+            "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,"
+            "bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
         )
 
-        if resp.status_code >= 400:
+        def _sync_folder(folder_name, order_by_field):
+            params = {
+                "$top": "50",
+                "$select": select_fields,
+                "$orderby": f"{order_by_field} desc",
+            }
+            resp = requests.get(
+                f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_name}/messages",
+                headers=headers,
+                params=params,
+                timeout=20,
+            )
+            if resp.status_code >= 400:
+                return None, f"Graph API error ({folder_name}): {resp.status_code}"
+            body = resp.json() if resp.content else {}
+            return body.get("value", []) if isinstance(body, dict) else [], None
+
+        inbox_messages, inbox_error = _sync_folder("Inbox", "receivedDateTime")
+        if inbox_error:
             return jsonify({
                 "success": False,
-                "error": f"Graph API error: {resp.status_code}",
+                "error": inbox_error,
             }), 400
 
-        body = resp.json() if resp.content else {}
-        messages = body.get("value", []) if isinstance(body, dict) else []
+        sent_messages, sent_error = _sync_folder("SentItems", "sentDateTime")
+        if sent_error:
+            return jsonify({
+                "success": False,
+                "error": sent_error,
+            }), 400
+
+        messages = (inbox_messages or []) + (sent_messages or [])
 
         if messages:
             _cache_email_messages(user_id, messages)
@@ -4411,7 +4436,7 @@ def scan_contact_emails():
                     "ConsistencyLevel": "eventual",
                 }
                 select_fields = (
-                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
+                    "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,"
                     "body,bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
                 )
 
@@ -4428,6 +4453,10 @@ def scan_contact_emails():
                         if addr and addr.lower() == needle:
                             return True
                     for recipient in message.get("ccRecipients", []) or []:
+                        addr = recipient.get("emailAddress", {}).get("address", "")
+                        if addr and addr.lower() == needle:
+                            return True
+                    for recipient in message.get("bccRecipients", []) or []:
                         addr = recipient.get("emailAddress", {}).get("address", "")
                         if addr and addr.lower() == needle:
                             return True
@@ -4634,7 +4663,7 @@ def scan_contacts_bulk():
                     "ConsistencyLevel": "eventual",
                 }
                 select_fields = (
-                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
+                    "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,"
                     "body,bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
                 )
 
@@ -4657,6 +4686,10 @@ def scan_contacts_bulk():
                             if addr and addr.lower() == needle:
                                 return True
                         for recipient in message.get("ccRecipients", []) or []:
+                            addr = recipient.get("emailAddress", {}).get("address", "")
+                            if addr and addr.lower() == needle:
+                                return True
+                        for recipient in message.get("bccRecipients", []) or []:
                             addr = recipient.get("emailAddress", {}).get("address", "")
                             if addr and addr.lower() == needle:
                                 return True

@@ -3461,88 +3461,86 @@ def get_request_details(supplier_id, base_part_number):
     including any quote response received.
     """
     try:
-        conn = get_db()
-        cursor = conn.cursor()
+        with db_cursor() as cursor:
+            # Get the most recent request sent to this supplier for this part
+            recent_request = _execute_with_cursor(cursor, """
+                SELECT
+                    se.id,
+                    se.date_sent,
+                    se.email_subject,
+                    se.recipient_email,
+                    pll.parts_list_id,
+                    pl.name as list_name
+                FROM parts_list_line_supplier_emails se
+                JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
+                JOIN parts_lists pl ON pl.id = pll.parts_list_id
+                WHERE pll.base_part_number = ?
+                  AND se.supplier_id = ?
+                ORDER BY se.date_sent DESC
+                LIMIT 1
+            """, (base_part_number, supplier_id)).fetchone()
 
-        # Get the most recent request sent to this supplier for this part
-        recent_request = _execute_with_cursor(cursor, """
-            SELECT
-                se.id,
-                se.date_sent,
-                se.email_subject,
-                se.recipient_email,
-                pll.parts_list_id,
-                pl.name as list_name
-            FROM parts_list_line_supplier_emails se
-            JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
-            JOIN parts_lists pl ON pl.id = pll.parts_list_id
-            WHERE pll.base_part_number = ?
-              AND se.supplier_id = ?
-            ORDER BY se.date_sent DESC
-            LIMIT 1
-        """, (base_part_number, supplier_id)).fetchone()
+            if not recent_request:
+                return jsonify({'success': True, 'request': None, 'response': None})
 
-        if not recent_request:
-            return jsonify({'success': True, 'request': None, 'response': None})
+            request_date = recent_request['date_sent']
 
-        request_date = recent_request['date_sent']
+            # Look for any quote response from this supplier for this part after the request
+            quote_response = _execute_with_cursor(cursor, """
+                SELECT
+                    sql.unit_price,
+                    sql.quantity_quoted,
+                    sql.lead_time_days,
+                    sql.condition_code,
+                    sql.is_no_bid,
+                    sql.line_notes,
+                    sql.quoted_part_number,
+                    sql.manufacturer,
+                    sql.date_created as quote_date,
+                    sq.quote_reference,
+                    sq.currency_id,
+                    c.currency_code
+                FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+                LEFT JOIN currencies c ON c.id = sq.currency_id
+                WHERE pll.base_part_number = ?
+                  AND sq.supplier_id = ?
+                  AND sql.date_created >= ?
+                ORDER BY sql.date_created DESC
+                LIMIT 1
+            """, (base_part_number, supplier_id, request_date)).fetchone()
 
-        # Look for any quote response from this supplier for this part after the request
-        quote_response = _execute_with_cursor(cursor, """
-            SELECT
-                sql.unit_price,
-                sql.quantity_quoted,
-                sql.lead_time_days,
-                sql.condition_code,
-                sql.is_no_bid,
-                sql.line_notes,
-                sql.quoted_part_number,
-                sql.manufacturer,
-                sql.date_created as quote_date,
-                sq.quote_reference,
-                sq.currency_id,
-                c.code as currency_code
-            FROM parts_list_supplier_quote_lines sql
-            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-            JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
-            LEFT JOIN currencies c ON c.id = sq.currency_id
-            WHERE pll.base_part_number = ?
-              AND sq.supplier_id = ?
-              AND sql.date_created >= ?
-            ORDER BY sql.date_created DESC
-            LIMIT 1
-        """, (base_part_number, supplier_id, request_date)).fetchone()
-
-        # Format the response
-        request_info = {
-            'date_sent': _format_date_display(request_date),
-            'email_subject': recent_request['email_subject'],
-            'recipient_email': recent_request['recipient_email'],
-            'list_name': recent_request['list_name'],
-            'list_id': recent_request['parts_list_id']
-        }
-
-        response_info = None
-        if quote_response:
-            response_info = {
-                'is_no_bid': bool(quote_response['is_no_bid']),
-                'quote_date': _format_date_display(quote_response['quote_date']),
-                'unit_price': float(quote_response['unit_price']) if quote_response['unit_price'] else None,
-                'quantity_quoted': quote_response['quantity_quoted'],
-                'lead_time_days': quote_response['lead_time_days'],
-                'condition_code': quote_response['condition_code'],
-                'currency_code': quote_response['currency_code'] or 'GBP',
-                'quote_reference': quote_response['quote_reference'],
-                'quoted_part_number': quote_response['quoted_part_number'],
-                'manufacturer': quote_response['manufacturer'],
-                'notes': quote_response['line_notes']
+            # Format the response
+            request_info = {
+                'date_sent': _format_date_display(request_date),
+                'email_subject': recent_request['email_subject'],
+                'recipient_email': recent_request['recipient_email'],
+                'list_name': recent_request['list_name'],
+                'list_id': recent_request['parts_list_id']
             }
 
-        return jsonify({
-            'success': True,
-            'request': request_info,
-            'response': response_info
-        })
+            response_info = None
+            if quote_response:
+                response_info = {
+                    'is_no_bid': bool(quote_response['is_no_bid']),
+                    'quote_date': _format_date_display(quote_response['quote_date']),
+                    'unit_price': float(quote_response['unit_price']) if quote_response['unit_price'] else None,
+                    'quantity_quoted': quote_response['quantity_quoted'],
+                    'lead_time_days': quote_response['lead_time_days'],
+                    'condition_code': quote_response['condition_code'],
+                    'currency_code': quote_response['currency_code'] or 'GBP',
+                    'quote_reference': quote_response['quote_reference'],
+                    'quoted_part_number': quote_response['quoted_part_number'],
+                    'manufacturer': quote_response['manufacturer'],
+                    'notes': quote_response['line_notes']
+                }
+
+            return jsonify({
+                'success': True,
+                'request': request_info,
+                'response': response_info
+            })
 
     except Exception as e:
         logging.exception("Error fetching request details")

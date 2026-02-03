@@ -1456,6 +1456,10 @@ document.addEventListener('DOMContentLoaded', function () {
       loadEmailsBtn.addEventListener('click', loadEmailTimeline);
     }
 
+    if (timelineContainer && getContactDetailsInputs().contactEmail) {
+      loadEmailTimeline();
+    }
+
     const scanEmailsBtn = contactDetailsContent.querySelector('#scanEmailsBtn');
     if (scanEmailsBtn) {
       scanEmailsBtn.addEventListener('click', async () => {
