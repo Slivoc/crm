@@ -1486,6 +1486,67 @@ def _save_graph_cache_for_request(user_id, cache):
         _save_graph_cache(cache)
 
 
+def _load_mailbox_folders_cache(user_id, max_age_seconds=3600):
+    """Load cached mailbox folders for a user. Returns (folders, is_stale)."""
+    if not user_id:
+        return None, True
+    row = db_execute(
+        """
+        SELECT folders_json, updated_at
+        FROM graph_mailbox_folders_cache
+        WHERE user_id = ?
+        """,
+        (user_id,),
+        fetch="one",
+    )
+    if not row:
+        return None, True
+    folders_json = row.get("folders_json") if isinstance(row, dict) else row[0]
+    updated_at = row.get("updated_at") if isinstance(row, dict) else row[1]
+    if not folders_json:
+        return None, True
+    try:
+        folders = json.loads(folders_json)
+    except (ValueError, TypeError):
+        return None, True
+    is_stale = True
+    if updated_at:
+        from datetime import datetime, timezone
+        if isinstance(updated_at, str):
+            try:
+                updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            except ValueError:
+                updated_at = None
+        if updated_at:
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            age = (now - updated_at).total_seconds()
+            is_stale = age > max_age_seconds
+    return folders, is_stale
+
+
+def _save_mailbox_folders_cache(user_id, folders):
+    """Save mailbox folders to cache for a user."""
+    if not user_id or folders is None:
+        return
+    try:
+        folders_json = json.dumps(folders)
+    except (ValueError, TypeError):
+        return
+    db_execute(
+        """
+        INSERT INTO graph_mailbox_folders_cache (user_id, folders_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE
+        SET folders_json = EXCLUDED.folders_json,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (user_id, folders_json),
+        commit=True,
+    )
+
+
 def _fetch_mailbox_folder_rules(user_id, email_addresses):
     if not user_id or not email_addresses:
         return {}
@@ -3566,6 +3627,20 @@ def graph_message_detail(message_id):
 
 @emails_bp.route('/emails/graph/mail-folders', methods=['GET'])
 def graph_mail_folders():
+    force_refresh = request.args.get('refresh', '').lower() in ('1', 'true', 'yes')
+    user_id = _current_graph_user_id()
+
+    # Return cached folders if available and not forcing refresh
+    if not force_refresh and user_id:
+        cached_folders, is_stale = _load_mailbox_folders_cache(user_id)
+        if cached_folders is not None:
+            return jsonify({
+                "success": True,
+                "folders": cached_folders,
+                "cached": True,
+                "stale": is_stale,
+            })
+
     settings = _get_graph_settings(include_secret=True)
     cache, user_id = _load_graph_cache_for_request()
     app = _build_msal_app(settings, cache=cache)
@@ -3602,9 +3677,14 @@ def graph_mail_folders():
             "debug": error,
         }), 400
 
+    # Cache the folders for future requests
+    if user_id and folders:
+        _save_mailbox_folders_cache(user_id, folders)
+
     return jsonify({
         "success": True,
         "folders": folders,
+        "cached": False,
     })
 
 

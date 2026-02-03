@@ -426,6 +426,7 @@ let mailboxIsLoading = false;
 let mailboxFolderRules = new Map();
 let mailboxFolderList = null;
 let mailboxFolderListLoading = false;
+const MAILBOX_FOLDERS_CACHE_KEY = 'mailboxFoldersCache';
 const MAILBOX_PAGE_SIZE = 25;
 let mailboxLoadImages = localStorage.getItem('mailboxLoadImages');
 mailboxLoadImages = mailboxLoadImages === null ? true : mailboxLoadImages === 'true';
@@ -1592,24 +1593,73 @@ function populateMailboxFolderSelect(folders) {
     mailboxFolderSelect.disabled = false;
 }
 
-async function loadMailboxFolderList() {
-    if (mailboxFolderList || mailboxFolderListLoading) {
+function loadMailboxFoldersFromLocalStorage() {
+    try {
+        const cached = localStorage.getItem(MAILBOX_FOLDERS_CACHE_KEY);
+        if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                return parsed;
+            }
+        }
+    } catch (e) {
+        // Ignore parse errors
+    }
+    return null;
+}
+
+function saveMailboxFoldersToLocalStorage(folders) {
+    try {
+        if (Array.isArray(folders) && folders.length > 0) {
+            localStorage.setItem(MAILBOX_FOLDERS_CACHE_KEY, JSON.stringify(folders));
+        }
+    } catch (e) {
+        // Ignore storage errors
+    }
+}
+
+async function loadMailboxFolderList(forceRefresh = false) {
+    if (mailboxFolderList && !forceRefresh) {
         return mailboxFolderList;
     }
+    if (mailboxFolderListLoading) {
+        return mailboxFolderList;
+    }
+
+    // Try localStorage first for instant UI
+    if (!mailboxFolderList && !forceRefresh) {
+        const localCached = loadMailboxFoldersFromLocalStorage();
+        if (localCached) {
+            mailboxFolderList = localCached;
+            populateMailboxFolderSelect(mailboxFolderList);
+        }
+    }
+
     mailboxFolderListLoading = true;
     try {
-        const response = await fetch('/emails/graph/mail-folders');
+        const url = forceRefresh ? '/emails/graph/mail-folders?refresh=true' : '/emails/graph/mail-folders';
+        const response = await fetch(url);
         const data = await response.json();
         if (!response.ok || !data.success) {
             throw new Error(data.error?.message || 'Failed to load folders');
         }
-        mailboxFolderList = data.folders || [];
+        const folders = data.folders || [];
+        mailboxFolderList = folders;
         populateMailboxFolderSelect(mailboxFolderList);
+        saveMailboxFoldersToLocalStorage(folders);
+
+        // If server returned stale cached data, refresh in background
+        if (data.cached && data.stale && !forceRefresh) {
+            loadMailboxFolderList(true);
+        }
         return mailboxFolderList;
     } catch (error) {
-        populateMailboxFolderSelect([]);
-        setMailboxFolderFeedback(error.message || 'Failed to load folders');
-        return null;
+        // If we already have cached folders, keep using them
+        if (!mailboxFolderList) {
+            populateMailboxFolderSelect([]);
+            setMailboxFolderFeedback(error.message || 'Failed to load folders');
+        }
+        return mailboxFolderList;
     } finally {
         mailboxFolderListLoading = false;
     }
@@ -2562,6 +2612,8 @@ setGraphStatus(graphSeed);
         loadMailboxMessages({ reset: true, silent: true });
     }
 })();
+// Preload folder list in background for faster filing
+loadMailboxFolderList();
 </script>
 
 <style>
