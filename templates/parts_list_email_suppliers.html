@@ -184,6 +184,18 @@
 .queue-card .queue-meta {
     font-size: 0.8rem;
 }
+.email-editor-body {
+    min-height: 240px;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    background: #fff;
+}
+.email-editor-body:focus {
+    outline: none;
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
 </style>
 {% endblock %}
 
@@ -402,9 +414,12 @@
                                     <span class="badge badge-sm bg-quoted">{{ part.quote_count }} Quote{{ 's' if part.quote_count != 1 else '' }}</span>
                                 {% endif %}
                                 {% if part.recent_request_date %}
-                                    <span class="badge badge-sm bg-requested"
-                                          title="Supplier requested in last 30 days{% if part.recent_request_date %} ({{ part.recent_request_date }}){% endif %}">
-                                        Recent Request{% if part.recent_request_date %} · {{ part.recent_request_date }}{% endif %}
+                                    <span class="badge badge-sm bg-requested request-details-badge"
+                                          style="cursor: pointer;"
+                                          data-supplier-id="{{ supplier.supplier_id }}"
+                                          data-base-part-number="{{ part.base_part_number or part.part_number }}"
+                                          title="Click for details">
+                                        Recent Request · {{ part.recent_request_date }}
                                     </span>
                                 {% endif %}
                                 {% if part.supplier_has_quote %}
@@ -458,16 +473,20 @@
             <div class="modal-body">
                 <div id="emailPreview">
                     <div class="mb-3">
-                        <label class="form-label fw-bold">To:</label>
-                        <div id="previewRecipient" class="text-muted"></div>
+                        <label class="form-label fw-bold">Recipient name</label>
+                        <input type="text" id="editRecipientName" class="form-control" placeholder="Recipient name">
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-bold">Subject:</label>
-                        <div id="previewSubject"></div>
+                        <label class="form-label fw-bold">Recipient email</label>
+                        <input type="email" id="editRecipientEmail" class="form-control" placeholder="name@company.com">
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-bold">Body:</label>
-                        <div id="previewBody" class="border rounded p-3 bg-light"></div>
+                        <label class="form-label fw-bold">Subject</label>
+                        <input type="text" id="editSubject" class="form-control">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Body</label>
+                        <div id="editBody" class="email-editor-body" contenteditable="true"></div>
                     </div>
                 </div>
                 <div id="loadingSpinner" class="text-center d-none">
@@ -512,6 +531,93 @@
                     <div id="ilsQueueContainer"></div>
                 </div>
                 <div id="chunksContainer"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Request Details Modal -->
+<div class="modal fade" id="requestDetailsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">📨 Request Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="requestDetailsLoading" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+                <div id="requestDetailsContent" class="d-none">
+                    <!-- Request Info -->
+                    <div class="mb-3">
+                        <h6 class="text-muted mb-2">Request Sent</h6>
+                        <div class="bg-light rounded p-3">
+                            <div class="row">
+                                <div class="col-6">
+                                    <small class="text-muted">Date</small>
+                                    <div id="requestDate" class="fw-medium">-</div>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted">To</small>
+                                    <div id="requestRecipient" class="fw-medium text-truncate">-</div>
+                                </div>
+                            </div>
+                            <div class="mt-2">
+                                <small class="text-muted">From List</small>
+                                <div id="requestListName" class="fw-medium">-</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Response Info -->
+                    <div id="responseSection">
+                        <h6 class="text-muted mb-2">Supplier Response</h6>
+                        <div id="noResponseAlert" class="alert alert-secondary d-none">
+                            <i class="bi bi-hourglass-split me-2"></i>No response received yet
+                        </div>
+                        <div id="noBidAlert" class="alert alert-danger d-none">
+                            <i class="bi bi-x-circle me-2"></i>Supplier declined to quote (No Bid)
+                            <div id="noBidDate" class="small mt-1"></div>
+                        </div>
+                        <div id="quoteResponse" class="bg-success bg-opacity-10 rounded p-3 d-none">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="bi bi-check-circle text-success me-2"></i>
+                                <strong class="text-success">Quote Received</strong>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <small class="text-muted">Unit Price</small>
+                                    <div id="quotePrice" class="fw-bold fs-5">-</div>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted">Qty Quoted</small>
+                                    <div id="quoteQty" class="fw-medium">-</div>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted">Lead Time</small>
+                                    <div id="quoteLeadTime" class="fw-medium">-</div>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted">Condition</small>
+                                    <div id="quoteCondition" class="fw-medium">-</div>
+                                </div>
+                                <div class="col-12" id="quoteNotesRow" style="display: none;">
+                                    <small class="text-muted">Notes</small>
+                                    <div id="quoteNotes" class="fw-medium">-</div>
+                                </div>
+                            </div>
+                            <div id="quoteDateRow" class="mt-2 text-muted small">
+                                Quoted on <span id="quoteDate">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
@@ -1237,6 +1343,10 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
         const modal = new bootstrap.Modal('#supplierEmailModal');
         const spinner = document.getElementById('loadingSpinner');
         const preview = document.getElementById('emailPreview');
+        const editRecipientName = document.getElementById('editRecipientName');
+        const editRecipientEmail = document.getElementById('editRecipientEmail');
+        const editSubject = document.getElementById('editSubject');
+        const editBody = document.getElementById('editBody');
 
         spinner.classList.remove('d-none');
         preview.classList.add('d-none');
@@ -1252,10 +1362,10 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
 
             if (data.success) {
                 currentEmailData = data;
-                document.getElementById('previewRecipient').textContent =
-                    `${data.recipient_name ? data.recipient_name + ' - ' : ''}${data.recipient_email}`;
-                document.getElementById('previewSubject').textContent = data.subject;
-                document.getElementById('previewBody').innerHTML = data.body_html;
+                editRecipientName.value = data.recipient_name || '';
+                editRecipientEmail.value = data.recipient_email || '';
+                editSubject.value = data.subject || '';
+                editBody.innerHTML = data.body_html || '';
 
                 spinner.classList.add('d-none');
                 preview.classList.remove('d-none');
@@ -1270,6 +1380,22 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
         }
     }
 
+    function getEditedEmailData() {
+        if (!currentEmailData) return null;
+        const recipientName = document.getElementById('editRecipientName').value.trim();
+        const recipientEmail = document.getElementById('editRecipientEmail').value.trim();
+        const subject = document.getElementById('editSubject').value.trim();
+        const bodyHtml = document.getElementById('editBody').innerHTML.trim();
+
+        return {
+            ...currentEmailData,
+            recipient_name: recipientName,
+            recipient_email: recipientEmail,
+            subject,
+            body_html: bodyHtml
+        };
+    }
+
     // ---- Copy & Open Outlook + Record -----------------------------
     document.getElementById('copyAndOpenBtn').addEventListener('click', async function() {
         if (!currentEmailData) return;
@@ -1278,7 +1404,12 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
         const origHTML = btn.innerHTML;
 
         try {
-            const bodyHtmlForCopy = currentEmailData.body_html_without_signature || currentEmailData.body_html;
+            const editedEmailData = getEditedEmailData();
+            if (!editedEmailData || !editedEmailData.recipient_email) {
+                alert('Recipient email is required.');
+                return;
+            }
+            const bodyHtmlForCopy = editedEmailData.body_html || '';
 
             // Copy HTML + plain text
             await navigator.clipboard.write([
@@ -1289,11 +1420,11 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
             ]);
 
             // Open mailto
-            const mailto = `mailto:${encodeURIComponent(currentEmailData.recipient_email)}?subject=${encodeURIComponent(currentEmailData.subject)}`;
+            const mailto = `mailto:${encodeURIComponent(editedEmailData.recipient_email)}?subject=${encodeURIComponent(editedEmailData.subject)}`;
             window.open(mailto, '_blank');
 
             // Record each part that has a line_id
-            await recordEmailSent(currentEmailData);
+            await recordEmailSent(editedEmailData);
 
             // Success feedback
             btn.innerHTML = 'Sent & Recorded!';
@@ -1321,13 +1452,20 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
         btn.disabled = true;
 
         try {
+            const editedEmailData = getEditedEmailData();
+            if (!editedEmailData || !editedEmailData.recipient_email) {
+                alert('Recipient email is required.');
+                btn.innerHTML = origHTML;
+                btn.disabled = false;
+                return;
+            }
             const resp = await fetch('/parts_list/send-supplier-email', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    recipient_email: currentEmailData.recipient_email,
-                    subject: currentEmailData.subject,
-                    body_html: currentEmailData.body_html
+                    recipient_email: editedEmailData.recipient_email,
+                    subject: editedEmailData.subject,
+                    body_html: editedEmailData.body_html
                 })
             });
             const data = await resp.json();
@@ -1336,7 +1474,7 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
                 throw new Error(data.error || 'Failed to send email');
             }
 
-            await recordEmailSent(currentEmailData);
+            await recordEmailSent(editedEmailData);
 
             btn.innerHTML = 'Sent & Recorded!';
             btn.classList.remove('btn-outline-primary');
@@ -1381,6 +1519,95 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
         try { await Promise.all(promises); }
         catch (e) { console.error('Recording failed', e); }
     }
+
+    // ---- Request Details Badge Click ------------------------------
+    document.querySelectorAll('.request-details-badge').forEach(badge => {
+        badge.addEventListener('click', async function(e) {
+            e.stopPropagation();
+
+            const supplierId = this.dataset.supplierId;
+            const basePartNumber = this.dataset.basePartNumber;
+
+            if (!supplierId || !basePartNumber) return;
+
+            // Show modal with loading state
+            const modal = new bootstrap.Modal('#requestDetailsModal');
+            const loading = document.getElementById('requestDetailsLoading');
+            const content = document.getElementById('requestDetailsContent');
+
+            loading.classList.remove('d-none');
+            content.classList.add('d-none');
+            modal.show();
+
+            try {
+                const resp = await fetch(`/parts_list/request-details/${supplierId}/${encodeURIComponent(basePartNumber)}`);
+                const data = await resp.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || 'Failed to load details');
+                }
+
+                // Populate request info
+                if (data.request) {
+                    document.getElementById('requestDate').textContent = data.request.date_sent || '-';
+                    document.getElementById('requestRecipient').textContent = data.request.recipient_email || '-';
+                    document.getElementById('requestListName').textContent = data.request.list_name || '-';
+                }
+
+                // Handle response section
+                const noResponseAlert = document.getElementById('noResponseAlert');
+                const noBidAlert = document.getElementById('noBidAlert');
+                const quoteResponse = document.getElementById('quoteResponse');
+
+                // Reset all states
+                noResponseAlert.classList.add('d-none');
+                noBidAlert.classList.add('d-none');
+                quoteResponse.classList.add('d-none');
+
+                if (!data.response) {
+                    // No response yet
+                    noResponseAlert.classList.remove('d-none');
+                } else if (data.response.is_no_bid) {
+                    // No bid
+                    noBidAlert.classList.remove('d-none');
+                    document.getElementById('noBidDate').textContent = data.response.quote_date ? `On ${data.response.quote_date}` : '';
+                } else {
+                    // Quote received
+                    quoteResponse.classList.remove('d-none');
+
+                    const price = data.response.unit_price;
+                    const currency = data.response.currency_code || 'GBP';
+                    document.getElementById('quotePrice').textContent = price !== null
+                        ? `${currency} ${price.toFixed(2)}`
+                        : '-';
+
+                    document.getElementById('quoteQty').textContent = data.response.quantity_quoted || '-';
+                    document.getElementById('quoteLeadTime').textContent = data.response.lead_time_days
+                        ? `${data.response.lead_time_days} days`
+                        : '-';
+                    document.getElementById('quoteCondition').textContent = data.response.condition_code || '-';
+                    document.getElementById('quoteDate').textContent = data.response.quote_date || '-';
+
+                    // Show notes if present
+                    const notesRow = document.getElementById('quoteNotesRow');
+                    if (data.response.notes) {
+                        document.getElementById('quoteNotes').textContent = data.response.notes;
+                        notesRow.style.display = '';
+                    } else {
+                        notesRow.style.display = 'none';
+                    }
+                }
+
+                // Show content
+                loading.classList.add('d-none');
+                content.classList.remove('d-none');
+
+            } catch (error) {
+                console.error('Failed to load request details:', error);
+                loading.innerHTML = `<div class="alert alert-danger">${error.message || 'Failed to load details'}</div>`;
+            }
+        });
+    });
 });
 </script>
 {% endblock %}

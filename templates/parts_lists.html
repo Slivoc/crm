@@ -70,7 +70,7 @@
                     <small class="text-muted d-block mt-1">
                         <i class="bi bi-calendar-event me-1"></i>
                         Quotes on {{ selected_quoted_date }}
-                        <a class="ms-2" href="{{ url_for('parts_list.view_parts_lists', status_id=selected_status_id if selected_status_id else '', customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '') }}">Clear date filter</a>
+                        <a class="ms-2" href="{{ url_for('parts_list.view_parts_lists', status_id=selected_status_id if selected_status_id is not none else '', customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '') }}">Clear date filter</a>
                     </small>
                 {% endif %}
             </div>
@@ -171,7 +171,7 @@
                     <ul class="nav nav-pills" role="tablist">
                         <li class="nav-item" role="presentation">
                             <a class="nav-link {% if not selected_status_id %}active{% endif %}"
-                               href="{{ url_for('parts_list.view_parts_lists', customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
+                               href="{{ url_for('parts_list.view_parts_lists', status_id=0, customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
                                 All Statuses
                             </a>
                         </li>
@@ -238,7 +238,11 @@
 
     {% if lists|length == 0 %}
     <div class="alert alert-info">
-        <i class="bi bi-info-circle"></i> No parts lists found. Create your first one!
+        {% if initial_part_search %}
+            <i class="bi bi-search"></i> Showing part search results above. The main list is skipped for faster loading.
+        {% else %}
+            <i class="bi bi-info-circle"></i> No parts lists found. Create your first one!
+        {% endif %}
     </div>
     {% else %}
     <div class="card shadow-sm border-0">
@@ -437,7 +441,7 @@
 <script>
 // Customer filter function
 function filterByCustomer(customerId) {
-    const currentStatus = "{{ selected_status_id or '' }}";
+    const currentStatus = "{{ selected_status_id if selected_status_id is not none and selected_status_id != 0 else '' }}";
     const currentSalesperson = "{{ selected_salesperson_id or '' }}";
     const currentQuotedDate = "{{ selected_quoted_date or '' }}";
     let url = "{{ url_for('parts_list.view_parts_lists') }}";
@@ -853,7 +857,7 @@ function openTopQuotesModal() {
     const statusSelect = document.getElementById('topQuotesStatusFilter');
 
     if (statusSelect) {
-        statusSelect.value = "{{ selected_status_id or '' }}";
+        statusSelect.value = "{{ selected_status_id if selected_status_id is not none and selected_status_id != 0 else '' }}";
     }
 
     loadTopQuotes();

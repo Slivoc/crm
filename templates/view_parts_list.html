@@ -179,6 +179,11 @@
                 </h5>
 
                 <div class="btn-group">
+                    <!-- Quick Add Part Button -->
+                    <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#quickAddPartModal">
+                        <i class="bi bi-plus-circle me-1"></i>Add Part
+                    </button>
+
                     <!-- ILS Upload Button -->
                     <button type="button" class="btn btn-info btn-sm ils-upload-trigger" id="ils-upload-btn-compact">
                         <i class="bi bi-cloud-upload me-1"></i>Upload ILS
@@ -282,6 +287,81 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+// Quick Add Part handler
+document.addEventListener('DOMContentLoaded', function() {
+    const addPartBtn = document.getElementById('quickAddPartBtn');
+    const addPartModal = document.getElementById('quickAddPartModal');
+
+    if (addPartBtn && addPartModal) {
+        addPartBtn.addEventListener('click', function() {
+            const partNumber = document.getElementById('quick_part_number').value.trim();
+            const quantity = parseInt(document.getElementById('quick_part_quantity').value) || 1;
+            const description = document.getElementById('quick_part_description').value.trim();
+
+            if (!partNumber) {
+                alert('Please enter a part number');
+                return;
+            }
+
+            addPartBtn.disabled = true;
+            addPartBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Adding...';
+
+            const listId = {{ list_id }};
+
+            fetch(`/parts_list/parts-lists/${listId}/lines/add`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    lines: [{
+                        customer_part_number: partNumber,
+                        quantity: quantity,
+                        description: description || null
+                    }]
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Close modal and reset form
+                    bootstrap.Modal.getInstance(addPartModal).hide();
+                    document.getElementById('quickAddPartForm').reset();
+
+                    // Show success message
+                    if (typeof showToast === 'function') {
+                        showToast('Part added successfully', 'success');
+                    }
+
+                    // Reload the page to refresh data with full analysis
+                    setTimeout(() => window.location.reload(), 500);
+                } else {
+                    alert('Error adding part: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error adding part');
+            })
+            .finally(() => {
+                addPartBtn.disabled = false;
+                addPartBtn.innerHTML = '<i class="bi bi-plus-circle"></i> Add Part';
+            });
+        });
+
+        // Auto-focus the part number input when modal opens
+        addPartModal.addEventListener('shown.bs.modal', function() {
+            document.getElementById('quick_part_number').focus();
+        });
+
+        // Submit on Enter key in part number field
+        document.getElementById('quick_part_number').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addPartBtn.click();
+            }
+        });
+    }
+});
+
 // Add Email Suppliers button handler for view page
 document.addEventListener('DOMContentLoaded', function() {
     const emailBtn = document.getElementById('email-suppliers-btn');
@@ -319,6 +399,42 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 </script>
+<!-- Quick Add Part Modal -->
+<div class="modal fade" id="quickAddPartModal" tabindex="-1" aria-labelledby="quickAddPartModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="quickAddPartModalLabel">
+          <i class="bi bi-plus-circle"></i> Add Part
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="quickAddPartForm">
+          <div class="mb-3">
+            <label for="quick_part_number" class="form-label">Part Number <span class="text-danger">*</span></label>
+            <input type="text" id="quick_part_number" name="part_number" class="form-control" required autofocus>
+          </div>
+          <div class="mb-3">
+            <label for="quick_part_quantity" class="form-label">Quantity</label>
+            <input type="number" id="quick_part_quantity" name="quantity" class="form-control" value="1" min="1">
+          </div>
+          <div class="mb-3">
+            <label for="quick_part_description" class="form-label">Description (optional)</label>
+            <input type="text" id="quick_part_description" name="description" class="form-control">
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="quickAddPartBtn">
+          <i class="bi bi-plus-circle"></i> Add Part
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Quick Add Supplier Modal (for ILS page) -->
 <div class="modal fade" id="quickAddSupplierModal" tabindex="-1" aria-labelledby="quickAddSupplierModalLabel" aria-hidden="true">
   <div class="modal-dialog">

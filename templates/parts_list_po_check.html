@@ -256,6 +256,70 @@
         display: none;
     }
 
+    /* Column visibility toggles */
+    .section-toggle {
+        cursor: pointer;
+        user-select: none;
+    }
+    .section-toggle:hover {
+        opacity: 0.8;
+    }
+    .section-toggle .bi-chevron-down {
+        transition: transform 0.2s;
+    }
+    .section-toggle.collapsed .bi-chevron-down {
+        transform: rotate(-90deg);
+    }
+
+    /* Hide columns when section is collapsed */
+    .hide-quote-cols .quote-col {
+        display: none;
+    }
+    .hide-supplier-cols .supplier-col {
+        display: none;
+    }
+
+    /* Filter controls */
+    .filter-controls {
+        background: #f8f9fa;
+        padding: 12px 16px;
+        border-bottom: 1px solid #dee2e6;
+    }
+    .filter-controls .form-select {
+        max-width: 250px;
+    }
+
+    /* Near match modal */
+    .near-match-item {
+        cursor: pointer;
+        border: 1px solid #dee2e6;
+        padding: 10px;
+        margin-bottom: 8px;
+        border-radius: 4px;
+        transition: all 0.2s;
+    }
+    .near-match-item:hover {
+        background: #e8f4e8;
+        border-color: var(--primary, #5ebc67);
+    }
+    .near-match-item .match-score {
+        font-size: 0.75rem;
+        padding: 2px 6px;
+        border-radius: 3px;
+    }
+    .near-match-item .match-score.high {
+        background: #d1e7dd;
+        color: #0a3622;
+    }
+    .near-match-item .match-score.medium {
+        background: #fff3cd;
+        color: #664d03;
+    }
+    .near-match-item .match-score.low {
+        background: #f8d7da;
+        color: #58151c;
+    }
+
     .loading-overlay {
         position: fixed;
         top: 0;
@@ -479,28 +543,51 @@
                 </div>
             </div>
 
+            <!-- Filter and Toggle Controls -->
+            <div class="filter-controls d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div class="d-flex align-items-center gap-3">
+                    <div>
+                        <label class="form-label mb-0 small text-muted me-2">Filter by Supplier:</label>
+                        <select id="supplierFilter" class="form-select form-select-sm d-inline-block" style="width: auto;">
+                            <option value="">All Suppliers</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center gap-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="toggleQuoteCols" checked>
+                        <label class="form-check-label small" for="toggleQuoteCols">Show Our Quote</label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="toggleSupplierCols" checked>
+                        <label class="form-check-label small" for="toggleSupplierCols">Show Supplier</label>
+                    </div>
+                </div>
+            </div>
+
             <!-- Match Details Table -->
             <div class="table-responsive">
-                <table class="table table-hover table-sm mb-0 results-table">
+                <table class="table table-hover table-sm mb-0 results-table" id="resultsTable">
                     <thead class="table-light">
                         <tr>
-                            <th colspan="3" class="text-center bg-light border-end">PO Line</th>
+                            <th colspan="4" class="text-center bg-light border-end">PO Line</th>
                             <th colspan="2" class="text-center bg-light border-end">Match Status</th>
-                            <th colspan="3" class="text-center border-end" style="background: #e8f4e8 !important;">Our Quote</th>
-                            <th colspan="3" class="text-center" style="background: #e8f0f8 !important;">Supplier</th>
+                            <th colspan="3" class="text-center border-end quote-col" style="background: #e8f4e8 !important;">Our Quote</th>
+                            <th colspan="3" class="text-center supplier-col" style="background: #e8f0f8 !important;">Supplier</th>
                         </tr>
                         <tr>
+                            <th style="width: 40px;">#</th>
                             <th>Part Number</th>
                             <th class="text-center">Qty</th>
                             <th class="text-end border-end">Price</th>
                             <th class="text-center" style="width: 50px;">PL</th>
                             <th class="border-end" style="width: 180px;">Status</th>
-                            <th class="text-end" style="background: #f0f8f0;">Price</th>
-                            <th class="text-center" style="background: #f0f8f0;">Qty</th>
-                            <th class="text-end border-end" style="background: #f0f8f0;">Lead</th>
-                            <th style="background: #f0f4f8;">Name</th>
-                            <th class="text-end" style="background: #f0f4f8;">Cost</th>
-                            <th class="text-end" style="background: #f0f4f8;">Lead</th>
+                            <th class="text-end quote-col" style="background: #f0f8f0;">Price</th>
+                            <th class="text-center quote-col" style="background: #f0f8f0;">Qty</th>
+                            <th class="text-end border-end quote-col" style="background: #f0f8f0;">Lead</th>
+                            <th class="supplier-col" style="background: #f0f4f8;">Name</th>
+                            <th class="text-end supplier-col" style="background: #f0f4f8;">Cost</th>
+                            <th class="text-end supplier-col" style="background: #f0f4f8;">Lead</th>
                         </tr>
                     </thead>
                     <tbody id="resultsTableBody">
@@ -540,6 +627,41 @@
                 </div>
                 <div class="modal-body">
                     <pre id="rawTextContent" class="bg-light p-3 rounded" style="white-space: pre-wrap; font-size: 0.85rem; max-height: 60vh; overflow: auto;"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Near Match Modal -->
+    <div class="modal fade" id="nearMatchModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-search me-2"></i>Find Similar Part Numbers</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3 p-3 bg-light rounded">
+                        <div class="small text-muted">PO Part Number:</div>
+                        <div class="fw-bold font-monospace" id="nearMatchPOPartNumber">-</div>
+                        <div class="small text-muted mt-1">Qty: <span id="nearMatchPOQty">-</span></div>
+                    </div>
+                    <div class="mb-2 text-muted small">Select a matching part number from your quotes:</div>
+                    <div id="nearMatchLoading" class="text-center py-4">
+                        <div class="spinner-border spinner-border-sm text-primary"></div>
+                        <div class="small text-muted mt-2">Searching for similar parts...</div>
+                    </div>
+                    <div id="nearMatchResults" style="display: none;">
+                        <div id="nearMatchList">
+                            <!-- Populated by JS -->
+                        </div>
+                        <div id="nearMatchEmpty" class="text-center py-3 text-muted" style="display: none;">
+                            <i class="bi bi-x-circle me-1"></i> No similar parts found
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 </div>
             </div>
         </div>
@@ -840,9 +962,39 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('statUnmatched').textContent = summary.unmatched;
         document.getElementById('statPartsLists').textContent = summary.affected_parts_lists?.length || 0;
 
+        // Collect unique suppliers for filter dropdown
+        const suppliers = new Set();
+        matchResults.matches.forEach(match => {
+            if (match.supplier_info && match.supplier_info.name) {
+                suppliers.add(match.supplier_info.name);
+            }
+        });
+
+        // Populate supplier filter
+        const supplierFilter = document.getElementById('supplierFilter');
+        supplierFilter.innerHTML = '<option value="">All Suppliers</option>';
+        Array.from(suppliers).sort().forEach(name => {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            supplierFilter.appendChild(option);
+        });
+
         // Populate match results table
+        renderResultsTable();
+
+        // Enable confirm button if there are matches
+        confirmBtn.disabled = !summary.affected_parts_lists || summary.affected_parts_lists.length === 0;
+
+        // Scroll to results
+        resultsSection.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function renderResultsTable() {
         const tbody = document.getElementById('resultsTableBody');
         tbody.innerHTML = '';
+
+        const supplierFilter = document.getElementById('supplierFilter').value;
 
         matchResults.matches.forEach((match, index) => {
             const po = match.po_line;
@@ -851,15 +1003,48 @@ document.addEventListener('DOMContentLoaded', function() {
             const sup = match.supplier_info;
             const conf = match.match_confidence;
 
+            // Filter by supplier if selected
+            if (supplierFilter && (!sup || sup.name !== supplierFilter)) {
+                return;
+            }
+
             const row = document.createElement('tr');
             row.className = `match-${conf}`;
+            row.dataset.index = index;
+            row.dataset.supplier = sup ? sup.name : '';
 
             // Build discrepancy text inline
             const discrepancyText = match.discrepancies.length > 0
                 ? match.discrepancies.map(d => `<div class="small text-warning">${escapeHtml(d)}</div>`).join('')
                 : '';
 
+            // Build status cell content - add "Find Match" button for unmatched items
+            let statusContent = `
+                <span class="status-badge status-${conf}">
+                    ${conf === 'exact' ? 'Match' : conf === 'partial' ? 'Discrepancy' : 'No Match'}
+                </span>
+            `;
+            if (conf === 'none') {
+                statusContent += `
+                    <button class="btn btn-sm btn-outline-primary ms-1 find-match-btn"
+                            data-index="${index}"
+                            data-part-number="${escapeHtml(po.part_number)}"
+                            data-quantity="${po.quantity}"
+                            title="Find similar part numbers">
+                        <i class="bi bi-search"></i>
+                    </button>
+                `;
+            }
+            if (m && m.quote_status === 'quoted') {
+                statusContent += '<span class="badge bg-success ms-1" style="font-size:0.6rem">Q</span>';
+            }
+            if (pl && pl.is_repeat) {
+                statusContent += '<div class="small text-muted">Repeat order</div>';
+            }
+            statusContent += discrepancyText;
+
             row.innerHTML = `
+                <td class="text-center text-muted">${po.line_number || index + 1}</td>
                 <td class="part-number-cell">
                     ${escapeHtml(po.part_number)}
                     <button class="btn btn-outline-secondary copy-btn" onclick="copyToClipboard('${escapeHtml(po.part_number)}')" title="Copy">
@@ -872,32 +1057,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 <td class="text-center">
                     ${pl ? `<a href="/parts_list/view/${pl.id}" target="_blank" class="fw-bold">${pl.id}</a>${pl.is_repeat ? '<span class="badge bg-secondary ms-1" style="font-size:0.55rem" title="Previously won - repeat order">R</span>' : ''}` : '-'}
                 </td>
-                <td class="border-end">
-                    <span class="status-badge status-${conf}">
-                        ${conf === 'exact' ? 'Match' : conf === 'partial' ? 'Discrepancy' : 'No Match'}
-                    </span>
-                    ${m && m.quote_status === 'quoted' ? '<span class="badge bg-success ms-1" style="font-size:0.6rem">Q</span>' : ''}
-                    ${pl && pl.is_repeat ? '<div class="small text-muted">Repeat order</div>' : ''}
-                    ${discrepancyText}
-                </td>
+                <td class="border-end">${statusContent}</td>
 
-                <td class="text-end" style="background: #f8fcf8;">
+                <td class="text-end quote-col" style="background: #f8fcf8;">
                     ${m && m.price ? formatCurrency(m.price) : '-'}
                 </td>
-                <td class="text-center" style="background: #f8fcf8;">
+                <td class="text-center quote-col" style="background: #f8fcf8;">
                     ${m ? (m.quantity || '-') : '-'}
                 </td>
-                <td class="text-end border-end" style="background: #f8fcf8;">
+                <td class="text-end border-end quote-col" style="background: #f8fcf8;">
                     ${m && m.lead_days ? `${m.lead_days}d` : '-'}
                 </td>
 
-                <td style="background: #f8fafc;">
+                <td class="supplier-col" style="background: #f8fafc;">
                     ${sup ? `<span class="supplier-info">${escapeHtml(sup.name)}</span>` : '-'}
                 </td>
-                <td class="text-end" style="background: #f8fafc;">
+                <td class="text-end supplier-col" style="background: #f8fafc;">
                     ${sup && sup.cost ? formatCurrency(sup.cost) : '-'}
                 </td>
-                <td class="text-end" style="background: #f8fafc;">
+                <td class="text-end supplier-col" style="background: #f8fafc;">
                     ${sup && sup.lead_days ? `${sup.lead_days}d` : '-'}
                 </td>
             `;
@@ -905,11 +1083,16 @@ document.addEventListener('DOMContentLoaded', function() {
             tbody.appendChild(row);
         });
 
-        // Enable confirm button if there are matches
-        confirmBtn.disabled = !summary.affected_parts_lists || summary.affected_parts_lists.length === 0;
-
-        // Scroll to results
-        resultsSection.scrollIntoView({ behavior: 'smooth' });
+        // Attach event listeners to find-match buttons
+        tbody.querySelectorAll('.find-match-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                openNearMatchModal(
+                    parseInt(this.dataset.index),
+                    this.dataset.partNumber,
+                    parseInt(this.dataset.quantity)
+                );
+            });
+        });
     }
 
     // Confirm button
@@ -970,6 +1153,196 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('rawTextContent').textContent = rawText || 'No text extracted';
         new bootstrap.Modal(document.getElementById('rawTextModal')).show();
     });
+
+    // Column visibility toggles
+    document.getElementById('toggleQuoteCols').addEventListener('change', function() {
+        const table = document.getElementById('resultsTable');
+        if (this.checked) {
+            table.classList.remove('hide-quote-cols');
+        } else {
+            table.classList.add('hide-quote-cols');
+        }
+    });
+
+    document.getElementById('toggleSupplierCols').addEventListener('change', function() {
+        const table = document.getElementById('resultsTable');
+        if (this.checked) {
+            table.classList.remove('hide-supplier-cols');
+        } else {
+            table.classList.add('hide-supplier-cols');
+        }
+    });
+
+    // Supplier filter
+    document.getElementById('supplierFilter').addEventListener('change', function() {
+        if (matchResults) {
+            renderResultsTable();
+        }
+    });
+
+    // Near-match modal functionality
+    let nearMatchModal = null;
+    let currentNearMatchIndex = null;
+
+    function openNearMatchModal(index, partNumber, quantity) {
+        currentNearMatchIndex = index;
+        document.getElementById('nearMatchPOPartNumber').textContent = partNumber;
+        document.getElementById('nearMatchPOQty').textContent = quantity;
+
+        // Show loading, hide results
+        document.getElementById('nearMatchLoading').style.display = 'block';
+        document.getElementById('nearMatchResults').style.display = 'none';
+
+        // Open modal
+        if (!nearMatchModal) {
+            nearMatchModal = new bootstrap.Modal(document.getElementById('nearMatchModal'));
+        }
+        nearMatchModal.show();
+
+        // Fetch near matches
+        const customerId = $(customerSelect).val();
+        fetch('{{ url_for("parts_list_po_check.find_near_matches") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                customer_id: customerId,
+                part_number: partNumber,
+                quantity: quantity
+            })
+        })
+        .then(response => response.json())
+        .then(result => {
+            document.getElementById('nearMatchLoading').style.display = 'none';
+            document.getElementById('nearMatchResults').style.display = 'block';
+
+            const listContainer = document.getElementById('nearMatchList');
+            const emptyMsg = document.getElementById('nearMatchEmpty');
+
+            if (!result.success || !result.matches || result.matches.length === 0) {
+                listContainer.innerHTML = '';
+                emptyMsg.style.display = 'block';
+                return;
+            }
+
+            emptyMsg.style.display = 'none';
+            listContainer.innerHTML = '';
+
+            result.matches.forEach(match => {
+                const scoreClass = match.score >= 80 ? 'high' : match.score >= 50 ? 'medium' : 'low';
+                const item = document.createElement('div');
+                item.className = 'near-match-item';
+                item.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="fw-bold font-monospace">${escapeHtml(match.part_number)}</div>
+                            <div class="small text-muted">
+                                PL #${match.parts_list_id} · Qty: ${match.quantity}
+                                ${match.price ? ` · Price: ${formatCurrency(match.price)}` : ''}
+                            </div>
+                            ${match.supplier_name ? `<div class="small text-muted">Supplier: ${escapeHtml(match.supplier_name)}</div>` : ''}
+                        </div>
+                        <span class="match-score ${scoreClass}">${match.score}% match</span>
+                    </div>
+                `;
+                item.addEventListener('click', () => {
+                    selectNearMatch(match);
+                });
+                listContainer.appendChild(item);
+            });
+        })
+        .catch(error => {
+            console.error('Failed to fetch near matches:', error);
+            document.getElementById('nearMatchLoading').style.display = 'none';
+            document.getElementById('nearMatchResults').style.display = 'block';
+            document.getElementById('nearMatchList').innerHTML = '';
+            document.getElementById('nearMatchEmpty').style.display = 'block';
+            document.getElementById('nearMatchEmpty').innerHTML = '<i class="bi bi-exclamation-circle me-1"></i> Error fetching matches';
+        });
+    }
+
+    function selectNearMatch(match) {
+        if (currentNearMatchIndex === null) return;
+
+        // Update the match result in memory
+        const matchResult = matchResults.matches[currentNearMatchIndex];
+        matchResult.match = {
+            line_id: match.line_id,
+            parts_list_id: match.parts_list_id,
+            line_number: match.line_number,
+            part_number: match.part_number,
+            quantity: match.quantity,
+            price: match.price,
+            lead_days: match.lead_days,
+            quote_status: match.quote_status,
+            is_no_bid: match.is_no_bid || false
+        };
+        matchResult.parts_list = {
+            id: match.parts_list_id,
+            name: match.parts_list_name,
+            date: match.parts_list_date,
+            status: match.status_name,
+            is_repeat: match.status_name === 'Won'
+        };
+        if (match.supplier_name) {
+            matchResult.supplier_info = {
+                name: match.supplier_name,
+                cost: match.supplier_cost,
+                lead_days: match.supplier_lead_days
+            };
+        }
+
+        // Check for discrepancies
+        matchResult.discrepancies = [];
+        const poLine = matchResult.po_line;
+        if (poLine.quantity !== match.quantity) {
+            const diff = poLine.quantity - match.quantity;
+            matchResult.discrepancies.push(`Qty: PO has ${poLine.quantity}, quoted ${match.quantity} (${diff > 0 ? '+' : ''}${diff})`);
+        }
+        if (poLine.unit_price && match.price && Math.abs(poLine.unit_price - match.price) > 0.01) {
+            const diff = poLine.unit_price - match.price;
+            matchResult.discrepancies.push(`Price: PO has ${poLine.unit_price.toFixed(2)}, quoted ${match.price.toFixed(2)} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
+        }
+
+        matchResult.match_confidence = matchResult.discrepancies.length > 0 ? 'partial' : 'exact';
+
+        // Update summary stats
+        updateSummaryStats();
+
+        // Re-render the table
+        renderResultsTable();
+
+        // Close modal
+        nearMatchModal.hide();
+        currentNearMatchIndex = null;
+    }
+
+    function updateSummaryStats() {
+        let exact = 0, partial = 0, unmatched = 0;
+        const affectedLists = {};
+
+        matchResults.matches.forEach(m => {
+            if (m.match_confidence === 'exact') exact++;
+            else if (m.match_confidence === 'partial') partial++;
+            else unmatched++;
+
+            if (m.parts_list) {
+                affectedLists[m.parts_list.id] = m.parts_list;
+            }
+        });
+
+        document.getElementById('statExact').textContent = exact;
+        document.getElementById('statPartial').textContent = partial;
+        document.getElementById('statUnmatched').textContent = unmatched;
+        document.getElementById('statPartsLists').textContent = Object.keys(affectedLists).length;
+
+        matchResults.summary.exact_matches = exact;
+        matchResults.summary.partial_matches = partial;
+        matchResults.summary.unmatched = unmatched;
+        matchResults.summary.affected_parts_lists = Object.values(affectedLists);
+
+        // Update confirm button
+        confirmBtn.disabled = Object.keys(affectedLists).length === 0;
+    }
 
     // Helper functions
     function showLoading(text) {

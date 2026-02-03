@@ -852,3 +852,164 @@ def get_preload_data():
     if preload:
         return jsonify(success=True, **preload)
     return jsonify(success=False, message="No preloaded data")
+
+
+def _levenshtein_distance(s1, s2):
+    """Calculate the Levenshtein distance between two strings."""
+    if len(s1) < len(s2):
+        return _levenshtein_distance(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    return previous_row[-1]
+
+
+def _similarity_score(s1, s2):
+    """
+    Calculate similarity score (0-100) between two strings.
+    Uses normalized Levenshtein distance.
+    """
+    if not s1 or not s2:
+        return 0
+    max_len = max(len(s1), len(s2))
+    if max_len == 0:
+        return 100
+    distance = _levenshtein_distance(s1, s2)
+    return int((1 - distance / max_len) * 100)
+
+
+@parts_list_po_check_bp.route('/po-check/near-matches', methods=['POST'])
+@login_required
+def find_near_matches():
+    """
+    Find near matches for a part number that didn't match exactly.
+    Uses fuzzy matching on the base (normalized) part number.
+    """
+    data = request.get_json(force=True)
+
+    customer_id = data.get('customer_id')
+    part_number = data.get('part_number', '').strip()
+    quantity = data.get('quantity', 1)
+
+    if not customer_id:
+        return jsonify(success=False, message="Customer ID is required"), 400
+
+    if not part_number:
+        return jsonify(success=False, message="Part number is required"), 400
+
+    try:
+        # Normalize the search part number
+        search_base_pn = _normalize_part_number(part_number)
+
+        # Get all parts list lines for this customer
+        parts_list_lines = db_execute(
+            """
+            SELECT
+                pll.id as line_id,
+                pll.parts_list_id,
+                pll.line_number,
+                pll.customer_part_number,
+                pll.base_part_number,
+                pll.quantity,
+                pll.chosen_cost,
+                pll.chosen_lead_days,
+                pll.chosen_supplier_id,
+                pll.chosen_qty,
+                pl.name as parts_list_name,
+                pl.date_created as parts_list_date,
+                pl.status_id,
+                pls.name as status_name,
+                s.name as supplier_name,
+                s.id as supplier_id,
+                cur.currency_code as cost_currency,
+                cql.quote_price_gbp,
+                cql.lead_days as quoted_lead_days,
+                cql.quoted_status,
+                cql.is_no_bid
+            FROM parts_list_lines pll
+            JOIN parts_lists pl ON pl.id = pll.parts_list_id
+            LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
+            LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
+            LEFT JOIN currencies cur ON cur.id = pll.chosen_currency_id
+            LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+            WHERE pl.customer_id = ?
+              AND pls.name IN ('Quoted', 'Sent to Suppliers', 'New', 'Won')
+            ORDER BY pl.date_created DESC, pll.line_number ASC
+            """,
+            (customer_id,),
+            fetch='all'
+        ) or []
+
+        # Calculate similarity scores and filter
+        matches = []
+        seen_parts = set()  # Avoid duplicate part numbers
+
+        for line in parts_list_lines:
+            line_base_pn = _normalize_part_number(line['base_part_number'] or line['customer_part_number'])
+
+            if not line_base_pn:
+                continue
+
+            # Skip if we've already seen this part number (prefer most recent)
+            if line_base_pn in seen_parts:
+                continue
+
+            # Calculate similarity score
+            score = _similarity_score(search_base_pn, line_base_pn)
+
+            # Only include if score is above threshold (30% similarity)
+            if score >= 30:
+                seen_parts.add(line_base_pn)
+
+                # Get the quoted price
+                quoted_price = None
+                if line.get('quote_price_gbp'):
+                    quoted_price = float(line['quote_price_gbp'])
+
+                quoted_lead_days = line.get('quoted_lead_days') or line.get('chosen_lead_days')
+
+                matches.append({
+                    'line_id': line['line_id'],
+                    'parts_list_id': line['parts_list_id'],
+                    'parts_list_name': line['parts_list_name'],
+                    'parts_list_date': line['parts_list_date'].isoformat() if line['parts_list_date'] else None,
+                    'line_number': float(line['line_number']) if line['line_number'] else None,
+                    'part_number': line['customer_part_number'],
+                    'base_part_number': line_base_pn,
+                    'quantity': line['chosen_qty'] or line['quantity'],
+                    'price': quoted_price,
+                    'lead_days': quoted_lead_days,
+                    'status_name': line['status_name'],
+                    'supplier_name': line['supplier_name'],
+                    'supplier_cost': float(line['chosen_cost']) if line['chosen_cost'] else None,
+                    'supplier_lead_days': line['chosen_lead_days'],
+                    'quote_status': line.get('quoted_status'),
+                    'is_no_bid': line.get('is_no_bid', False),
+                    'score': score
+                })
+
+        # Sort by score (highest first), then by date (most recent first)
+        matches.sort(key=lambda x: (-x['score'], x['parts_list_date'] or ''), reverse=False)
+
+        # Limit to top 10 matches
+        matches = matches[:10]
+
+        return jsonify(
+            success=True,
+            matches=matches,
+            search_part_number=part_number,
+            search_base_pn=search_base_pn
+        )
+
+    except Exception as e:
+        logger.exception("Failed to find near matches")
+        return jsonify(success=False, message=str(e)), 500

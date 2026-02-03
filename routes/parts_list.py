@@ -3454,6 +3454,101 @@ def process_suggested_suppliers(email_data, cursor, request_cutoff, list_id=None
     return suppliers_map
 
 
+@parts_list_bp.route('/request-details/<int:supplier_id>/<base_part_number>', methods=['GET'])
+def get_request_details(supplier_id, base_part_number):
+    """
+    Get details about a recent request to a supplier for a specific part,
+    including any quote response received.
+    """
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # Get the most recent request sent to this supplier for this part
+        recent_request = _execute_with_cursor(cursor, """
+            SELECT
+                se.id,
+                se.date_sent,
+                se.email_subject,
+                se.recipient_email,
+                pll.parts_list_id,
+                pl.name as list_name
+            FROM parts_list_line_supplier_emails se
+            JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
+            JOIN parts_lists pl ON pl.id = pll.parts_list_id
+            WHERE pll.base_part_number = ?
+              AND se.supplier_id = ?
+            ORDER BY se.date_sent DESC
+            LIMIT 1
+        """, (base_part_number, supplier_id)).fetchone()
+
+        if not recent_request:
+            return jsonify({'success': True, 'request': None, 'response': None})
+
+        request_date = recent_request['date_sent']
+
+        # Look for any quote response from this supplier for this part after the request
+        quote_response = _execute_with_cursor(cursor, """
+            SELECT
+                sql.unit_price,
+                sql.quantity_quoted,
+                sql.lead_time_days,
+                sql.condition_code,
+                sql.is_no_bid,
+                sql.line_notes,
+                sql.quoted_part_number,
+                sql.manufacturer,
+                sql.date_created as quote_date,
+                sq.quote_reference,
+                sq.currency_id,
+                c.code as currency_code
+            FROM parts_list_supplier_quote_lines sql
+            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+            LEFT JOIN currencies c ON c.id = sq.currency_id
+            WHERE pll.base_part_number = ?
+              AND sq.supplier_id = ?
+              AND sql.date_created >= ?
+            ORDER BY sql.date_created DESC
+            LIMIT 1
+        """, (base_part_number, supplier_id, request_date)).fetchone()
+
+        # Format the response
+        request_info = {
+            'date_sent': _format_date_display(request_date),
+            'email_subject': recent_request['email_subject'],
+            'recipient_email': recent_request['recipient_email'],
+            'list_name': recent_request['list_name'],
+            'list_id': recent_request['parts_list_id']
+        }
+
+        response_info = None
+        if quote_response:
+            response_info = {
+                'is_no_bid': bool(quote_response['is_no_bid']),
+                'quote_date': _format_date_display(quote_response['quote_date']),
+                'unit_price': float(quote_response['unit_price']) if quote_response['unit_price'] else None,
+                'quantity_quoted': quote_response['quantity_quoted'],
+                'lead_time_days': quote_response['lead_time_days'],
+                'condition_code': quote_response['condition_code'],
+                'currency_code': quote_response['currency_code'] or 'GBP',
+                'quote_reference': quote_response['quote_reference'],
+                'quoted_part_number': quote_response['quoted_part_number'],
+                'manufacturer': quote_response['manufacturer'],
+                'notes': quote_response['line_notes']
+            }
+
+        return jsonify({
+            'success': True,
+            'request': request_info,
+            'response': response_info
+        })
+
+    except Exception as e:
+        logging.exception("Error fetching request details")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @parts_list_bp.route('/generate-supplier-email', methods=['POST'])
 def generate_supplier_email():
     """
@@ -3951,7 +4046,18 @@ def view_parts_lists():
     """
     try:
         # Get optional filters from query parameters
-        status_id = request.args.get('status_id', type=int)
+        raw_status_id = request.args.get('status_id')
+        status_id = None
+        if raw_status_id is not None:
+            raw_status_id = raw_status_id.strip()
+            if raw_status_id == '':
+                status_id = 0
+            else:
+                try:
+                    status_id = int(raw_status_id)
+                except ValueError:
+                    status_id = None
+
         customer_id = request.args.get('customer_id', type=int)
         salesperson_id_param = request.args.get('salesperson_id', type=int)
         salesperson_id = salesperson_id_param
@@ -3977,6 +4083,15 @@ def view_parts_lists():
         # Default to current user's salesperson if no explicit filter
         if not salesperson_id and current_user_salesperson_id:
             salesperson_id = current_user_salesperson_id
+
+        has_explicit_filters = any([
+            request.args.get('customer_id'),
+            request.args.get('salesperson_id'),
+            request.args.get('quoted_date'),
+            request.args.get('q'),
+        ])
+        if raw_status_id is None and not has_explicit_filters:
+            status_id = 1
 
         # Get all salespeople with their parts list counts
         all_salespeople = db_execute(
@@ -4008,115 +4123,117 @@ def view_parts_lists():
                 fetch='one',
             )
 
-        # Build SQL query with optional filters and preview
-        sql = """
-            SELECT pl.id,
-                   pl.name,
-                   pl.date_created,
-                   pl.date_modified,
-                   pl.status_id,
-                   pl.customer_id,
-                   pl.contact_id,
-                   pl.salesperson_id,
-                   pl.project_id,
-                   COALESCE(c.name, '') AS customer_name,
-                 COALESCE(ct.name, '') AS contact_name,
-                 pls.name AS status_name,
-                 p.name AS project_name,
-                 (SELECT COUNT(*) FROM parts_list_lines pll WHERE pll.parts_list_id = pl.id) AS line_count,
-                 (SELECT COUNT(*)
-                 FROM parts_list_lines pll
-                 WHERE pll.parts_list_id = pl.id
-                   AND pll.chosen_cost IS NOT NULL) AS costed_line_count,
-                 (SELECT COUNT(DISTINCT pll.id)
-                  FROM parts_list_lines pll
-                  LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
-                  WHERE pll.parts_list_id = pl.id
-                    AND cql.quoted_status = 'quoted') AS quoted_line_count
-                ,(SELECT COUNT(DISTINCT pll.id)
-                  FROM parts_list_lines pll
-                  WHERE pll.parts_list_id = pl.id
-                    AND EXISTS (
+        lists_data = []
+        if not part_search:
+            # Build SQL query with optional filters and preview
+            sql = """
+                SELECT pl.id,
+                       pl.name,
+                       pl.date_created,
+                       pl.date_modified,
+                       pl.status_id,
+                       pl.customer_id,
+                       pl.contact_id,
+                       pl.salesperson_id,
+                       pl.project_id,
+                       COALESCE(c.name, '') AS customer_name,
+                     COALESCE(ct.name, '') AS contact_name,
+                     pls.name AS status_name,
+                     p.name AS project_name,
+                     (SELECT COUNT(*) FROM parts_list_lines pll WHERE pll.parts_list_id = pl.id) AS line_count,
+                     (SELECT COUNT(*)
+                     FROM parts_list_lines pll
+                     WHERE pll.parts_list_id = pl.id
+                       AND pll.chosen_cost IS NOT NULL) AS costed_line_count,
+                     (SELECT COUNT(DISTINCT pll.id)
+                      FROM parts_list_lines pll
+                      LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                      WHERE pll.parts_list_id = pl.id
+                        AND cql.quoted_status = 'quoted') AS quoted_line_count
+                    ,(SELECT COUNT(DISTINCT pll.id)
+                      FROM parts_list_lines pll
+                      WHERE pll.parts_list_id = pl.id
+                        AND EXISTS (
+                            SELECT 1
+                            FROM manufacturer_approvals ma
+                            WHERE ma.airbus_material_base = pll.base_part_number
+                               OR ma.manufacturer_part_number_base = pll.base_part_number
+                        )) AS qpl_line_count
+                    ,(SELECT COALESCE(SUM(CASE
+                        WHEN cql.quoted_status = 'quoted'
+                             AND COALESCE(cql.is_no_bid::int, 0) = 0
+                             AND cql.quote_price_gbp > 0
+                        THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                        ELSE 0 END), 0)
+                      FROM parts_list_lines pll
+                      LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                      WHERE pll.parts_list_id = pl.id) AS quoted_value_gbp
+                FROM parts_lists pl
+                LEFT JOIN customers c ON c.id = pl.customer_id
+                LEFT JOIN contacts ct ON ct.id = pl.contact_id
+                LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
+                LEFT JOIN projects p ON p.id = pl.project_id
+            """
+
+            where_clauses = []
+            params = []
+
+            if status_id:
+                where_clauses.append("pl.status_id = ?")
+                params.append(status_id)
+
+            if customer_id:
+                where_clauses.append("pl.customer_id = ?")
+                params.append(customer_id)
+
+            if salesperson_id:
+                where_clauses.append("pl.salesperson_id = ?")
+                params.append(salesperson_id)
+
+            if quoted_date_filter:
+                where_clauses.append("""
+                    EXISTS (
                         SELECT 1
-                        FROM manufacturer_approvals ma
-                        WHERE ma.airbus_material_base = pll.base_part_number
-                           OR ma.manufacturer_part_number_base = pll.base_part_number
-                    )) AS qpl_line_count
-                ,(SELECT COALESCE(SUM(CASE
-                    WHEN cql.quoted_status = 'quoted'
-                         AND COALESCE(cql.is_no_bid::int, 0) = 0
-                         AND cql.quote_price_gbp > 0
-                    THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
-                    ELSE 0 END), 0)
-                  FROM parts_list_lines pll
-                  LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
-                  WHERE pll.parts_list_id = pl.id) AS quoted_value_gbp
-            FROM parts_lists pl
-            LEFT JOIN customers c ON c.id = pl.customer_id
-            LEFT JOIN contacts ct ON ct.id = pl.contact_id
-            LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
-            LEFT JOIN projects p ON p.id = pl.project_id
-        """
+                        FROM parts_list_lines pll2
+                        JOIN customer_quote_lines cql2 ON cql2.parts_list_line_id = pll2.id
+                        WHERE pll2.parts_list_id = pl.id
+                          AND cql2.quoted_status = 'quoted'
+                          AND cql2.quoted_on IS NOT NULL
+                          AND DATE(cql2.quoted_on) = ?
+                    )
+                """)
+                params.append(quoted_date_filter)
 
-        where_clauses = []
-        params = []
+            if where_clauses:
+                sql += " WHERE " + " AND ".join(where_clauses)
 
-        if status_id:
-            where_clauses.append("pl.status_id = ?")
-            params.append(status_id)
+            sql += " ORDER BY pl.date_modified DESC, pl.date_created DESC"
 
-        if customer_id:
-            where_clauses.append("pl.customer_id = ?")
-            params.append(customer_id)
+            rows = db_execute(sql, params, fetch='all')
 
-        if salesperson_id:
-            where_clauses.append("pl.salesperson_id = ?")
-            params.append(salesperson_id)
-
-        if quoted_date_filter:
-            where_clauses.append("""
-                EXISTS (
-                    SELECT 1
-                    FROM parts_list_lines pll2
-                    JOIN customer_quote_lines cql2 ON cql2.parts_list_line_id = pll2.id
-                    WHERE pll2.parts_list_id = pl.id
-                      AND cql2.quoted_status = 'quoted'
-                      AND cql2.quoted_on IS NOT NULL
-                      AND DATE(cql2.quoted_on) = ?
+            lists_data = [dict(r) for r in rows] if rows else []
+            preview_map = {}
+            if lists_data:
+                parts_list_ids = [row['id'] for row in lists_data]
+                placeholders = ','.join('?' for _ in parts_list_ids)
+                line_rows = db_execute(
+                    f"""
+                    SELECT parts_list_id, customer_part_number, base_part_number
+                    FROM parts_list_lines
+                    WHERE parts_list_id IN ({placeholders})
+                    ORDER BY parts_list_id, line_number ASC, id ASC
+                    """,
+                    tuple(parts_list_ids),
+                    fetch='all',
                 )
-            """)
-            params.append(quoted_date_filter)
+                for line in line_rows or []:
+                    preview_lines = preview_map.setdefault(line['parts_list_id'], [])
+                    if len(preview_lines) < 5:
+                        preview_lines.append(line['customer_part_number'] or line['base_part_number'])
 
-        if where_clauses:
-            sql += " WHERE " + " AND ".join(where_clauses)
-
-        sql += " ORDER BY pl.date_modified DESC, pl.date_created DESC"
-
-        rows = db_execute(sql, params, fetch='all')
-
-        lists_data = [dict(r) for r in rows] if rows else []
-        preview_map = {}
-        if lists_data:
-            parts_list_ids = [row['id'] for row in lists_data]
-            placeholders = ','.join('?' for _ in parts_list_ids)
-            line_rows = db_execute(
-                f"""
-                SELECT parts_list_id, customer_part_number, base_part_number
-                FROM parts_list_lines
-                WHERE parts_list_id IN ({placeholders})
-                ORDER BY parts_list_id, line_number ASC, id ASC
-                """,
-                tuple(parts_list_ids),
-                fetch='all',
-            )
-            for line in line_rows or []:
-                preview_lines = preview_map.setdefault(line['parts_list_id'], [])
-                if len(preview_lines) < 5:
-                    preview_lines.append(line['customer_part_number'] or line['base_part_number'])
-
-            for list_dict in lists_data:
-                preview_lines = preview_map.get(list_dict['id'], [])
-                list_dict['preview_parts'] = ', '.join(filter(None, preview_lines)) if preview_lines else ''
+                for list_dict in lists_data:
+                    preview_lines = preview_map.get(list_dict['id'], [])
+                    list_dict['preview_parts'] = ', '.join(filter(None, preview_lines)) if preview_lines else ''
 
         selected_customer_name = None
         if customer_id:
@@ -6781,6 +6898,8 @@ def apply_quick_no_bid(list_id, supplier_id):
         data = request.get_json(force=True) or {}
         mode_all = bool(data.get('all'))
         line_ids = data.get('line_ids') or []
+        email_message_id = data.get('email_message_id') or None
+        email_conversation_id = data.get('email_conversation_id') or None
 
         with db_cursor(commit=True) as cur:
             has_emails = _execute_with_cursor(cur, """
@@ -6797,7 +6916,7 @@ def apply_quick_no_bid(list_id, supplier_id):
 
             # Find or create quote header
             quote = _execute_with_cursor(cur, """
-                SELECT id
+                SELECT id, email_message_id, email_conversation_id
                 FROM parts_list_supplier_quotes
                 WHERE parts_list_id = ? AND supplier_id = ?
                 ORDER BY date_created ASC
@@ -6806,6 +6925,13 @@ def apply_quick_no_bid(list_id, supplier_id):
 
             if quote:
                 quote_id = quote['id']
+                if (email_message_id or email_conversation_id) and (not quote['email_message_id'] and not quote['email_conversation_id']):
+                    _execute_with_cursor(cur, """
+                        UPDATE parts_list_supplier_quotes
+                        SET email_message_id = COALESCE(?, email_message_id),
+                            email_conversation_id = COALESCE(?, email_conversation_id)
+                        WHERE id = ?
+                    """, (email_message_id, email_conversation_id, quote_id))
             else:
                 # --- Work out a non-null currency_id ---
                 currency_row = _execute_with_cursor(cur, """
@@ -6842,8 +6968,9 @@ def apply_quick_no_bid(list_id, supplier_id):
 
                 quote_row = _execute_with_cursor(cur, """
                     INSERT INTO parts_list_supplier_quotes
-                        (parts_list_id, supplier_id, quote_reference, quote_date, currency_id, notes, created_by_user_id)
-                    VALUES (?, ?, ?, CURRENT_DATE, ?, ?, ?)
+                        (parts_list_id, supplier_id, quote_reference, quote_date, currency_id, notes, created_by_user_id,
+                         email_message_id, email_conversation_id)
+                    VALUES (?, ?, ?, CURRENT_DATE, ?, ?, ?, ?, ?)
                     RETURNING id
                 """, (
                     list_id,
@@ -6851,7 +6978,9 @@ def apply_quick_no_bid(list_id, supplier_id):
                     data.get('quote_reference') or 'Quick No Bid',
                     currency_id,
                     data.get('notes') or 'Auto-generated quick no-bid from sourcing screen',
-                    session.get('user_id')
+                    session.get('user_id'),
+                    email_message_id,
+                    email_conversation_id
                 )).fetchone()
                 quote_id = quote_row['id'] if quote_row else getattr(cur, 'lastrowid', None)
 

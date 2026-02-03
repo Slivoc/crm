@@ -664,20 +664,17 @@ th:hover .sort-icon {
   padding: 8px 12px;
 }
 
-/* Badges */
-.badge,
-.badge-primary {
+/* Badges - base styling only (no colors - let variants define those) */
+.badge {
   padding: 0.35em 0.7em !important;
   border-radius: 30px !important;
   font-weight: 500 !important;
   font-size: 0.75rem !important;
   letter-spacing: 0.01em !important;
-  background-color: rgba(94, 188, 103, 0.15) !important;
-  color: #3b7e43 !important;
-  border: 1px solid rgba(94, 188, 103, 0.3) !important;
 }
 
-/* Specific badge for bg-primary when used as badge */
+/* Primary badge styling */
+.badge-primary,
 .badge.bg-primary {
   background-color: rgba(94, 188, 103, 0.15) !important;
   color: #3b7e43 !important;

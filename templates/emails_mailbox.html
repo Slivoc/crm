@@ -142,6 +142,13 @@
                                     </div>
                                     <div class="text-muted small" id="mailboxSupplierStatus"></div>
                                 </div>
+                                <div class="supplier-panel mt-3 d-none" id="mailboxDetectedListPanel">
+                                    <div class="supplier-panel-header">
+                                        <div class="fw-semibold">Detected parts list</div>
+                                        <div class="small text-muted" id="mailboxDetectedListMeta"></div>
+                                    </div>
+                                    <div class="supplier-panel-body" id="mailboxDetectedListBody"></div>
+                                </div>
                                 <div class="supplier-panel mt-3">
                                     <div class="supplier-panel-header">
                                         <div class="fw-semibold">Part scan suggestions</div>
@@ -383,6 +390,9 @@ const mailboxSupplierRequestsMeta = document.getElementById('mailboxSupplierRequ
 const mailboxSupplierStatus = document.getElementById('mailboxSupplierStatus');
 const mailboxPartsScanResults = document.getElementById('mailboxPartsScanResults');
 const mailboxPartsScanMeta = document.getElementById('mailboxPartsScanMeta');
+const mailboxDetectedListPanel = document.getElementById('mailboxDetectedListPanel');
+const mailboxDetectedListBody = document.getElementById('mailboxDetectedListBody');
+const mailboxDetectedListMeta = document.getElementById('mailboxDetectedListMeta');
 const mailboxLoadMoreBtn = document.getElementById('mailboxLoadMoreBtn');
 const mailboxLoadMoreStatus = document.getElementById('mailboxLoadMoreStatus');
 const supplierActionsHeader = document.getElementById('supplierActionsHeader');
@@ -824,7 +834,9 @@ function renderSupplierRequests() {
                     body: JSON.stringify({
                         all: true,
                         quote_reference: 'Mailbox No Bid',
-                        notes: 'Quick no bid from mailbox'
+                        notes: 'Quick no bid from mailbox',
+                        email_message_id: selectedMessage?.id || null,
+                        email_conversation_id: selectedMessage?.conversationId || null
                     })
                 });
                 const data = await response.json();
@@ -938,6 +950,115 @@ function renderPartScanResults() {
     });
 }
 
+function renderDetectedPartsList() {
+    if (!mailboxDetectedListPanel || !mailboxDetectedListBody || !mailboxDetectedListMeta) return;
+    if (!selectedPartsListId) {
+        mailboxDetectedListPanel.classList.add('d-none');
+        mailboxDetectedListBody.innerHTML = '';
+        mailboxDetectedListMeta.textContent = '';
+        return;
+    }
+
+    const listId = selectedPartsListId;
+    const activeSupplierId = mailboxSelectedSupplierData?.id || selectedSupplierId || null;
+    const activeSupplierName = mailboxSelectedSupplierData?.name
+        || (activeSupplierId ? `Supplier #${activeSupplierId}` : '');
+
+    const queryParams = buildEmailQueryParams();
+    let quickUrl = `/parts_list/parts-lists/${listId}/quick-quote`;
+    if (activeSupplierId) {
+        quickUrl += `/${activeSupplierId}`;
+    }
+    if (queryParams) {
+        quickUrl += `?${queryParams}`;
+    }
+
+    const quoteBtn = activeSupplierId
+        ? `<a class="btn btn-sm btn-outline-primary" href="${quickUrl}">Open quick quote</a>`
+        : `<button type="button" class="btn btn-sm btn-outline-primary detected-list-quote-btn" data-list-id="${listId}">
+               <i class="bi bi-lightning-charge me-1"></i>Select supplier
+           </button>`;
+
+    const noBidBtn = activeSupplierId
+        ? `<button type="button" class="btn btn-sm btn-outline-danger detected-list-nobid-btn" data-list-id="${listId}">
+               No bid all
+           </button>`
+        : '';
+
+    mailboxDetectedListMeta.textContent = activeSupplierName ? `Using ${activeSupplierName}` : 'Supplier not selected';
+    mailboxDetectedListBody.innerHTML = `
+        <div class="supplier-request-card">
+            <div class="supplier-request-header">
+                <div class="fw-semibold">PL #${listId}</div>
+            </div>
+            <div class="supplier-request-footer">
+                <div class="text-muted small">Detected from email subject</div>
+                <div class="supplier-request-actions">
+                    ${quoteBtn}
+                    ${noBidBtn}
+                    <a class="btn btn-sm btn-outline-secondary" href="/parts_list/view/${listId}" target="_blank" rel="noopener">View list</a>
+                </div>
+            </div>
+        </div>
+    `;
+    mailboxDetectedListPanel.classList.remove('d-none');
+
+    mailboxDetectedListBody.querySelectorAll('.detected-list-quote-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const listIdValue = btn.getAttribute('data-list-id');
+            window.pendingQuoteListId = listIdValue;
+            const modal = new bootstrap.Modal(mailboxAddSupplierModal);
+            modal.show();
+            showToast('Select a supplier to open the quick quote', 'info');
+        });
+    });
+
+    mailboxDetectedListBody.querySelectorAll('.detected-list-nobid-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const listIdValue = btn.getAttribute('data-list-id');
+            const supplierIdValue = mailboxSelectedSupplierData?.id || selectedSupplierId || null;
+            if (!listIdValue || !supplierIdValue) {
+                showToast('Select a supplier to mark no bid', 'info');
+                return;
+            }
+
+            const supplierLabel = mailboxSelectedSupplierData?.name || `supplier #${supplierIdValue}`;
+            const confirmText = `Mark all emailed lines as no bid for ${supplierLabel} on PL #${listIdValue}?`;
+            if (!confirm(confirmText)) return;
+
+            const original = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>No bid...';
+            try {
+                const response = await fetch(`/parts_list/api/parts-lists/${listIdValue}/quick-no-bid/${supplierIdValue}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        all: true,
+                        quote_reference: 'Mailbox No Bid',
+                        notes: 'Quick no bid from mailbox',
+                        email_message_id: selectedMessage?.id || null,
+                        email_conversation_id: selectedMessage?.conversationId || null
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || data.error || 'Failed to mark no bid');
+                }
+                showToast(`Marked no bid for PL #${listIdValue}`, 'success');
+                if (mailboxSelectedSupplierData?.id) {
+                    await fetchSupplierOutstandingRequests(mailboxSelectedSupplierData.id);
+                }
+            } catch (error) {
+                showToast(error.message || 'Failed to mark no bid', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = original;
+            }
+        });
+    });
+}
+
 function renderSupplierMatchState() {
     if (!supplierMatchTools) return;
     const hasMessage = Boolean(selectedMessage);
@@ -974,6 +1095,8 @@ function renderSupplierMatchState() {
     mailboxSupplierStatus.textContent = hasMessage
         ? (hasSupplier ? '' : 'Select a supplier to see outstanding requests and enable supplier-specific links.')
         : '';
+
+    renderDetectedPartsList();
 
     // Update PDF attachments dropdown
     renderPdfAttachmentsDropdown();
@@ -3125,10 +3248,24 @@ loadMailboxFolderList();
     align-items: center;
 }
 
+.reading-supplier-actions {
+    border: 1px solid #d9e2ec;
+    border-radius: 12px;
+    background: #f7f9fc;
+}
+
+.supplier-actions-header {
+    padding: 10px 12px;
+    background: #ffffff;
+    border-bottom: 1px solid #d9e2ec;
+    border-radius: 12px 12px 0 0;
+}
+
 .supplier-actions-content {
     padding: 12px;
     border-top: 1px solid #e9ecef;
-    background: #fff;
+    background: #ffffff;
+    border-radius: 0 0 12px 12px;
 }
 
 .supplier-actions-buttons {
@@ -3172,17 +3309,19 @@ loadMailboxFolderList();
 }
 
 .supplier-panel {
-    border: 1px solid #e9ecef;
+    border: 1px solid #dbe3ea;
     border-radius: 10px;
     background: #fff;
+    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
 }
 
 .supplier-panel-header {
     padding: 10px 12px;
-    border-bottom: 1px solid #e9ecef;
+    border-bottom: 1px solid #e3e8ef;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    background: #f1f5f9;
 }
 
 .supplier-panel-body {
@@ -3193,10 +3332,10 @@ loadMailboxFolderList();
 }
 
 .supplier-request-card {
-    border: 1px solid #f1f3f4;
+    border: 1px solid #e1e7ee;
     border-radius: 8px;
     padding: 10px 12px;
-    background: #fdfdff;
+    background: #fff;
 }
 
 .supplier-request-header {
