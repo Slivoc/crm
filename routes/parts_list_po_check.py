@@ -300,7 +300,6 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
         LEFT JOIN currencies cur ON cur.id = pll.chosen_currency_id
         LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
         WHERE pl.customer_id = ?
-          AND pls.name IN ('Quoted', 'Sent to Suppliers', 'New', 'Won')
         ORDER BY pl.date_created DESC, pll.line_number ASC
         """,
         (customer_id,),
@@ -991,7 +990,6 @@ def find_near_matches():
             LEFT JOIN currencies cur ON cur.id = pll.chosen_currency_id
             LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
             WHERE pl.customer_id = ?
-              AND pls.name IN ('Quoted', 'Sent to Suppliers', 'New', 'Won')
             ORDER BY pl.date_created DESC, pll.line_number ASC
             """,
             (customer_id,),
