@@ -41,7 +41,13 @@ def _normalize_part_number(pn):
     """Normalize a part number for comparison by removing non-alphanumeric characters."""
     if not pn:
         return ''
-    return re.sub(r'[^A-Z0-9]', '', str(pn).upper())
+    # Convert to string and uppercase
+    pn = str(pn).upper()
+    # Replace common unicode dashes/hyphens with standard hyphen first
+    # (EN DASH, EM DASH, MINUS SIGN, various other dashes)
+    pn = re.sub(r'[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]', '-', pn)
+    # Remove all non-alphanumeric characters
+    return re.sub(r'[^A-Z0-9]', '', pn)
 
 
 def _safe_float(val):
@@ -303,9 +309,11 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
 
     # Build lookup by normalized part number
     # Key: base_part_number, Value: list of matching lines (most recent first)
+    # Always re-normalize to ensure consistency (stored base_part_number may be from old normalization)
     pn_lookup = {}
     for line in parts_list_lines:
-        base_pn = _normalize_part_number(line['base_part_number'] or line['customer_part_number'])
+        # Always normalize fresh from customer_part_number to ensure consistency
+        base_pn = _normalize_part_number(line['customer_part_number'])
         if base_pn:
             if base_pn not in pn_lookup:
                 pn_lookup[base_pn] = []
@@ -313,7 +321,8 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
 
     # Match each PO line
     for po_line in po_lines:
-        po_base_pn = po_line.get('base_part_number') or _normalize_part_number(po_line.get('part_number'))
+        # Always normalize fresh from part_number
+        po_base_pn = _normalize_part_number(po_line.get('part_number'))
         po_qty = po_line.get('quantity') or 1
         po_price = po_line.get('unit_price')
 
@@ -876,15 +885,54 @@ def _levenshtein_distance(s1, s2):
 def _similarity_score(s1, s2):
     """
     Calculate similarity score (0-100) between two strings.
-    Uses normalized Levenshtein distance.
+    Uses normalized Levenshtein distance with bonuses for substring matches.
     """
     if not s1 or not s2:
         return 0
+
+    # Exact match
+    if s1 == s2:
+        return 100
+
     max_len = max(len(s1), len(s2))
     if max_len == 0:
         return 100
+
+    # Calculate Levenshtein-based score
     distance = _levenshtein_distance(s1, s2)
-    return int((1 - distance / max_len) * 100)
+    lev_score = int((1 - distance / max_len) * 100)
+
+    # Check for substring matches (one contains the other)
+    # This helps when part numbers have extra prefixes/suffixes
+    contains_score = 0
+    if s1 in s2 or s2 in s1:
+        # Calculate how much overlap there is
+        shorter = min(len(s1), len(s2))
+        longer = max(len(s1), len(s2))
+        contains_score = int((shorter / longer) * 90)  # Max 90 for contains
+
+    # Check for common prefix/suffix
+    prefix_len = 0
+    for i in range(min(len(s1), len(s2))):
+        if s1[i] == s2[i]:
+            prefix_len += 1
+        else:
+            break
+
+    suffix_len = 0
+    for i in range(1, min(len(s1), len(s2)) + 1):
+        if s1[-i] == s2[-i]:
+            suffix_len += 1
+        else:
+            break
+
+    # Common characters bonus (prefix + suffix relative to shorter string)
+    common_chars = prefix_len + suffix_len
+    shorter_len = min(len(s1), len(s2))
+    common_score = int((common_chars / shorter_len) * 50) if shorter_len > 0 else 0
+
+    # Return the best score
+    return max(lev_score, contains_score, common_score)
 
 
 @parts_list_po_check_bp.route('/po-check/near-matches', methods=['POST'])
@@ -909,6 +957,7 @@ def find_near_matches():
     try:
         # Normalize the search part number
         search_base_pn = _normalize_part_number(part_number)
+        logger.info(f"Near-match search: '{part_number}' -> normalized: '{search_base_pn}'")
 
         # Get all parts list lines for this customer
         parts_list_lines = db_execute(
@@ -951,24 +1000,35 @@ def find_near_matches():
 
         # Calculate similarity scores and filter
         matches = []
-        seen_parts = set()  # Avoid duplicate part numbers
+        seen_parts = set()  # Avoid duplicate entries (by line_id)
+
+        logger.info(f"Searching through {len(parts_list_lines)} parts list lines for customer {customer_id}")
 
         for line in parts_list_lines:
-            line_base_pn = _normalize_part_number(line['base_part_number'] or line['customer_part_number'])
+            # Try both stored base_part_number and freshly normalized customer_part_number
+            stored_base = line.get('base_part_number') or ''
+            customer_pn = line.get('customer_part_number') or ''
+            line_base_pn = _normalize_part_number(stored_base) if stored_base else _normalize_part_number(customer_pn)
 
             if not line_base_pn:
                 continue
 
-            # Skip if we've already seen this part number (prefer most recent)
-            if line_base_pn in seen_parts:
+            # Use line_id for deduplication instead of part number
+            # This way we show the same part from different PLs if relevant
+            line_key = f"{line['line_id']}"
+            if line_key in seen_parts:
                 continue
 
             # Calculate similarity score
             score = _similarity_score(search_base_pn, line_base_pn)
 
-            # Only include if score is above threshold (30% similarity)
-            if score >= 30:
-                seen_parts.add(line_base_pn)
+            # Log high-scoring matches for debugging
+            if score >= 50:
+                logger.info(f"  Found potential match: '{customer_pn}' (normalized: '{line_base_pn}') - score: {score}%")
+
+            # Only include if score is above threshold (20% similarity)
+            if score >= 20:
+                seen_parts.add(line_key)
 
                 # Get the quoted price
                 quoted_price = None
@@ -1000,14 +1060,17 @@ def find_near_matches():
         # Sort by score (highest first), then by date (most recent first)
         matches.sort(key=lambda x: (-x['score'], x['parts_list_date'] or ''), reverse=False)
 
-        # Limit to top 10 matches
-        matches = matches[:10]
+        # Limit to top 15 matches
+        matches = matches[:15]
+
+        logger.info(f"Returning {len(matches)} near-matches for '{part_number}'")
 
         return jsonify(
             success=True,
             matches=matches,
             search_part_number=part_number,
-            search_base_pn=search_base_pn
+            search_base_pn=search_base_pn,
+            total_candidates=len(parts_list_lines)
         )
 
     except Exception as e:

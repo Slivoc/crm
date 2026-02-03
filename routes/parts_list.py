@@ -8342,13 +8342,17 @@ def get_related_emails(list_id):
 def get_related_emails_data(list_id):
     """
     Return related email metadata for a parts list (used for reply selection).
+    Searches by conversation ID and also by customer contact email to find
+    recent customer emails even if the conversation thread was broken.
     """
     try:
         parts_list = db_execute(
             """
-            SELECT id, email_message_id, email_conversation_id
-            FROM parts_lists
-            WHERE id = ?
+            SELECT pl.id, pl.email_message_id, pl.email_conversation_id, pl.contact_id,
+                   c.email as contact_email
+            FROM parts_lists pl
+            LEFT JOIN contacts c ON c.id = pl.contact_id
+            WHERE pl.id = ?
             """,
             (list_id,),
             fetch='one',
@@ -8358,6 +8362,7 @@ def get_related_emails_data(list_id):
 
         conversation_id = parts_list.get('email_conversation_id') if isinstance(parts_list, dict) else parts_list['email_conversation_id']
         source_message_id = parts_list.get('email_message_id') if isinstance(parts_list, dict) else parts_list['email_message_id']
+        contact_email = parts_list.get('contact_email') if isinstance(parts_list, dict) else parts_list.get('contact_email')
 
         conversation_ids = set()
         if conversation_id:
@@ -8366,7 +8371,7 @@ def get_related_emails_data(list_id):
         if source_message_id:
             message_ids.add(source_message_id)
 
-        if not conversation_ids and not message_ids:
+        if not conversation_ids and not message_ids and not contact_email:
             return jsonify(success=True, emails=[], source_message_id=None, graph_connected=True)
 
         from routes.emails import (
@@ -8397,6 +8402,7 @@ def get_related_emails_data(list_id):
         headers = {"Authorization": f"Bearer {token['access_token']}"}
         all_emails = []
 
+        # 1. Search by conversation ID (finds emails in the same thread)
         for conv_id in conversation_ids:
             params = {
                 "$filter": f"conversationId eq '{conv_id}'",
@@ -8417,6 +8423,30 @@ def get_related_emails_data(list_id):
                     msg['_is_source'] = False
                     all_emails.append(msg)
 
+        # 2. Search by customer contact email (finds recent emails even if thread broke)
+        if contact_email:
+            # Search for emails FROM this contact (customer replies)
+            params = {
+                "$filter": f"from/emailAddress/address eq '{contact_email}'",
+                "$select": "id,subject,from,receivedDateTime,bodyPreview,conversationId",
+                "$orderby": "receivedDateTime desc",
+                "$top": 20
+            }
+            resp = requests.get(
+                "https://graph.microsoft.com/v1.0/me/messages",
+                headers=headers,
+                params=params,
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                messages = data.get("value", [])
+                for msg in messages:
+                    msg['_is_source'] = False
+                    all_emails.append(msg)
+
+        # 3. Try to fetch the original source message directly
+        source_found = False
         for msg_id in message_ids:
             resp = requests.get(
                 f"https://graph.microsoft.com/v1.0/me/messages/{url_quote(msg_id)}",
@@ -8428,14 +8458,20 @@ def get_related_emails_data(list_id):
                 msg = resp.json()
                 msg['_is_source'] = (msg_id == source_message_id)
                 all_emails.append(msg)
+                source_found = True
 
-        seen_ids = set()
-        unique_emails = []
+        # Deduplicate emails, but ensure source message is properly marked
+        seen_ids = {}
         for email_msg in all_emails:
             msg_id = email_msg.get('id')
-            if msg_id and msg_id not in seen_ids:
-                seen_ids.add(msg_id)
-                unique_emails.append(email_msg)
+            if not msg_id:
+                continue
+            if msg_id not in seen_ids:
+                seen_ids[msg_id] = email_msg
+            elif email_msg.get('_is_source'):
+                # If this is the source, update the existing entry
+                seen_ids[msg_id]['_is_source'] = True
+        unique_emails = list(seen_ids.values())
 
         unique_emails.sort(
             key=lambda x: x.get('receivedDateTime', ''),

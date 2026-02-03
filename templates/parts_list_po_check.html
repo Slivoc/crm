@@ -1221,6 +1221,11 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!result.success || !result.matches || result.matches.length === 0) {
                 listContainer.innerHTML = '';
                 emptyMsg.style.display = 'block';
+                // Show debug info
+                const debugInfo = result.search_base_pn
+                    ? `<div class="small text-muted mt-2">Searched for: ${escapeHtml(result.search_base_pn)}<br>Checked ${result.total_candidates || 0} parts</div>`
+                    : '';
+                emptyMsg.innerHTML = `<i class="bi bi-x-circle me-1"></i> No similar parts found${debugInfo}`;
                 return;
             }
 
