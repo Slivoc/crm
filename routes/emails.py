@@ -1437,6 +1437,44 @@ def send_graph_reply(message_id, html_body, *, reply_all=False, user_id=None):
     return {"success": True}
 
 
+def _cache_recent_sent_items(user_id, limit=20):
+    if not user_id:
+        return 0
+    settings = _get_graph_settings(include_secret=True)
+    cache = _load_graph_cache_for_user(user_id)
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+    if not accounts:
+        return 0
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache_for_user(user_id, cache)
+    if not token or "access_token" not in token:
+        return 0
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    params = {
+        "$top": str(max(1, min(limit, 50))),
+        "$select": (
+            "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,"
+            "bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
+        ),
+        "$orderby": "sentDateTime desc",
+    }
+    resp = requests.get(
+        "https://graph.microsoft.com/v1.0/me/mailFolders/SentItems/messages",
+        headers=headers,
+        params=params,
+        timeout=20,
+    )
+    if resp.status_code >= 400:
+        return 0
+    body = resp.json() if resp.content else {}
+    messages = body.get("value", []) if isinstance(body, dict) else []
+    if messages:
+        _cache_email_messages(user_id, messages)
+    return len(messages)
+
+
 def _load_graph_cache_for_user(user_id):
     cache = msal.SerializableTokenCache()
     row = db_execute(
@@ -2539,6 +2577,86 @@ def _get_emails_for_contact(user_id, contact_email, limit=5):
             break
 
     return results
+
+
+def _fetch_recent_graph_messages_for_contact(cache, user_id, contact_email, days_back=14):
+    """Fetch recent messages from Graph for a contact, including folder rules + SentItems."""
+    if not user_id or not contact_email:
+        return []
+
+    settings = _get_graph_settings(include_secret=True)
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+    if not accounts:
+        return []
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache_for_request(user_id, cache)
+    if not token or "access_token" not in token:
+        return []
+
+    headers = {
+        "Authorization": f"Bearer {token['access_token']}",
+        "ConsistencyLevel": "eventual",
+    }
+    select_fields = (
+        "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,"
+        "body,bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
+    )
+
+    safe_email = contact_email.replace("'", "''").lower()
+    cutoff = (datetime.utcnow() - timedelta(days=days_back)).replace(microsecond=0).isoformat() + "Z"
+
+    inbox_filter = (
+        f"(from/emailAddress/address eq '{safe_email}'"
+        f" or toRecipients/any(r:r/emailAddress/address eq '{safe_email}')"
+        f" or ccRecipients/any(r:r/emailAddress/address eq '{safe_email}'))"
+        f" and receivedDateTime ge {cutoff}"
+    )
+    sent_filter = (
+        f"(toRecipients/any(r:r/emailAddress/address eq '{safe_email}')"
+        f" or ccRecipients/any(r:r/emailAddress/address eq '{safe_email}'))"
+        f" and sentDateTime ge {cutoff}"
+    )
+
+    def _fetch_folder(folder_id_or_name, filter_value, order_by_field):
+        params = {
+            "$top": "25",
+            "$select": select_fields,
+            "$orderby": f"{order_by_field} desc",
+            "$filter": filter_value,
+        }
+        folder_ref = quote(folder_id_or_name, safe='')
+        resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_ref}/messages",
+            headers=headers,
+            params=params,
+            timeout=20,
+        )
+        if resp.status_code >= 400:
+            return []
+        body = resp.json() if resp.content else {}
+        return body.get("value", []) if isinstance(body, dict) else []
+
+    rule = _fetch_mailbox_folder_rules(user_id, [contact_email]).get(contact_email.lower())
+    rule_folder_id = rule.get("graph_folder_id") if rule else None
+
+    messages = []
+    if rule_folder_id:
+        messages.extend(_fetch_folder(rule_folder_id, inbox_filter, "receivedDateTime"))
+    messages.extend(_fetch_folder("SentItems", sent_filter, "sentDateTime"))
+    if not messages:
+        messages.extend(_fetch_folder("Inbox", inbox_filter, "receivedDateTime"))
+
+    deduped = []
+    seen = set()
+    for msg in messages:
+        msg_id = msg.get("id") if isinstance(msg, dict) else None
+        if not msg_id or msg_id in seen:
+            continue
+        seen.add(msg_id)
+        deduped.append(msg)
+    return deduped
 
 
 def _update_contact_scan_status(user_id, contact_email, success=True, error=None, total_found=0):
@@ -4210,6 +4328,11 @@ def graph_reply_message():
             "error": result.get("error", "Graph reply failed."),
         }), 500
 
+    try:
+        _cache_recent_sent_items(current_user.id, limit=10)
+    except Exception:
+        pass
+
     return jsonify({"success": True})
 
 
@@ -4370,6 +4493,25 @@ def graph_contact_timeline():
         }), 400
 
     emails = _get_emails_for_contact(user_id, email_addr, limit=limit)
+    if not emails:
+        days_back = request.args.get("days_back", "14")
+        try:
+            days_back = int(days_back)
+        except (TypeError, ValueError):
+            days_back = 14
+        days_back = max(1, min(days_back, 60))
+        try:
+            live_messages = _fetch_recent_graph_messages_for_contact(
+                cache,
+                user_id,
+                email_addr,
+                days_back=days_back,
+            )
+            if live_messages:
+                _cache_email_messages(user_id, live_messages)
+                emails = _get_emails_for_contact(user_id, email_addr, limit=limit)
+        except Exception as exc:
+            current_app.logger.warning("Live Graph fetch failed for %s: %s", email_addr, exc)
     scan_status = _get_contact_scan_status(user_id, email_addr)
 
     return jsonify({

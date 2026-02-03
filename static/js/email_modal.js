@@ -34,6 +34,7 @@ class EmailModal {
         // Reply context elements (optional)
         this.replySection = this.modal.querySelector('.reply-section');
         this.replySelect = this.modal.querySelector('#reply_message_id');
+        this.replyAllCheckbox = this.modal.querySelector('#reply_all');
         this.replyPreview = this.modal.querySelector('#replyPreview');
         this.replyPreviewSubject = this.modal.querySelector('#replyPreviewSubject');
         this.replyPreviewMeta = this.modal.querySelector('#replyPreviewMeta');
@@ -43,6 +44,7 @@ class EmailModal {
         this.replyMessageId = '';
         this.replySubject = '';
         this.replyOptionsEmail = '';
+        this.replyLocked = false;
         this.manualSubjectValue = '';
         this.context = this.modal.dataset.context || '';
         this.aiSection = this.modal.querySelector('#aiDraftSection');
@@ -50,6 +52,10 @@ class EmailModal {
         this.aiStatus = this.modal.querySelector('#aiDraftStatus');
         this.aiNews = this.modal.querySelector('#aiDraftNews');
         this.aiUseNews = this.modal.querySelector('#ai_use_news');
+
+        if (this.context === 'mailbox' && this.outlookBtn) {
+            this.outlookBtn.classList.add('d-none');
+        }
 
         // Recipients elements
         this.recipientsList = this.modal.querySelector('.recipients-list');
@@ -540,14 +546,19 @@ class EmailModal {
             }
             return;
         }
-        if (this.recipients.length !== 1) {
+        if (this.recipients.length !== 1 && !this.isReplyAll()) {
             this.replySection.classList.add('d-none');
             this.replyMessageId = '';
             return;
         }
         this.replySection.classList.remove('d-none');
-        const recipient = this.recipients[0];
-        this.loadReplyOptionsForRecipient(recipient.email);
+        if (this.replySelect) {
+            this.replySelect.disabled = this.replyLocked;
+        }
+        if (!this.replyLocked && this.recipients[0]) {
+            const recipient = this.recipients[0];
+            this.loadReplyOptionsForRecipient(recipient.email);
+        }
 
         const isReply = this.replySelect && this.replySelect.value;
         if (isReply && !this.isCustomEmail && this.customEmailCheckbox) {
@@ -568,8 +579,48 @@ class EmailModal {
                 }
             }
         }
-        this.replyMessageId = isReply || '';
+        this.replyMessageId = isReply || this.replyMessageId || '';
         this.loadReplyPreview(this.replyMessageId);
+    }
+
+    isReplyAll() {
+        if (this.replyAllCheckbox) {
+            return this.replyAllCheckbox.checked;
+        }
+        return false;
+    }
+
+    setReplyContext({ messageId, replyAll = false, recipients = [] }) {
+        this.clearRecipients();
+        if (Array.isArray(recipients) && recipients.length) {
+            this.addMultipleRecipients(recipients);
+        }
+
+        if (this.customEmailCheckbox) {
+            this.customEmailCheckbox.checked = true;
+            this.isCustomEmail = true;
+            this.toggleEmailMode();
+        }
+
+        this.replyMessageId = messageId || '';
+        if (this.replySelect) {
+            this.replySelect.innerHTML = '<option value="">Send new email (no reply)</option>';
+            if (messageId) {
+                const option = document.createElement('option');
+                option.value = messageId;
+                option.textContent = 'Selected message';
+                this.replySelect.appendChild(option);
+                this.replySelect.value = messageId;
+            }
+        }
+        if (this.replyAllCheckbox) {
+            this.replyAllCheckbox.checked = !!replyAll;
+        }
+        this.replyLocked = !!messageId;
+        if (messageId) {
+            this.loadReplyPreview(messageId);
+        }
+        this.updateReplyModeState();
     }
 
     // Enhanced methods for recipient management
@@ -648,9 +699,16 @@ class EmailModal {
         recipientInfo.appendChild(nameDiv);
         recipientInfo.appendChild(emailDiv);
 
-        // Add company badge if available
+        // Add role / company badges if available
         const rightSection = document.createElement('div');
         rightSection.style.cssText = 'display: flex; align-items: center;';
+
+        if (recipient.role) {
+            const roleBadge = document.createElement('span');
+            roleBadge.className = 'recipient-badge';
+            roleBadge.textContent = recipient.role;
+            rightSection.appendChild(roleBadge);
+        }
 
         if (recipient.company) {
             const companyBadge = document.createElement('span');
@@ -1416,9 +1474,11 @@ class EmailModal {
         // Always use Outlook button after preview (since direct send is disabled)
         if (hasPreview && hasRecipients) {
             if (this.sendBtn) this.sendBtn.classList.add('d-none');
-            this.outlookBtn.classList.remove('d-none');
+            if (this.context !== 'mailbox') {
+                this.outlookBtn.classList.remove('d-none');
+            }
             if (this.sendSystemBtn) {
-                if (this.recipients.length > 1) {
+                if (this.replyMessageId || this.recipients.length > 1) {
                     this.sendSystemBtn.classList.remove('d-none');
                 } else {
                     this.sendSystemBtn.classList.add('d-none');
@@ -2667,8 +2727,9 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
             const baseBodyHtml = emailBody.innerHTML;
             const templateId = this.templateSelect ? this.templateSelect.value : '';
             const replyMessageId = this.replyMessageId || '';
+            const replyAll = this.isReplyAll();
 
-            if (replyMessageId && this.recipients.length !== 1) {
+            if (replyMessageId && this.recipients.length !== 1 && !replyAll) {
                 this.showToast('Replying is only available for a single recipient', 'warning');
                 return;
             }
@@ -2682,7 +2743,10 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
                 return;
             }
 
-            const confirmSend = confirm(`Send ${this.recipients.length} emails via the system now?`);
+            const confirmText = replyMessageId
+                ? 'Send this reply via the system now?'
+                : `Send ${this.recipients.length} emails via the system now?`;
+            const confirmSend = confirm(confirmText);
             if (!confirmSend) {
                 return;
             }
@@ -2695,10 +2759,11 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
             let successCount = 0;
             let failureCount = 0;
 
-            for (const recipient of this.recipients) {
-                if (!recipient.email) {
-                    failureCount += 1;
-                    continue;
+            if (replyMessageId) {
+                const recipient = this.recipients[0];
+                if (!recipient?.email) {
+                    this.showToast('Reply recipient missing', 'warning');
+                    return;
                 }
 
                 try {
@@ -2708,38 +2773,16 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
                         baseBodyHtml
                     );
 
-                    let endpoint = '';
-                    let payload = {};
-
-                    if (replyMessageId) {
-                        endpoint = '/emails/graph/reply';
-                        payload = {
-                            message_id: replyMessageId,
-                            html_body: personalizedContent.bodyHtml
-                        };
-                    } else if (this.isCustomEmail) {
-                        endpoint = '/api/send-custom-email';
-                        payload = {
-                            contact_id: recipient.id,
-                            customer_id: recipient.customerId || this.customerData?.id || '',
-                            subject: personalizedContent.subject,
-                            body: personalizedContent.bodyHtml
-                        };
-                    } else {
-                        endpoint = '/api/send-email';
-                        payload = {
-                            contact_id: recipient.id,
-                            customer_id: recipient.customerId || this.customerData?.id || '',
-                            template_id: templateId
-                        };
-                    }
-
-                    const response = await fetch(endpoint, {
+                    const response = await fetch('/emails/graph/reply', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
                         },
-                        body: JSON.stringify(payload)
+                        body: JSON.stringify({
+                            message_id: replyMessageId,
+                            html_body: personalizedContent.bodyHtml,
+                            reply_all: replyAll
+                        })
                     });
 
                     const result = await response.json();
@@ -2748,10 +2791,64 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
                     }
 
                     await this.logCustomerUpdate(recipient, personalizedContent.subject);
-                    successCount += 1;
+                    successCount = 1;
                 } catch (error) {
-                    console.error('System send failed for recipient:', recipient, error);
-                    failureCount += 1;
+                    console.error('System reply failed:', error);
+                    failureCount = 1;
+                }
+            } else {
+                for (const recipient of this.recipients) {
+                    if (!recipient.email) {
+                        failureCount += 1;
+                        continue;
+                    }
+
+                    try {
+                        const personalizedContent = await this.personalizeContentForRecipient(
+                            recipient,
+                            baseSubject,
+                            baseBodyHtml
+                        );
+
+                        let endpoint = '';
+                        let payload = {};
+
+                        if (this.isCustomEmail) {
+                            endpoint = '/api/send-custom-email';
+                            payload = {
+                                contact_id: recipient.id,
+                                customer_id: recipient.customerId || this.customerData?.id || '',
+                                subject: personalizedContent.subject,
+                                body: personalizedContent.bodyHtml
+                            };
+                        } else {
+                            endpoint = '/api/send-email';
+                            payload = {
+                                contact_id: recipient.id,
+                                customer_id: recipient.customerId || this.customerData?.id || '',
+                                template_id: templateId
+                            };
+                        }
+
+                        const response = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(payload)
+                        });
+
+                        const result = await response.json();
+                        if (!response.ok || !result.success) {
+                            throw new Error(result.error || result.message || `Send failed (${response.status})`);
+                        }
+
+                        await this.logCustomerUpdate(recipient, personalizedContent.subject);
+                        successCount += 1;
+                    } catch (error) {
+                        console.error('System send failed for recipient:', recipient, error);
+                        failureCount += 1;
+                    }
                 }
             }
 

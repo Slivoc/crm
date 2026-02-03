@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set email_modal_context = 'mailbox' %}
 
 {% block content %}
 <div class="mailbox-container">
@@ -76,6 +77,12 @@
                             </button>
                             <button type="button" class="btn btn-sm btn-outline-dark" id="mailboxTriageBtn" disabled title="Preview triage decision">
                                 <i class="bi bi-diagram-3 me-1"></i>Triage
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="mailboxReplyBtn" disabled title="Reply">
+                                <i class="bi bi-reply me-1"></i>Reply
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="mailboxReplyAllBtn" disabled title="Reply all">
+                                <i class="bi bi-reply-all me-1"></i>Reply all
                             </button>
                             <a class="btn btn-sm btn-outline-secondary disabled" id="openOutlookBtn" href="#" target="_blank" rel="noopener" title="Open in Outlook">
                                 <i class="bi bi-box-arrow-up-right"></i>
@@ -359,6 +366,8 @@ const createSupplierQuoteBtn = document.getElementById('createSupplierQuoteBtn')
 const createTicketBtn = document.getElementById('createTicketBtn');
 const checkCustomerPoBtn = document.getElementById('checkCustomerPoBtn');
 const mailboxTriageBtn = document.getElementById('mailboxTriageBtn');
+const mailboxReplyBtn = document.getElementById('mailboxReplyBtn');
+const mailboxReplyAllBtn = document.getElementById('mailboxReplyAllBtn');
 const openOutlookBtn = document.getElementById('openOutlookBtn');
 const loadImagesToggle = document.getElementById('loadImagesToggle');
 const loadImagesLabel = document.getElementById('loadImagesLabel');
@@ -446,6 +455,72 @@ const INLINE_PREFETCH_CONCURRENCY = 2;
 const MAX_ATTACHMENT_SCAN_COUNT = 3;
 const MAX_ATTACHMENT_SCAN_BYTES = 3 * 1024 * 1024;
 updateLoadImagesButton();
+
+function normalizeMailboxRecipient(recipient, role) {
+    const email = recipient?.emailAddress?.address || recipient?.address || '';
+    if (!email) return null;
+    const name = recipient?.emailAddress?.name || recipient?.name || email;
+    return {
+        name,
+        email,
+        role: role || 'To'
+    };
+}
+
+function buildReplyRecipients(message, replyAll) {
+    if (!message) return [];
+    const recipients = [];
+    const fromData = message.from?.emailAddress;
+    const fromRecipient = normalizeMailboxRecipient(fromData, 'To');
+    if (fromRecipient) {
+        recipients.push(fromRecipient);
+    }
+
+    if (replyAll) {
+        const toRecipients = message.toRecipients || [];
+        const ccRecipients = message.ccRecipients || [];
+        toRecipients.forEach(recipient => {
+            const normalized = normalizeMailboxRecipient(recipient, 'To');
+            if (normalized) recipients.push(normalized);
+        });
+        ccRecipients.forEach(recipient => {
+            const normalized = normalizeMailboxRecipient(recipient, 'Cc');
+            if (normalized) recipients.push(normalized);
+        });
+    }
+
+    const seen = new Set();
+    return recipients.filter(recipient => {
+        const key = (recipient.email || '').toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function openMailboxReplyModal(replyAll) {
+    if (!selectedMessage || !selectedMessage.id) {
+        showToast('Select an email first', 'warning');
+        return;
+    }
+    if (!window.emailModalInstance || !window.emailModalInstance.setReplyContext) {
+        showToast('Email composer is not ready', 'warning');
+        return;
+    }
+
+    const recipients = buildReplyRecipients(selectedMessage, replyAll);
+    window.emailModalInstance.setReplyContext({
+        messageId: selectedMessage.id,
+        replyAll: !!replyAll,
+        recipients
+    });
+
+    if (window.bootstrap && bootstrap.Modal) {
+        const modalEl = document.getElementById('emailModal');
+        const modalInstance = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modalInstance.show();
+    }
+}
 
 function parsePartsAvailabilitySubject(subject) {
     if (!subject) return null;
@@ -1880,6 +1955,8 @@ async function selectMessage(messageId) {
     });
     selectedMessageId = messageId;
     mailboxTriageBtn.disabled = true;
+    if (mailboxReplyBtn) mailboxReplyBtn.disabled = true;
+    if (mailboxReplyAllBtn) mailboxReplyAllBtn.disabled = true;
     resetTriagePreview();
     mailboxSelectedSupplierData = null;
     mailboxSupplierRequests = [];
@@ -1972,6 +2049,8 @@ async function selectMessage(messageId) {
         createTicketBtn.disabled = false;
         checkCustomerPoBtn.disabled = false;
         mailboxTriageBtn.disabled = false;
+        if (mailboxReplyBtn) mailboxReplyBtn.disabled = false;
+        if (mailboxReplyAllBtn) mailboxReplyAllBtn.disabled = false;
         renderSupplierMatchState();
 
         // Fetch PDF attachments for the email (non-blocking)
@@ -2462,6 +2541,14 @@ mailboxTriageBtn?.addEventListener('click', async () => {
         mailboxTriageBtn.disabled = !selectedMessage;
         mailboxTriageBtn.innerHTML = original;
     }
+});
+
+mailboxReplyBtn?.addEventListener('click', () => {
+    openMailboxReplyModal(false);
+});
+
+mailboxReplyAllBtn?.addEventListener('click', () => {
+    openMailboxReplyModal(true);
 });
 
 createPartsListBtn.addEventListener('click', async () => {

@@ -801,13 +801,17 @@ input:-webkit-autofill {
     </div>
 </a>
 <ul class="dropdown-menu shadow border-0" aria-labelledby="projectsDropdown" style="min-width: 250px;">
-                                    <li><a class="dropdown-item" href="{{ url_for('projects.list_projects') }}">Go to All Projects</a></li>
+                                    <li>
+                                        <a class="dropdown-item d-flex align-items-center" href="{{ url_for('projects.list_projects') }}">
+                                            <i class="bi bi-kanban me-2"></i>Go to All Projects
+                                        </a>
+                                    </li>
                                     <li><hr class="dropdown-divider"></li>
                                     {% for proj in projects %}
                                         <li>
-                                            <a class="dropdown-item {% if session.get('active_project_id') == proj.id %}active{% endif %}"
+                                            <a class="dropdown-item d-flex align-items-center {% if session.get('active_project_id') == proj.id %}active{% endif %}"
                                                href="javascript:setActiveProject({{ proj.id }})">
-                                                {{ proj.name }}
+                                                <i class="bi bi-folder me-2"></i>{{ proj.name }}
                                             </a>
                                         </li>
                                     {% endfor %}
