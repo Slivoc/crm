@@ -1796,7 +1796,7 @@ def customer_quote_simple(list_id):
                 SELECT id, name FROM parts_list_statuses ORDER BY id ASC
             """).fetchall()
 
-              lines = _execute_with_cursor(cur, """
+            lines = _execute_with_cursor(cur, """
                   SELECT 
                       pll.id,
                       pll.line_number,
@@ -1911,15 +1911,15 @@ def customer_quote_simple(list_id):
                 ORDER BY pll.line_number ASC
             """, (list_id,)).fetchall()
 
-                for line in lines:
-                    line_dict = dict(line)
-                    has_parent_part = line_dict.get('parent_customer_part_number')
-                    is_alt_line = line_dict.get('line_type') == 'alternate' or line_dict.get('parent_line_id')
-                    line_dict['requested_part_number'] = (
-                        line_dict['parent_customer_part_number']
-                        if is_alt_line and has_parent_part
-                        else line_dict.get('customer_part_number')
-                    )
+            for line in lines:
+                line_dict = dict(line)
+                has_parent_part = line_dict.get('parent_customer_part_number')
+                is_alt_line = line_dict.get('line_type') == 'alternate' or line_dict.get('parent_line_id')
+                line_dict['requested_part_number'] = (
+                    line_dict['parent_customer_part_number']
+                    if is_alt_line and has_parent_part
+                    else line_dict.get('customer_part_number')
+                )
                 bom_data = _execute_with_cursor(cur, """
                     SELECT bl.guide_price, bh.name as bom_name
                     FROM bom_lines bl
