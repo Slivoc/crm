@@ -206,6 +206,59 @@
     border-color: #86b7fe;
     box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
 }
+
+/* Supplier score tooltip */
+.supplier-score-pill {
+    position: relative;
+}
+.score-debug-trigger {
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+}
+.score-debug-tooltip {
+    position: fixed;
+    z-index: 9999;
+    background: #212529;
+    color: #fff;
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    font-size: 0.8rem;
+    min-width: 220px;
+    max-width: 320px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.score-debug-tooltip.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+.score-debug-tooltip .tooltip-title {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+}
+.score-debug-tooltip .tooltip-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.2rem 0;
+}
+.score-debug-tooltip .tooltip-row .label {
+    color: #adb5bd;
+}
+.score-debug-tooltip .tooltip-row .value {
+    font-weight: 500;
+}
+.score-debug-tooltip .tooltip-formula {
+    margin-top: 0.5rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid rgba(255,255,255,0.2);
+    font-size: 0.7rem;
+    color: #adb5bd;
+}
 </style>
 {% endblock %}
 
@@ -324,15 +377,11 @@
                         {% if supplier.warning %}
                             <span class="supplier-warning">
                                 ⚠ {{ supplier.warning }}
-                                <span class="supplier-score-pill ms-2" data-supplier-id="{{ supplier.supplier_id }}">
-                                    <span class="text-muted">Loading score...</span>
-                                </span>
-                            </span>
-                        {% else %}
-                            <span class="supplier-score-pill ms-2" data-supplier-id="{{ supplier.supplier_id }}">
-                                <span class="text-muted">Loading score...</span>
                             </span>
                         {% endif %}
+                        <span class="supplier-score-pill ms-2" data-supplier-id="{{ supplier.supplier_id }}">
+                            <span class="text-muted">Loading score...</span>
+                        </span>
                     </div>
                     {% if supplier.contact_email %}
                         <div class="supplier-email">
@@ -682,18 +731,13 @@ document.addEventListener('DOMContentLoaded', function() {
         const noResponseRate = scoreInfo.no_response_rate !== null && scoreInfo.no_response_rate !== undefined
             ? Math.round(scoreInfo.no_response_rate * 100)
             : null;
-        const noResponseLabel = scoreInfo.response_window_days
-            ? `No-response ${scoreInfo.response_window_days}d`
-            : 'No-response';
-        const tooltip = `Requests: ${scoreInfo.requests_sent} · No-bid: ${scoreInfo.no_bid_count}` +
-            (noBidRate !== null ? ` (${noBidRate}%)` : '') +
-            ` · ${noResponseLabel}: ${scoreInfo.no_response_count}` +
-            (noResponseRate !== null ? ` (${noResponseRate}%)` : '') +
-            (scoreInfo.lookback_days ? ` · Last ${scoreInfo.lookback_days}d` : '');
+
+        // Encode score info as JSON for the tooltip
+        const scoreDataJson = encodeURIComponent(JSON.stringify(scoreInfo));
 
         return `
-            <span class="badge ${badgeClass}" title="${tooltip}">${scoreInfo.score}</span>
-            <small class="text-muted ms-1">${scoreInfo.rating}</small>
+            <span class="badge ${badgeClass} score-debug-trigger" data-score-info="${scoreDataJson}">${scoreInfo.score}</span>
+            <small class="text-muted ms-1 score-debug-trigger" data-score-info="${scoreDataJson}">${scoreInfo.rating}</small>
         `;
     }
 
@@ -1016,6 +1060,79 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('filterPartNumber').addEventListener('input', applyFilters);
 
     fetchSupplierScoresForEmailSuppliers();
+
+    // ---- Score Debug Tooltip --------------------------------------
+    const scoreTooltip = document.createElement('div');
+    scoreTooltip.className = 'score-debug-tooltip';
+    scoreTooltip.id = 'scoreDebugTooltip';
+    document.body.appendChild(scoreTooltip);
+
+    function showScoreTooltip(e, scoreInfo) {
+        const noBidRate = scoreInfo.no_bid_rate !== null && scoreInfo.no_bid_rate !== undefined
+            ? (scoreInfo.no_bid_rate * 100).toFixed(1)
+            : 'N/A';
+        const noResponseRate = scoreInfo.no_response_rate !== null && scoreInfo.no_response_rate !== undefined
+            ? (scoreInfo.no_response_rate * 100).toFixed(1)
+            : 'N/A';
+
+        scoreTooltip.innerHTML = `
+            <div class="tooltip-title">Score Breakdown: ${scoreInfo.score} (${scoreInfo.rating})</div>
+            <div class="tooltip-row"><span class="label">Lookback period</span><span class="value">${scoreInfo.lookback_days || 'N/A'} days</span></div>
+            <div class="tooltip-row"><span class="label">Response window</span><span class="value">${scoreInfo.response_window_days || 'N/A'} days</span></div>
+            <div class="tooltip-row"><span class="label">Requests sent</span><span class="value">${scoreInfo.requests_sent}</span></div>
+            <div class="tooltip-row"><span class="label">No-bid count</span><span class="value">${scoreInfo.no_bid_count}</span></div>
+            <div class="tooltip-row"><span class="label">No-bid rate</span><span class="value">${noBidRate}%</span></div>
+            <div class="tooltip-row"><span class="label">No-response count</span><span class="value">${scoreInfo.no_response_count}</span></div>
+            <div class="tooltip-row"><span class="label">No-response rate</span><span class="value">${noResponseRate}%</span></div>
+            <div class="tooltip-formula">Score = 100 - (no_bid% × 0.4) - (no_response% × 0.6)</div>
+        `;
+
+        // Position tooltip near the trigger element
+        const rect = e.target.getBoundingClientRect();
+        let left = rect.left;
+        let top = rect.bottom + 8;
+
+        // Keep tooltip in viewport
+        scoreTooltip.style.left = '0px';
+        scoreTooltip.style.top = '0px';
+        scoreTooltip.classList.add('visible');
+
+        const tooltipRect = scoreTooltip.getBoundingClientRect();
+        if (left + tooltipRect.width > window.innerWidth - 16) {
+            left = window.innerWidth - tooltipRect.width - 16;
+        }
+        if (top + tooltipRect.height > window.innerHeight - 16) {
+            top = rect.top - tooltipRect.height - 8;
+        }
+
+        scoreTooltip.style.left = `${Math.max(8, left)}px`;
+        scoreTooltip.style.top = `${Math.max(8, top)}px`;
+    }
+
+    function hideScoreTooltip() {
+        scoreTooltip.classList.remove('visible');
+    }
+
+    // Event delegation for score triggers
+    document.addEventListener('mouseenter', function(e) {
+        if (e.target.classList.contains('score-debug-trigger')) {
+            const scoreDataJson = e.target.dataset.scoreInfo;
+            if (scoreDataJson) {
+                try {
+                    const scoreInfo = JSON.parse(decodeURIComponent(scoreDataJson));
+                    showScoreTooltip(e, scoreInfo);
+                } catch (err) {
+                    console.warn('Failed to parse score info', err);
+                }
+            }
+        }
+    }, true);
+
+    document.addEventListener('mouseleave', function(e) {
+        if (e.target.classList.contains('score-debug-trigger')) {
+            hideScoreTooltip();
+        }
+    }, true);
 
     // ---- Copy for ILS Button --------------------------------------
     document.getElementById('copyForILSBtn').addEventListener('click', async function() {
