@@ -609,8 +609,17 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
         const noBidRate = scoreInfo.no_bid_rate !== null && scoreInfo.no_bid_rate !== undefined
             ? Math.round(scoreInfo.no_bid_rate * 100)
             : null;
+        const noResponseRate = scoreInfo.no_response_rate !== null && scoreInfo.no_response_rate !== undefined
+            ? Math.round(scoreInfo.no_response_rate * 100)
+            : null;
+        const noResponseLabel = scoreInfo.response_window_days
+            ? `No-response ${scoreInfo.response_window_days}d`
+            : 'No-response';
         const tooltip = `Requests: ${scoreInfo.requests_sent} · No-bid: ${scoreInfo.no_bid_count}` +
-            (noBidRate !== null ? ` (${noBidRate}%)` : '');
+            (noBidRate !== null ? ` (${noBidRate}%)` : '') +
+            ` · ${noResponseLabel}: ${scoreInfo.no_response_count}` +
+            (noResponseRate !== null ? ` (${noResponseRate}%)` : '') +
+            (scoreInfo.lookback_days ? ` · Last ${scoreInfo.lookback_days}d` : '');
 
         return `
             <span class="badge ${badgeClass}" title="${tooltip}">
@@ -631,7 +640,9 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                supplier_ids: supplierIds
+                supplier_ids: supplierIds,
+                lookback_days: 60,
+                response_window_days: 7
             })
         })
         .then(response => response.json())
