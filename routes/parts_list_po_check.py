@@ -85,7 +85,8 @@ def extract_customer_po_data(po_text):
     - payment_terms: Payment terms if stated
     - delivery_address: Ship-to / delivery address
     - invoice_address: Bill-to / invoice address
-    - lines: List of line items with part_number, description, quantity, unit_price, total_price
+    - required_delivery_date: Overall required delivery date if stated (string, null if not found)
+    - lines: List of line items with part_number, description, quantity, unit_price, total_price, required_delivery_date
     """
     try:
         logger.info("extract_customer_po_data: starting extraction")
@@ -122,6 +123,7 @@ The JSON object should have these fields:
   - quantity: Quantity ordered (integer)
   - unit_price: Unit price (decimal number, null if not stated)
   - total_price: Line total (decimal number, null if not stated)
+  - required_delivery_date: Required delivery date for the line in YYYY-MM-DD (string, null if not stated)
 
 Important notes:
 - Extract ALL line items from the PO
@@ -133,7 +135,9 @@ Important notes:
 - Payment terms might appear as "Terms:", "Payment:", "Net 30", etc.
 - Delivery address may appear as "Ship To:", "Deliver To:", "Delivery Address:", or similar
 - Invoice address may appear as "Bill To:", "Invoice To:", "Billing Address:", or similar
-- Include full address with company name, street, city, postal code, country if available"""
+- Include full address with company name, street, city, postal code, country if available
+- If the PO specifies a required delivery date, capture it as required_delivery_date
+- Required delivery date might be overall for the PO or per line item (line-level required_delivery_date)"""
                 },
                 {
                     "role": "user",
@@ -141,7 +145,7 @@ Important notes:
 
 {po_text}
 
-Return a JSON object with customer_name, po_reference, po_date, currency, incoterms, payment_terms, delivery_address, invoice_address, and lines array."""
+Return a JSON object with customer_name, po_reference, po_date, currency, incoterms, payment_terms, delivery_address, invoice_address, required_delivery_date, and lines array."""
                 }
             ],
             max_tokens=6000,
@@ -195,6 +199,7 @@ Return a JSON object with customer_name, po_reference, po_date, currency, incote
             'payment_terms': data.get('payment_terms'),
             'delivery_address': data.get('delivery_address'),
             'invoice_address': data.get('invoice_address'),
+            'required_delivery_date': data.get('required_delivery_date'),
             'lines': []
         }
 
@@ -224,7 +229,8 @@ Return a JSON object with customer_name, po_reference, po_date, currency, incote
                 'description': line.get('description'),
                 'quantity': qty,
                 'unit_price': unit_price,
-                'total_price': total_price
+                'total_price': total_price,
+                'required_delivery_date': line.get('required_delivery_date')
             })
 
         logger.info("Extracted %d lines from PO", len(result['lines']))
@@ -242,6 +248,7 @@ Return a JSON object with customer_name, po_reference, po_date, currency, incote
             'payment_terms': None,
             'delivery_address': None,
             'invoice_address': None,
+            'required_delivery_date': None,
             'lines': []
         }
 
@@ -409,7 +416,8 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                         'name': best_match['supplier_name'],
                         'cost': float(best_match['chosen_cost']) if best_match['chosen_cost'] else None,
                         'cost_currency': best_match.get('cost_currency'),
-                        'lead_days': best_match.get('chosen_lead_days')
+                        'lead_days': best_match.get('chosen_lead_days'),
+                        'quantity': best_match.get('chosen_qty') or best_match.get('quantity')
                     }
 
                 # Check for discrepancies
