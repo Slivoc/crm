@@ -7827,18 +7827,37 @@ def preview_email():
     Preview email content for both direct send and Outlook integration
     """
     try:
-        data = request.json
+        data = request.json or {}
         contact_id = data.get('contact_id')
         customer_id = data.get('customer_id')
         is_custom = data.get('is_custom', False)
+        recipients = data.get('recipients') or []
 
-        if not contact_id:
-            return jsonify({'success': False, 'error': 'Contact ID is required'}), 400
+        primary_recipient = None
+        if isinstance(recipients, list):
+            for recipient in recipients:
+                email = recipient.get('email') or recipient.get('address')
+                if email:
+                    primary_recipient = recipient
+                    break
 
         # Get contact information
-        contact = get_contact_by_id(contact_id)
+        contact = None
+        if contact_id:
+            contact = get_contact_by_id(contact_id)
+        if not contact and primary_recipient:
+            recipient_email = primary_recipient.get('email') or primary_recipient.get('address')
+            if recipient_email:
+                contact = get_contact_by_email(recipient_email)
+                if not contact:
+                    contact = {
+                        'email': recipient_email,
+                        'name': primary_recipient.get('name') or recipient_email,
+                        'job_title': primary_recipient.get('title') or ''
+                    }
+
         if not contact:
-            return jsonify({'success': False, 'error': 'Contact not found'}), 404
+            return jsonify({'success': False, 'error': 'Contact is required'}), 400
 
         # Get customer information if provided
         customer = None
