@@ -5766,40 +5766,57 @@ def get_supplier_no_bid_scores():
         placeholders = ','.join(['?'] * len(supplier_ids))
         rows = db_execute(
             f"""
-            WITH response_times AS (
+            WITH response_status AS (
+                -- For each supplier+line, check if they responded at all
                 SELECT
                     sq.supplier_id,
                     sql.parts_list_line_id,
-                    MIN(sql.date_created) AS first_response_at
+                    1 AS has_response
                 FROM parts_list_supplier_quotes sq
                 JOIN parts_list_supplier_quote_lines sql
                     ON sql.supplier_quote_id = sq.id
+                GROUP BY sq.supplier_id, sql.parts_list_line_id
+            ),
+            no_bids AS (
+                -- Lines where supplier explicitly said no-bid
+                SELECT
+                    sq.supplier_id,
+                    sql.parts_list_line_id
+                FROM parts_list_supplier_quotes sq
+                JOIN parts_list_supplier_quote_lines sql
+                    ON sql.supplier_quote_id = sq.id
+                WHERE sql.is_no_bid = TRUE
                 GROUP BY sq.supplier_id, sql.parts_list_line_id
             )
             SELECT
                 se.supplier_id,
                 COUNT(DISTINCT se.parts_list_line_id) AS requests_sent,
-                COUNT(DISTINCT CASE WHEN sql.is_no_bid = TRUE THEN sql.parts_list_line_id END) AS no_bid_count,
+                COUNT(DISTINCT nb.parts_list_line_id) AS no_bid_count,
+                -- Only count as no-response if:
+                -- 1. Request is old enough (sent > response_window_days ago)
+                -- 2. No response of any kind was received
                 COUNT(DISTINCT CASE
-                    WHEN se.date_sent IS NOT NULL
-                     AND (rt.first_response_at IS NULL
-                          OR rt.first_response_at > se.date_sent + (? * INTERVAL '1 day'))
+                    WHEN se.date_sent < NOW() - (? * INTERVAL '1 day')
+                     AND rs.has_response IS NULL
                     THEN se.parts_list_line_id
-                END) AS no_response_count
+                END) AS no_response_count,
+                -- Also track how many requests are still "young" (for debugging)
+                COUNT(DISTINCT CASE
+                    WHEN se.date_sent >= NOW() - (? * INTERVAL '1 day')
+                    THEN se.parts_list_line_id
+                END) AS young_requests
             FROM parts_list_line_supplier_emails se
-            LEFT JOIN parts_list_supplier_quotes sq
-                ON sq.supplier_id = se.supplier_id
-            LEFT JOIN parts_list_supplier_quote_lines sql
-                ON sql.supplier_quote_id = sq.id
-               AND sql.parts_list_line_id = se.parts_list_line_id
-            LEFT JOIN response_times rt
-                ON rt.supplier_id = se.supplier_id
-               AND rt.parts_list_line_id = se.parts_list_line_id
+            LEFT JOIN response_status rs
+                ON rs.supplier_id = se.supplier_id
+               AND rs.parts_list_line_id = se.parts_list_line_id
+            LEFT JOIN no_bids nb
+                ON nb.supplier_id = se.supplier_id
+               AND nb.parts_list_line_id = se.parts_list_line_id
             WHERE se.supplier_id IN ({placeholders})
               AND se.date_sent >= NOW() - (? * INTERVAL '1 day')
             GROUP BY se.supplier_id
             """,
-            supplier_ids + [response_window_days, lookback_days],
+            [response_window_days, response_window_days] + supplier_ids + [lookback_days],
             fetch='all',
         )
 
@@ -5808,11 +5825,18 @@ def get_supplier_no_bid_scores():
             requests_sent = int(row['requests_sent'] or 0)
             no_bid_count = int(row['no_bid_count'] or 0)
             no_response_count = int(row.get('no_response_count') or 0)
+            young_requests = int(row.get('young_requests') or 0)
+            # Mature requests = requests old enough to expect a response
+            mature_requests = requests_sent - young_requests
             if requests_sent > 0:
                 no_bid_rate = no_bid_count / requests_sent
-                no_response_rate = no_response_count / requests_sent
-                combined_rate = (no_bid_count + no_response_count) / requests_sent
-                score = round((1 - combined_rate) * 100)
+                # No-response rate is based on mature requests only
+                no_response_rate = no_response_count / mature_requests if mature_requests > 0 else 0
+                # Score: penalize no-bids and no-responses equally
+                # But only count no-responses against mature requests
+                combined_bad = no_bid_count + no_response_count
+                score = round((1 - combined_bad / requests_sent) * 100) if requests_sent > 0 else 100
+                score = max(0, min(100, score))  # Clamp to 0-100
                 if score >= 85:
                     rating = 'Great'
                 elif score >= 70:
@@ -5833,6 +5857,8 @@ def get_supplier_no_bid_scores():
                 'no_bid_rate': no_bid_rate,
                 'no_response_count': no_response_count,
                 'no_response_rate': no_response_rate,
+                'young_requests': young_requests,
+                'mature_requests': mature_requests,
                 'lookback_days': lookback_days,
                 'response_window_days': response_window_days,
                 'score': score,

@@ -1074,17 +1074,19 @@ document.addEventListener('DOMContentLoaded', function() {
         const noResponseRate = scoreInfo.no_response_rate !== null && scoreInfo.no_response_rate !== undefined
             ? (scoreInfo.no_response_rate * 100).toFixed(1)
             : 'N/A';
+        const youngRequests = scoreInfo.young_requests ?? 0;
+        const matureRequests = scoreInfo.mature_requests ?? scoreInfo.requests_sent;
 
         scoreTooltip.innerHTML = `
             <div class="tooltip-title">Score Breakdown: ${scoreInfo.score} (${scoreInfo.rating})</div>
             <div class="tooltip-row"><span class="label">Lookback period</span><span class="value">${scoreInfo.lookback_days || 'N/A'} days</span></div>
             <div class="tooltip-row"><span class="label">Response window</span><span class="value">${scoreInfo.response_window_days || 'N/A'} days</span></div>
-            <div class="tooltip-row"><span class="label">Requests sent</span><span class="value">${scoreInfo.requests_sent}</span></div>
-            <div class="tooltip-row"><span class="label">No-bid count</span><span class="value">${scoreInfo.no_bid_count}</span></div>
-            <div class="tooltip-row"><span class="label">No-bid rate</span><span class="value">${noBidRate}%</span></div>
-            <div class="tooltip-row"><span class="label">No-response count</span><span class="value">${scoreInfo.no_response_count}</span></div>
-            <div class="tooltip-row"><span class="label">No-response rate</span><span class="value">${noResponseRate}%</span></div>
-            <div class="tooltip-formula">Score = 100 - (no_bid% × 0.4) - (no_response% × 0.6)</div>
+            <div class="tooltip-row"><span class="label">Total requests sent</span><span class="value">${scoreInfo.requests_sent}</span></div>
+            <div class="tooltip-row"><span class="label">↳ Young (&lt;${scoreInfo.response_window_days}d)</span><span class="value">${youngRequests}</span></div>
+            <div class="tooltip-row"><span class="label">↳ Mature (≥${scoreInfo.response_window_days}d)</span><span class="value">${matureRequests}</span></div>
+            <div class="tooltip-row"><span class="label">No-bid count</span><span class="value">${scoreInfo.no_bid_count} (${noBidRate}%)</span></div>
+            <div class="tooltip-row"><span class="label">No-response count</span><span class="value">${scoreInfo.no_response_count} (${noResponseRate}%)</span></div>
+            <div class="tooltip-formula">Score = 100 × (1 - (no_bids + no_responses) / total_requests)<br>No-response only counted for mature requests</div>
         `;
 
         // Position tooltip near the trigger element
