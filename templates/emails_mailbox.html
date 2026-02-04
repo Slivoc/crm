@@ -156,14 +156,14 @@
                                     </div>
                                     <div class="supplier-panel-body" id="mailboxDetectedListBody"></div>
                                 </div>
-                                <div class="supplier-panel mt-3">
+                                <div class="supplier-panel mt-3" id="mailboxPartsScanPanel">
                                     <div class="supplier-panel-header">
                                         <div class="fw-semibold">Part scan suggestions</div>
                                         <div class="small text-muted" id="mailboxPartsScanMeta"></div>
                                     </div>
                                     <div class="supplier-panel-body" id="mailboxPartsScanResults"></div>
                                 </div>
-                                <div class="supplier-panel mt-3">
+                                <div class="supplier-panel mt-3" id="mailboxSupplierRequestsPanel">
                                     <div class="supplier-panel-header">
                                         <div class="fw-semibold">Unanswered quote requests</div>
                                         <div class="small text-muted" id="mailboxSupplierRequestsMeta"></div>
@@ -399,6 +399,8 @@ const mailboxSupplierRequestsMeta = document.getElementById('mailboxSupplierRequ
 const mailboxSupplierStatus = document.getElementById('mailboxSupplierStatus');
 const mailboxPartsScanResults = document.getElementById('mailboxPartsScanResults');
 const mailboxPartsScanMeta = document.getElementById('mailboxPartsScanMeta');
+const mailboxPartsScanPanel = document.getElementById('mailboxPartsScanPanel');
+const mailboxSupplierRequestsPanel = document.getElementById('mailboxSupplierRequestsPanel');
 const mailboxDetectedListPanel = document.getElementById('mailboxDetectedListPanel');
 const mailboxDetectedListBody = document.getElementById('mailboxDetectedListBody');
 const mailboxDetectedListMeta = document.getElementById('mailboxDetectedListMeta');
@@ -1167,11 +1169,25 @@ function renderSupplierMatchState() {
         mailboxSupplierChip.textContent = hasSupplier ? mailboxSelectedSupplierData.name : '';
         mailboxSupplierChip.style.display = hasSupplier ? 'inline-flex' : 'none';
     }
+    const detectedPartsList = Boolean(selectedPartsListId);
     mailboxSupplierStatus.textContent = hasMessage
-        ? (hasSupplier ? '' : 'Select a supplier to see outstanding requests and enable supplier-specific links.')
+        ? (detectedPartsList ? '' : (hasSupplier ? '' : 'Select a supplier to see outstanding requests and enable supplier-specific links.'))
         : '';
 
     renderDetectedPartsList();
+
+    if (mailboxScanPartsBtn) {
+        mailboxScanPartsBtn.classList.toggle('d-none', detectedPartsList);
+    }
+    if (mailboxPartsScanPanel) {
+        mailboxPartsScanPanel.classList.toggle('d-none', detectedPartsList);
+    }
+    if (mailboxSupplierRequestsPanel) {
+        mailboxSupplierRequestsPanel.classList.toggle('d-none', detectedPartsList);
+    }
+    if (pdfAttachmentsDropdown) {
+        pdfAttachmentsDropdown.classList.toggle('d-none', detectedPartsList);
+    }
 
     // Update PDF attachments dropdown
     renderPdfAttachmentsDropdown();
@@ -1190,6 +1206,11 @@ function toggleSupplierTools() {
 
 function renderPdfAttachmentsDropdown() {
     if (!pdfAttachmentsDropdown || !pdfAttachmentsList) return;
+    if (selectedPartsListId) {
+        pdfAttachmentsDropdown.style.display = 'none';
+        pdfAttachmentsDropdown.style.setProperty('display', 'none', 'important');
+        return;
+    }
 
     const pdfs = selectedMessagePdfAttachments || [];
     if (!pdfs.length) {

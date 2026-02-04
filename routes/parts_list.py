@@ -5799,7 +5799,7 @@ def get_supplier_no_bid_scores():
               AND se.date_sent >= NOW() - (? * INTERVAL '1 day')
             GROUP BY se.supplier_id
             """,
-            [response_window_days] + supplier_ids + [lookback_days],
+            supplier_ids + [response_window_days, lookback_days],
             fetch='all',
         )
 

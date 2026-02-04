@@ -14,6 +14,43 @@
     .po-check-page .results-table thead th {
         color: #212529;
     }
+    .po-check-page .results-table {
+        table-layout: fixed;
+        width: 100%;
+    }
+    .po-check-page .results-table th,
+    .po-check-page .results-table td {
+        vertical-align: middle;
+    }
+    .po-check-page .results-table .col-line {
+        width: 4%;
+    }
+    .po-check-page .results-table .col-part {
+        width: 18%;
+    }
+    .po-check-page .results-table .col-qty,
+    .po-check-page .results-table .col-price {
+        width: 4%;
+    }
+    .po-check-page .results-table .col-check {
+        width: 5%;
+    }
+    .po-check-page .results-table .col-quote,
+    .po-check-page .results-table .col-supplier {
+        width: 9%;
+    }
+    .po-check-page .results-table .part-number-cell {
+        white-space: normal;
+        word-break: break-word;
+    }
+    .po-check-page .results-table .check-cell {
+        text-align: center;
+        line-height: 1.1;
+    }
+    .po-check-page .results-table .check-cell .check-details {
+        font-size: 0.7rem;
+        color: #6c757d;
+    }
 
     /* Upload card styling */
     .upload-card {
@@ -448,6 +485,10 @@
                         <div class="label">Payment Terms</div>
                         <div class="value" id="poPaymentTerms">-</div>
                     </div>
+                    <div class="term-item">
+                        <div class="label">Required Delivery</div>
+                        <div class="value" id="poRequiredDelivery">-</div>
+                    </div>
                 </div>
             </div>
 
@@ -568,10 +609,25 @@
             <!-- Match Details Table -->
             <div class="table-responsive">
                 <table class="table table-hover table-sm mb-0 results-table" id="resultsTable">
+                    <colgroup>
+                        <col class="col-line">
+                        <col class="col-part">
+                        <col class="col-qty">
+                        <col class="col-price">
+                        <col class="col-check">
+                        <col class="col-check">
+                        <col class="col-check">
+                        <col class="col-quote">
+                        <col class="col-quote">
+                        <col class="col-quote">
+                        <col class="col-supplier">
+                        <col class="col-supplier">
+                        <col class="col-supplier">
+                    </colgroup>
                     <thead class="table-light">
                         <tr>
                             <th colspan="4" class="text-center bg-light border-end">PO Line</th>
-                            <th colspan="2" class="text-center bg-light border-end">Match Status</th>
+                            <th colspan="3" class="text-center bg-light border-end">Checks</th>
                             <th colspan="3" class="text-center border-end quote-col" style="background: #e8f4e8 !important;">Our Quote</th>
                             <th colspan="3" class="text-center supplier-col" style="background: #e8f0f8 !important;">Supplier</th>
                         </tr>
@@ -580,14 +636,15 @@
                             <th>Part Number</th>
                             <th class="text-center">Qty</th>
                             <th class="text-end border-end">Price</th>
-                            <th class="text-center" style="width: 50px;">PL</th>
-                            <th class="border-end" style="width: 180px;">Status</th>
-                            <th class="text-end quote-col" style="background: #f0f8f0;">Price</th>
+                            <th class="text-center" style="width: 120px;">Lead/Delivery</th>
+                            <th class="text-center" style="width: 70px;">Qty</th>
+                            <th class="text-center border-end" style="width: 80px;">Price</th>
+                            <th class="text-center quote-col" style="background: #f0f8f0;">Lead</th>
                             <th class="text-center quote-col" style="background: #f0f8f0;">Qty</th>
-                            <th class="text-end border-end quote-col" style="background: #f0f8f0;">Lead</th>
-                            <th class="supplier-col" style="background: #f0f4f8;">Name</th>
-                            <th class="text-end supplier-col" style="background: #f0f4f8;">Cost</th>
-                            <th class="text-end supplier-col" style="background: #f0f4f8;">Lead</th>
+                            <th class="text-end border-end quote-col" style="background: #f0f8f0;">Price</th>
+                            <th class="text-center supplier-col" style="background: #f0f4f8;">Lead</th>
+                            <th class="text-center supplier-col" style="background: #f0f4f8;">Qty</th>
+                            <th class="text-end supplier-col" style="background: #f0f4f8;">Price</th>
                         </tr>
                     </thead>
                     <tbody id="resultsTableBody">
@@ -909,6 +966,7 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('poCurrency').textContent = data.currency || '-';
         document.getElementById('poIncoterms').textContent = data.incoterms || '-';
         document.getElementById('poPaymentTerms').textContent = data.payment_terms || '-';
+        document.getElementById('poRequiredDelivery').textContent = data.required_delivery_date || '-';
         document.getElementById('poCustomerName').textContent = data.customer_name || 'Customer';
 
         // Update addresses
@@ -1013,35 +1071,21 @@ document.addEventListener('DOMContentLoaded', function() {
             row.dataset.index = index;
             row.dataset.supplier = sup ? sup.name : '';
 
-            // Build discrepancy text inline
-            const discrepancyText = match.discrepancies.length > 0
-                ? match.discrepancies.map(d => `<div class="small text-warning">${escapeHtml(d)}</div>`).join('')
-                : '';
+            const matchLabel = conf === 'exact' ? 'Match' : conf === 'partial' ? 'Discrepancy' : 'No Match';
 
-            // Build status cell content - add "Find Match" button for unmatched items
-            let statusContent = `
-                <span class="status-badge status-${conf}">
-                    ${conf === 'exact' ? 'Match' : conf === 'partial' ? 'Discrepancy' : 'No Match'}
-                </span>
-            `;
-            if (conf === 'none') {
-                statusContent += `
-                    <button class="btn btn-sm btn-outline-primary ms-1 find-match-btn"
-                            data-index="${index}"
-                            data-part-number="${escapeHtml(po.part_number)}"
-                            data-quantity="${po.quantity}"
-                            title="Find similar part numbers">
-                        <i class="bi bi-search"></i>
-                    </button>
-                `;
-            }
-            if (m && m.quote_status === 'quoted') {
-                statusContent += '<span class="badge bg-success ms-1" style="font-size:0.6rem">Q</span>';
-            }
-            if (pl && pl.is_repeat) {
-                statusContent += '<div class="small text-muted">Repeat order</div>';
-            }
-            statusContent += discrepancyText;
+            const requiredDelivery = po.required_delivery_date || extractedData?.required_delivery_date || null;
+            const poDate = extractedData?.po_date || null;
+            const deliveryCheck = getDeliveryMatch(requiredDelivery, poDate, m ? m.lead_days : null);
+            const qtyCheck = getValueMatch(po.quantity, m ? m.quantity : null, {
+                formatter: formatQuantity,
+                tolerance: 0
+            });
+            const priceCheck = getValueMatch(po.unit_price, m ? m.price : null, {
+                formatter: formatCurrency,
+                tolerance: 0.01
+            });
+
+            const deliveryDetails = buildDeliveryDetails(requiredDelivery, deliveryCheck.expectedDate);
 
             row.innerHTML = `
                 <td class="text-center text-muted">${po.line_number || index + 1}</td>
@@ -1050,33 +1094,57 @@ document.addEventListener('DOMContentLoaded', function() {
                     <button class="btn btn-outline-secondary copy-btn" onclick="copyToClipboard('${escapeHtml(po.part_number)}')" title="Copy">
                         <i class="bi bi-clipboard"></i>
                     </button>
+                    ${conf === 'none' ? `
+                        <button class="btn btn-sm btn-outline-primary ms-1 find-match-btn"
+                                data-index="${index}"
+                                data-part-number="${escapeHtml(po.part_number)}"
+                                data-quantity="${po.quantity}"
+                                title="Find similar part numbers">
+                            <i class="bi bi-search"></i>
+                        </button>
+                    ` : ''}
+                    <div class="small text-muted">
+                        ${matchLabel}
+                        ${pl ? ` · PL <a href="/parts_list/view/${pl.id}" target="_blank" class="fw-bold">${pl.id}</a>` : ''}
+                        ${pl && pl.is_repeat ? ' · Repeat order' : ''}
+                        ${m && m.quote_status === 'quoted' ? '<span class="badge bg-success ms-1" style="font-size:0.6rem">Q</span>' : ''}
+                    </div>
                 </td>
                 <td class="text-center">${po.quantity}</td>
                 <td class="text-end border-end">${po.unit_price ? formatCurrency(po.unit_price) : '-'}</td>
 
-                <td class="text-center">
-                    ${pl ? `<a href="/parts_list/view/${pl.id}" target="_blank" class="fw-bold">${pl.id}</a>${pl.is_repeat ? '<span class="badge bg-secondary ms-1" style="font-size:0.55rem" title="Previously won - repeat order">R</span>' : ''}` : '-'}
+                <td class="check-cell">
+                    ${renderCheckIcon(deliveryCheck.status)}
+                    <div class="check-details">${deliveryDetails}</div>
                 </td>
-                <td class="border-end">${statusContent}</td>
+                <td class="check-cell">
+                    ${renderCheckIcon(qtyCheck.status)}
+                    <div class="check-details">${qtyCheck.details}</div>
+                </td>
+                <td class="check-cell border-end">
+                    ${renderCheckIcon(priceCheck.status)}
+                    <div class="check-details">${priceCheck.details}</div>
+                </td>
 
-                <td class="text-end quote-col" style="background: #f8fcf8;">
-                    ${m && m.price ? formatCurrency(m.price) : '-'}
+                <td class="text-center quote-col" style="background: #f8fcf8;">
+                    ${m && m.lead_days ? `${m.lead_days}d` : '-'}
                 </td>
                 <td class="text-center quote-col" style="background: #f8fcf8;">
                     ${m ? (m.quantity || '-') : '-'}
                 </td>
                 <td class="text-end border-end quote-col" style="background: #f8fcf8;">
-                    ${m && m.lead_days ? `${m.lead_days}d` : '-'}
+                    ${m && m.price ? formatCurrency(m.price) : '-'}
                 </td>
 
-                <td class="supplier-col" style="background: #f8fafc;">
-                    ${sup ? `<span class="supplier-info">${escapeHtml(sup.name)}</span>` : '-'}
+                <td class="text-center supplier-col" style="background: #f8fafc;">
+                    ${sup && sup.lead_days ? `${sup.lead_days}d` : '-'}
+                    ${sup && sup.name ? `<div class="small text-muted">${escapeHtml(sup.name)}</div>` : ''}
+                </td>
+                <td class="text-center supplier-col" style="background: #f8fafc;">
+                    ${sup ? (sup.quantity || '-') : '-'}
                 </td>
                 <td class="text-end supplier-col" style="background: #f8fafc;">
                     ${sup && sup.cost ? formatCurrency(sup.cost) : '-'}
-                </td>
-                <td class="text-end supplier-col" style="background: #f8fafc;">
-                    ${sup && sup.lead_days ? `${sup.lead_days}d` : '-'}
                 </td>
             `;
 
@@ -1292,7 +1360,8 @@ document.addEventListener('DOMContentLoaded', function() {
             matchResult.supplier_info = {
                 name: match.supplier_name,
                 cost: match.supplier_cost,
-                lead_days: match.supplier_lead_days
+                lead_days: match.supplier_lead_days,
+                quantity: match.quantity
             };
         }
 
@@ -1373,6 +1442,96 @@ document.addEventListener('DOMContentLoaded', function() {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
         }).format(value);
+    }
+
+    function parseIsoDate(dateStr) {
+        if (!dateStr || typeof dateStr !== 'string') return null;
+        const parts = dateStr.split('-').map(Number);
+        if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+        return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+    }
+
+    function addWorkingDays(date, days) {
+        if (!date || days === null || days === undefined) return null;
+        let remaining = Number(days);
+        if (!Number.isFinite(remaining)) return null;
+        const current = new Date(date.getTime());
+        while (remaining > 0) {
+            current.setUTCDate(current.getUTCDate() + 1);
+            const day = current.getUTCDay();
+            if (day !== 0 && day !== 6) {
+                remaining -= 1;
+            }
+        }
+        return current;
+    }
+
+    function formatIsoDate(date) {
+        if (!date) return null;
+        return date.toISOString().slice(0, 10);
+    }
+
+    function getDeliveryMatch(requiredDate, poDate, leadDays) {
+        const required = parseIsoDate(requiredDate);
+        const po = parseIsoDate(poDate);
+        if (!required || !po || leadDays === null || leadDays === undefined) {
+            return { status: 'na', expectedDate: null };
+        }
+        const expected = addWorkingDays(po, leadDays);
+        if (!expected) {
+            return { status: 'na', expectedDate: null };
+        }
+        const expectedIso = formatIsoDate(expected);
+        const status = expected <= required ? 'match' : 'mismatch';
+        return { status, expectedDate: expectedIso };
+    }
+
+    function buildDeliveryDetails(requiredDate, expectedDate) {
+        if (!requiredDate && !expectedDate) {
+            return '—';
+        }
+        const parts = [];
+        if (requiredDate) {
+            parts.push(`Req ${escapeHtml(requiredDate)}`);
+        }
+        if (expectedDate) {
+            parts.push(`Exp ${escapeHtml(expectedDate)}`);
+        }
+        return parts.join('<br>');
+    }
+
+    function getValueMatch(poValue, quoteValue, { formatter = formatCurrency, tolerance = 0 } = {}) {
+        if (poValue === null || poValue === undefined || quoteValue === null || quoteValue === undefined) {
+            return { status: 'na', details: '—' };
+        }
+        const poNum = Number(poValue);
+        const quoteNum = Number(quoteValue);
+        if (!Number.isFinite(poNum) || !Number.isFinite(quoteNum)) {
+            return { status: 'na', details: '—' };
+        }
+        const matches = Math.abs(poNum - quoteNum) <= tolerance;
+        return {
+            status: matches ? 'match' : 'mismatch',
+            details: `${formatter(poNum)}<br>${formatter(quoteNum)}`
+        };
+    }
+
+    function formatQuantity(value) {
+        if (value === null || value === undefined) return '-';
+        return new Intl.NumberFormat('en-GB', {
+            style: 'decimal',
+            maximumFractionDigits: 0
+        }).format(value);
+    }
+
+    function renderCheckIcon(status) {
+        if (status === 'match') {
+            return '<i class="bi bi-check-circle-fill text-success"></i>';
+        }
+        if (status === 'mismatch') {
+            return '<i class="bi bi-x-circle-fill text-danger"></i>';
+        }
+        return '<span class="text-muted">—</span>';
     }
 });
 
