@@ -39,6 +39,16 @@
     margin-left: 0.5rem;
     display: inline-block;
 }
+.supplier-score-pill {
+    display: inline-flex;
+    align-items: center;
+}
+.supplier-score-pill .badge {
+    font-size: 0.75rem;
+}
+.supplier-score-pill small {
+    font-size: 0.75rem;
+}
 .supplier-email {
     color: #6c757d;
     font-size: 0.9rem;
@@ -303,7 +313,7 @@
     <!-- Suppliers List -->
     {% if suppliers %}
         {% for supplier in suppliers %}
-        <div class="supplier-card">
+        <div class="supplier-card" data-supplier-id="{{ supplier.supplier_id }}">
             <div class="supplier-header">
                 <div>
                     <div class="supplier-name">
@@ -312,7 +322,16 @@
                             <i class="bi bi-box-arrow-up-right"></i>
                         </a>
                         {% if supplier.warning %}
-                            <span class="supplier-warning">⚠ {{ supplier.warning }}</span>
+                            <span class="supplier-warning">
+                                ⚠ {{ supplier.warning }}
+                                <span class="supplier-score-pill ms-2" data-supplier-id="{{ supplier.supplier_id }}">
+                                    <span class="text-muted">Loading score...</span>
+                                </span>
+                            </span>
+                        {% else %}
+                            <span class="supplier-score-pill ms-2" data-supplier-id="{{ supplier.supplier_id }}">
+                                <span class="text-muted">Loading score...</span>
+                            </span>
                         {% endif %}
                     </div>
                     {% if supplier.contact_email %}
@@ -643,6 +662,118 @@ document.addEventListener('DOMContentLoaded', function() {
         pageMode: {{ mode | tojson }}
     };
 
+    function renderSupplierScorePill(scoreInfo) {
+        if (!scoreInfo || scoreInfo.score === null || scoreInfo.score === undefined) {
+            return '<span class="text-muted">No history</span>';
+        }
+
+        let badgeClass = 'bg-danger';
+        if (scoreInfo.score >= 85) {
+            badgeClass = 'bg-success';
+        } else if (scoreInfo.score >= 70) {
+            badgeClass = 'bg-primary';
+        } else if (scoreInfo.score >= 50) {
+            badgeClass = 'bg-warning text-dark';
+        }
+
+        const noBidRate = scoreInfo.no_bid_rate !== null && scoreInfo.no_bid_rate !== undefined
+            ? Math.round(scoreInfo.no_bid_rate * 100)
+            : null;
+        const noResponseRate = scoreInfo.no_response_rate !== null && scoreInfo.no_response_rate !== undefined
+            ? Math.round(scoreInfo.no_response_rate * 100)
+            : null;
+        const noResponseLabel = scoreInfo.response_window_days
+            ? `No-response ${scoreInfo.response_window_days}d`
+            : 'No-response';
+        const tooltip = `Requests: ${scoreInfo.requests_sent} · No-bid: ${scoreInfo.no_bid_count}` +
+            (noBidRate !== null ? ` (${noBidRate}%)` : '') +
+            ` · ${noResponseLabel}: ${scoreInfo.no_response_count}` +
+            (noResponseRate !== null ? ` (${noResponseRate}%)` : '') +
+            (scoreInfo.lookback_days ? ` · Last ${scoreInfo.lookback_days}d` : '');
+
+        return `
+            <span class="badge ${badgeClass}" title="${tooltip}">${scoreInfo.score}</span>
+            <small class="text-muted ms-1">${scoreInfo.rating}</small>
+        `;
+    }
+
+    function sortSupplierCardsByScore() {
+        const cards = Array.from(document.querySelectorAll('.supplier-card'));
+        if (!cards.length) {
+            return;
+        }
+        const parent = cards[0].parentElement;
+        cards.sort((a, b) => {
+            const scoreA = Number.parseFloat(a.dataset.score ?? '');
+            const scoreB = Number.parseFloat(b.dataset.score ?? '');
+            const validA = Number.isFinite(scoreA);
+            const validB = Number.isFinite(scoreB);
+            if (validA && validB && scoreA !== scoreB) {
+                return scoreB - scoreA;
+            }
+            if (validA !== validB) {
+                return validA ? -1 : 1;
+            }
+            const orderA = Number.parseInt(a.dataset.initialOrder ?? '0', 10);
+            const orderB = Number.parseInt(b.dataset.initialOrder ?? '0', 10);
+            return orderA - orderB;
+        });
+        cards.forEach(card => parent.appendChild(card));
+    }
+
+    async function fetchSupplierScoresForEmailSuppliers() {
+        const cards = Array.from(document.querySelectorAll('.supplier-card'));
+        if (!cards.length) {
+            return;
+        }
+        cards.forEach((card, index) => {
+            card.dataset.initialOrder = card.dataset.initialOrder || String(index);
+        });
+        const supplierIds = cards
+            .map(card => Number.parseInt(card.dataset.supplierId, 10))
+            .filter(id => Number.isFinite(id));
+
+        if (!supplierIds.length) {
+            return;
+        }
+
+        try {
+            const resp = await fetch('/parts_list/api/suppliers/no-bid-score', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    supplier_ids: supplierIds,
+                    lookback_days: 60,
+                    response_window_days: 7
+                })
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                throw new Error(data?.error || 'Unable to load supplier scores');
+            }
+            const scores = data.scores || {};
+            document.querySelectorAll('.supplier-score-pill').forEach(pill => {
+                const supplierId = pill.dataset.supplierId;
+                const scoreInfo = scores[supplierId];
+                pill.innerHTML = renderSupplierScorePill(scoreInfo);
+                if (scoreInfo && scoreInfo.score !== null && scoreInfo.score !== undefined) {
+                    const card = pill.closest('.supplier-card');
+                    if (card) {
+                        card.dataset.score = String(scoreInfo.score);
+                    }
+                }
+            });
+            sortSupplierCardsByScore();
+        } catch (error) {
+            console.warn('Unable to load supplier scores', error);
+            document.querySelectorAll('.supplier-score-pill').forEach(pill => {
+                pill.innerHTML = '<span class="text-muted">No history</span>';
+            });
+        }
+    }
+
     async function fetchIlsQueue() {
         const resp = await fetch('/parts_list/ils-copy-queue');
         if (!resp.ok) {
@@ -883,6 +1014,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('filterNoCost').addEventListener('change', applyFilters);
     document.getElementById('filterNotContacted').addEventListener('change', applyFilters);
     document.getElementById('filterPartNumber').addEventListener('input', applyFilters);
+
+    fetchSupplierScoresForEmailSuppliers();
 
     // ---- Copy for ILS Button --------------------------------------
     document.getElementById('copyForILSBtn').addEventListener('click', async function() {

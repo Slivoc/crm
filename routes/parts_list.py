@@ -5734,13 +5734,22 @@ def get_line_ils_data(list_id, line_id):
 @parts_list_bp.route('/api/suppliers/no-bid-score', methods=['POST'])
 def get_supplier_no_bid_scores():
     """
-    Return per-supplier no-bid scoring based on requests sent vs no-bid responses.
+    Return per-supplier score based on requests sent vs no-bid and late/no responses.
     """
     try:
         data = request.get_json(silent=True) or {}
         raw_ids = data.get('supplier_ids', [])
+        lookback_days = data.get('lookback_days', 60)
+        response_window_days = data.get('response_window_days', 7)
         if not isinstance(raw_ids, list):
             return jsonify(success=False, error='supplier_ids must be a list'), 400
+        try:
+            lookback_days = int(lookback_days)
+            response_window_days = int(response_window_days)
+        except (TypeError, ValueError):
+            return jsonify(success=False, error='lookback_days and response_window_days must be integers'), 400
+        if lookback_days <= 0 or response_window_days <= 0:
+            return jsonify(success=False, error='lookback_days and response_window_days must be positive'), 400
 
         supplier_ids = []
         for raw_id in raw_ids:
@@ -5757,20 +5766,40 @@ def get_supplier_no_bid_scores():
         placeholders = ','.join(['?'] * len(supplier_ids))
         rows = db_execute(
             f"""
+            WITH response_times AS (
+                SELECT
+                    sq.supplier_id,
+                    sql.parts_list_line_id,
+                    MIN(sql.date_created) AS first_response_at
+                FROM parts_list_supplier_quotes sq
+                JOIN parts_list_supplier_quote_lines sql
+                    ON sql.supplier_quote_id = sq.id
+                GROUP BY sq.supplier_id, sql.parts_list_line_id
+            )
             SELECT
                 se.supplier_id,
                 COUNT(DISTINCT se.parts_list_line_id) AS requests_sent,
-                COUNT(DISTINCT CASE WHEN sql.is_no_bid = TRUE THEN sql.parts_list_line_id END) AS no_bid_count
+                COUNT(DISTINCT CASE WHEN sql.is_no_bid = TRUE THEN sql.parts_list_line_id END) AS no_bid_count,
+                COUNT(DISTINCT CASE
+                    WHEN se.date_sent IS NOT NULL
+                     AND (rt.first_response_at IS NULL
+                          OR rt.first_response_at > se.date_sent + (? * INTERVAL '1 day'))
+                    THEN se.parts_list_line_id
+                END) AS no_response_count
             FROM parts_list_line_supplier_emails se
             LEFT JOIN parts_list_supplier_quotes sq
                 ON sq.supplier_id = se.supplier_id
             LEFT JOIN parts_list_supplier_quote_lines sql
                 ON sql.supplier_quote_id = sq.id
                AND sql.parts_list_line_id = se.parts_list_line_id
+            LEFT JOIN response_times rt
+                ON rt.supplier_id = se.supplier_id
+               AND rt.parts_list_line_id = se.parts_list_line_id
             WHERE se.supplier_id IN ({placeholders})
+              AND se.date_sent >= NOW() - (? * INTERVAL '1 day')
             GROUP BY se.supplier_id
             """,
-            supplier_ids,
+            [response_window_days] + supplier_ids + [lookback_days],
             fetch='all',
         )
 
@@ -5778,9 +5807,12 @@ def get_supplier_no_bid_scores():
         for row in rows or []:
             requests_sent = int(row['requests_sent'] or 0)
             no_bid_count = int(row['no_bid_count'] or 0)
+            no_response_count = int(row.get('no_response_count') or 0)
             if requests_sent > 0:
                 no_bid_rate = no_bid_count / requests_sent
-                score = round((1 - no_bid_rate) * 100)
+                no_response_rate = no_response_count / requests_sent
+                combined_rate = (no_bid_count + no_response_count) / requests_sent
+                score = round((1 - combined_rate) * 100)
                 if score >= 85:
                     rating = 'Great'
                 elif score >= 70:
@@ -5791,6 +5823,7 @@ def get_supplier_no_bid_scores():
                     rating = 'Poor'
             else:
                 no_bid_rate = None
+                no_response_rate = None
                 score = None
                 rating = 'No history'
 
@@ -5798,6 +5831,10 @@ def get_supplier_no_bid_scores():
                 'requests_sent': requests_sent,
                 'no_bid_count': no_bid_count,
                 'no_bid_rate': no_bid_rate,
+                'no_response_count': no_response_count,
+                'no_response_rate': no_response_rate,
+                'lookback_days': lookback_days,
+                'response_window_days': response_window_days,
                 'score': score,
                 'rating': rating,
             }
