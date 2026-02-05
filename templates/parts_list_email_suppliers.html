@@ -1086,7 +1086,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="tooltip-row"><span class="label">↳ Mature (≥${scoreInfo.response_window_days}d)</span><span class="value">${matureRequests}</span></div>
             <div class="tooltip-row"><span class="label">No-bid count</span><span class="value">${scoreInfo.no_bid_count} (${noBidRate}%)</span></div>
             <div class="tooltip-row"><span class="label">No-response count</span><span class="value">${scoreInfo.no_response_count} (${noResponseRate}%)</span></div>
-            <div class="tooltip-formula">Score = 100 × (1 - (no_bids + no_responses) / total_requests)<br>No-response only counted for mature requests</div>
+            <div class="tooltip-formula">Score = 100 × (1 - (no_bids + no_responses) / total_requests)<br>Responses matched by part number across all lists</div>
         `;
 
         // Position tooltip near the trigger element

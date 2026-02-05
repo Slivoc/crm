@@ -5767,56 +5767,74 @@ def get_supplier_no_bid_scores():
         rows = db_execute(
             f"""
             WITH response_status AS (
-                -- For each supplier+line, check if they responded at all
+                -- For each supplier+base_part_number, check if they responded at all
+                -- Match by base_part_number so responses on ANY list count
                 SELECT
                     sq.supplier_id,
-                    sql.parts_list_line_id,
+                    pll.base_part_number,
                     1 AS has_response
                 FROM parts_list_supplier_quotes sq
                 JOIN parts_list_supplier_quote_lines sql
                     ON sql.supplier_quote_id = sq.id
-                GROUP BY sq.supplier_id, sql.parts_list_line_id
+                JOIN parts_list_lines pll
+                    ON pll.id = sql.parts_list_line_id
+                WHERE pll.base_part_number IS NOT NULL
+                GROUP BY sq.supplier_id, pll.base_part_number
             ),
             no_bids AS (
-                -- Lines where supplier explicitly said no-bid
+                -- Parts where supplier explicitly said no-bid (match by base_part_number)
                 SELECT
                     sq.supplier_id,
-                    sql.parts_list_line_id
+                    pll.base_part_number
                 FROM parts_list_supplier_quotes sq
                 JOIN parts_list_supplier_quote_lines sql
                     ON sql.supplier_quote_id = sq.id
+                JOIN parts_list_lines pll
+                    ON pll.id = sql.parts_list_line_id
                 WHERE sql.is_no_bid = TRUE
-                GROUP BY sq.supplier_id, sql.parts_list_line_id
+                  AND pll.base_part_number IS NOT NULL
+                GROUP BY sq.supplier_id, pll.base_part_number
+            ),
+            email_requests AS (
+                -- Get emails with their base_part_number
+                SELECT
+                    se.supplier_id,
+                    se.parts_list_line_id,
+                    se.date_sent,
+                    pll.base_part_number
+                FROM parts_list_line_supplier_emails se
+                JOIN parts_list_lines pll
+                    ON pll.id = se.parts_list_line_id
+                WHERE se.supplier_id IN ({placeholders})
+                  AND se.date_sent >= NOW() - (? * INTERVAL '1 day')
             )
             SELECT
-                se.supplier_id,
-                COUNT(DISTINCT se.parts_list_line_id) AS requests_sent,
-                COUNT(DISTINCT nb.parts_list_line_id) AS no_bid_count,
+                er.supplier_id,
+                COUNT(DISTINCT er.parts_list_line_id) AS requests_sent,
+                COUNT(DISTINCT CASE WHEN nb.base_part_number IS NOT NULL THEN er.parts_list_line_id END) AS no_bid_count,
                 -- Only count as no-response if:
                 -- 1. Request is old enough (sent > response_window_days ago)
-                -- 2. No response of any kind was received
+                -- 2. No response of any kind was received for this base_part_number
                 COUNT(DISTINCT CASE
-                    WHEN se.date_sent < NOW() - (? * INTERVAL '1 day')
+                    WHEN er.date_sent < NOW() - (? * INTERVAL '1 day')
                      AND rs.has_response IS NULL
-                    THEN se.parts_list_line_id
+                    THEN er.parts_list_line_id
                 END) AS no_response_count,
-                -- Also track how many requests are still "young" (for debugging)
+                -- Track how many requests are still "young" (for debugging)
                 COUNT(DISTINCT CASE
-                    WHEN se.date_sent >= NOW() - (? * INTERVAL '1 day')
-                    THEN se.parts_list_line_id
+                    WHEN er.date_sent >= NOW() - (? * INTERVAL '1 day')
+                    THEN er.parts_list_line_id
                 END) AS young_requests
-            FROM parts_list_line_supplier_emails se
+            FROM email_requests er
             LEFT JOIN response_status rs
-                ON rs.supplier_id = se.supplier_id
-               AND rs.parts_list_line_id = se.parts_list_line_id
+                ON rs.supplier_id = er.supplier_id
+               AND rs.base_part_number = er.base_part_number
             LEFT JOIN no_bids nb
-                ON nb.supplier_id = se.supplier_id
-               AND nb.parts_list_line_id = se.parts_list_line_id
-            WHERE se.supplier_id IN ({placeholders})
-              AND se.date_sent >= NOW() - (? * INTERVAL '1 day')
-            GROUP BY se.supplier_id
+                ON nb.supplier_id = er.supplier_id
+               AND nb.base_part_number = er.base_part_number
+            GROUP BY er.supplier_id
             """,
-            [response_window_days, response_window_days] + supplier_ids + [lookback_days],
+            supplier_ids + [lookback_days, response_window_days, response_window_days],
             fetch='all',
         )
 

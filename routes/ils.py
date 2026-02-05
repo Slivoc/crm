@@ -517,6 +517,72 @@ def map_supplier():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@ils_bp.route('/suppliers/map-by-company', methods=['POST'])
+def map_supplier_by_company():
+    """
+    Map an ILS company name to an internal supplier (no mapping page required).
+    """
+    try:
+        data = request.get_json() or {}
+        company_name = (data.get('company_name') or '').strip()
+        cage_code = (data.get('cage_code') or '').strip() or None
+        supplier_id = data.get('supplier_id')
+
+        if not company_name:
+            return jsonify({'success': False, 'error': 'company_name required'}), 400
+        if not supplier_id:
+            return jsonify({'success': False, 'error': 'supplier_id required'}), 400
+
+        with db_cursor(commit=True) as cursor:
+            _execute_with_cursor(cursor, '''
+                SELECT id
+                FROM ils_supplier_mappings
+                WHERE LOWER(ils_company_name) = LOWER(?)
+                  AND (? IS NULL OR ils_cage_code = ? OR ils_cage_code IS NULL)
+                ORDER BY
+                    CASE WHEN ils_cage_code IS NOT NULL THEN 0 ELSE 1 END,
+                    created_date DESC
+                LIMIT 1
+            ''', (company_name, cage_code, cage_code))
+            row = cursor.fetchone()
+            mapping_id = row.get('id') if row and hasattr(row, 'get') else row[0] if row else None
+
+            if mapping_id:
+                _execute_with_cursor(cursor, '''
+                    UPDATE ils_supplier_mappings
+                    SET supplier_id = ?
+                    WHERE id = ?
+                ''', (supplier_id, mapping_id))
+            else:
+                insert_query = '''
+                    INSERT INTO ils_supplier_mappings (ils_company_name, ils_cage_code, supplier_id)
+                    VALUES (?, ?, ?)
+                '''
+                if _using_postgres():
+                    insert_query = insert_query.strip().rstrip(';') + ' RETURNING id'
+                _execute_with_cursor(cursor, insert_query, (company_name, cage_code, supplier_id))
+                if _using_postgres():
+                    row = cursor.fetchone()
+                    mapping_id = row.get('id') if row and hasattr(row, 'get') else row[0] if row else None
+                else:
+                    mapping_id = getattr(cursor, 'lastrowid', None)
+
+            _execute_with_cursor(cursor, '''
+                UPDATE ils_search_results
+                SET supplier_id = ?
+                WHERE LOWER(ils_company_name) = LOWER(?)
+            ''', (supplier_id, company_name))
+
+        return jsonify({
+            'success': True,
+            'mapping_id': mapping_id
+        })
+
+    except Exception as e:
+        logging.error(f'Error mapping supplier by company: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @ils_bp.route('/results/<base_part_number>', methods=['GET'])
 def get_ils_results_for_part(base_part_number):
     """

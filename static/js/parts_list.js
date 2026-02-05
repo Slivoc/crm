@@ -647,7 +647,111 @@ function showQplDetailsModal(partIndex) {
         });
 }
 
-function openQuickAddSupplier(companyName = '', email = '') {
+let quickAddSelectedSupplier = null;
+let quickAddSearchTimer = null;
+let quickAddSearchAbort = null;
+
+function updateQuickAddSupplierButton() {
+    const button = document.getElementById('quickAddSupplierBtn');
+    if (!button) return;
+    if (quickAddSelectedSupplier && quickAddSelectedSupplier.id) {
+        button.innerHTML = '<i class="bi bi-link-45deg"></i> Match Supplier';
+    } else {
+        button.innerHTML = '<i class="bi bi-plus-circle"></i> Create Supplier';
+    }
+}
+
+function setQuickAddMatchStatus(message, tone = 'muted') {
+    const status = document.getElementById('quickSupplierMatchStatus');
+    if (!status) return;
+    status.textContent = message || '';
+    status.className = `form-text mt-1 text-${tone}`;
+}
+
+function clearQuickAddSupplierSelection() {
+    quickAddSelectedSupplier = null;
+    updateQuickAddSupplierButton();
+}
+
+function applyQuickAddSupplierSelection(supplier) {
+    quickAddSelectedSupplier = supplier;
+    const nameInput = document.getElementById('quick_supplier_name');
+    if (nameInput && supplier && supplier.name) {
+        nameInput.value = supplier.name;
+    }
+    setQuickAddMatchStatus(`Matched existing supplier: ${supplier.name}`, 'success');
+    updateQuickAddSupplierButton();
+}
+
+function renderQuickAddMatches(matches) {
+    const container = document.getElementById('quickSupplierMatches');
+    if (!container) return;
+    container.innerHTML = '';
+    if (!matches || matches.length === 0) {
+        container.classList.add('d-none');
+        return;
+    }
+    matches.forEach(match => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'list-group-item list-group-item-action';
+        item.textContent = match.name;
+        item.addEventListener('click', () => {
+            applyQuickAddSupplierSelection(match);
+            container.classList.add('d-none');
+        });
+        container.appendChild(item);
+    });
+    container.classList.remove('d-none');
+}
+
+function searchQuickAddSuppliers(query) {
+    if (quickAddSearchAbort) {
+        quickAddSearchAbort.abort();
+    }
+    const controller = new AbortController();
+    quickAddSearchAbort = controller;
+
+    fetch(`/suppliers/search?q=${encodeURIComponent(query)}&limit=8`, { signal: controller.signal })
+        .then(response => response.json())
+        .then(data => {
+            const matches = Array.isArray(data) ? data : [];
+            renderQuickAddMatches(matches);
+            if (matches.length > 0) {
+                setQuickAddMatchStatus('Select an existing supplier to match, or keep typing to create a new one.', 'muted');
+            } else {
+                setQuickAddMatchStatus('No matches found. You can create a new supplier.', 'muted');
+            }
+        })
+        .catch(error => {
+            if (error.name === 'AbortError') return;
+            console.error('Supplier search error:', error);
+        });
+}
+
+function attemptQuickAddAutoMatch(companyName) {
+    if (!companyName || companyName.trim().length < 2) {
+        setQuickAddMatchStatus('');
+        return;
+    }
+    fetch(`/suppliers/search?q=${encodeURIComponent(companyName)}&limit=5`)
+        .then(response => response.json())
+        .then(data => {
+            const matches = Array.isArray(data) ? data : [];
+            const exact = matches.find(item => item.name && item.name.toLowerCase() === companyName.toLowerCase());
+            if (exact) {
+                applyQuickAddSupplierSelection(exact);
+            } else {
+                setQuickAddMatchStatus('No exact match found. Select an existing supplier or create a new one.', 'muted');
+                renderQuickAddMatches(matches);
+            }
+        })
+        .catch(error => {
+            console.error('Auto match error:', error);
+        });
+}
+
+function openQuickAddSupplier(companyName = '', email = '', cage = '') {
     // Hide ILS modal if it's open
     const ilsModal = bootstrap.Modal.getInstance(document.getElementById('ilsDetailsModal'));
     if (ilsModal) {
@@ -656,6 +760,19 @@ function openQuickAddSupplier(companyName = '', email = '') {
 
     const form = document.getElementById('quickAddSupplierForm');
     form.reset();
+    clearQuickAddSupplierSelection();
+    const matchList = document.getElementById('quickSupplierMatches');
+    if (matchList) {
+        matchList.innerHTML = '';
+        matchList.classList.add('d-none');
+    }
+    setQuickAddMatchStatus('');
+
+    const modalElement = document.getElementById('quickAddSupplierModal');
+    if (modalElement) {
+        modalElement.dataset.ilsCompany = companyName || '';
+        modalElement.dataset.ilsCage = cage || '';
+    }
 
     if (companyName) {
         document.getElementById('quick_supplier_name').value = companyName;
@@ -663,6 +780,9 @@ function openQuickAddSupplier(companyName = '', email = '') {
     if (email) {
         document.getElementById('quick_contact_email').value = email;
     }
+
+    updateQuickAddSupplierButton();
+    attemptQuickAddAutoMatch(companyName);
 
     const modal = new bootstrap.Modal(document.getElementById('quickAddSupplierModal'));
     modal.show();
@@ -1852,6 +1972,7 @@ function showIlsDetailsModal(part) {
         <td>
             <button class="btn btn-sm btn-success quick-add-from-ils-btn"
                     data-company-name="${escapeHtml(ils.ils_company_name)}"
+                    data-cage="${escapeHtml(ils.ils_cage_code || '')}"
                     data-email="${escapeHtml(ils.email || '')}"
                     title="Create supplier from this company">
                 <i class="bi bi-building-add"></i>
@@ -2101,7 +2222,8 @@ function showIlsDetailsModal(part) {
         btn.addEventListener('click', function() {
             const companyName = this.getAttribute('data-company-name');
             const email = this.getAttribute('data-email');
-            openQuickAddSupplier(companyName, email);
+            const cage = this.getAttribute('data-cage');
+            openQuickAddSupplier(companyName, email, cage);
         });
     });
 
@@ -2131,6 +2253,65 @@ document.addEventListener('click', function(e) {
             return;
         }
 
+        const modalElement = document.getElementById('quickAddSupplierModal');
+        const ilsCompany = modalElement?.dataset?.ilsCompany || '';
+        const ilsCage = modalElement?.dataset?.ilsCage || '';
+
+        const setBusy = (label) => {
+            button.disabled = true;
+            button.innerHTML = `<span class="spinner-border spinner-border-sm"></span> ${label}`;
+        };
+        const resetButton = () => {
+            button.disabled = false;
+            updateQuickAddSupplierButton();
+        };
+
+        const mapIlsSupplier = (supplierId, supplierName) => {
+            if (!ilsCompany) {
+                return Promise.resolve({ skipped: true });
+            }
+            return fetch('/ils/suppliers/map-by-company', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    company_name: ilsCompany,
+                    cage_code: ilsCage || null,
+                    supplier_id: supplierId
+                })
+            })
+                .then(resp => {
+                    if (!resp.ok) {
+                        throw new Error(`HTTP error! status: ${resp.status}`);
+                    }
+                    return resp.json();
+                })
+                .then(result => {
+                    if (!result.success) {
+                        throw new Error(result.error || 'Failed to map supplier');
+                    }
+                    showToast(`Mapped "${ilsCompany}" to supplier "${supplierName}"`, 'success');
+                    return result;
+                });
+        };
+
+        if (quickAddSelectedSupplier && quickAddSelectedSupplier.id) {
+            setBusy('Matching...');
+            mapIlsSupplier(quickAddSelectedSupplier.id, quickAddSelectedSupplier.name)
+                .then(() => {
+                    const modal = bootstrap.Modal.getInstance(modalElement);
+                    if (modal) modal.hide();
+                    form.reset();
+                    clearQuickAddSupplierSelection();
+                    resetButton();
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred while matching the supplier: ' + error.message);
+                    resetButton();
+                });
+            return;
+        }
+
         const formData = new FormData(form);
         const data = {};
         formData.forEach((value, key) => {
@@ -2139,9 +2320,7 @@ document.addEventListener('click', function(e) {
 
         console.log('Sending supplier data:', data);
 
-        const originalHtml = button.innerHTML;
-        button.disabled = true;
-        button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Creating...';
+        setBusy('Creating...');
 
         fetch('/suppliers/create', {
             method: 'POST',
@@ -2150,44 +2329,42 @@ document.addEventListener('click', function(e) {
             },
             body: JSON.stringify(data)
         })
-        .then(response => {
-            console.log('Response status:', response.status);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log('Response data:', data);
+            .then(response => {
+                console.log('Response status:', response.status);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Response data:', data);
 
-            if (data.success) {
-                const modalElement = document.getElementById('quickAddSupplierModal');
+                if (!data.success) {
+                    throw new Error(data.error || 'Unknown error');
+                }
+
+                return mapIlsSupplier(data.supplier_id, data.supplier_name)
+                    .catch(error => {
+                        console.error('Mapping error:', error);
+                        showToast('Supplier created, but mapping failed. You can map it later.', 'warning');
+                    })
+                    .then(() => data);
+            })
+            .then(data => {
                 const modal = bootstrap.Modal.getInstance(modalElement);
                 if (modal) modal.hide();
 
                 showToast(`Supplier "${data.supplier_name}" created successfully!`, 'success');
 
                 form.reset();
-                button.disabled = false;
-                button.innerHTML = originalHtml;
-
-                setTimeout(() => {
-                    if (confirm(`Supplier created! Would you like to open the Supplier Mapping page to map ILS companies to "${data.supplier_name}"?`)) {
-                        window.open('/ils/supplier-mapping', '_blank');
-                    }
-                }, 500);
-            } else {
-                alert(`Error: ${data.error || 'Unknown error'}`);
-                button.disabled = false;
-                button.innerHTML = originalHtml;
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('An error occurred while creating the supplier: ' + error.message);
-            button.disabled = false;
-            button.innerHTML = originalHtml;
-        });
+                clearQuickAddSupplierSelection();
+                resetButton();
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while creating the supplier: ' + error.message);
+                resetButton();
+            });
     }
 });
 
@@ -2198,6 +2375,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const extractAiBtn = document.getElementById('extract-ai-btn');
     const loadingSpinner = document.getElementById('loading-spinner');
     const loadingMessage = document.getElementById('loading-message');
+    const quickSupplierNameInput = document.getElementById('quick_supplier_name');
+    const quickSupplierMatches = document.getElementById('quickSupplierMatches');
 
     if (window.LOADED_LIST_DATA && window.LOADED_LIST_DATA.header) {
         currentListId = window.LOADED_LIST_DATA.header.id;
@@ -2221,6 +2400,35 @@ document.addEventListener('DOMContentLoaded', function() {
             duplicateLineForPriceBreak(partIndex, button);
         });
     }
+
+    if (quickSupplierNameInput) {
+        quickSupplierNameInput.addEventListener('input', function() {
+            const value = this.value.trim();
+            clearQuickAddSupplierSelection();
+            if (quickAddSearchTimer) {
+                clearTimeout(quickAddSearchTimer);
+            }
+            if (value.length < 2) {
+                if (quickSupplierMatches) {
+                    quickSupplierMatches.classList.add('d-none');
+                    quickSupplierMatches.innerHTML = '';
+                }
+                setQuickAddMatchStatus('');
+                return;
+            }
+            setQuickAddMatchStatus('Searching suppliers...', 'muted');
+            quickAddSearchTimer = setTimeout(() => {
+                searchQuickAddSuppliers(value);
+            }, 250);
+        });
+    }
+
+    document.addEventListener('click', function(event) {
+        if (!quickSupplierMatches) return;
+        if (!quickSupplierMatches.contains(event.target) && event.target.id !== 'quick_supplier_name') {
+            quickSupplierMatches.classList.add('d-none');
+        }
+    });
 
     if (!partsInput && window.LOADED_LIST_DATA && window.LOADED_LIST_DATA.lines) {
         console.log('View page detected - auto-loading parts list');
