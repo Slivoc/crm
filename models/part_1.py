@@ -825,7 +825,9 @@ def delete_manufacturer(manufacturer_id):
 
 def create_base_part_number(part_number):
     import re
-    base_part_number = re.sub(r'[^a-zA-Z0-9]', '', part_number).upper()
+    if part_number is None:
+        return ''
+    base_part_number = re.sub(r'[^a-zA-Z0-9]', '', str(part_number)).upper()
     return base_part_number
 
 class Status(Base):
