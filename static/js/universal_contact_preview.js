@@ -7,6 +7,9 @@ const UniversalContactPreview = {
     contactStatuses: [],
     timezoneCacheKey: 'crm_timezones_cache_v1',
     timezoneCacheTtlMs: 24 * 60 * 60 * 1000,
+    notesSaveTimer: null,
+    notesSaveDelayMs: 600,
+    lastNotesValue: '',
 
     /**
      * Initialize the module - call this on page load
@@ -270,6 +273,7 @@ suggestTimezoneForCountry: async function(countryCode) {
                 clearInterval(this.timezoneInterval);
                 this.timezoneInterval = null;
             }
+            this.clearNotesSaveTimer();
         });
 
         // Refresh preview modal after edit modal closes
@@ -278,6 +282,14 @@ suggestTimezoneForCountry: async function(countryCode) {
             if ($('#contactPreviewModal').hasClass('show')) {
                 this.refreshContactData();
             }
+        });
+
+        $(document).on('input', '#contact-notes-input', () => {
+            this.queueNotesSave();
+        });
+
+        $(document).on('blur', '#contact-notes-input', () => {
+            this.flushNotesSave();
         });
     },
 
@@ -445,7 +457,7 @@ openEditModal: async function() {
   /**
  * Refresh contact data in preview modal
  */
-refreshContactData: async function() {
+    refreshContactData: async function() {
     if (!this.currentContact) return;
 
     try {
@@ -466,6 +478,78 @@ refreshContactData: async function() {
         console.error('Failed to refresh contact data:', error);
     }
 },
+
+    clearNotesSaveTimer: function() {
+        if (this.notesSaveTimer) {
+            clearTimeout(this.notesSaveTimer);
+            this.notesSaveTimer = null;
+        }
+    },
+
+    setNotesStatus: function(message, isError = false) {
+        const statusEl = $('#contact-notes-status');
+        if (!statusEl.length) return;
+
+        statusEl
+            .toggleClass('text-danger', isError)
+            .toggleClass('text-muted', !isError)
+            .text(message || '');
+    },
+
+    setNotesInputValue: function(notes) {
+        const notesValue = notes || '';
+        $('#contact-notes-input').val(notesValue);
+        this.lastNotesValue = notesValue;
+        this.setNotesStatus('');
+    },
+
+    queueNotesSave: function() {
+        this.clearNotesSaveTimer();
+        this.notesSaveTimer = setTimeout(() => {
+            this.saveNotes();
+        }, this.notesSaveDelayMs);
+    },
+
+    flushNotesSave: function() {
+        this.clearNotesSaveTimer();
+        this.saveNotes();
+    },
+
+    saveNotes: async function() {
+        if (!this.currentContact) return;
+        const notes = $('#contact-notes-input').val() || '';
+
+        if (notes === this.lastNotesValue) {
+            return;
+        }
+
+        this.setNotesStatus('Saving...');
+
+        try {
+            const response = await fetch(`/customers/contacts/${this.currentContact.id}/update-notes`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ notes })
+            });
+            const result = await response.json();
+
+            if (result.success) {
+                this.lastNotesValue = notes;
+                this.currentContact = {
+                    ...this.currentContact,
+                    notes: notes
+                };
+                this.setNotesStatus('Saved');
+                setTimeout(() => {
+                    this.setNotesStatus('');
+                }, 2000);
+            } else {
+                this.setNotesStatus('Failed', true);
+            }
+        } catch (error) {
+            this.setNotesStatus('Failed', true);
+        }
+    },
 
     /**
      * Show message in specified element
@@ -580,6 +664,7 @@ refreshContactData: async function() {
             contactUrl += `?salesperson_id=${this.currentOptions.salesperson_id}`;
         }
         $('#view-full-contact-btn').attr('href', contactUrl);
+        this.setNotesInputValue(contact.notes);
     },
 
     /**
