@@ -20,7 +20,7 @@
                 <!-- Contact Information Section -->
                 <div class="contact-details-section mb-4">
     <h6 class="fw-bold mb-3">Contact Information</h6>
-    <div class="row g-3">
+                    <div class="row g-3">
         <!-- Timezone field -->
         <div class="col-md-6" id="contact-timezone-container" style="display: none;">
             <div class="d-flex align-items-center">
@@ -58,6 +58,13 @@
                                     <span id="contact-modal-job-title"></span>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                    <div class="contact-notes-row mt-3">
+                        <small class="text-muted d-block mb-1">Notes</small>
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="text" id="contact-notes-input" class="form-control form-control-sm contact-notes-input" placeholder="Add notes..." autocomplete="off" aria-label="Contact notes">
+                            <span id="contact-notes-status" class="small text-muted"></span>
                         </div>
                     </div>
                 </div>
@@ -195,6 +202,22 @@
 
 #contactPreviewModal .contact-details-section a:hover {
     text-decoration: underline;
+}
+
+#contactPreviewModal .contact-notes-input {
+    background-color: #ffffff;
+    border: 1px solid transparent;
+    box-shadow: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+#contactPreviewModal .contact-notes-input:focus {
+    border-color: #ced4da;
+    box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.1);
+}
+
+#contactPreviewModal .contact-notes-row #contact-notes-status {
+    min-width: 4rem;
 }
 
 #contactPreviewModal .communication-history-section {
