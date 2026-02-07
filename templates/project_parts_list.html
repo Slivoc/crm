@@ -245,14 +245,14 @@
                                         <input class="form-check-input project-line-checkbox" type="checkbox" value="{{ row.project_line_id }}">
                                     </td>
                                     <td>{{ row.line_number }}</td>
-                                    <td data-field="customer_part_number"><span class="text-muted">Loading...</span></td>
-                                    <td data-field="description"><span class="text-muted">Loading...</span></td>
-                                    <td data-field="category"><span class="text-muted">Loading...</span></td>
-                                    <td class="editable-cell" data-field="comment" data-line-id="{{ row.project_line_id }}"><span class="text-muted">Loading...</span></td>
-                                    <td data-field="line_type"><span class="text-muted">Loading...</span></td>
-                                    <td data-field="total_quantity"><span class="text-muted">Loading...</span></td>
+                                    <td data-field="customer_part_number"><span class="text-muted">-</span></td>
+                                    <td data-field="description"><span class="text-muted">-</span></td>
+                                    <td data-field="category"><span class="text-muted">-</span></td>
+                                    <td class="editable-cell" data-field="comment" data-line-id="{{ row.project_line_id }}"><span class="text-muted">-</span></td>
+                                    <td data-field="line_type"><span class="text-muted">-</span></td>
+                                    <td data-field="total_quantity"><span class="text-muted">-</span></td>
                                     {% for year_index in range(1, max_usage_years + 1) %}
-                                        <td data-field="usage_year" data-year-index="{{ year_index }}"><span class="text-muted">Loading...</span></td>
+                                        <td data-field="usage_year" data-year-index="{{ year_index }}"><span class="text-muted">-</span></td>
                                     {% endfor %}
                                     <td>
                                         <span class="status-badge status-{{ 'yes' if row.is_quoted else 'no' }}" data-field="quoted_badge">
@@ -265,10 +265,10 @@
                                         </span>
                                     </td>
                                     <td>
-                                        <span class="status-badge status-{{ row_status }}">{{ row_status|replace('_', ' ')|title }}</span>
+                                        <span class="status-badge status-{{ row_status }}" data-field="status_badge">{{ row_status|replace('_', ' ')|title }}</span>
                                     </td>
                                     <td data-field="linked_list">
-                                        <span class="text-muted">Loading...</span>
+                                        <span class="text-muted">-</span>
                                     </td>
                                 </tr>
                             {% endfor %}
@@ -352,6 +352,9 @@
     const searchInput = document.getElementById('projectPartsSearch');
     const lineCheckboxes = Array.from(document.querySelectorAll('.project-line-checkbox'));
     const rows = Array.from(document.querySelectorAll('[data-line-row]'));
+    const rowById = new Map(
+        rows.map((row) => [Number.parseInt(row.dataset.lineId, 10), row])
+    );
     const selectedCount = document.getElementById('selectedPartsCount');
     const createBtn = document.getElementById('createPartsListBtn');
     const markNoBidBtn = document.getElementById('markNoBidBtn');
@@ -422,6 +425,28 @@
             row.classList.toggle('d-none', !matchesQuery || !matchesStatus || !matchesQuoted || !matchesCosted);
         });
         updateCreateButtonState();
+    }
+
+    function updateRowStatus(rowEl, newStatus) {
+        rowEl.dataset.status = newStatus;
+        rowEl.classList.remove('table-row-pending', 'table-row-linked', 'table-row-no_bid', 'table-row-ignore');
+        rowEl.classList.add(`table-row-${newStatus}`);
+
+        const statusBadge = rowEl.querySelector('[data-field="status_badge"]');
+        if (statusBadge) {
+            const statusLabel = (newStatus || 'pending').replace('_', ' ');
+            statusBadge.textContent = statusLabel.charAt(0).toUpperCase() + statusLabel.slice(1);
+            statusBadge.className = `status-badge status-${newStatus}`;
+        }
+    }
+
+    function updateRowSearch(rowEl) {
+        const fields = ['customer_part_number', 'description', 'category', 'comment', 'line_type'];
+        const values = fields.map((field) => {
+            const cell = rowEl.querySelector(`[data-field="${field}"]`);
+            return cell ? (cell.textContent || '') : '';
+        });
+        rowEl.dataset.search = values.join(' ').toLowerCase();
     }
 
     // Status filter buttons
@@ -557,9 +582,22 @@
         markNoBidBtn.disabled = true;
         try {
             await bulkUpdateStatus(ids, 'no_bid');
-            window.location.reload();
+            ids.forEach((lineId) => {
+                const rowEl = rowById.get(lineId);
+                if (!rowEl || rowEl.dataset.status === 'linked') {
+                    return;
+                }
+                updateRowStatus(rowEl, 'no_bid');
+                const checkbox = rowEl.querySelector('.project-line-checkbox');
+                if (checkbox) {
+                    checkbox.checked = false;
+                }
+            });
+            updateSelectedCount();
+            applyFilters();
         } catch (err) {
             alert(err.message);
+        } finally {
             markNoBidBtn.disabled = false;
         }
     });
@@ -570,9 +608,22 @@
         markIgnoreBtn.disabled = true;
         try {
             await bulkUpdateStatus(ids, 'ignore');
-            window.location.reload();
+            ids.forEach((lineId) => {
+                const rowEl = rowById.get(lineId);
+                if (!rowEl || rowEl.dataset.status === 'linked') {
+                    return;
+                }
+                updateRowStatus(rowEl, 'ignore');
+                const checkbox = rowEl.querySelector('.project-line-checkbox');
+                if (checkbox) {
+                    checkbox.checked = false;
+                }
+            });
+            updateSelectedCount();
+            applyFilters();
         } catch (err) {
             alert(err.message);
+        } finally {
             markIgnoreBtn.disabled = false;
         }
     });
@@ -583,9 +634,22 @@
         markPendingBtn.disabled = true;
         try {
             await bulkUpdateStatus(ids, 'pending');
-            window.location.reload();
+            ids.forEach((lineId) => {
+                const rowEl = rowById.get(lineId);
+                if (!rowEl || rowEl.dataset.status === 'linked') {
+                    return;
+                }
+                updateRowStatus(rowEl, 'pending');
+                const checkbox = rowEl.querySelector('.project-line-checkbox');
+                if (checkbox) {
+                    checkbox.checked = false;
+                }
+            });
+            updateSelectedCount();
+            applyFilters();
         } catch (err) {
             alert(err.message);
+        } finally {
             markPendingBtn.disabled = false;
         }
     });
@@ -601,9 +665,34 @@
 
         try {
             await bulkUpdateCategory(ids, category);
-            window.location.reload();
+            ids.forEach((lineId) => {
+                const rowEl = rowById.get(lineId);
+                if (!rowEl) {
+                    return;
+                }
+                const categoryCell = rowEl.querySelector('[data-field="category"]');
+                if (categoryCell) {
+                    categoryCell.textContent = category || '';
+                }
+                updateRowSearch(rowEl);
+                const checkbox = rowEl.querySelector('.project-line-checkbox');
+                if (checkbox) {
+                    checkbox.checked = false;
+                }
+            });
+            updateSelectedCount();
+            applyFilters();
+
+            const modalEl = document.getElementById('setCategoryModal');
+            if (modalEl && window.bootstrap) {
+                const modalInstance = bootstrap.Modal.getInstance(modalEl);
+                if (modalInstance) {
+                    modalInstance.hide();
+                }
+            }
         } catch (err) {
             alert(err.message);
+        } finally {
             confirmSetCategoryBtn.disabled = false;
             confirmSetCategoryBtn.textContent = 'Set Category';
         }
@@ -648,6 +737,7 @@
             }
 
             const selectedIds = getVisibleLineIds();
+            const selectedIdSet = new Set(selectedIds);
 
             if (selectedIds.length === 0) {
                 alert('No visible lines found for this filter.');
@@ -677,9 +767,41 @@
 
                 if (data.redirect) {
                     window.open(data.redirect, '_blank', 'noopener');
-                    window.location.reload();
-                } else {
-                    window.location.reload();
+                }
+
+                const linkHtml = data.parts_list_id
+                    ? `<a href="/parts-lists/${data.parts_list_id}" class="text-decoration-none">${listName}</a>`
+                    : `<span class="text-muted">-</span>`;
+
+                const visibleRows = getVisibleRows();
+                visibleRows.forEach((rowEl) => {
+                    const lineId = Number.parseInt(rowEl.dataset.lineId, 10);
+                    if (!selectedIdSet.has(lineId)) {
+                        return;
+                    }
+                    updateRowStatus(rowEl, 'linked');
+
+                    const linkedCell = rowEl.querySelector('[data-field="linked_list"]');
+                    if (linkedCell) {
+                        linkedCell.innerHTML = linkHtml;
+                    }
+
+                    const checkbox = rowEl.querySelector('.project-line-checkbox');
+                    if (checkbox) {
+                        checkbox.checked = false;
+                    }
+                });
+
+                listNameInput.value = '';
+                updateSelectedCount();
+                applyFilters();
+
+                const modalEl = document.getElementById('createPartsListModal');
+                if (modalEl && window.bootstrap) {
+                    const modalInstance = bootstrap.Modal.getInstance(modalEl);
+                    if (modalInstance) {
+                        modalInstance.hide();
+                    }
                 }
             } catch (error) {
                 alert(error.message || 'Unable to create parts list');
@@ -835,9 +957,8 @@
                 throw new Error(data.message || 'Failed to load details');
             }
 
-            const rowMap = new Map(rows.map((row) => [Number.parseInt(row.dataset.lineId, 10), row]));
             data.rows.forEach((rowData) => {
-                const rowEl = rowMap.get(rowData.project_line_id);
+                const rowEl = rowById.get(rowData.project_line_id);
                 if (!rowEl) {
                     return;
                 }
@@ -897,9 +1018,16 @@
                 rowEl.dataset.status = rowData.status || 'pending';
                 rowEl.dataset.quoted = rowData.is_quoted ? '1' : '0';
                 rowEl.dataset.costed = rowData.is_costed ? '1' : '0';
-                rowEl.dataset.search = `${rowData.customer_part_number || ''} ${rowData.description || ''} ${rowData.category || ''} ${rowData.comment || ''} ${rowData.line_type || ''}`.toLowerCase();
+                updateRowSearch(rowEl);
                 rowEl.classList.remove('table-row-pending', 'table-row-linked', 'table-row-no_bid', 'table-row-ignore');
                 rowEl.classList.add(`table-row-${rowEl.dataset.status}`);
+
+                const statusBadge = rowEl.querySelector('[data-field="status_badge"]');
+                if (statusBadge) {
+                    const statusLabel = (rowEl.dataset.status || 'pending').replace('_', ' ');
+                    statusBadge.textContent = statusLabel.charAt(0).toUpperCase() + statusLabel.slice(1);
+                    statusBadge.className = `status-badge status-${rowEl.dataset.status}`;
+                }
             });
 
             applyFilters();
