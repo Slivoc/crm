@@ -240,12 +240,14 @@
                                     data-quoted="{{ 1 if row.is_quoted else 0 }}"
                                     data-costed="{{ 1 if row.is_costed else 0 }}"
                                     class="table-row-{{ row_status }}"
-                                    data-search="">
+                                    data-search="{{ (row.customer_part_number or '')|lower }}">
                                     <td>
                                         <input class="form-check-input project-line-checkbox" type="checkbox" value="{{ row.project_line_id }}">
                                     </td>
                                     <td>{{ row.line_number }}</td>
-                                    <td data-field="customer_part_number"><span class="text-muted">-</span></td>
+                                    <td data-field="customer_part_number">
+                                        {{ row.customer_part_number or '-' }}
+                                    </td>
                                     <td data-field="description"><span class="text-muted">-</span></td>
                                     <td data-field="category"><span class="text-muted">-</span></td>
                                     <td class="editable-cell" data-field="comment" data-line-id="{{ row.project_line_id }}"><span class="text-muted">-</span></td>

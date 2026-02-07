@@ -6,7 +6,7 @@ from datetime import datetime
 from flask import Blueprint, request, redirect, url_for, jsonify, current_app, render_template, send_from_directory, flash, session, Response
 from werkzeug.utils import secure_filename
 from db import db_cursor, execute as db_execute
-from models import get_rfqs_for_project, insert_stage_update, get_stage_updates, insert_file_for_project_stage, insert_project, get_stage, get_stage_by_id, insert_project_stage, get_project_stages, generate_breadcrumbs, update_project, get_project_by_id, get_projects, insert_project_update, \
+from models import create_base_part_number, get_rfqs_for_project, insert_stage_update, get_stage_updates, insert_file_for_project_stage, insert_project, get_stage, get_stage_by_id, insert_project_stage, get_project_stages, generate_breadcrumbs, update_project, get_project_by_id, get_projects, insert_project_update, \
     get_project_updates, get_project_statuses, get_customers, get_salespeople, insert_file_for_project, link_file_to_project, get_files_for_project, get_file_by_id
 from routes.auth import login_required, current_user
 from backfill_project_parts_list_lines import run_backfill
@@ -196,6 +196,7 @@ def _fetch_project_parts_list_status_overview(project_id):
         SELECT
             ppl.id AS project_line_id,
             ppl.line_number,
+            ppl.customer_part_number,
             ppl.status,
             ppl.parts_list_id,
             pl.name AS parts_list_name,
@@ -778,6 +779,7 @@ def project_parts_list_create_from_lines(project_id):
         for index, line in enumerate(lines, start=1):
             usage_values = _parse_usage_by_year(line.get('usage_by_year'))
             usage_total = sum(value for value in usage_values if isinstance(value, (int, float)))
+            base_part_number = create_base_part_number(line['customer_part_number'])
 
             # Determine quantity based on source selection
             chosen_quantity = None
@@ -823,8 +825,8 @@ def project_parts_list_create_from_lines(project_id):
                         parts_list_id,
                         index,
                         line['customer_part_number'],
-                        line['description'],
-                        None,
+                        base_part_number,
+                        line.get('description'),
                         line.get('category'),
                         chosen_quantity,
                         line.get('comment'),
@@ -847,8 +849,8 @@ def project_parts_list_create_from_lines(project_id):
                         parts_list_id,
                         index,
                         line['customer_part_number'],
-                        line['description'],
-                        None,
+                        base_part_number,
+                        line.get('description'),
                         line.get('category'),
                         chosen_quantity,
                         line.get('comment'),

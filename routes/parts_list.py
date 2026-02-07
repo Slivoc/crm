@@ -75,6 +75,76 @@ def _ensure_part_number(base_part_number, part_number):
     )
 
 
+def _repair_project_linked_parts_list_lines(list_id):
+    """
+    For project-linked lists created from project parts, ensure base_part_number/description
+    are populated correctly in parts_list_lines based on the project source data.
+    """
+    if not list_id:
+        return
+
+    with db_cursor(commit=True) as cur:
+        rows = _execute_with_cursor(
+            cur,
+            """
+            SELECT
+                pll.id,
+                pll.base_part_number,
+                pll.description,
+                pll.customer_part_number,
+                ppl.description AS project_description,
+                ppl.customer_part_number AS project_customer_part_number
+            FROM parts_list_lines pll
+            JOIN project_parts_list_lines ppl ON ppl.parts_list_line_id = pll.id
+            WHERE pll.parts_list_id = ?
+            """,
+            (list_id,),
+        ).fetchall() or []
+
+        for row in rows:
+            current_base = _safe_row_get(row, 'base_part_number')
+            current_desc = _safe_row_get(row, 'description')
+            customer_part = _safe_row_get(row, 'customer_part_number') or _safe_row_get(row, 'project_customer_part_number')
+            project_desc = _safe_row_get(row, 'project_description')
+
+            if not customer_part:
+                continue
+
+            normalized_base = create_base_part_number(customer_part)
+            if not normalized_base:
+                continue
+
+            new_base = current_base
+            new_desc = current_desc
+            should_update = False
+
+            if not current_base or current_base == project_desc:
+                new_base = normalized_base
+                should_update = True
+
+            if not current_desc:
+                if project_desc:
+                    new_desc = project_desc
+                    should_update = True
+                elif current_base and current_base != normalized_base:
+                    new_desc = current_base
+                    should_update = True
+
+            if should_update:
+                _execute_with_cursor(
+                    cur,
+                    """
+                    UPDATE parts_list_lines
+                    SET base_part_number = ?,
+                        description = COALESCE(?, description),
+                        date_modified = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                      AND parts_list_id = ?
+                    """,
+                    (new_base, new_desc, row['id'], list_id),
+                )
+
+
 def _log_parts_list_creation_communication(list_id, list_name, customer_id, contact_id, salesperson_id):
     if not (list_id and customer_id and contact_id and salesperson_id):
         return
@@ -2708,6 +2778,9 @@ def parts_list_costing(list_id):
 
         if not header:
             return "Parts list not found", 404
+
+        if header.get('project_id'):
+            _repair_project_linked_parts_list_lines(list_id)
 
         lines = db_execute(
             """
@@ -5400,8 +5473,11 @@ def parts_list_sourcing(list_id):
                 WHERE pl.id = ?
             """, (list_id,)).fetchone()
 
-            if not header:
-                return "Parts list not found", 404
+        if not header:
+            return "Parts list not found", 404
+
+        if header.get('project_id'):
+            _repair_project_linked_parts_list_lines(list_id)
 
             # Get all lines with base sourcing info AND supplier name for chosen cost
             lines = _execute_with_cursor(cur, """
