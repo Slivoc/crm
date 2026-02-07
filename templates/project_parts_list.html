@@ -74,15 +74,21 @@
     <div class="card border-0 shadow-sm mb-3">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
             <strong>Add Project Parts</strong>
-            <a href="{{ url_for('projects.project_parts_list_import', project_id=project.id) }}" class="btn btn-primary btn-sm">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16" style="vertical-align: -2px;">
-                    <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
-                    <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z"/>
-                </svg>
-                Spreadsheet Import
-            </a>
+            <div class="d-flex gap-2 align-items-center">
+                <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#addProjectPartsBody" aria-expanded="false" aria-controls="addProjectPartsBody">
+                    Show
+                </button>
+                <a href="{{ url_for('projects.project_parts_list_import', project_id=project.id) }}" class="btn btn-primary btn-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16" style="vertical-align: -2px;">
+                        <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                        <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z"/>
+                    </svg>
+                    Spreadsheet Import
+                </a>
+            </div>
         </div>
-        <div class="card-body">
+        <div class="collapse" id="addProjectPartsBody">
+            <div class="card-body">
             <div class="row g-3 align-items-end">
                 <div class="col-md-3">
                     <label for="quickCustomerPn" class="form-label">Customer PN</label>
@@ -132,6 +138,7 @@
             <div class="d-flex gap-2 mt-2">
                 <button class="btn btn-outline-primary btn-sm" id="bulkAddBtn" type="button">Add lines</button>
             </div>
+            </div>
         </div>
     </div>
 
@@ -153,10 +160,6 @@
                     </div>
                 </div>
                 <div class="col-md-4 d-flex flex-wrap gap-2 align-items-end justify-content-end">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="selectAllProjectParts">
-                        <label class="form-check-label" for="selectAllProjectParts">Select visible</label>
-                    </div>
                     <span class="text-muted" id="selectedPartsCount">0 selected</span>
                 </div>
             </div>
@@ -182,6 +185,9 @@
                 <button class="btn btn-primary btn-sm" id="createPartsListBtn" type="button" disabled data-bs-toggle="modal" data-bs-target="#createPartsListModal">
                     Create linked parts list
                 </button>
+                <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('projects.project_parts_list_import', project_id=project.id, edit=1) }}">
+                    Edit in spreadsheet
+                </a>
                 <button class="btn btn-outline-primary btn-sm" id="backfillProjectPartsBtn" type="button">
                     Backfill linked lines
                 </button>
@@ -227,7 +233,6 @@
                     <tbody>
                         {% if rows %}
                             {% for row in rows %}
-                                {% set total_value = row.total_quantity if row.total_quantity is not none else row.usage_total %}
                                 {% set row_status = row.status or 'pending' %}
                                 <tr data-line-row
                                     data-line-id="{{ row.project_line_id }}"
@@ -235,42 +240,35 @@
                                     data-quoted="{{ 1 if row.is_quoted else 0 }}"
                                     data-costed="{{ 1 if row.is_costed else 0 }}"
                                     class="table-row-{{ row_status }}"
-                                    data-search="{{ (row.customer_part_number or '')|lower }} {{ (row.description or '')|lower }} {{ (row.category or '')|lower }} {{ (row.comment or '')|lower }} {{ (row.line_type or '')|lower }}">
+                                    data-search="">
                                     <td>
                                         <input class="form-check-input project-line-checkbox" type="checkbox" value="{{ row.project_line_id }}">
                                     </td>
                                     <td>{{ row.line_number }}</td>
-                                    <td>{{ row.customer_part_number }}</td>
-                                    <td>{{ row.description }}</td>
-                                    <td>{{ row.category }}</td>
-                                    <td class="editable-cell" data-field="comment" data-line-id="{{ row.project_line_id }}">{{ row.comment or '' }}</td>
-                                    <td>{{ row.line_type }}</td>
-                                    <td>{{ total_value }}</td>
+                                    <td data-field="customer_part_number"><span class="text-muted">Loading...</span></td>
+                                    <td data-field="description"><span class="text-muted">Loading...</span></td>
+                                    <td data-field="category"><span class="text-muted">Loading...</span></td>
+                                    <td class="editable-cell" data-field="comment" data-line-id="{{ row.project_line_id }}"><span class="text-muted">Loading...</span></td>
+                                    <td data-field="line_type"><span class="text-muted">Loading...</span></td>
+                                    <td data-field="total_quantity"><span class="text-muted">Loading...</span></td>
                                     {% for year_index in range(1, max_usage_years + 1) %}
-                                        {% set usage_value = row.usage_by_year[year_index - 1] if row.usage_by_year and row.usage_by_year|length >= year_index else '' %}
-                                        <td>{{ usage_value }}</td>
+                                        <td data-field="usage_year" data-year-index="{{ year_index }}"><span class="text-muted">Loading...</span></td>
                                     {% endfor %}
                                     <td>
-                                        <span class="status-badge status-{{ 'yes' if row.is_quoted else 'no' }}">
+                                        <span class="status-badge status-{{ 'yes' if row.is_quoted else 'no' }}" data-field="quoted_badge">
                                             {{ 'Yes' if row.is_quoted else 'No' }}
                                         </span>
                                     </td>
                                     <td>
-                                        <span class="status-badge status-{{ 'yes' if row.is_costed else 'no' }}">
+                                        <span class="status-badge status-{{ 'yes' if row.is_costed else 'no' }}" data-field="costed_badge">
                                             {{ 'Yes' if row.is_costed else 'No' }}
                                         </span>
                                     </td>
                                     <td>
                                         <span class="status-badge status-{{ row_status }}">{{ row_status|replace('_', ' ')|title }}</span>
                                     </td>
-                                    <td>
-                                        {% if row.parts_list_id %}
-                                            <a href="{{ url_for('parts_list.view_parts_list', list_id=row.parts_list_id) }}" class="text-decoration-none">
-                                                {{ row.parts_list_name or ('List #' ~ row.parts_list_id) }}
-                                            </a>
-                                        {% else %}
-                                            <span class="text-muted">-</span>
-                                        {% endif %}
+                                    <td data-field="linked_list">
+                                        <span class="text-muted">Loading...</span>
                                     </td>
                                 </tr>
                             {% endfor %}
@@ -352,7 +350,6 @@
 {% block scripts %}
 <script>
     const searchInput = document.getElementById('projectPartsSearch');
-    const selectAll = document.getElementById('selectAllProjectParts');
     const lineCheckboxes = Array.from(document.querySelectorAll('.project-line-checkbox'));
     const rows = Array.from(document.querySelectorAll('[data-line-row]'));
     const selectedCount = document.getElementById('selectedPartsCount');
@@ -387,11 +384,19 @@
     let usageYearCount = Number.parseInt('{{ max_usage_years }}', 10) || 1;
     let currentStatusFilter = 'all';
 
+    function getVisibleRows() {
+        return rows.filter((row) => !row.classList.contains('d-none'));
+    }
+
+    function updateCreateButtonState() {
+        const visibleCount = getVisibleRows().length;
+        createBtn.disabled = visibleCount === 0;
+    }
+
     function updateSelectedCount() {
         const selected = lineCheckboxes.filter((checkbox) => checkbox.checked);
         const count = selected.length;
         selectedCount.textContent = `${count} selected`;
-        createBtn.disabled = count === 0;
         markNoBidBtn.disabled = count === 0;
         markIgnoreBtn.disabled = count === 0;
         markPendingBtn.disabled = count === 0;
@@ -416,14 +421,7 @@
                 || (costedValue === 'no' && !isCosted);
             row.classList.toggle('d-none', !matchesQuery || !matchesStatus || !matchesQuoted || !matchesCosted);
         });
-        const visibleCheckboxes = rows
-            .filter((row) => !row.classList.contains('d-none'))
-            .map((row) => row.querySelector('.project-line-checkbox'))
-            .filter(Boolean);
-        if (selectAll) {
-            selectAll.checked = visibleCheckboxes.length > 0 && visibleCheckboxes.every((checkbox) => checkbox.checked);
-            selectAll.indeterminate = visibleCheckboxes.length > 0 && visibleCheckboxes.some((checkbox) => checkbox.checked) && !selectAll.checked;
-        }
+        updateCreateButtonState();
     }
 
     // Status filter buttons
@@ -628,29 +626,18 @@
         costedFilter.addEventListener('change', applyFilters);
     }
 
-    if (selectAll) {
-        selectAll.addEventListener('change', () => {
-            const shouldSelect = selectAll.checked;
-            rows.forEach((row) => {
-                if (row.classList.contains('d-none')) {
-                    return;
-                }
-                const checkbox = row.querySelector('.project-line-checkbox');
-                if (checkbox) {
-                    checkbox.checked = shouldSelect;
-                }
-            });
-            updateSelectedCount();
-            applyFilters();
-        });
-    }
-
     lineCheckboxes.forEach((checkbox) => {
         checkbox.addEventListener('change', () => {
             updateSelectedCount();
             applyFilters();
         });
     });
+
+    function getVisibleLineIds() {
+        return getVisibleRows()
+            .map((row) => Number.parseInt(row.dataset.lineId, 10))
+            .filter(Number.isFinite);
+    }
 
     if (confirmCreateBtn) {
         confirmCreateBtn.addEventListener('click', async () => {
@@ -660,13 +647,10 @@
                 return;
             }
 
-            const selectedIds = lineCheckboxes
-                .filter((checkbox) => checkbox.checked)
-                .map((checkbox) => Number.parseInt(checkbox.value, 10))
-                .filter(Number.isFinite);
+            const selectedIds = getVisibleLineIds();
 
             if (selectedIds.length === 0) {
-                alert('Please select at least one line.');
+                alert('No visible lines found for this filter.');
                 return;
             }
 
@@ -692,7 +676,8 @@
                 }
 
                 if (data.redirect) {
-                    window.location.href = data.redirect;
+                    window.open(data.redirect, '_blank', 'noopener');
+                    window.location.reload();
                 } else {
                     window.location.reload();
                 }
@@ -841,5 +826,101 @@
     renderUsageInputs();
     updateSelectedCount();
     applyFilters();
+
+    async function loadRowDetails() {
+        try {
+            const response = await fetch(`/projects/${projectId}/project-parts-list/lines/overview-data`);
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Failed to load details');
+            }
+
+            const rowMap = new Map(rows.map((row) => [Number.parseInt(row.dataset.lineId, 10), row]));
+            data.rows.forEach((rowData) => {
+                const rowEl = rowMap.get(rowData.project_line_id);
+                if (!rowEl) {
+                    return;
+                }
+
+                const setCellText = (selector, value) => {
+                    const cell = rowEl.querySelector(selector);
+                    if (cell) {
+                        cell.textContent = value ?? '';
+                    }
+                };
+
+                setCellText('[data-field="customer_part_number"]', rowData.customer_part_number || '');
+                setCellText('[data-field="description"]', rowData.description || '');
+                setCellText('[data-field="category"]', rowData.category || '');
+                setCellText('[data-field="line_type"]', rowData.line_type || '');
+
+                const commentCell = rowEl.querySelector('[data-field="comment"]');
+                if (commentCell) {
+                    commentCell.textContent = rowData.comment || '';
+                }
+
+                const totalValue = rowData.total_quantity !== null && rowData.total_quantity !== undefined
+                    ? rowData.total_quantity
+                    : rowData.usage_total;
+                setCellText('[data-field="total_quantity"]', totalValue ?? '');
+
+                const usage = rowData.usage_by_year || [];
+                rowEl.querySelectorAll('[data-field="usage_year"]').forEach((cell) => {
+                    const yearIndex = Number.parseInt(cell.dataset.yearIndex, 10);
+                    const usageValue = usage.length >= yearIndex ? usage[yearIndex - 1] : '';
+                    cell.textContent = usageValue ?? '';
+                });
+
+                const quotedBadge = rowEl.querySelector('[data-field="quoted_badge"]');
+                if (quotedBadge) {
+                    const quoted = !!rowData.is_quoted;
+                    quotedBadge.textContent = quoted ? 'Yes' : 'No';
+                    quotedBadge.className = `status-badge status-${quoted ? 'yes' : 'no'}`;
+                }
+
+                const costedBadge = rowEl.querySelector('[data-field="costed_badge"]');
+                if (costedBadge) {
+                    const costed = !!rowData.is_costed;
+                    costedBadge.textContent = costed ? 'Yes' : 'No';
+                    costedBadge.className = `status-badge status-${costed ? 'yes' : 'no'}`;
+                }
+
+                const linkedCell = rowEl.querySelector('[data-field="linked_list"]');
+                if (linkedCell) {
+                    if (rowData.parts_list_id) {
+                        linkedCell.innerHTML = `<a href="/parts-lists/${rowData.parts_list_id}" class="text-decoration-none">${rowData.parts_list_name || `List #${rowData.parts_list_id}`}</a>`;
+                    } else {
+                        linkedCell.innerHTML = '<span class="text-muted">-</span>';
+                    }
+                }
+
+                rowEl.dataset.status = rowData.status || 'pending';
+                rowEl.dataset.quoted = rowData.is_quoted ? '1' : '0';
+                rowEl.dataset.costed = rowData.is_costed ? '1' : '0';
+                rowEl.dataset.search = `${rowData.customer_part_number || ''} ${rowData.description || ''} ${rowData.category || ''} ${rowData.comment || ''} ${rowData.line_type || ''}`.toLowerCase();
+                rowEl.classList.remove('table-row-pending', 'table-row-linked', 'table-row-no_bid', 'table-row-ignore');
+                rowEl.classList.add(`table-row-${rowEl.dataset.status}`);
+            });
+
+            applyFilters();
+        } catch (error) {
+            console.error('Failed to load project parts list details:', error);
+        }
+    }
+
+    if (rows.length) {
+        loadRowDetails();
+    }
+
+    const addPartsToggle = document.querySelector('[data-bs-target="#addProjectPartsBody"]');
+    const addPartsBody = document.getElementById('addProjectPartsBody');
+    if (addPartsToggle && addPartsBody) {
+        addPartsBody.addEventListener('show.bs.collapse', () => {
+            addPartsToggle.textContent = 'Hide';
+        });
+        addPartsBody.addEventListener('hide.bs.collapse', () => {
+            addPartsToggle.textContent = 'Show';
+        });
+    }
 </script>
 {% endblock %}
