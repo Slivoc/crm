@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Import Parts - {{ project.name }}{% endblock %}
+{% block title %}{{ 'Edit Parts' if edit_mode else 'Import Parts' }} - {{ project.name }}{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable@14.1.0/dist/handsontable.full.min.css">
@@ -86,7 +86,7 @@
 <div class="container-fluid mt-4 mb-5">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
         <div>
-            <h4 class="mb-1">Import Parts</h4>
+            <h4 class="mb-1">{{ 'Edit Parts' if edit_mode else 'Import Parts' }}</h4>
             <div class="text-muted">Project: {{ project.name }} ({{ project.id }})</div>
         </div>
         <div class="d-flex gap-2">
@@ -153,7 +153,11 @@
                 <div class="d-flex gap-2">
                     <button class="btn btn-outline-primary" id="validateBtn" type="button">Validate</button>
                     <button class="btn btn-primary" id="importBtn" type="button" disabled>
-                        Import <span id="importCount">0</span> Parts
+                        {% if edit_mode %}
+                            Save <span id="importCount">0</span> Changes
+                        {% else %}
+                            Import <span id="importCount">0</span> Parts
+                        {% endif %}
                     </button>
                 </div>
             </div>
@@ -195,9 +199,14 @@
 (function() {
     const projectId = {{ project.id }};
     const maxUsageYears = {{ max_usage_years or 5 }};
+    const editMode = {{ 'true' if edit_mode else 'false' }};
 
     // Column definitions
     const baseColumns = [
+        ...(editMode ? [
+            { key: 'line_number', title: 'Line #', width: 70, readOnly: true },
+            { key: 'line_id', title: 'Line ID', width: 80, readOnly: true }
+        ] : []),
         { key: 'customer_part_number', title: 'Customer PN', required: true, width: 150 },
         { key: 'description', title: 'Description', width: 200 },
         { key: 'category', title: 'Category', width: 120 },
@@ -217,6 +226,7 @@
     // Find column indices for auto-calculation
     const totalQtyColIndex = allColumns.findIndex(c => c.key === 'total_quantity');
     const yearColIndices = yearColumns.map(c => allColumns.findIndex(col => col.key === c.key));
+    const lineIdColIndex = allColumns.findIndex(c => c.key === 'line_id');
 
     // Initialize Handsontable
     const container = document.getElementById('spreadsheet');
@@ -240,6 +250,10 @@
         manualRowResize: true,
         contextMenu: true,
         minSpareRows: 1,
+        hiddenColumns: {
+            columns: editMode && lineIdColIndex >= 0 ? [lineIdColIndex] : [],
+            indicators: false
+        },
         licenseKey: 'non-commercial-and-evaluation',
         afterChange: function(changes, source) {
             if (source !== 'loadData') {
@@ -592,7 +606,7 @@
 
         const importBtn = this;
         importBtn.disabled = true;
-        importBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Importing...';
+        importBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Working...';
 
         try {
             const lines = validRows.map(row => {
@@ -605,6 +619,8 @@
                 }
 
                 return {
+                    line_id: row.line_id || null,
+                    line_number: row.line_number || null,
                     customer_part_number: (row.customer_part_number || '').toString().trim(),
                     description: (row.description || '').toString().trim(),
                     category: (row.category || '').toString().trim(),
@@ -615,7 +631,10 @@
                 };
             });
 
-            const response = await fetch(`/projects/${projectId}/project-parts-list/lines`, {
+            const endpoint = editMode
+                ? `/projects/${projectId}/project-parts-list/lines/bulk-update`
+                : `/projects/${projectId}/project-parts-list/lines`;
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ lines })
@@ -633,13 +652,62 @@
         } catch (err) {
             alert('Import error: ' + err.message);
             importBtn.disabled = false;
-            importBtn.innerHTML = `Import <span id="importCount">${validRows.length}</span> Parts`;
+            importBtn.innerHTML = editMode
+                ? `Save <span id="importCount">${validRows.length}</span> Changes`
+                : `Import <span id="importCount">${validRows.length}</span> Parts`;
         }
     });
 
     // Initial state
     updateRowCount();
     updateImportButton();
+
+    async function loadExistingLines() {
+        const status = document.getElementById('validationStatus');
+        try {
+            status.textContent = 'Loading existing lines...';
+            const response = await fetch(`/projects/${projectId}/project-parts-list/lines/overview-data`);
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Unable to load existing lines');
+            }
+
+            const rows = (data.rows || []).map(row => {
+                const entry = {};
+                allColumns.forEach(col => {
+                    entry[col.key] = col.key === 'line_type' ? 'normal' : '';
+                });
+
+                entry.line_id = row.project_line_id;
+                entry.line_number = row.line_number;
+                entry.customer_part_number = row.customer_part_number || '';
+                entry.description = row.description || '';
+                entry.category = row.category || '';
+                entry.comment = row.comment || '';
+                entry.line_type = row.line_type || 'normal';
+                entry.total_quantity = row.total_quantity ?? '';
+
+                const usage = row.usage_by_year || [];
+                for (let i = 1; i <= Math.max(maxUsageYears, 5); i++) {
+                    entry[`year_${i}`] = usage.length >= i ? usage[i - 1] : '';
+                }
+
+                return entry;
+            });
+
+            hot.loadData(rows.length ? rows : createEmptyRows(20));
+            updateRowCount();
+            updateImportButton();
+            status.textContent = rows.length ? `Loaded ${rows.length} lines.` : 'No existing lines found.';
+        } catch (error) {
+            status.textContent = 'Failed to load existing lines.';
+            console.error(error);
+        }
+    }
+
+    if (editMode) {
+        loadExistingLines();
+    }
 })();
 </script>
 {% endblock %}
