@@ -5455,23 +5455,26 @@ def parts_list_sourcing(list_id):
     UPDATED: Now includes quoted prices in the contacted supplier section and supplier names for chosen costs
     """
     try:
-        with db_cursor() as cur:
-            # Get list header
-            header = _execute_with_cursor(cur, """
-                SELECT 
-                    pl.*, 
-                    c.name as customer_name,
-                    cont.name as contact_name,
-                    cont.email as contact_email,
-                    s.name as status_name,
-                    p.name as project_name
-                FROM parts_lists pl
-                LEFT JOIN customers c ON c.id = pl.customer_id
-                LEFT JOIN contacts cont ON cont.id = pl.contact_id
-                LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
-                LEFT JOIN projects p ON p.id = pl.project_id
-                WHERE pl.id = ?
-            """, (list_id,)).fetchone()
+        # Get list header
+        header = db_execute(
+            """
+            SELECT 
+                pl.*, 
+                c.name as customer_name,
+                cont.name as contact_name,
+                cont.email as contact_email,
+                s.name as status_name,
+                p.name as project_name
+            FROM parts_lists pl
+            LEFT JOIN customers c ON c.id = pl.customer_id
+            LEFT JOIN contacts cont ON cont.id = pl.contact_id
+            LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+            LEFT JOIN projects p ON p.id = pl.project_id
+            WHERE pl.id = ?
+            """,
+            (list_id,),
+            fetch='one',
+        )
 
         if not header:
             return "Parts list not found", 404
@@ -5479,6 +5482,7 @@ def parts_list_sourcing(list_id):
         if header.get('project_id'):
             _repair_project_linked_parts_list_lines(list_id)
 
+        with db_cursor() as cur:
             # Get all lines with base sourcing info AND supplier name for chosen cost
             lines = _execute_with_cursor(cur, """
                 SELECT 
