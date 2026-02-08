@@ -516,6 +516,63 @@ def save_supplier_quote_lines(list_id, quote_id):
                 skipped_count += 1
                 continue
 
+            # Handle split line request - duplicate the parts list line first
+            split_line = line.get('split_line', False)
+            if split_line:
+                logging.info(f"Split line requested for parts_list_line_id: {parts_list_line_id}")
+                # Duplicate the line using the existing logic
+                with db_cursor(commit=True) as cur:
+                    original_line = _execute_with_cursor(cur, """
+                        SELECT *
+                        FROM parts_list_lines
+                        WHERE id = ? AND parts_list_id = ?
+                    """, (parts_list_line_id, list_id)).fetchone()
+
+                    if original_line:
+                        # Determine the parent line (original line if no parent, otherwise the parent)
+                        parent_line_id = original_line['parent_line_id'] or original_line['id']
+                        parent_row = _execute_with_cursor(cur, """
+                            SELECT line_number
+                            FROM parts_list_lines
+                            WHERE id = ? AND parts_list_id = ?
+                        """, (parent_line_id, list_id)).fetchone()
+
+                        if parent_row:
+                            next_line_number = _next_child_line_number(cur, list_id, parent_line_id, parent_row['line_number'])
+
+                            # Get the quoted quantity to set on the new line
+                            quoted_qty = line.get('quantity_quoted')
+                            new_qty = _safe_int(quoted_qty) if quoted_qty else original_line['quantity']
+
+                            new_row = _execute_with_cursor(cur, """
+                                INSERT INTO parts_list_lines
+                                (parts_list_id, line_number, customer_part_number, base_part_number, description, quantity,
+                                 parent_line_id, line_type, customer_notes, internal_notes)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                RETURNING id
+                            """, (
+                                list_id,
+                                next_line_number,
+                                original_line['customer_part_number'],
+                                original_line['base_part_number'],
+                                original_line['description'],
+                                new_qty,
+                                parent_line_id,
+                                'price_break',  # Mark as price break line
+                                original_line['customer_notes'],
+                                original_line['internal_notes']
+                            )).fetchone()
+
+                            if new_row:
+                                new_line_id = new_row['id'] if isinstance(new_row, dict) else new_row[0]
+                                logging.info(f"Created new split line: {new_line_id} with line_number: {next_line_number}")
+                                # Use the new line for the quote
+                                parts_list_line_id = new_line_id
+                            else:
+                                logging.warning("Failed to create split line - using original line")
+                    else:
+                        logging.warning(f"Original line {parts_list_line_id} not found for splitting")
+
             quoted_part_number = line.get('quoted_part_number')
             quantity_quoted_raw = line.get('quantity_quoted')
             qty_available_raw = line.get('qty_available')

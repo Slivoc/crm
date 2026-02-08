@@ -928,7 +928,8 @@ function initializeEmptyQuoteLines(supplierId = null) {
 function initializeQuoteLinesTable(lines) {
     quoteLinesData = lines.map(line => ({
         ...line,
-        quote_requested: line.quote_requested || 0
+        quote_requested: line.quote_requested || 0,
+        split_line: false  // New field for split line checkbox
     }));
 
     const container = document.getElementById('quote-lines-table-container');
@@ -951,7 +952,8 @@ function initializeQuoteLinesTable(lines) {
         !!line.is_no_bid,
         line.line_notes,
         line.other_quotes_count || 0,
-        !!line.quote_requested
+        !!line.quote_requested,
+        false  // split_line - column 17
     ]);
 
     quoteLinesTable = new Handsontable(container, {
@@ -973,7 +975,8 @@ function initializeQuoteLinesTable(lines) {
             'No Bid',
             'Notes',
             'Other Quotes',
-            'Sent?'
+            'Sent?',
+            'Split'
         ],
         columns: [
             { data: 0, type: 'numeric', readOnly: true, className: 'htCenter htMiddle' },
@@ -998,7 +1001,8 @@ function initializeQuoteLinesTable(lines) {
             },
             { data: 14, type: 'text' },
             { data: 15, type: 'numeric', readOnly: true, className: 'htCenter' },
-            { data: 16, type: 'checkbox', readOnly: true }
+            { data: 16, type: 'checkbox', readOnly: true },
+            { data: 17, type: 'checkbox', className: 'htCenter' }
         ],
         rowHeaders: true,
         height: 500,
@@ -1039,6 +1043,10 @@ function initializeQuoteLinesTable(lines) {
                     }
                 }
             }
+            // Add tooltip to Split column header
+            if (col === 17) {
+                TH.title = 'Check to create a new line (e.g., 1.1, 1.2) for this partial quote';
+            }
         },
         cells: function(row, col) {
             const cellProperties = {};
@@ -1051,6 +1059,11 @@ function initializeQuoteLinesTable(lines) {
             // Other quotes warning
             if (col === 15 && this.instance.getDataAtCell(row, col) > 0) {
                 cellProperties.className = ((cellProperties.className || '') + ' bg-warning').trim();
+            }
+
+            // Split line indicator - highlight the row if split is checked
+            if (this.instance.getDataAtCell(row, 17) === true) {
+                cellProperties.className = ((cellProperties.className || '') + ' bg-success bg-opacity-25').trim();
             }
 
             // No-bid styling (takes precedence)
@@ -1311,7 +1324,8 @@ function saveQuoteLines(quoteId) {
         condition_code: tableData[index][11],
         certifications: tableData[index][12],
         is_no_bid: !!tableData[index][13],
-        line_notes: tableData[index][14]
+        line_notes: tableData[index][14],
+        split_line: !!tableData[index][17]  // New: split line flag
     }));
 
     return fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/supplier-quotes/${quoteId}/lines/save`, {

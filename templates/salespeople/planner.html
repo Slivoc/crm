@@ -102,6 +102,9 @@
                     <input type="month" id="planningMonth" class="form-control" value="{{ default_month }}">
                 </div>
 
+                <a href="{{ url_for('team_tracker.team_tracker_page') }}" class="btn btn-primary">
+                    <i class="bi bi-bullseye"></i> Team Tracker
+                </a>
                 <a href="{{ url_for('salespeople.dashboard') }}" class="btn btn-outline-secondary">
                     <i class="bi bi-arrow-left"></i> Back
                 </a>
@@ -568,6 +571,12 @@ function renderPlanner(data) {
                         onclick="openCustomerOverview(${customer.id}); event.stopPropagation();">
                     <i class="bi bi-box-arrow-up-right"></i>
                 </button>
+                <button type="button"
+                        class="btn btn-sm btn-outline-primary py-0 px-1"
+                        title="Add to Team Tracker"
+                        onclick="addToTeamTracker(${customer.id}, '${customer.name.replace(/'/g, "\\'")}'); event.stopPropagation();">
+                    <i class="bi bi-bullseye"></i>
+                </button>
             </div>
             ${customer.associated_count > 1 ? '<small class="text-muted"><i class="bi bi-diagram-2"></i> Grouped</small>' : ''}
         </td>
@@ -868,6 +877,33 @@ function addManualCustomer() {
             return;
         }
         window.location.href = `/customers/${customerId}`;
+    }
+
+    async function addToTeamTracker(customerId, customerName) {
+        if (!confirm(`Add "${customerName}" to Team Tracker for team meetings?`)) return;
+
+        try {
+            const response = await fetch('/team-tracker/entry', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    salesperson_id: SALESPERSON_ID,
+                    customer_id: customerId
+                })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                alert(`${customerName} added to Team Tracker!`);
+            } else if (data.error === 'already_exists') {
+                alert(`${customerName} is already in the Team Tracker.`);
+            } else {
+                alert('Error: ' + (data.error || 'Unknown error'));
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Failed to add to Team Tracker');
+        }
     }
 
     function updateLocalTotal() {

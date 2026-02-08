@@ -168,23 +168,65 @@ def _resolve_assignee(value, workspace_id):
         external_id = str(value).split(':', 1)[1].strip()
         if not external_id or not workspace_id:
             return None, None, None
-        row = db_execute(
+        workspace = db_execute(
             """
             SELECT
-                u.display_name,
+                w.workspace_key,
+                w.workspace_uuid,
                 w.external_instance_id,
                 w.external_workspace_uuid
             FROM ticket_workspaces w
-            LEFT JOIN external_ticket_users u
-                ON u.external_instance_id = w.external_instance_id
-                AND u.external_workspace_uuid = w.external_workspace_uuid
-                AND u.external_user_id = ?
             WHERE w.id = ?
             """,
-            (external_id, int(workspace_id)),
+            (int(workspace_id),),
             fetch="one",
         )
-        display_name = row.get('display_name') if row else None
+        if not workspace:
+            return None, None, None
+
+        display_name = None
+        external_instance_id = (workspace.get('external_instance_id') or '').strip()
+        external_workspace_uuid = (workspace.get('external_workspace_uuid') or '').strip()
+        if external_instance_id and external_workspace_uuid:
+            row = db_execute(
+                """
+                SELECT display_name
+                FROM external_ticket_users
+                WHERE external_instance_id = ?
+                  AND external_workspace_uuid = ?
+                  AND external_user_id = ?
+                """,
+                (external_instance_id, external_workspace_uuid, external_id),
+                fetch="one",
+            )
+            display_name = row.get('display_name') if row else None
+        else:
+            hub_base_url = (current_app.config.get('TICKETS_HUB_URL') or '').strip().rstrip('/')
+            api_key = (current_app.config.get('TICKETS_HUB_API_KEY') or '').strip()
+            workspace_uuid = (workspace.get('workspace_uuid') or '').strip()
+            workspace_key = (workspace.get('workspace_key') or '').strip().lower()
+            if hub_base_url and api_key and workspace_uuid:
+                try:
+                    response = requests.get(
+                        f"{hub_base_url}/api/external/workspaces/{workspace_uuid}/users",
+                        params={'workspace_key': workspace_key},
+                        headers={'Authorization': f'Bearer {api_key}'},
+                        timeout=10,
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        users = data.get('users') or []
+                        for user in users:
+                            if str(user.get('id')) == external_id:
+                                display_name = (
+                                    user.get('display_name')
+                                    or user.get('name')
+                                    or user.get('email')
+                                    or None
+                                )
+                                break
+                except Exception:
+                    display_name = None
         return None, external_id, display_name
     if value and str(value).isdigit():
         return int(value), None, None
@@ -364,7 +406,9 @@ def _sync_external_workspace_tickets(workspace):
         if not str(external_id).isdigit():
             continue
         external_id = int(external_id)
-        assigned_external_id = ticket.get('assigned_user_id')
+        assigned_external_id = ticket.get('external_assignee_id')
+        if assigned_external_id is None:
+            assigned_external_id = ticket.get('assigned_user_id')
         if assigned_external_id is not None:
             assigned_external_id = str(assigned_external_id)
         assigned_name = (ticket.get('assigned_user_name') or '').strip() or None
@@ -949,6 +993,28 @@ def _fetch_workspaces_with_members():
     return workspaces
 
 
+def _fetch_workspace_member_map():
+    rows = db_execute(
+        "SELECT workspace_id, user_id FROM ticket_workspace_members",
+        fetch="all",
+    ) or []
+    member_map = {}
+    for row in rows:
+        wid = int(row["workspace_id"])
+        member_map.setdefault(wid, set()).add(int(row["user_id"]))
+    return {wid: sorted(list(member_ids)) for wid, member_ids in member_map.items()}
+
+
+def _is_local_assignee_allowed(workspace_id, assignee_id):
+    if not workspace_id or not assignee_id:
+        return True
+    member_map = _fetch_workspace_member_map()
+    members = set(member_map.get(int(workspace_id), []))
+    if not members:
+        return True
+    return int(assignee_id) in members
+
+
 def _fetch_workspace_chips(user_id):
     rows = db_execute(
         """
@@ -1429,6 +1495,10 @@ def list_tickets():
             workspace = workspace_lookup.get(int(workspace_id))
         else:
             workspace = None
+        if assigned_user_id and workspace_id and str(workspace_id).isdigit():
+            if not _is_local_assignee_allowed(int(workspace_id), int(assigned_user_id)):
+                flash('Assignee must be a member of the selected workspace.', 'error')
+                return redirect(url_for('tickets.list_tickets'))
 
         if _is_external_workspace(workspace):
             external_payload = {
@@ -1529,6 +1599,182 @@ def list_tickets():
             external_payload = None
     else:
         external_payload = None
+
+    if external_workspace and external_payload:
+        remote_statuses = external_payload.get("statuses") or []
+        status_lookup = {status.get("id"): status for status in remote_statuses}
+        tickets = []
+        for ticket in external_payload.get("tickets") or []:
+            external_id = ticket.get("id")
+            if not str(external_id).isdigit():
+                continue
+            external_assignee_id = ticket.get("external_assignee_id")
+            if external_assignee_id is None:
+                external_assignee_id = ticket.get("assigned_user_id")
+            if external_assignee_id is not None:
+                external_assignee_id = str(external_assignee_id)
+            created_by_user_id = ticket.get("created_by_user_id")
+            assigned_to_me = external_assignee_id == str(user_id)
+            created_by_me_external = str(created_by_user_id) == str(user_id) if created_by_user_id is not None else False
+            if only_mine and created_by_me:
+                if not (assigned_to_me or created_by_me_external):
+                    continue
+            elif only_mine:
+                if not assigned_to_me:
+                    continue
+            elif created_by_me:
+                if not created_by_me_external:
+                    continue
+
+            status_id = ticket.get("status_id")
+            status = status_lookup.get(status_id) or {}
+            due_date = _parse_external_due_date(ticket.get("due_date"))
+            tickets.append({
+                "id": int(external_id),
+                "title": ticket.get("title") or "",
+                "description": ticket.get("description"),
+                "status_id": status_id,
+                "status_name": status.get("name"),
+                "status_is_closed": status.get("is_closed"),
+                "assigned_user_id": int(user_id) if assigned_to_me else None,
+                "assigned_user_name": ticket.get("assigned_user_name"),
+                "external_assignee_id": external_assignee_id,
+                "created_by_user_id": created_by_user_id,
+                "parent_ticket_id": ticket.get("parent_ticket_id"),
+                "parent_id": ticket.get("parent_ticket_id"),
+                "priority": ticket.get("priority") or "Medium",
+                "due_date": due_date,
+                "is_private": bool(ticket.get("is_private")),
+                "workspace_id": external_workspace.get("id"),
+                "workspace_name": external_workspace.get("name"),
+                "subjob_count": ticket.get("subjob_count") or 0,
+                "closed_subjob_count": ticket.get("closed_subjob_count") or 0,
+                "external_ticket_id": int(external_id),
+                "is_external": True,
+                "view_url": url_for(
+                    "tickets.external_view_ticket",
+                    workspace_id=external_workspace.get("id"),
+                    external_ticket_id=int(external_id),
+                ),
+            })
+
+        ticket_lookup = {ticket["id"]: ticket for ticket in tickets}
+        for ticket in tickets:
+            chain_titles = []
+            parent_id = ticket.get("parent_id")
+            hop_count = 0
+            parent = None
+            while parent_id and hop_count < 5:
+                parent = ticket_lookup.get(parent_id)
+                if not parent:
+                    break
+                chain_titles.append(f"#{parent['id']} {parent['title']}")
+                parent_id = parent.get("parent_id")
+                hop_count += 1
+            ticket["parent_chain"] = " > ".join(reversed(chain_titles)) if chain_titles else None
+            ticket["depth"] = len(chain_titles)
+            if ticket.get("parent_id") and parent:
+                ticket["parent_label"] = f"#{parent['id']} {parent['title']}"
+            else:
+                ticket["parent_label"] = None
+            ticket["is_context_only"] = False
+
+        statuses = [dict(status) for status in remote_statuses]
+        default_status_id = None
+        for status in statuses:
+            if not status.get('is_closed'):
+                default_status_id = status.get('id')
+                break
+        users = _fetch_users()
+        customers = []
+        suppliers = []
+        workspace_defaults = {workspace['id']: workspace.get('default_assignee_id') for workspace in workspaces}
+        workspace_member_map = _fetch_workspace_member_map()
+        workspace_external_map = {workspace['id']: _is_external_workspace(workspace) for workspace in workspaces}
+        workspace_chips = _fetch_workspace_chips(user_id)
+
+        tickets_by_status = {status['id']: [] for status in statuses}
+        status_groups = {}
+        for ticket in tickets:
+            status_groups.setdefault(ticket["status_id"], []).append(ticket)
+
+        for status_id, group in status_groups.items():
+            group_ids = {ticket["id"] for ticket in group}
+            expanded_group = list(group)
+            expanded_ids = set(group_ids)
+
+            for ticket in group:
+                parent_id = ticket.get("parent_id")
+                hop_count = 0
+                while parent_id and hop_count < 5:
+                    parent = ticket_lookup.get(parent_id)
+                    if not parent:
+                        break
+                    if parent_id not in expanded_ids:
+                        context_ticket = dict(parent)
+                        context_ticket["is_context_only"] = True
+                        context_ticket["context_for_status_id"] = status_id
+                        expanded_group.append(context_ticket)
+                        expanded_ids.add(parent_id)
+                    parent_id = parent.get("parent_id")
+                    hop_count += 1
+
+            group = expanded_group
+            group_ids = expanded_ids
+            children_by_parent = {}
+            for ticket in group:
+                parent_id = ticket.get("parent_id")
+                if parent_id:
+                    children_by_parent.setdefault(parent_id, []).append(ticket)
+
+            ordered = []
+            seen = set()
+
+            def append_children(parent_id):
+                for child in children_by_parent.get(parent_id, []):
+                    if child["id"] in seen:
+                        continue
+                    ordered.append(child)
+                    seen.add(child["id"])
+                    append_children(child["id"])
+
+            for ticket in group:
+                if ticket["id"] in seen:
+                    continue
+                if ticket.get("parent_id") and ticket["parent_id"] in group_ids:
+                    continue
+                ordered.append(ticket)
+                seen.add(ticket["id"])
+                append_children(ticket["id"])
+
+            for ticket in group:
+                if ticket["id"] not in seen:
+                    ordered.append(ticket)
+                    seen.add(ticket["id"])
+                    append_children(ticket["id"])
+
+            tickets_by_status[status_id] = ordered
+
+        return render_template(
+            'tickets.html',
+            tickets_by_status=tickets_by_status,
+            statuses=statuses,
+            users=users,
+            workspaces=workspaces,
+            workspace_chips=workspace_chips,
+            show_closed=show_closed,
+            only_mine=only_mine,
+            created_by_me=created_by_me,
+            workspace_filter_id=workspace_filter_id,
+            customer_filter_id=customer_filter_id,
+            supplier_filter_id=supplier_filter_id,
+            default_status_id=default_status_id,
+            workspace_defaults=workspace_defaults,
+            workspace_member_map=workspace_member_map,
+            workspace_external_map=workspace_external_map,
+            customers=customers,
+            suppliers=suppliers,
+        )
 
     visibility_clause, visibility_params = _ticket_visibility_clause(user_id, is_admin)
     closed_clause = "" if show_closed else "AND s.is_closed = FALSE"
@@ -1674,6 +1920,7 @@ def list_tickets():
         workspace['id']: workspace.get('default_assignee_id')
         for workspace in workspaces
     }
+    workspace_member_map = _fetch_workspace_member_map()
     workspace_external_map = {
         workspace['id']: _is_external_workspace(workspace)
         for workspace in workspaces
@@ -1762,6 +2009,7 @@ def list_tickets():
         supplier_filter_id=supplier_filter_id,
         default_status_id=default_status_id,
         workspace_defaults=workspace_defaults,
+        workspace_member_map=workspace_member_map,
         workspace_external_map=workspace_external_map,
         customers=customers,
         suppliers=suppliers,
@@ -1990,6 +2238,7 @@ def view_ticket(ticket_id):
     statuses = _fetch_statuses()
     users = _fetch_users()
     workspaces = _fetch_workspaces()
+    workspace_member_map = _fetch_workspace_member_map()
     workspace_external_map = {
         workspace['id']: _is_external_workspace(workspace)
         for workspace in workspaces
@@ -2026,6 +2275,7 @@ def view_ticket(ticket_id):
         statuses=statuses,
         users=users,
         workspaces=workspaces,
+        workspace_member_map=workspace_member_map,
         workspace_external_map=workspace_external_map,
         subjobs=subjobs,
         updates=updates,
@@ -2088,6 +2338,7 @@ def external_view_ticket(workspace_id, external_ticket_id):
 
     users = _fetch_users()
     workspaces = _fetch_workspaces()
+    workspace_member_map = _fetch_workspace_member_map()
     workspace_external_map = {
         workspace['id']: _is_external_workspace(workspace)
         for workspace in workspaces
@@ -2098,6 +2349,7 @@ def external_view_ticket(workspace_id, external_ticket_id):
         statuses=statuses,
         users=users,
         workspaces=workspaces,
+        workspace_member_map=workspace_member_map,
         workspace_external_map=workspace_external_map,
         subjobs=subjobs,
         updates=updates,
@@ -2366,6 +2618,10 @@ def update_ticket(ticket_id):
         assigned_user_value,
         workspace_id,
     )
+    if assigned_user_id and workspace_id and str(workspace_id).isdigit():
+        if not _is_local_assignee_allowed(int(workspace_id), int(assigned_user_id)):
+            flash('Assignee must be a member of the selected workspace.', 'error')
+            return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
     if status_name and status_name.lower() == 'returned':
         assigned_user_id = ticket.get('created_by_user_id')
@@ -2525,6 +2781,10 @@ def add_subjob(ticket_id):
         assigned_user_value,
         workspace_id,
     )
+    if assigned_user_id and workspace_id and str(workspace_id).isdigit():
+        if not _is_local_assignee_allowed(int(workspace_id), int(assigned_user_id)):
+            flash('Assignee must be a member of the selected workspace.', 'error')
+            return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
     external_ticket_id = None
     workspace = next((w for w in _fetch_workspaces() if w['id'] == int(workspace_id)), None) if workspace_id else None
@@ -2920,6 +3180,8 @@ def external_workspace_users(workspace_id):
         """
         SELECT
             id,
+            workspace_key,
+            workspace_uuid,
             is_external,
             external_instance_id,
             external_base_url,
@@ -2930,184 +3192,49 @@ def external_workspace_users(workspace_id):
         (workspace_id,),
         fetch="one",
     )
-    if not _is_external_workspace(workspace):
-        return jsonify({'success': True, 'users': []})
-
-    ok, result = _refresh_external_users(dict(workspace))
     error_message = None
-    if not ok:
-        error_message = result
+    if _is_external_workspace(workspace):
+        ok, result = _refresh_external_users(dict(workspace))
+        if not ok:
+            error_message = result
+        rows = db_execute(
+            """
+            SELECT external_user_id AS id, display_name, email
+            FROM external_ticket_users
+            WHERE external_instance_id = ? AND external_workspace_uuid = ?
+            ORDER BY display_name
+            """,
+            (workspace.get('external_instance_id'), workspace.get('external_workspace_uuid')),
+            fetch="all",
+        ) or []
+        users = [dict(row) for row in rows]
+        payload = {'success': True, 'users': users}
+        if error_message:
+            payload['error'] = error_message
+        return jsonify(payload)
 
-    if external_workspace and external_payload:
-        remote_statuses = external_payload.get("statuses") or []
-        status_lookup = {status.get("id"): status for status in remote_statuses}
-        tickets = []
-        for ticket in external_payload.get("tickets") or []:
-            external_id = ticket.get("id")
-            if not str(external_id).isdigit():
-                continue
-            status_id = ticket.get("status_id")
-            status = status_lookup.get(status_id) or {}
-            due_date = _parse_external_due_date(ticket.get("due_date"))
-            tickets.append({
-                "id": int(external_id),
-                "title": ticket.get("title") or "",
-                "description": ticket.get("description"),
-                "status_id": status_id,
-                "status_name": status.get("name"),
-                "status_is_closed": status.get("is_closed"),
-                "assigned_user_id": None,
-                "assigned_user_name": ticket.get("assigned_user_name"),
-                "external_assignee_id": ticket.get("assigned_user_id"),
-                "parent_ticket_id": ticket.get("parent_ticket_id"),
-                "parent_id": ticket.get("parent_ticket_id"),
-                "priority": ticket.get("priority") or "Medium",
-                "due_date": due_date,
-                "is_private": bool(ticket.get("is_private")),
-                "workspace_id": external_workspace.get("id"),
-                "workspace_name": external_workspace.get("name"),
-                "subjob_count": ticket.get("subjob_count") or 0,
-                "closed_subjob_count": ticket.get("closed_subjob_count") or 0,
-                "external_ticket_id": int(external_id),
-                "is_external": True,
-                "view_url": url_for(
-                    "tickets.external_view_ticket",
-                    workspace_id=external_workspace.get("id"),
-                    external_ticket_id=int(external_id),
-                ),
-            })
-
-        ticket_lookup = {ticket["id"]: ticket for ticket in tickets}
-        for ticket in tickets:
-            chain_titles = []
-            parent_id = ticket.get("parent_id")
-            hop_count = 0
-            parent = None
-            while parent_id and hop_count < 5:
-                parent = ticket_lookup.get(parent_id)
-                if not parent:
-                    break
-                chain_titles.append(f"#{parent['id']} {parent['title']}")
-                parent_id = parent.get("parent_id")
-                hop_count += 1
-            ticket["parent_chain"] = " > ".join(reversed(chain_titles)) if chain_titles else None
-            ticket["depth"] = len(chain_titles)
-            if ticket.get("parent_id") and parent:
-                ticket["parent_label"] = f"#{parent['id']} {parent['title']}"
-            else:
-                ticket["parent_label"] = None
-            ticket["is_context_only"] = False
-
-        statuses = [dict(status) for status in remote_statuses]
-        default_status_id = None
-        for status in statuses:
-            if not status.get('is_closed'):
-                default_status_id = status.get('id')
-                break
-        users = _fetch_users()
-        customers = []
-        suppliers = []
-        workspace_defaults = {workspace['id']: workspace.get('default_assignee_id') for workspace in workspaces}
-        workspace_external_map = {workspace['id']: _is_external_workspace(workspace) for workspace in workspaces}
-        workspace_chips = _fetch_workspace_chips(user_id)
-
-        tickets_by_status = {status['id']: [] for status in statuses}
-        status_groups = {}
-        for ticket in tickets:
-            status_groups.setdefault(ticket["status_id"], []).append(ticket)
-
-        for status_id, group in status_groups.items():
-            group_ids = {ticket["id"] for ticket in group}
-            expanded_group = list(group)
-            expanded_ids = set(group_ids)
-
-            for ticket in group:
-                parent_id = ticket.get("parent_id")
-                hop_count = 0
-                while parent_id and hop_count < 5:
-                    parent = ticket_lookup.get(parent_id)
-                    if not parent:
-                        break
-                    if parent_id not in expanded_ids:
-                        context_ticket = dict(parent)
-                        context_ticket["is_context_only"] = True
-                        context_ticket["context_for_status_id"] = status_id
-                        expanded_group.append(context_ticket)
-                        expanded_ids.add(parent_id)
-                    parent_id = parent.get("parent_id")
-                    hop_count += 1
-
-            group = expanded_group
-            group_ids = expanded_ids
-            children_by_parent = {}
-            for ticket in group:
-                parent_id = ticket.get("parent_id")
-                if parent_id:
-                    children_by_parent.setdefault(parent_id, []).append(ticket)
-
-            ordered = []
-            seen = set()
-
-            def append_children(parent_id):
-                for child in children_by_parent.get(parent_id, []):
-                    if child["id"] in seen:
-                        continue
-                    ordered.append(child)
-                    seen.add(child["id"])
-                    append_children(child["id"])
-
-            for ticket in group:
-                if ticket["id"] in seen:
-                    continue
-                if ticket.get("parent_id") and ticket["parent_id"] in group_ids:
-                    continue
-                ordered.append(ticket)
-                seen.add(ticket["id"])
-                append_children(ticket["id"])
-
-            for ticket in group:
-                if ticket["id"] not in seen:
-                    ordered.append(ticket)
-                    seen.add(ticket["id"])
-                    append_children(ticket["id"])
-
-            tickets_by_status[status_id] = ordered
-
-        return render_template(
-            'tickets.html',
-            tickets_by_status=tickets_by_status,
-            statuses=statuses,
-            users=users,
-            workspaces=workspaces,
-            workspace_chips=workspace_chips,
-            show_closed=show_closed,
-            only_mine=only_mine,
-            created_by_me=created_by_me,
-            workspace_filter_id=workspace_filter_id,
-            customer_filter_id=customer_filter_id,
-            supplier_filter_id=supplier_filter_id,
-            default_status_id=default_status_id,
-            workspace_defaults=workspace_defaults,
-            workspace_external_map=workspace_external_map,
-            customers=customers,
-            suppliers=suppliers,
+    hub_base_url = (current_app.config.get('TICKETS_HUB_URL') or '').strip().rstrip('/')
+    api_key = (current_app.config.get('TICKETS_HUB_API_KEY') or '').strip()
+    workspace_uuid = (workspace.get('workspace_uuid') or '').strip()
+    workspace_key = (workspace.get('workspace_key') or '').strip().lower()
+    if not hub_base_url or not api_key or not workspace_uuid:
+        return jsonify({'success': True, 'users': []})
+    try:
+        response = requests.get(
+            f"{hub_base_url}/api/external/workspaces/{workspace_uuid}/users",
+            params={'workspace_key': workspace_key},
+            headers={'Authorization': f'Bearer {api_key}'},
+            timeout=10,
         )
-
-    rows = db_execute(
-        """
-        SELECT external_user_id AS id, display_name, email
-        FROM external_ticket_users
-        WHERE external_instance_id = ? AND external_workspace_uuid = ?
-        ORDER BY display_name
-        """,
-        (workspace.get('external_instance_id'), workspace.get('external_workspace_uuid')),
-        fetch="all",
-    ) or []
-    users = [dict(row) for row in rows]
-    payload = {'success': True, 'users': users}
-    if error_message:
-        payload['error'] = error_message
-    return jsonify(payload)
+        if response.status_code != 200:
+            return jsonify({'success': True, 'users': [], 'error': f'External workspace returned {response.status_code}.'})
+        data = response.json()
+        users = data.get('users') or []
+        if not isinstance(users, list):
+            return jsonify({'success': True, 'users': [], 'error': 'Invalid users list.'})
+        return jsonify({'success': True, 'users': users})
+    except Exception as exc:
+        return jsonify({'success': True, 'users': [], 'error': f'Failed to reach external workspace: {exc}'})
 
 
 def _external_workspace_users_api(workspace_uuid):
@@ -3158,6 +3285,15 @@ def _external_workspace_users_api(workspace_uuid):
         (workspace['id'],),
         fetch="all",
     ) or []
+    if not rows:
+        rows = db_execute(
+            """
+            SELECT id, username, email
+            FROM users
+            ORDER BY username, email
+            """,
+            fetch="all",
+        ) or []
     users = [
         {
             'id': str(row['id']),

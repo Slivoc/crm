@@ -77,6 +77,7 @@ from routes.tickets import tickets_bp, external_api_bp
 from routes.manufacturer_approvals import manufacturer_approvals_bp
 from routes.supplier_portal import supplier_portal_bp
 from routes.notifications import notifications_bp
+from routes.team_tracker import team_tracker_bp
 
 scheduler = APScheduler()
 
@@ -210,6 +211,7 @@ app.register_blueprint(portal_admin_bp)
 app.register_blueprint(manufacturer_approvals_bp)
 app.register_blueprint(supplier_portal_bp, url_prefix='/supplier-portal')
 app.register_blueprint(notifications_bp)
+app.register_blueprint(team_tracker_bp)
 
 def bit_and(value, other):
     return value & other

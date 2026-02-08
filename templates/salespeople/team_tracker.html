@@ -1,0 +1,621 @@
+{% extends base_template %}
+
+{% block title %}Team Tracker{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+    .tracker-table {
+        width: 100%;
+    }
+    .tracker-table th {
+        background-color: #f8f9fa;
+        padding: 0.75rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #495057;
+        border-bottom: 2px solid #dee2e6;
+        white-space: nowrap;
+    }
+    .tracker-table td {
+        padding: 0.75rem;
+        vertical-align: top;
+        border-bottom: 1px solid #e9ecef;
+    }
+    .tracker-table tr:hover {
+        background-color: #f8f9fa;
+    }
+    .tracker-table tr.archived {
+        opacity: 0.6;
+        background-color: #f5f5f5;
+    }
+
+    /* Inline editing inputs */
+    .tracker-input {
+        border: 1px solid transparent;
+        background: transparent;
+        padding: 4px 8px;
+        width: 100%;
+        border-radius: 4px;
+        transition: border-color 0.2s, background-color 0.2s;
+    }
+    .tracker-input:hover {
+        border-color: #dee2e6;
+        background-color: #fff;
+    }
+    .tracker-input:focus {
+        border-color: #86b7fe;
+        background: white;
+        outline: 0;
+        box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+    }
+    .tracker-input::placeholder {
+        color: #adb5bd;
+        font-style: italic;
+    }
+
+    /* Next steps styling */
+    .next-steps-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    .next-step-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 4px 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .next-step-item:last-child {
+        border-bottom: none;
+    }
+    .next-step-item.completed .step-text {
+        text-decoration: line-through;
+        color: #6c757d;
+    }
+    .step-checkbox {
+        cursor: pointer;
+        margin-top: 2px;
+        width: 16px;
+        height: 16px;
+    }
+    .step-text {
+        flex: 1;
+        font-size: 0.9rem;
+        word-break: break-word;
+    }
+    .step-actions {
+        display: flex;
+        gap: 4px;
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+    .next-step-item:hover .step-actions {
+        opacity: 1;
+    }
+    .step-complete {
+        cursor: pointer;
+        color: #198754;
+        padding: 0 4px;
+    }
+    .step-complete:hover {
+        color: #146c43;
+    }
+    .step-uncomplete {
+        cursor: pointer;
+        color: #6c757d;
+        padding: 0 4px;
+    }
+    .step-uncomplete:hover {
+        color: #495057;
+    }
+    .step-delete {
+        cursor: pointer;
+        color: #dc3545;
+        padding: 0 4px;
+    }
+    .step-delete:hover {
+        color: #b02a37;
+    }
+
+    /* Salesperson group header */
+    .salesperson-group-header {
+        background-color: #e9ecef;
+        font-weight: 600;
+        padding: 0.75rem 1rem;
+        border-bottom: 2px solid #dee2e6;
+    }
+    .salesperson-group-header td {
+        background-color: #e9ecef;
+        padding: 0.75rem 1rem !important;
+    }
+
+    /* Add step input */
+    .add-step-input {
+        border: 1px dashed #dee2e6;
+        border-radius: 4px;
+        padding: 6px 10px;
+        width: 100%;
+        font-size: 0.85rem;
+        background: #fafafa;
+        transition: all 0.2s;
+    }
+    .add-step-input:focus {
+        border-color: #86b7fe;
+        border-style: solid;
+        background: white;
+        outline: 0;
+    }
+    .add-step-input::placeholder {
+        color: #adb5bd;
+    }
+
+    /* History link */
+    .history-link {
+        font-size: 0.75rem;
+        color: #6c757d;
+    }
+    .history-link:hover {
+        color: #0d6efd;
+    }
+
+    /* Action buttons */
+    .entry-actions {
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+    tr:hover .entry-actions {
+        opacity: 1;
+    }
+
+    /* Save indicator */
+    .save-indicator {
+        font-size: 0.7rem;
+        color: #198754;
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+    .save-indicator.show {
+        opacity: 1;
+    }
+
+    /* Empty state */
+    .empty-state {
+        text-align: center;
+        padding: 3rem;
+        color: #6c757d;
+    }
+    .empty-state i {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        opacity: 0.5;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4 align-items-center">
+        <div class="col-md-6">
+            <h2 class="fw-bold mb-1">Team Tracker</h2>
+            <p class="text-muted mb-0">Focus accounts for team meetings</p>
+        </div>
+        <div class="col-md-6 text-md-end">
+            <div class="d-inline-flex align-items-center gap-3">
+                <div class="form-check">
+                    <input type="checkbox" class="form-check-input" id="showArchived">
+                    <label class="form-check-label" for="showArchived">Show archived</label>
+                </div>
+                <a href="{{ url_for('salespeople.dashboard') }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loader" class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Loading team tracker data...</p>
+    </div>
+
+    <!-- Main Content -->
+    <div id="trackerContent" style="display: none;">
+        <div class="card shadow-sm">
+            <div class="table-responsive">
+                <table class="tracker-table table mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width: 14%;">Customer</th>
+                            <th style="width: 7%;">Date Added</th>
+                            <th style="width: 12%;">Long Term Target</th>
+                            <th style="width: 12%;">Short Term Target</th>
+                            <th style="width: 12%;">Action</th>
+                            <th style="width: 7%;">Action Date</th>
+                            <th style="width: 12%;">Progress</th>
+                            <th style="width: 20%;">Next Steps</th>
+                            <th style="width: 4%;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="trackerTableBody">
+                        <!-- Rows populated by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- History Modal for viewing completed steps -->
+<div class="modal fade" id="historyModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-clock-history me-2"></i>Next Steps History</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="historyModalBody">
+                <!-- History content -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    loadTrackerData();
+
+    document.getElementById('showArchived').addEventListener('change', loadTrackerData);
+});
+
+async function loadTrackerData() {
+    const showArchived = document.getElementById('showArchived').checked;
+    document.getElementById('loader').style.display = 'block';
+    document.getElementById('trackerContent').style.display = 'none';
+
+    try {
+        const response = await fetch(`/team-tracker/data?show_archived=${showArchived}`);
+        const data = await response.json();
+        if (data.success) {
+            renderTrackerTable(data.entries);
+        } else {
+            console.error('Error loading data:', data.error);
+        }
+    } catch (e) {
+        console.error('Error:', e);
+    } finally {
+        document.getElementById('loader').style.display = 'none';
+        document.getElementById('trackerContent').style.display = 'block';
+    }
+}
+
+function renderTrackerTable(entries) {
+    const tbody = document.getElementById('trackerTableBody');
+    tbody.innerHTML = '';
+
+    if (entries.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="9">
+                    <div class="empty-state">
+                        <i class="bi bi-bullseye d-block"></i>
+                        <h5>No accounts in team tracker</h5>
+                        <p class="mb-0">Add accounts from the <a href="{{ url_for('salespeople.dashboard') }}">planner</a> to start tracking.</p>
+                    </div>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    // Group entries by salesperson
+    const grouped = {};
+    entries.forEach(entry => {
+        const key = entry.salesperson_name;
+        if (!grouped[key]) {
+            grouped[key] = [];
+        }
+        grouped[key].push(entry);
+    });
+
+    // Render grouped entries
+    Object.keys(grouped).sort().forEach(salespersonName => {
+        // Add salesperson header row
+        const headerRow = document.createElement('tr');
+        headerRow.className = 'salesperson-group-header';
+        headerRow.innerHTML = `
+            <td colspan="9">
+                <i class="bi bi-person-circle me-2"></i>${escapeHtml(salespersonName)}
+                <span class="badge bg-primary ms-2">${grouped[salespersonName].length}</span>
+            </td>
+        `;
+        tbody.appendChild(headerRow);
+
+        // Add entry rows for this salesperson
+        grouped[salespersonName].forEach(entry => {
+            const row = createTrackerRow(entry);
+            tbody.appendChild(row);
+        });
+    });
+}
+
+function createTrackerRow(entry) {
+    const row = document.createElement('tr');
+    row.dataset.entryId = entry.id;
+    if (!entry.is_active) {
+        row.classList.add('archived');
+    }
+
+    row.innerHTML = `
+        <td>
+            <div class="d-flex align-items-center gap-2">
+                <strong>${escapeHtml(entry.customer_name)}</strong>
+                <button type="button" class="btn btn-sm btn-link p-0" onclick="openCustomerOverview(${entry.customer_id})" title="View customer">
+                    <i class="bi bi-box-arrow-up-right"></i>
+                </button>
+            </div>
+        </td>
+        <td>
+            <small class="text-muted">${formatDate(entry.date_added)}</small>
+        </td>
+        <td>
+            <input type="text" class="tracker-input"
+                   value="${escapeHtml(entry.long_term_target || '')}"
+                   placeholder="e.g. 50K contract"
+                   onblur="saveField(${entry.id}, 'long_term_target', this.value, this)">
+            <span class="save-indicator" id="save-${entry.id}-long_term_target">Saved</span>
+        </td>
+        <td>
+            <input type="text" class="tracker-input"
+                   value="${escapeHtml(entry.short_term_target || '')}"
+                   placeholder="e.g. 5K/month"
+                   onblur="saveField(${entry.id}, 'short_term_target', this.value, this)">
+            <span class="save-indicator" id="save-${entry.id}-short_term_target">Saved</span>
+        </td>
+        <td>
+            <input type="text" class="tracker-input"
+                   value="${escapeHtml(entry.current_action || '')}"
+                   placeholder="Current action..."
+                   onblur="saveField(${entry.id}, 'current_action', this.value, this)">
+            <span class="save-indicator" id="save-${entry.id}-current_action">Saved</span>
+        </td>
+        <td>
+            <input type="date" class="tracker-input"
+                   value="${entry.action_date || ''}"
+                   onchange="saveField(${entry.id}, 'action_date', this.value, this)">
+        </td>
+        <td>
+            <input type="text" class="tracker-input"
+                   value="${escapeHtml(entry.progress || '')}"
+                   placeholder="Progress..."
+                   onblur="saveField(${entry.id}, 'progress', this.value, this)">
+            <span class="save-indicator" id="save-${entry.id}-progress">Saved</span>
+        </td>
+        <td>
+            ${renderNextSteps(entry)}
+        </td>
+        <td>
+            <div class="entry-actions">
+                ${entry.is_active ?
+                    `<button class="btn btn-sm btn-link text-danger p-0" onclick="archiveEntry(${entry.id})" title="Archive">
+                        <i class="bi bi-archive"></i>
+                    </button>` :
+                    `<button class="btn btn-sm btn-link text-success p-0" onclick="restoreEntry(${entry.id})" title="Restore">
+                        <i class="bi bi-arrow-counterclockwise"></i>
+                    </button>`
+                }
+            </div>
+        </td>
+    `;
+
+    return row;
+}
+
+function renderNextSteps(entry) {
+    const steps = entry.next_steps || [];
+    const completedCount = steps.filter(s => s.is_completed).length;
+
+    let html = '<ul class="next-steps-list">';
+
+    // Show ALL steps - incomplete first, then completed
+    const sortedSteps = [...steps].sort((a, b) => {
+        if (a.is_completed === b.is_completed) return 0;
+        return a.is_completed ? 1 : -1;
+    });
+
+    sortedSteps.forEach(step => {
+        const isCompleted = step.is_completed;
+        html += `
+            <li class="next-step-item ${isCompleted ? 'completed' : ''}">
+                <span class="step-text">${escapeHtml(step.description)}</span>
+                <span class="step-actions">
+                    ${isCompleted ?
+                        `<span class="step-uncomplete" onclick="toggleStep(${step.id})" title="Mark as incomplete">
+                            <i class="bi bi-arrow-counterclockwise"></i>
+                        </span>` :
+                        `<span class="step-complete" onclick="toggleStep(${step.id})" title="Mark as complete">
+                            <i class="bi bi-check-lg"></i>
+                        </span>`
+                    }
+                    <span class="step-delete" onclick="deleteStep(${step.id})" title="Delete">
+                        <i class="bi bi-x"></i>
+                    </span>
+                </span>
+            </li>
+        `;
+    });
+
+    html += '</ul>';
+
+    // Add new step input
+    html += `
+        <input type="text" class="add-step-input mt-2"
+               placeholder="+ Add step (Enter to save)"
+               data-entry-id="${entry.id}"
+               onkeypress="if(event.key==='Enter') { addStep(${entry.id}, this.value, this); event.preventDefault(); }">
+    `;
+
+    // Show history link if there are completed steps (to see who/when)
+    if (completedCount > 0) {
+        html += `
+            <button class="btn btn-link btn-sm p-0 mt-1 history-link" onclick="showHistory(${entry.id})">
+                <i class="bi bi-clock-history me-1"></i>View history
+            </button>
+        `;
+    }
+
+    return html;
+}
+
+async function saveField(entryId, field, value, inputEl) {
+    try {
+        const response = await fetch(`/team-tracker/entry/${entryId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [field]: value })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            // Show save indicator
+            const indicator = document.getElementById(`save-${entryId}-${field}`);
+            if (indicator) {
+                indicator.classList.add('show');
+                setTimeout(() => indicator.classList.remove('show'), 2000);
+            }
+        }
+    } catch (e) {
+        console.error('Error saving:', e);
+    }
+}
+
+async function toggleStep(stepId) {
+    try {
+        await fetch(`/team-tracker/step/${stepId}/toggle`, { method: 'POST' });
+        loadTrackerData();
+    } catch (e) {
+        console.error('Error toggling step:', e);
+    }
+}
+
+async function addStep(entryId, description, inputEl) {
+    if (!description.trim()) return;
+
+    try {
+        const response = await fetch(`/team-tracker/entry/${entryId}/steps`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ description: description.trim() })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            inputEl.value = '';
+            loadTrackerData();
+        }
+    } catch (e) {
+        console.error('Error adding step:', e);
+    }
+}
+
+async function deleteStep(stepId) {
+    if (!confirm('Delete this step?')) return;
+
+    try {
+        await fetch(`/team-tracker/step/${stepId}`, { method: 'DELETE' });
+        loadTrackerData();
+    } catch (e) {
+        console.error('Error deleting step:', e);
+    }
+}
+
+async function archiveEntry(entryId) {
+    if (!confirm('Archive this entry? It can be restored later.')) return;
+
+    try {
+        await fetch(`/team-tracker/entry/${entryId}`, { method: 'DELETE' });
+        loadTrackerData();
+    } catch (e) {
+        console.error('Error archiving:', e);
+    }
+}
+
+async function restoreEntry(entryId) {
+    try {
+        await fetch(`/team-tracker/entry/${entryId}/restore`, { method: 'POST' });
+        loadTrackerData();
+    } catch (e) {
+        console.error('Error restoring:', e);
+    }
+}
+
+async function showHistory(entryId) {
+    try {
+        const response = await fetch(`/team-tracker/entry/${entryId}/history`);
+        const data = await response.json();
+
+        if (data.success) {
+            renderHistoryModal(data.steps);
+            new bootstrap.Modal(document.getElementById('historyModal')).show();
+        }
+    } catch (e) {
+        console.error('Error loading history:', e);
+    }
+}
+
+function renderHistoryModal(steps) {
+    const body = document.getElementById('historyModalBody');
+
+    if (steps.length === 0) {
+        body.innerHTML = '<p class="text-muted text-center py-3">No steps recorded yet.</p>';
+        return;
+    }
+
+    body.innerHTML = steps.map(step => `
+        <div class="d-flex align-items-start gap-3 py-2 border-bottom">
+            <i class="bi bi-${step.is_completed ? 'check-circle-fill text-success' : 'circle text-muted'}" style="font-size: 1.1rem; margin-top: 2px;"></i>
+            <div class="flex-grow-1">
+                <span class="${step.is_completed ? 'text-decoration-line-through text-muted' : ''}">${escapeHtml(step.description)}</span>
+                <div class="small text-muted mt-1">
+                    ${step.is_completed ?
+                        `<i class="bi bi-check2 me-1"></i>Completed ${formatDateTime(step.completed_at)}${step.completed_by_name ? ` by ${escapeHtml(step.completed_by_name)}` : ''}` :
+                        `<i class="bi bi-plus me-1"></i>Added ${formatDateTime(step.created_at)}${step.created_by_name ? ` by ${escapeHtml(step.created_by_name)}` : ''}`
+                    }
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatDateTime(dateStr) {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function openCustomerOverview(customerId) {
+    if (window.customerOverviewModal) {
+        window.customerOverviewModal.show(customerId);
+        return;
+    }
+    window.location.href = `/customers/${customerId}`;
+}
+</script>
+{% endblock %}
