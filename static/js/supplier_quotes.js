@@ -134,6 +134,24 @@ function noBidCheckboxRenderer(instance, td, row, col, prop, value, cellProperti
     return td;
 }
 
+function splitLineCheckboxRenderer(instance, td, row, col, prop, value, cellProperties) {
+    Handsontable.dom.empty(td);
+    const checked = !!value;
+    td.textContent = checked ? '✓' : '';
+    td.style.textAlign = 'center';
+    td.style.cursor = 'pointer';
+    td.style.fontWeight = 'bold';
+    td.style.color = checked ? '#198754' : '';  // Green when checked
+
+    td.onclick = function (e) {
+        e.stopPropagation();
+        const current = !!instance.getDataAtCell(row, col);
+        instance.setDataAtCell(row, col, !current);
+    };
+
+    return td;
+}
+
 // Part number normalization
 function normalizePN(pn) {
     if (!pn) return '';
@@ -1002,7 +1020,13 @@ function initializeQuoteLinesTable(lines) {
             { data: 14, type: 'text' },
             { data: 15, type: 'numeric', readOnly: true, className: 'htCenter' },
             { data: 16, type: 'checkbox', readOnly: true },
-            { data: 17, type: 'checkbox', className: 'htCenter' }
+            {
+                data: 17,
+                type: 'text',
+                renderer: splitLineCheckboxRenderer,
+                readOnly: false,
+                className: 'htCenter'
+            }
         ],
         rowHeaders: true,
         height: 500,
