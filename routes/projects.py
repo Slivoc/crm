@@ -440,14 +440,15 @@ def project_parts_lists_all(project_id):
 
 @projects_bp.route('/<int:project_id>/parts-lists/supplier-quote-counts', methods=['GET'])
 def project_parts_lists_supplier_quote_counts(project_id):
-    """Get supplier quote counts for all parts lists in a project (for lazy loading)."""
+    """Get supplier quote line counts for all parts lists in a project (for lazy loading)."""
     try:
         counts = db_execute(
             """
             SELECT
                 sq.parts_list_id,
-                COUNT(DISTINCT sq.id) AS quote_count
+                COUNT(sql.id) AS quote_line_count
             FROM parts_list_supplier_quotes sq
+            JOIN parts_list_supplier_quote_lines sql ON sql.supplier_quote_id = sq.id
             JOIN parts_lists pl ON pl.id = sq.parts_list_id
             WHERE pl.project_id = ?
             GROUP BY sq.parts_list_id
@@ -456,7 +457,7 @@ def project_parts_lists_supplier_quote_counts(project_id):
             fetch='all'
         ) or []
 
-        result = {row['parts_list_id']: row['quote_count'] for row in counts}
+        result = {row['parts_list_id']: row['quote_line_count'] for row in counts}
         return jsonify(success=True, counts=result)
     except Exception as e:
         return jsonify(success=False, message=str(e)), 500
