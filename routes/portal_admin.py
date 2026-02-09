@@ -1813,27 +1813,26 @@ def test_portal_analyze():
                     elif actual_source in ['vendor_quote', 'vendor_quote_estimate']:
                         vq = db_execute("""
                             SELECT 
-                                vq.reference,
-                                vql.unit_price,
-                                vq.date_received,
-                                s.name as supplier_name,
-                                c.currency_code
-                            FROM vendor_quote_lines vql
-                            JOIN vendor_quotes vq ON vq.id = vql.vendor_quote_id
-                            JOIN suppliers s ON s.id = vq.supplier_id
-                            LEFT JOIN currencies c ON c.id = vql.currency_id
-                            WHERE vql.base_part_number = ?
-                            AND vq.status = 'received'
-                            ORDER BY vq.date_received DESC
+                                v.vq_number as reference,
+                                vl.vendor_price as unit_price,
+                                v.entry_date as date_received,
+                                s.name as supplier_name
+                            FROM vq_lines vl
+                            JOIN vqs v ON v.id = vl.vq_id
+                            JOIN suppliers s ON s.id = v.supplier_id
+                            WHERE vl.base_part_number = ?
+                            AND vl.vendor_price > 0
+                            ORDER BY v.entry_date DESC
                             LIMIT 1
                         """, (base_pn,), fetch='one')
 
                         if vq:
+                            unit_price = _to_float(vq['unit_price'])
                             source_details = {
                                 'type': 'Vendor Quote',
                                 'reference': vq['reference'],
                                 'supplier': vq['supplier_name'],
-                                'price': f"{vq['currency_code']} {vq['unit_price']:.2f}",
+                                'price': f"Â£{unit_price:.2f}" if unit_price is not None else 'N/A',
                                 'date': vq['date_received']
                             }
 

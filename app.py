@@ -485,7 +485,7 @@ def inject_projects():
         if current_user.is_authenticated:
             salesperson_id = current_user.get_salesperson_id()
             if salesperson_id:
-                query = "SELECT id, name FROM projects WHERE salesperson_id = ? ORDER BY name"
+                query = "SELECT id, name FROM projects WHERE salesperson_id = ? ORDER BY id DESC"
                 result = db_execute(query, (salesperson_id,), fetch='all')
             else:
                 # If no salesperson_id, return empty list
