@@ -309,6 +309,58 @@ document.getElementById('testSearchForm').addEventListener('submit', async funct
     }
 });
 
+async function prefillFromPartsList() {
+    const params = new URLSearchParams(window.location.search);
+    const listId = params.get('parts_list_id');
+    const customerId = params.get('customer_id');
+
+    if (customerId) {
+        const customerSelect = document.getElementById('customer_select');
+        if (customerSelect) {
+            customerSelect.value = customerId;
+        }
+    }
+
+    if (!listId) {
+        return;
+    }
+
+    const partsInput = document.getElementById('parts_input');
+    if (!partsInput) {
+        return;
+    }
+
+    if (!partsInput.value.trim()) {
+        partsInput.value = 'Loading parts list...';
+    }
+
+    try {
+        const response = await fetch(`/parts_list/parts-lists/${listId}/lines`);
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.message || 'Unable to load parts list');
+        }
+
+        const lines = (data.lines || [])
+            .map(line => {
+                const partNumber = line.customer_part_number || line.base_part_number || '';
+                if (!partNumber) return null;
+                const qty = Number(line.quantity);
+                return Number.isFinite(qty) && qty > 1 ? `${qty}x ${partNumber}` : partNumber;
+            })
+            .filter(Boolean);
+
+        partsInput.value = lines.join('\n');
+    } catch (error) {
+        console.error('Failed to prefill parts list:', error);
+        if (!partsInput.value || partsInput.value === 'Loading parts list...') {
+            partsInput.value = '';
+        }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', prefillFromPartsList);
+
 function displayResults(data) {
     const resultsSection = document.getElementById('resultsSection');
     const resultsContainer = document.getElementById('resultsContainer');

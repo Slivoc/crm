@@ -6510,6 +6510,7 @@ def view_parts_list(list_id):
                            list_id=list_id,
                            list_name=header['name'],
                            list_notes=header.get('notes'),
+                           customer_id=header.get('customer_id'),
                            customer_name=header['customer_name'],
                            project_id=header.get('project_id'),
                            project_name=header.get('project_name'),

@@ -194,6 +194,14 @@
                         <i class="bi bi-table me-1"></i>Excel view
                     </a>
 
+                    <button type="button"
+                            class="btn btn-outline-secondary btn-sm"
+                            id="test-portal-btn"
+                            data-list-id="{{ list_id }}"
+                            data-customer-id="{{ customer_id or '' }}">
+                        <i class="bi bi-globe me-1"></i>Test Portal
+                    </button>
+
                     <a id="email-suppliers-btn" href="/parts_list/email-suppliers?list_id={{ list_id }}" class="btn btn-success btn-sm" style="display: none;">
                         <i class="bi bi-envelope-at me-1"></i>Email ILS Suppliers
                     </a>
@@ -397,6 +405,25 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     }
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+    const testPortalBtn = document.getElementById('test-portal-btn');
+    if (!testPortalBtn) return;
+
+    testPortalBtn.addEventListener('click', function() {
+        const listId = this.getAttribute('data-list-id');
+        if (!listId) return;
+
+        const customerId = this.getAttribute('data-customer-id');
+        const params = new URLSearchParams({ parts_list_id: listId });
+        if (customerId) {
+            params.append('customer_id', customerId);
+        }
+
+        const baseUrl = "{{ url_for('portal_admin.test_portal') }}";
+        window.open(`${baseUrl}?${params.toString()}`, '_blank', 'noopener');
+    });
 });
 </script>
 <!-- Quick Add Part Modal -->

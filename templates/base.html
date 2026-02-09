@@ -786,42 +786,22 @@ input:-webkit-autofill {
                     </button>
                     <div class="collapse" id="projects-collapse">
                         <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
+                            <!-- Direct link to All Projects -->
+                            <li><a href="{{ url_for('projects.list_projects') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-list-ul me-2"></i>All Projects</a></li>
+                            <!-- Quick access to recent projects -->
+                            <li class="mt-2 mb-1 px-3"><small class="text-muted fw-semibold">Quick Access</small></li>
+                            {% for proj in projects[:5] %}
                             <li>
-                                <a href="#" class="link-dark text-decoration-none dropdown-toggle d-flex align-items-center justify-content-between px-3 py-2 bg-light rounded"
-   id="projectsDropdown" data-bs-toggle="manual" aria-expanded="false" style="min-height: 40px;">
-    <div class="d-flex align-items-center">
-        <i class="bi bi-folder me-2 text-primary"></i>
-        <span class="fw-semibold text-truncate" style="max-width: 180px;" title="{% if project %}{{ project.name }}{% else %}Select a Project{% endif %}">
-            {% if project %}
-                {{ project.name }}
-            {% else %}
-                Select a Project
-            {% endif %}
-        </span>
-    </div>
-</a>
-<ul class="dropdown-menu shadow border-0" aria-labelledby="projectsDropdown" style="min-width: 250px;">
-                                    <li>
-                                        <a class="dropdown-item d-flex align-items-center" href="{{ url_for('projects.list_projects') }}">
-                                            <i class="bi bi-kanban me-2"></i>Go to All Projects
-                                        </a>
-                                    </li>
-                                    <li><hr class="dropdown-divider"></li>
-                                    {% for proj in projects %}
-                                        <li>
-                                            <a class="dropdown-item d-flex align-items-center {% if session.get('active_project_id') == proj.id %}active{% endif %}"
-                                               href="javascript:setActiveProject({{ proj.id }})">
-                                                <i class="bi bi-folder me-2"></i>{{ proj.name }}
-                                            </a>
-                                        </li>
-                                    {% endfor %}
-                                </ul>
+                                <a href="{{ url_for('projects.edit_project', project_id=proj.id) }}"
+                                   class="link-dark rounded d-flex align-items-center ps-3 py-1 {% if session.get('active_project_id') == proj.id %}fw-bold text-primary{% endif %}">
+                                    <i class="bi bi-folder{% if session.get('active_project_id') == proj.id %}-fill text-primary{% endif %} me-2"></i>
+                                    <span class="text-truncate" style="max-width: 160px;">{{ proj.name }}</span>
+                                </a>
                             </li>
-                            <div class="collapse show" id="active-project-collapse">
-                                <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small border rounded-3 bg-light mx-2 p-2" id="project-stages-list">
-                                    {% include 'components/project_stages_list.html' %}
-                                </ul>
-                            </div>
+                            {% endfor %}
+                            {% if projects|length > 5 %}
+                            <li><a href="{{ url_for('projects.list_projects') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1 text-muted"><i class="bi bi-three-dots me-2"></i>View all {{ projects|length }} projects</a></li>
+                            {% endif %}
                         </ul>
                     </div>
                 </li>
