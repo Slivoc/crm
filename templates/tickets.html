@@ -14,18 +14,43 @@
                 <i class="bi bi-ticket-detailed me-2"></i>Tickets
             </h1>
             <div class="workspace-badges">
-                <a class="workspace-chip{% if not workspace_filter_id %} is-active{% endif %}" href="{{ url_for('tickets.list_tickets', only_mine=1 if only_mine else None, created_by_me=1 if created_by_me else None, show_closed=1 if show_closed else None) }}">
+                <a class="workspace-chip{% if not workspace_filter_id %} is-active{% endif %}" href="{{ url_for('tickets.list_tickets', only_mine=1 if only_mine else None, created_by_me=1 if created_by_me else None, show_closed=1 if show_closed else None, show_all=1 if show_all else None, customer_id=customer_filter_id, supplier_id=supplier_filter_id) }}">
                     All workspaces
                 </a>
+                {% set workspace_groups = namespace(native=[], foreign=[]) %}
                 {% for workspace in workspace_chips %}
-                <a class="workspace-chip{% if workspace_filter_id and workspace.id == workspace_filter_id|int %} is-active{% endif %}" href="{{ url_for('tickets.list_tickets', workspace_id=workspace.id, only_mine=1 if only_mine else None, created_by_me=1 if created_by_me else None, show_closed=1 if show_closed else None) }}">
-                    <span class="workspace-name">{{ workspace.name }}</span>
-                    <span class="workspace-origin-badge {% if workspace_external_map.get(workspace.id) %}is-foreign{% else %}is-native{% endif %}">
-                        {{ 'Foreign' if workspace_external_map.get(workspace.id) else 'Native' }}
-                    </span>
-                    <span class="workspace-count">{{ workspace.assigned_count }}</span>
-                </a>
+                    {% if workspace_external_map.get(workspace.id) %}
+                        {% set workspace_groups.foreign = workspace_groups.foreign + [workspace] %}
+                    {% else %}
+                        {% set workspace_groups.native = workspace_groups.native + [workspace] %}
+                    {% endif %}
                 {% endfor %}
+                {% if workspace_groups.native %}
+                <div class="workspace-group is-native">
+                    <span class="workspace-group-title">Native</span>
+                    <div class="workspace-group-chips">
+                        {% for workspace in workspace_groups.native %}
+                        <a class="workspace-chip is-native{% if workspace_filter_id and workspace.id == workspace_filter_id|int %} is-active{% endif %}" href="{{ url_for('tickets.list_tickets', workspace_id=workspace.id, only_mine=1 if only_mine else None, created_by_me=1 if created_by_me else None, show_closed=1 if show_closed else None, show_all=1 if show_all else None, customer_id=customer_filter_id, supplier_id=supplier_filter_id) }}">
+                            <span class="workspace-name">{{ workspace.name }}</span>
+                            <span class="workspace-count">{{ workspace.assigned_count }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+                {% if workspace_groups.foreign %}
+                <div class="workspace-group is-foreign">
+                    <span class="workspace-group-title">Foreign</span>
+                    <div class="workspace-group-chips">
+                        {% for workspace in workspace_groups.foreign %}
+                        <a class="workspace-chip is-foreign{% if workspace_filter_id and workspace.id == workspace_filter_id|int %} is-active{% endif %}" href="{{ url_for('tickets.list_tickets', workspace_id=workspace.id, only_mine=1 if only_mine else None, created_by_me=1 if created_by_me else None, show_closed=1 if show_closed else None, show_all=1 if show_all else None, customer_id=customer_filter_id, supplier_id=supplier_filter_id) }}">
+                            <span class="workspace-name">{{ workspace.name }}</span>
+                            <span class="workspace-count">{{ workspace.assigned_count }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
         <div class="header-actions">
@@ -41,6 +66,8 @@
     <!-- Filters -->
     <div class="tickets-filters">
         <form method="get" class="filter-form">
+            {% if workspace_filter_id %}<input type="hidden" name="workspace_id" value="{{ workspace_filter_id }}">{% endif %}
+            {% if show_all %}<input type="hidden" name="show_all" value="1">{% endif %}
             <div class="filter-chips">
                 <label class="filter-chip">
                     <input type="checkbox" name="only_mine" value="1" {% if only_mine %}checked{% endif %}>
@@ -82,6 +109,15 @@
             <button type="submit" class="btn btn-sm btn-outline-secondary">
                 <i class="bi bi-funnel me-1"></i>Apply
             </button>
+            {% if not show_all %}
+            <a class="btn btn-sm btn-outline-warning" href="{{ url_for('tickets.list_tickets', workspace_id=workspace_filter_id, show_closed=1 if show_closed else None, customer_id=customer_filter_id, supplier_id=supplier_filter_id, show_all=1) }}">
+                Show All (Debug)
+            </a>
+            {% else %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('tickets.list_tickets', workspace_id=workspace_filter_id, show_closed=1 if show_closed else None, customer_id=customer_filter_id, supplier_id=supplier_filter_id, only_mine=1) }}">
+                Back To Mine
+            </a>
+            {% endif %}
         </form>
     </div>
 
@@ -366,6 +402,41 @@
 
 .workspace-badges {
     display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.workspace-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.workspace-group-title {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.workspace-group.is-native .workspace-group-title {
+    background: #dff3e6;
+    color: #1d6b3a;
+}
+
+.workspace-group.is-foreign .workspace-group-title {
+    background: #ffe7d2;
+    color: #9a4b00;
+}
+
+.workspace-group-chips {
+    display: flex;
     flex-wrap: wrap;
     gap: 8px;
 }
@@ -383,6 +454,18 @@
     font-weight: 600;
     text-decoration: none;
     transition: all 0.15s ease;
+}
+
+.workspace-chip.is-native {
+    background: #eef8f2;
+    border-color: #d1eadc;
+    color: #266a40;
+}
+
+.workspace-chip.is-foreign {
+    background: #fff2e6;
+    border-color: #ffd7b1;
+    color: #8f4a00;
 }
 
 .workspace-chip:hover {

@@ -313,7 +313,7 @@ def _external_api_authorized():
     return token == api_key
 
 
-def _external_request(workspace, method, path, payload=None):
+def _external_request(workspace, method, path, payload=None, params=None):
     base_url = (workspace.get('external_base_url') or '').strip().rstrip('/')
     headers = _external_headers()
     if not base_url or not headers:
@@ -323,6 +323,7 @@ def _external_request(workspace, method, path, payload=None):
             method,
             f"{base_url}{path}",
             json=payload,
+            params=params,
             headers=headers,
             timeout=10,
         )
@@ -352,6 +353,7 @@ def _fetch_external_workspace_tickets(workspace):
         workspace,
         'GET',
         f"/api/external/workspaces/{workspace.get('external_workspace_uuid')}/tickets",
+        params={'workspace_key': workspace.get('external_workspace_key') or workspace.get('workspace_key') or ''},
     )
     if error:
         return None, error
@@ -607,7 +609,10 @@ def _workspace_response(success, message, status=200, logs=None, **data):
 def _ticket_visibility_clause(user_id, is_admin):
     if is_admin:
         return "", []
-    return "AND (t.is_private = FALSE OR t.created_by_user_id = ? OR t.assigned_user_id = ?)", [user_id, user_id]
+    return (
+        "AND (t.is_private = FALSE OR t.created_by_user_id = ? OR t.assigned_user_id = ? OR t.external_assignee_id = ?)",
+        [user_id, user_id, str(user_id)],
+    )
 
 
 def _fetch_related_emails(ticket):
@@ -1028,11 +1033,11 @@ def _fetch_workspace_chips(user_id):
             AND twm.user_id = ?
         LEFT JOIN tickets t
             ON t.workspace_id = tw.id
-            AND t.assigned_user_id = ?
+            AND (t.assigned_user_id = ? OR t.external_assignee_id = ?)
         GROUP BY tw.id, tw.name
         ORDER BY tw.name
         """,
-        (user_id, user_id),
+        (user_id, user_id, str(user_id)),
         fetch="all",
     ) or []
     return [dict(row) for row in rows]
@@ -1575,7 +1580,11 @@ def list_tickets():
     show_closed = _parse_bool(request.args.get('show_closed'))
     only_mine = _parse_bool(request.args.get('only_mine'))
     created_by_me = _parse_bool(request.args.get('created_by_me'))
-    if request.args.get('only_mine') is None and request.args.get('created_by_me') is None:
+    show_all = _parse_bool(request.args.get('show_all'))
+    if show_all:
+        only_mine = False
+        created_by_me = False
+    elif request.args.get('only_mine') is None and request.args.get('created_by_me') is None:
         only_mine = True
     workspace_filter_id = request.args.get('workspace_id') or None
     customer_filter_id = request.args.get('customer_id') or None
@@ -1653,6 +1662,11 @@ def list_tickets():
                 "is_external": True,
                 "view_url": url_for(
                     "tickets.external_view_ticket",
+                    workspace_id=external_workspace.get("id"),
+                    external_ticket_id=int(external_id),
+                ),
+                "move_url": url_for(
+                    "tickets.external_move_ticket",
                     workspace_id=external_workspace.get("id"),
                     external_ticket_id=int(external_id),
                 ),
@@ -1765,6 +1779,7 @@ def list_tickets():
             show_closed=show_closed,
             only_mine=only_mine,
             created_by_me=created_by_me,
+            show_all=show_all,
             workspace_filter_id=workspace_filter_id,
             customer_filter_id=customer_filter_id,
             supplier_filter_id=supplier_filter_id,
@@ -1782,11 +1797,11 @@ def list_tickets():
     mine_params = []
     if only_mine and created_by_me:
         # Use OR when both are selected - show tickets assigned to me OR created by me
-        mine_clause = "AND (t.assigned_user_id = ? OR t.created_by_user_id = ?)"
-        mine_params = [user_id, user_id]
+        mine_clause = "AND (t.assigned_user_id = ? OR t.external_assignee_id = ? OR t.created_by_user_id = ?)"
+        mine_params = [user_id, str(user_id), user_id]
     elif only_mine:
-        mine_clause = "AND t.assigned_user_id = ?"
-        mine_params = [user_id]
+        mine_clause = "AND (t.assigned_user_id = ? OR t.external_assignee_id = ?)"
+        mine_params = [user_id, str(user_id)]
     elif created_by_me:
         mine_clause = "AND t.created_by_user_id = ?"
         mine_params = [user_id]
@@ -2004,6 +2019,7 @@ def list_tickets():
         show_closed=show_closed,
         only_mine=only_mine,
         created_by_me=created_by_me,
+        show_all=show_all,
         workspace_filter_id=workspace_filter_id,
         customer_filter_id=customer_filter_id,
         supplier_filter_id=supplier_filter_id,
@@ -2061,18 +2077,19 @@ def sidebar_tree():
             t.parent_ticket_id,
             t.workspace_id,
             t.assigned_user_id,
+            t.external_assignee_id,
             s.name AS status_name,
             s.is_closed AS status_is_closed,
             tw.name AS workspace_name
         FROM tickets t
         JOIN ticket_statuses s ON t.status_id = s.id
         LEFT JOIN ticket_workspaces tw ON t.workspace_id = tw.id
-        WHERE t.assigned_user_id = ?
+        WHERE (t.assigned_user_id = ? OR t.external_assignee_id = ?)
           AND s.is_closed = FALSE
           {status_filter_clause}
         {visibility_clause}
         """,
-        [user_id] + status_filter_params + visibility_params,
+        [user_id, str(user_id)] + status_filter_params + visibility_params,
         fetch="all",
     ) or []
 
@@ -2109,6 +2126,7 @@ def sidebar_tree():
                 t.parent_ticket_id,
                 t.workspace_id,
                 t.assigned_user_id,
+                t.external_assignee_id,
                 s.name AS status_name,
                 s.is_closed AS status_is_closed,
                 tw.name AS workspace_name
@@ -2165,8 +2183,8 @@ def sidebar_tree():
                 'title': row['title'],
                 'parent_id': row.get('parent_ticket_id'),
                 'assigned_user_id': row.get('assigned_user_id'),
-                'is_assigned_to_me': row.get('assigned_user_id') == user_id,
-                'is_context_only': row.get('assigned_user_id') != user_id,
+                'is_assigned_to_me': row.get('assigned_user_id') == user_id or str(row.get('external_assignee_id') or '') == str(user_id),
+                'is_context_only': not (row.get('assigned_user_id') == user_id or str(row.get('external_assignee_id') or '') == str(user_id)),
                 'status_id': row.get('status_id'),
                 'status_name': row.get('status_name'),
             }
@@ -2247,28 +2265,13 @@ def view_ticket(ticket_id):
     updates = _fetch_updates(ticket_id)
     workspace = next((w for w in workspaces if w['id'] == ticket.get('workspace_id')), None)
     if _is_external_workspace(workspace) and ticket.get('external_ticket_id'):
-        response, error = _external_request(
-            workspace,
-            'GET',
-            f"/api/external/tickets/{ticket.get('external_ticket_id')}",
+        return redirect(
+            url_for(
+                'tickets.external_view_ticket',
+                workspace_id=workspace.get('id'),
+                external_ticket_id=int(ticket.get('external_ticket_id')),
+            )
         )
-        if response and response.status_code == 200:
-            try:
-                payload = response.json()
-            except ValueError:
-                payload = None
-            if payload and payload.get('ticket'):
-                remote = payload.get('ticket')
-                ticket['title'] = remote.get('title') or ticket['title']
-                ticket['description'] = remote.get('description')
-                ticket['status_id'] = remote.get('status_id')
-                ticket['status_name'] = remote.get('status_name')
-                ticket['status_is_closed'] = remote.get('status_is_closed')
-                ticket['assigned_user_name'] = remote.get('assigned_user_name') or ticket.get('assigned_user_name')
-                ticket['priority'] = remote.get('priority') or ticket.get('priority')
-                ticket['due_date'] = remote.get('due_date')
-                ticket['is_private'] = remote.get('is_private')
-                updates = payload.get('updates') or updates
     return render_template(
         'ticket_edit.html',
         ticket=ticket,
@@ -2511,6 +2514,16 @@ def quick_status(ticket_id):
     if status_name.lower() == 'returned':
         assigned_user_id = ticket.get('created_by_user_id')
 
+    if ticket.get('workspace_id'):
+        workspace = next((w for w in _fetch_workspaces() if w['id'] == int(ticket.get('workspace_id'))), None)
+    else:
+        workspace = None
+    if _is_external_workspace(workspace) and ticket.get('external_ticket_id'):
+        ok, error = _move_external_ticket(workspace, ticket.get('external_ticket_id'), int(status_id))
+        if not ok:
+            return jsonify({'success': False, 'error': error or 'External update failed.'}), 502
+        return jsonify({'success': True})
+
     db_execute(
         """
         UPDATE tickets
@@ -2528,15 +2541,6 @@ def quick_status(ticket_id):
         ),
         commit=True,
     )
-
-    if ticket.get('workspace_id'):
-        workspace = next((w for w in _fetch_workspaces() if w['id'] == int(ticket.get('workspace_id'))), None)
-    else:
-        workspace = None
-    if _is_external_workspace(workspace) and ticket.get('external_ticket_id'):
-        ok, error = _move_external_ticket(workspace, ticket.get('external_ticket_id'), int(status_id))
-        if not ok:
-            return jsonify({'success': False, 'error': error or 'External update failed.'}), 502
 
     if ticket.get('workspace_id'):
         workspace = next((w for w in _fetch_workspaces() if w['id'] == int(ticket.get('workspace_id'))), None)
@@ -2628,6 +2632,31 @@ def update_ticket(ticket_id):
         external_assignee_id = None
         external_assignee_name = None
 
+    workspace = next((w for w in _fetch_workspaces() if w['id'] == int(workspace_id)), None) if workspace_id else None
+    if _is_external_workspace(workspace) and ticket.get('external_ticket_id'):
+        ok, error = _update_external_ticket(
+            workspace,
+            ticket.get('external_ticket_id'),
+            {
+                'title': title,
+                'description': description or None,
+                'status_id': int(status_id),
+                'assigned_user_id': external_assignee_id,
+                'priority': priority,
+                'due_date': due_date,
+                'is_private': bool(is_private),
+            },
+        )
+        if not ok:
+            flash(error or 'External update failed.', 'error')
+        return redirect(
+            url_for(
+                'tickets.external_view_ticket',
+                workspace_id=workspace.get('id'),
+                external_ticket_id=int(ticket.get('external_ticket_id')),
+            )
+        )
+
     db_execute(
         """
         UPDATE tickets
@@ -2661,24 +2690,6 @@ def update_ticket(ticket_id):
         ),
         commit=True,
     )
-
-    workspace = next((w for w in _fetch_workspaces() if w['id'] == int(workspace_id)), None) if workspace_id else None
-    if _is_external_workspace(workspace) and ticket.get('external_ticket_id'):
-        ok, error = _update_external_ticket(
-            workspace,
-            ticket.get('external_ticket_id'),
-            {
-                'title': title,
-                'description': description or None,
-                'status_id': int(status_id),
-                'assigned_user_id': external_assignee_id,
-                'priority': priority,
-                'due_date': due_date,
-                'is_private': bool(is_private),
-            },
-        )
-        if not ok:
-            flash(error or 'External update failed.', 'error')
 
     changes = []
     if int(status_id) != ticket.get('status_id'):
@@ -2803,6 +2814,13 @@ def add_subjob(ticket_id):
         if error or not external_ticket_id:
             flash(error or 'Unable to create external subtask.', 'error')
             return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
+        return redirect(
+            url_for(
+                'tickets.external_view_ticket',
+                workspace_id=workspace.get('id'),
+                external_ticket_id=int(parent.get('external_ticket_id') or external_ticket_id),
+            )
+        )
 
     row = db_execute(
         """
@@ -2914,7 +2932,6 @@ def add_ticket_update(ticket_id):
         flash('Update text is required.', 'error')
         return redirect(url_for('tickets.view_ticket', ticket_id=ticket_id))
 
-    _add_ticket_update(ticket_id, user_id, update_text)
     if ticket.get('workspace_id'):
         workspace = next((w for w in _fetch_workspaces() if w['id'] == int(ticket.get('workspace_id'))), None)
     else:
@@ -2923,6 +2940,15 @@ def add_ticket_update(ticket_id):
         ok, error = _comment_external_ticket(workspace, ticket.get('external_ticket_id'), update_text)
         if not ok:
             flash(error or 'External update failed.', 'error')
+        return redirect(
+            url_for(
+                'tickets.external_view_ticket',
+                workspace_id=workspace.get('id'),
+                external_ticket_id=int(ticket.get('external_ticket_id')),
+            )
+        )
+
+    _add_ticket_update(ticket_id, user_id, update_text)
 
     # Parse mentions and send notification emails
     mentioned_usernames = _parse_mentions(update_text)
@@ -3315,6 +3341,426 @@ def external_workspace_users_api_root(workspace_uuid):
     return _external_workspace_users_api(workspace_uuid)
 
 
+def _resolve_external_workspace_for_api(workspace_uuid):
+    workspace = db_execute(
+        """
+        SELECT id, workspace_uuid, workspace_key
+        FROM ticket_workspaces
+        WHERE workspace_uuid = ?
+        """,
+        (workspace_uuid,),
+        fetch="one",
+    )
+    if not workspace:
+        workspace_key = (request.args.get('workspace_key') or '').strip().lower()
+        if workspace_key:
+            workspace = db_execute(
+                """
+                SELECT id, workspace_uuid, workspace_key
+                FROM ticket_workspaces
+                WHERE workspace_key = ?
+                """,
+                (workspace_key,),
+                fetch="one",
+            )
+            if workspace and not workspace.get('workspace_uuid'):
+                db_execute(
+                    "UPDATE ticket_workspaces SET workspace_uuid = ? WHERE id = ?",
+                    (workspace_uuid, workspace['id']),
+                    commit=True,
+                )
+                workspace['workspace_uuid'] = workspace_uuid
+            elif workspace and workspace.get('workspace_uuid') and workspace.get('workspace_uuid') != workspace_uuid:
+                return None, jsonify({'error': 'Workspace UUID mismatch.'}), 409
+    if not workspace:
+        return None, jsonify({'error': 'Workspace not found'}), 404
+    return workspace, None, None
+
+
+def _external_workspace_tickets_api(workspace_uuid):
+    if not _external_api_authorized():
+        return jsonify({'error': 'Unauthorized'}), 401
+    workspace, error_response, status_code = _resolve_external_workspace_for_api(workspace_uuid)
+    if error_response:
+        return error_response, status_code
+
+    statuses = _fetch_statuses()
+    rows = db_execute(
+        """
+        SELECT
+            t.id,
+            t.title,
+            t.description,
+            t.status_id,
+            t.assigned_user_id,
+            t.external_assignee_id,
+            t.created_by_user_id,
+            t.parent_ticket_id,
+            t.priority,
+            t.due_date,
+            t.is_private,
+            t.created_at,
+            t.updated_at,
+            s.name AS status_name,
+            s.is_closed AS status_is_closed,
+            tw.name AS workspace_name,
+            COALESCE(u.username, t.external_assignee_name) AS assigned_user_name,
+            COALESCE(sc.subjob_count, 0) AS subjob_count,
+            COALESCE(sc.closed_subjob_count, 0) AS closed_subjob_count
+        FROM tickets t
+        JOIN ticket_statuses s ON t.status_id = s.id
+        LEFT JOIN users u ON t.assigned_user_id = u.id
+        LEFT JOIN ticket_workspaces tw ON t.workspace_id = tw.id
+        LEFT JOIN (
+            SELECT
+                t2.parent_ticket_id,
+                COUNT(*) AS subjob_count,
+                SUM(CASE WHEN s2.is_closed THEN 1 ELSE 0 END) AS closed_subjob_count
+            FROM tickets t2
+            JOIN ticket_statuses s2 ON t2.status_id = s2.id
+            WHERE t2.parent_ticket_id IS NOT NULL
+            GROUP BY t2.parent_ticket_id
+        ) sc ON sc.parent_ticket_id = t.id
+        WHERE t.workspace_id = ?
+        ORDER BY t.updated_at DESC, t.id DESC
+        """,
+        (workspace['id'],),
+        fetch="all",
+    ) or []
+
+    return jsonify(
+        {
+            'workspace': {
+                'id': workspace['id'],
+                'workspace_uuid': workspace.get('workspace_uuid'),
+            },
+            'statuses': statuses,
+            'tickets': [dict(row) for row in rows],
+        }
+    )
+
+
+def _external_create_ticket_api():
+    if not _external_api_authorized():
+        return jsonify({'error': 'Unauthorized'}), 401
+    payload = request.get_json(silent=True) or {}
+    title = (payload.get('title') or '').strip()
+    if not title:
+        return jsonify({'error': 'Title is required'}), 400
+
+    workspace_key = (payload.get('workspace_key') or '').strip().lower()
+    if not workspace_key:
+        return jsonify({'error': 'workspace_key is required'}), 400
+    workspace = db_execute(
+        """
+        SELECT id
+        FROM ticket_workspaces
+        WHERE workspace_key = ?
+        """,
+        (workspace_key,),
+        fetch="one",
+    )
+    if not workspace:
+        return jsonify({'error': 'Workspace not found'}), 404
+
+    assigned_user_id = payload.get('assigned_user_id')
+    if assigned_user_id in ('', None):
+        assigned_user_id = None
+    if assigned_user_id is not None and not str(assigned_user_id).isdigit():
+        return jsonify({'error': 'Invalid assigned_user_id'}), 400
+    if assigned_user_id is not None:
+        assigned_user_id = int(assigned_user_id)
+        assignee = db_execute("SELECT id FROM users WHERE id = ?", (assigned_user_id,), fetch="one")
+        if not assignee:
+            return jsonify({'error': 'assigned_user_id not found'}), 400
+        if not _is_local_assignee_allowed(workspace['id'], assigned_user_id):
+            return jsonify({'error': 'Assignee must be a member of the workspace'}), 400
+
+    parent_ticket_id = payload.get('parent_ticket_id')
+    if parent_ticket_id is not None and not str(parent_ticket_id).isdigit():
+        return jsonify({'error': 'Invalid parent_ticket_id'}), 400
+    parent_ticket_id = int(parent_ticket_id) if parent_ticket_id is not None else None
+    if parent_ticket_id is not None:
+        parent = db_execute(
+            "SELECT id FROM tickets WHERE id = ? AND workspace_id = ?",
+            (parent_ticket_id, workspace['id']),
+            fetch="one",
+        )
+        if not parent:
+            return jsonify({'error': 'parent_ticket_id not found'}), 400
+
+    status_id = payload.get('status_id')
+    if status_id is not None and not str(status_id).isdigit():
+        return jsonify({'error': 'Invalid status_id'}), 400
+    if status_id is None:
+        default_status = db_execute(
+            "SELECT id FROM ticket_statuses ORDER BY sort_order, name LIMIT 1",
+            fetch="one",
+        )
+        status_id = default_status['id'] if default_status else None
+    else:
+        status_id = int(status_id)
+
+    default_user = db_execute(
+        """
+        SELECT id
+        FROM users
+        ORDER BY id
+        LIMIT 1
+        """,
+        fetch="one",
+    )
+    if not default_user:
+        return jsonify({'error': 'No users available'}), 500
+
+    row = db_execute(
+        """
+        INSERT INTO tickets (
+            title,
+            description,
+            status_id,
+            assigned_user_id,
+            external_assignee_id,
+            external_assignee_name,
+            workspace_id,
+            created_by_user_id,
+            due_date,
+            is_private,
+            parent_ticket_id,
+            priority,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        RETURNING id
+        """,
+        (
+            title,
+            (payload.get('description') or '').strip() or None,
+            status_id,
+            assigned_user_id,
+            None,
+            None,
+            workspace['id'],
+            default_user['id'],
+            payload.get('due_date') or None,
+            bool(payload.get('is_private')),
+            parent_ticket_id,
+            payload.get('priority') or 'Medium',
+        ),
+        fetch="one",
+        commit=True,
+    )
+    ticket_id = row.get('id', list(row.values())[0]) if row else None
+    return jsonify({'ticket_id': ticket_id, 'status': 'created'}), 201
+
+
+def _external_get_ticket_api(ticket_id):
+    if not _external_api_authorized():
+        return jsonify({'error': 'Unauthorized'}), 401
+    row = db_execute(
+        """
+        SELECT
+            t.*,
+            s.name AS status_name,
+            s.is_closed AS status_is_closed,
+            tw.name AS workspace_name,
+            COALESCE(u.username, t.external_assignee_name) AS assigned_user_name,
+            cu.username AS created_by_name
+        FROM tickets t
+        JOIN ticket_statuses s ON t.status_id = s.id
+        LEFT JOIN users u ON t.assigned_user_id = u.id
+        LEFT JOIN users cu ON t.created_by_user_id = cu.id
+        LEFT JOIN ticket_workspaces tw ON t.workspace_id = tw.id
+        WHERE t.id = ?
+        """,
+        (ticket_id,),
+        fetch="one",
+    )
+    if not row:
+        return jsonify({'error': 'Ticket not found'}), 404
+    updates = db_execute(
+        """
+        SELECT
+            tu.id,
+            tu.update_text,
+            tu.created_at,
+            COALESCE(u.username, u.email) AS author_name
+        FROM ticket_updates tu
+        LEFT JOIN users u ON tu.user_id = u.id
+        WHERE tu.ticket_id = ?
+        ORDER BY tu.created_at DESC
+        """,
+        (ticket_id,),
+        fetch="all",
+    ) or []
+    return jsonify({'ticket': dict(row), 'updates': [dict(update) for update in updates]})
+
+
+def _external_update_ticket_api(ticket_id):
+    if not _external_api_authorized():
+        return jsonify({'error': 'Unauthorized'}), 401
+    payload = request.get_json(silent=True) or {}
+    assigned_user_id = payload.get('assigned_user_id')
+    if assigned_user_id in ('', None):
+        assigned_user_id = None
+    if assigned_user_id is not None and not str(assigned_user_id).isdigit():
+        return jsonify({'error': 'Invalid assigned_user_id'}), 400
+
+    ticket = db_execute(
+        "SELECT id, workspace_id FROM tickets WHERE id = ?",
+        (ticket_id,),
+        fetch="one",
+    )
+    if not ticket:
+        return jsonify({'error': 'Ticket not found'}), 404
+
+    if assigned_user_id is not None:
+        assigned_user_id = int(assigned_user_id)
+        assignee = db_execute("SELECT id FROM users WHERE id = ?", (assigned_user_id,), fetch="one")
+        if not assignee:
+            return jsonify({'error': 'assigned_user_id not found'}), 400
+        if not _is_local_assignee_allowed(ticket['workspace_id'], assigned_user_id):
+            return jsonify({'error': 'Assignee must be a member of the workspace'}), 400
+
+    status_id = payload.get('status_id')
+    if status_id is not None and not str(status_id).isdigit():
+        return jsonify({'error': 'Invalid status_id'}), 400
+
+    db_execute(
+        """
+        UPDATE tickets
+        SET
+            title = COALESCE(?, title),
+            description = COALESCE(?, description),
+            status_id = COALESCE(?, status_id),
+            assigned_user_id = ?,
+            external_assignee_id = NULL,
+            external_assignee_name = NULL,
+            priority = COALESCE(?, priority),
+            due_date = ?,
+            is_private = COALESCE(?, is_private),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            payload.get('title'),
+            payload.get('description'),
+            int(status_id) if status_id is not None else None,
+            assigned_user_id,
+            payload.get('priority'),
+            payload.get('due_date'),
+            payload.get('is_private'),
+            ticket_id,
+        ),
+        commit=True,
+    )
+    return jsonify({'status': 'updated'})
+
+
+def _external_move_ticket_api(ticket_id):
+    if not _external_api_authorized():
+        return jsonify({'error': 'Unauthorized'}), 401
+    payload = request.get_json(silent=True) or {}
+    status_id = payload.get('status_id')
+    if not status_id or not str(status_id).isdigit():
+        return jsonify({'error': 'status_id is required'}), 400
+    db_execute(
+        """
+        UPDATE tickets
+        SET status_id = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (int(status_id), ticket_id),
+        commit=True,
+    )
+    return jsonify({'status': 'updated'})
+
+
+def _external_comment_ticket_api(ticket_id):
+    if not _external_api_authorized():
+        return jsonify({'error': 'Unauthorized'}), 401
+    payload = request.get_json(silent=True) or {}
+    update_text = (payload.get('update_text') or '').strip()
+    if not update_text:
+        return jsonify({'error': 'update_text is required'}), 400
+    default_user = db_execute(
+        "SELECT id FROM users ORDER BY id LIMIT 1",
+        fetch="one",
+    )
+    if not default_user:
+        return jsonify({'error': 'No users available'}), 500
+    db_execute(
+        """
+        INSERT INTO ticket_updates (ticket_id, user_id, update_text, created_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        (ticket_id, default_user['id'], update_text),
+        commit=True,
+    )
+    return jsonify({'status': 'created'})
+
+
+@tickets_bp.route('/api/external/workspaces/<workspace_uuid>/tickets', methods=['GET'])
+def external_workspace_tickets_api(workspace_uuid):
+    return _external_workspace_tickets_api(workspace_uuid)
+
+
+@external_api_bp.route('/api/external/workspaces/<workspace_uuid>/tickets', methods=['GET'])
+def external_workspace_tickets_api_root(workspace_uuid):
+    return _external_workspace_tickets_api(workspace_uuid)
+
+
+@tickets_bp.route('/api/external/tickets', methods=['POST'])
+def external_create_ticket_api():
+    return _external_create_ticket_api()
+
+
+@external_api_bp.route('/api/external/tickets', methods=['POST'])
+def external_create_ticket_api_root():
+    return _external_create_ticket_api()
+
+
+@tickets_bp.route('/api/external/tickets/<int:ticket_id>', methods=['GET'])
+def external_get_ticket_api(ticket_id):
+    return _external_get_ticket_api(ticket_id)
+
+
+@external_api_bp.route('/api/external/tickets/<int:ticket_id>', methods=['GET'])
+def external_get_ticket_api_root(ticket_id):
+    return _external_get_ticket_api(ticket_id)
+
+
+@tickets_bp.route('/api/external/tickets/<int:ticket_id>', methods=['PATCH'])
+def external_patch_ticket_api(ticket_id):
+    return _external_update_ticket_api(ticket_id)
+
+
+@external_api_bp.route('/api/external/tickets/<int:ticket_id>', methods=['PATCH'])
+def external_patch_ticket_api_root(ticket_id):
+    return _external_update_ticket_api(ticket_id)
+
+
+@tickets_bp.route('/api/external/tickets/<int:ticket_id>/move', methods=['POST'])
+def external_move_ticket_api(ticket_id):
+    return _external_move_ticket_api(ticket_id)
+
+
+@external_api_bp.route('/api/external/tickets/<int:ticket_id>/move', methods=['POST'])
+def external_move_ticket_api_root(ticket_id):
+    return _external_move_ticket_api(ticket_id)
+
+
+@tickets_bp.route('/api/external/tickets/<int:ticket_id>/comment', methods=['POST'])
+def external_comment_ticket_api(ticket_id):
+    return _external_comment_ticket_api(ticket_id)
+
+
+@external_api_bp.route('/api/external/tickets/<int:ticket_id>/comment', methods=['POST'])
+def external_comment_ticket_api_root(ticket_id):
+    return _external_comment_ticket_api(ticket_id)
+
+
 @tickets_bp.route('/workspaces/<int:workspace_id>', methods=['POST'])
 @login_required
 def update_workspace(workspace_id):
@@ -3472,6 +3918,21 @@ def move_ticket(ticket_id):
     assigned_user_id = ticket.get('assigned_user_id')
     if status_name.lower() == 'returned':
         assigned_user_id = ticket.get('created_by_user_id')
+
+    if ticket.get('workspace_id'):
+        workspace = next((w for w in _fetch_workspaces() if w['id'] == int(ticket.get('workspace_id'))), None)
+    else:
+        workspace = None
+    if _is_external_workspace(workspace) and ticket.get('external_ticket_id'):
+        ok, error = _move_external_ticket(workspace, ticket.get('external_ticket_id'), int(status_id))
+        if not ok:
+            return jsonify({'success': False, 'error': error or 'External update failed.'}), 502
+        return jsonify({
+            'success': True,
+            'message': f"Ticket moved to {status_name}",
+            'is_closed': is_closed,
+            'assigned_user_id': assigned_user_id
+        })
 
     db_execute(
         """

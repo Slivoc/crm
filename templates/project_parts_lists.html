@@ -38,6 +38,7 @@
                                 <th class="text-center">Lines</th>
                                 <th class="text-center">Costed</th>
                                 <th class="text-center">Quoted</th>
+                                <th class="text-center">Supplier Offers</th>
                                 <th>Created</th>
                                 <th>Modified</th>
                                 <th class="text-end">Open</th>
@@ -59,6 +60,9 @@
                                     <td class="text-center">{{ parts_list.line_count or 0 }}</td>
                                     <td class="text-center">{{ parts_list.costed_line_count or 0 }}</td>
                                     <td class="text-center">{{ parts_list.quoted_line_count or 0 }}</td>
+                                    <td class="text-center supplier-offers-cell" data-parts-list-id="{{ parts_list.id }}">
+                                        <span class="spinner-border spinner-border-sm text-muted" role="status"></span>
+                                    </td>
                                     <td>{{ parts_list.date_created.strftime('%Y-%m-%d') if parts_list.date_created else '-' }}</td>
                                     <td>{{ parts_list.date_modified.strftime('%Y-%m-%d') if parts_list.date_modified else '-' }}</td>
                                     <td class="text-end">
@@ -76,4 +80,34 @@
         </div>
     {% endif %}
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const cells = document.querySelectorAll('.supplier-offers-cell');
+    if (cells.length === 0) return;
+
+    fetch('{{ url_for("projects.project_parts_lists_supplier_quote_counts", project_id=project.id) }}')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                cells.forEach(cell => {
+                    const plId = parseInt(cell.dataset.partsListId);
+                    const count = data.counts[plId] || 0;
+                    cell.innerHTML = count > 0
+                        ? `<span class="badge bg-info">${count}</span>`
+                        : '<span class="text-muted">0</span>';
+                });
+            } else {
+                cells.forEach(cell => {
+                    cell.innerHTML = '<span class="text-muted">-</span>';
+                });
+            }
+        })
+        .catch(() => {
+            cells.forEach(cell => {
+                cell.innerHTML = '<span class="text-muted">-</span>';
+            });
+        });
+});
+</script>
 {% endblock %}
