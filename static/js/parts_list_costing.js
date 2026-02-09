@@ -426,6 +426,73 @@ function formatPrice(value, currencyCode) {
     return `${prefix}${parsed.toFixed(2)}`;
 }
 
+function normalizeQuoteDateInput(value) {
+    if (!value || typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    return trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T');
+}
+
+function formatQuoteDate(dateValue) {
+    const normalized = normalizeQuoteDateInput(dateValue);
+    if (!normalized) return null;
+    let parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) {
+        parsed = new Date(dateValue);
+    }
+    if (Number.isNaN(parsed.getTime())) return null;
+
+    const dateText = parsed.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit'
+    });
+
+    const today = new Date();
+    const utcToday = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const utcParsed = Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+    const diffDays = Math.floor((utcToday - utcParsed) / 86400000);
+
+    let relative = '';
+    if (Number.isFinite(diffDays)) {
+        if (diffDays <= 0) {
+            relative = 'Today';
+        } else if (diffDays === 1) {
+            relative = '1d ago';
+        } else if (diffDays < 7) {
+            relative = `${diffDays}d ago`;
+        } else if (diffDays < 30) {
+            relative = `${Math.round(diffDays / 7)}w ago`;
+        } else if (diffDays < 365) {
+            relative = `${Math.round(diffDays / 30)}mo ago`;
+        } else {
+            relative = `${Math.round(diffDays / 365)}y ago`;
+        }
+    }
+
+    return {
+        dateText: dateText,
+        relative: relative,
+        fullText: parsed.toLocaleString()
+    };
+}
+
+function renderQuoteDateBadge(dateValue) {
+    const formatted = formatQuoteDate(dateValue);
+    if (!formatted) return '';
+
+    const relativeBadge = formatted.relative
+        ? `<span class="badge bg-light text-dark border" style="font-size: 0.65rem; font-weight: 600; margin-left: 6px;">${formatted.relative}</span>`
+        : '';
+
+    return `
+        <span style="font-weight: 600; color: #0d6efd;" title="${formatted.fullText}">
+            ${formatted.dateText}
+        </span>
+        ${relativeBadge}
+    `;
+}
+
 function getRequiredQtyForRow(row) {
     if (!row) return 1;
     const chosenQtyInput = row.querySelector('.chosen-qty-input');
@@ -967,6 +1034,7 @@ function displayQuotes(quotes, lineId, requiredQty) {
 
         const quoteNotes = quote.line_notes || '';
         const encodedQuoteNotes = quoteNotes ? encodeURIComponent(quoteNotes) : '';
+        const quoteDateBadge = renderQuoteDateBadge(quote.quote_date);
 
         // Check if PPP conversion is available
         const ppp = window._currentPiecesPerPound;
@@ -1007,7 +1075,7 @@ function displayQuotes(quotes, lineId, requiredQty) {
                 <div style="font-weight: 500;">${quote.supplier_name}</div>
                 <div style="font-size: 0.75rem; color: #6c757d;">
                     ${quote.quote_reference ? `Ref: ${quote.quote_reference}` : ''}
-                    ${quote.quote_date ? ` · ${quote.quote_date}` : ''}
+                    ${quoteDateBadge ? `<span style="margin: 0 6px; color: #adb5bd;">•</span>${quoteDateBadge}` : ''}
                 </div>
                 ${isCheapest ? '<span class="badge" style="background: #198754; font-size: 0.75rem; margin-top: 2px;">Lowest</span>' : ''}
                 ${quote.is_no_bid ? '<span class="badge" style="background: #6c757d; font-size: 0.75rem; margin-top: 2px;">No Bid</span>' : ''}
@@ -1236,12 +1304,13 @@ function displayOtherOffers(offers, lineId, requiredQty) {
         const row = document.createElement('tr');
         const offerNotes = offer.line_notes || '';
         const encodedOfferNotes = offerNotes ? encodeURIComponent(offerNotes) : '';
+        const offerDateBadge = renderQuoteDateBadge(offer.quote_date);
         row.innerHTML = `
             <td style="padding: 0.6rem;">
                 <div style="font-weight: 500;">${offer.supplier_name}</div>
                 <div style="font-size: 0.7rem; color: #6c757d;">
                     ${offer.quote_reference ? `Ref: ${offer.quote_reference}` : ''}
-                    ${offer.quote_date ? ` · ${offer.quote_date}` : ''}
+                    ${offerDateBadge ? `<span style="margin: 0 6px; color: #adb5bd;">•</span>${offerDateBadge}` : ''}
                 </div>
             </td>
             <td style="padding: 0.6rem;">
