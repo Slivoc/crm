@@ -1769,7 +1769,7 @@ def test_portal_analyze():
                         sale = db_execute("""
                             SELECT 
                                 so.sales_order_ref as reference,
-                                sol.unit_price_gbp,
+                                sol.price as unit_price,
                                 so.date_entered as date_created,
                                 c.name as customer_name
                             FROM sales_order_lines sol
@@ -1787,7 +1787,7 @@ def test_portal_analyze():
                                 'type': 'Sales Order',
                                 'reference': sale['reference'],
                                 'customer': sale['customer_name'],
-                                'price': f"£{sale['unit_price_gbp']:.2f}",
+                                'price': f"£{sale['unit_price']:.2f}",
                                 'date': sale['date_created']
                             }
 
