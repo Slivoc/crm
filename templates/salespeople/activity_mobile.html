@@ -131,15 +131,19 @@
             <h6 class="mb-0">Quick Actions</h6>
         </div>
         <div class="list-group list-group-flush">
-            <a href="{{ url_for('salespeople.contacts', salesperson_id=salesperson.id) }}" 
+            <a href="{{ url_for('emails.mailbox_page') }}"
+               class="list-group-item list-group-item-action">
+                <i class="bi bi-envelope me-2"></i>Mailbox
+            </a>
+            <a href="{{ url_for('salespeople.contacts', salesperson_id=salesperson.id) }}"
                class="list-group-item list-group-item-action">
                 <i class="bi bi-people me-2"></i>View All Contacts
             </a>
-            <a href="{{ url_for('salespeople.customers', salesperson_id=salesperson.id) }}" 
+            <a href="{{ url_for('salespeople.customers', salesperson_id=salesperson.id) }}"
                class="list-group-item list-group-item-action">
                 <i class="bi bi-building me-2"></i>View All Customers
             </a>
-            <a href="{{ url_for('salespeople.dashboard') }}" 
+            <a href="{{ url_for('salespeople.dashboard') }}"
                class="list-group-item list-group-item-action">
                 <i class="bi bi-speedometer2 me-2"></i>Team Dashboard
             </a>

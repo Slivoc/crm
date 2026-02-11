@@ -1,0 +1,649 @@
+{% extends base_template %}
+{% block title %}Quick Quote - {{ list_name }}{% endblock %}
+
+{% block content %}
+<div class="quick-quote-mobile">
+    <!-- Header -->
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h6 class="mb-0">
+                        <i class="bi bi-lightning-charge-fill text-primary me-1"></i>
+                        Quick Quote
+                    </h6>
+                    <small class="text-muted">PL #{{ list_id }} - {{ list_name }}</small>
+                </div>
+                <a href="{{ url_for('parts_list.parts_list_costing', list_id=list_id) }}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quote Info -->
+    <div class="card mb-3">
+        <div class="card-header py-2">
+            <h6 class="mb-0"><i class="bi bi-file-text me-1"></i>Quote Info</h6>
+        </div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label small fw-semibold">Supplier</label>
+                <select class="form-select" id="supplierSelect">
+                    <option value="">Select supplier...</option>
+                    {% for s in suppliers %}
+                    <option value="{{ s.id }}" {{ 'selected' if s.id == supplier_id }}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="row g-2">
+                <div class="col-6">
+                    <label class="form-label small fw-semibold">Reference</label>
+                    <input type="text" class="form-control" id="quoteReference"
+                           value="RFQ {{ list_id }}{{ '-' + supplier_id|string if supplier_id else '' }}"
+                           placeholder="Quote ref">
+                </div>
+                <div class="col-6">
+                    <label class="form-label small fw-semibold">Date</label>
+                    <input type="date" class="form-control" id="quoteDate" value="{{ current_date }}">
+                </div>
+            </div>
+            <div class="mt-2">
+                <label class="form-label small fw-semibold">Currency</label>
+                <select class="form-select" id="quoteCurrency">
+                    {% for c in currencies %}
+                    <option value="{{ c.id }}" {{ 'selected' if c.id == 3 }}>{{ c.currency_code }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Extraction -->
+    <div class="card mb-3">
+        <div class="card-header py-2">
+            <h6 class="mb-0"><i class="bi bi-magic me-1"></i>AI Extract</h6>
+        </div>
+        <div class="card-body">
+            {% if email_message_id %}
+            <div class="mb-2">
+                <button class="btn btn-outline-primary btn-sm w-100" id="loadEmailBtn">
+                    <i class="bi bi-envelope me-1"></i>Load from Email
+                </button>
+            </div>
+            {% endif %}
+            <textarea class="form-control mb-2" id="responseText" rows="4"
+                      placeholder="Paste supplier response here..."></textarea>
+            <button class="btn btn-success w-100" id="extractBtn">
+                <i class="bi bi-stars me-1"></i>Extract with AI
+            </button>
+        </div>
+    </div>
+
+    <!-- Quote Lines -->
+    <div class="card mb-3">
+        <div class="card-header py-2 d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="bi bi-list-ul me-1"></i>Lines (<span id="linesCount">0</span>)</h6>
+            <div>
+                <button class="btn btn-sm btn-outline-secondary" id="expandAllBtn">Expand All</button>
+            </div>
+        </div>
+        <div class="card-body p-0" id="linesContainer">
+            <div class="text-center text-muted py-4">
+                <div class="spinner-border spinner-border-sm" role="status"></div>
+                <p class="mt-2 mb-0 small">Loading parts...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save Button -->
+    <div class="d-grid mb-4">
+        <button class="btn btn-primary btn-lg" id="saveQuoteBtn">
+            <i class="bi bi-save me-1"></i>Save Quote
+        </button>
+    </div>
+</div>
+
+<style>
+.quick-quote-mobile .line-card {
+    border-bottom: 1px solid #e9ecef;
+    padding: 12px;
+}
+
+.quick-quote-mobile .line-card:last-child {
+    border-bottom: none;
+}
+
+.quick-quote-mobile .line-header {
+    cursor: pointer;
+}
+
+.quick-quote-mobile .line-header:hover {
+    background: #f8f9fa;
+}
+
+.quick-quote-mobile .line-details {
+    display: none;
+    padding-top: 12px;
+    margin-top: 12px;
+    border-top: 1px dashed #dee2e6;
+}
+
+.quick-quote-mobile .line-details.show {
+    display: block;
+}
+
+.quick-quote-mobile .line-part-number {
+    font-weight: 600;
+    font-family: monospace;
+}
+
+.quick-quote-mobile .has-quote {
+    background: #d1e7dd;
+}
+
+.quick-quote-mobile .is-no-bid {
+    background: #f8d7da;
+}
+
+.quick-quote-mobile .badge-qty {
+    background: #6c757d;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+}
+
+.quick-quote-mobile .input-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+}
+</style>
+
+<script>
+window.PARTS_LIST_ID = {{ list_id }};
+window.EMAIL_MESSAGE_ID = {{ email_message_id | tojson }};
+window.EMAIL_CONVERSATION_ID = {{ email_conversation_id | tojson }};
+
+let partsData = [];
+let quoteLinesData = {};
+let allExpanded = false;
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadPartsLines();
+
+    document.getElementById('extractBtn').addEventListener('click', extractQuote);
+    document.getElementById('saveQuoteBtn').addEventListener('click', saveQuote);
+    document.getElementById('expandAllBtn').addEventListener('click', toggleExpandAll);
+
+    {% if email_message_id %}
+    document.getElementById('loadEmailBtn').addEventListener('click', loadEmailBody);
+    {% endif %}
+});
+
+// Parts data is passed from the server
+const serverLines = {{ lines | tojson }};
+
+async function loadPartsLines() {
+    try {
+        // Use server-provided lines data
+        partsData = serverLines.map(line => ({
+            id: line.parts_list_line_id,
+            part_number: line.customer_part_number || line.base_part_number || '',
+            description: '',
+            quantity: line.quantity || 1,
+            line_number: line.line_number,
+            quote_requested: line.quote_requested
+        }));
+
+        // Load existing quotes for the selected supplier
+        const supplierId = document.getElementById('supplierSelect').value;
+        if (supplierId) {
+            await loadExistingQuotes(supplierId);
+        }
+
+        renderLines();
+
+    } catch (error) {
+        console.error('Error loading parts:', error);
+        document.getElementById('linesContainer').innerHTML = `
+            <div class="text-center text-danger py-4">
+                <p>Failed to load parts</p>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadPartsLines()">Retry</button>
+            </div>
+        `;
+    }
+}
+
+async function loadExistingQuotes(supplierId) {
+    try {
+        const response = await fetch(`/parts_list/parts-lists/${PARTS_LIST_ID}/supplier-quotes`);
+        const data = await response.json();
+
+        if (!response.ok || !data.success) return;
+
+        // Find quotes for this supplier
+        const supplierQuotes = (data.quotes || []).filter(q => q.supplier_id === parseInt(supplierId));
+
+        for (const quote of supplierQuotes) {
+            // Load quote lines
+            const linesResponse = await fetch(`/parts_list/parts-lists/${PARTS_LIST_ID}/supplier-quotes/${quote.id}`);
+            const linesData = await linesResponse.json();
+
+            if (linesData.success && linesData.quote?.lines) {
+                linesData.quote.lines.forEach(line => {
+                    const key = `${line.parts_list_line_id}_${supplierId}`;
+                    quoteLinesData[key] = {
+                        line_id: line.parts_list_line_id,
+                        supplier_id: parseInt(supplierId),
+                        unit_price: line.unit_price || 0,
+                        lead_time: line.lead_time || '',
+                        notes: line.notes || '',
+                        is_no_bid: line.is_no_bid || false
+                    };
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Error loading existing quotes:', error);
+    }
+}
+
+function renderLines() {
+    const container = document.getElementById('linesContainer');
+    const supplierId = document.getElementById('supplierSelect').value;
+
+    if (!partsData.length) {
+        container.innerHTML = '<div class="text-center text-muted py-4">No parts in this list</div>';
+        document.getElementById('linesCount').textContent = '0';
+        return;
+    }
+
+    document.getElementById('linesCount').textContent = partsData.length;
+
+    container.innerHTML = partsData.map((line, index) => {
+        const key = `${line.id}_${supplierId}`;
+        const quoteData = quoteLinesData[key] || {};
+        const hasQuote = quoteData.unit_price > 0;
+        const isNoBid = quoteData.is_no_bid;
+
+        let statusClass = '';
+        if (isNoBid) statusClass = 'is-no-bid';
+        else if (hasQuote) statusClass = 'has-quote';
+
+        return `
+            <div class="line-card ${statusClass}" data-line-id="${line.id}">
+                <div class="line-header" onclick="toggleLine(${index})">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <div class="line-part-number">${escapeHtml(line.part_number)}</div>
+                            <div class="small text-muted text-truncate">${escapeHtml(line.description || '')}</div>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge-qty">x${line.quantity || 1}</span>
+                            ${hasQuote ? `<div class="small text-success fw-semibold mt-1">${formatPrice(quoteData.unit_price)}</div>` : ''}
+                            ${isNoBid ? '<div class="small text-danger mt-1">No Bid</div>' : ''}
+                        </div>
+                    </div>
+                </div>
+                <div class="line-details" id="lineDetails${index}">
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label small">Unit Price</label>
+                            <input type="number" step="0.01" class="form-control input-sm"
+                                   id="price_${line.id}" value="${quoteData.unit_price || ''}"
+                                   placeholder="0.00" onchange="updateLineQuote(${line.id})">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Lead Time</label>
+                            <input type="text" class="form-control input-sm"
+                                   id="leadtime_${line.id}" value="${quoteData.lead_time || ''}"
+                                   placeholder="e.g. 2-3 weeks" onchange="updateLineQuote(${line.id})">
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small">Notes</label>
+                        <input type="text" class="form-control input-sm"
+                               id="notes_${line.id}" value="${escapeHtml(quoteData.notes || '')}"
+                               placeholder="Optional notes" onchange="updateLineQuote(${line.id})">
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-danger flex-grow-1" onclick="markNoBid(${line.id})">
+                            <i class="bi bi-x-circle me-1"></i>No Bid
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="clearLine(${line.id})">
+                            Clear
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function toggleLine(index) {
+    const details = document.getElementById(`lineDetails${index}`);
+    if (details) {
+        details.classList.toggle('show');
+    }
+}
+
+function toggleExpandAll() {
+    allExpanded = !allExpanded;
+    document.querySelectorAll('.line-details').forEach(el => {
+        el.classList.toggle('show', allExpanded);
+    });
+    document.getElementById('expandAllBtn').textContent = allExpanded ? 'Collapse All' : 'Expand All';
+}
+
+function updateLineQuote(lineId) {
+    const supplierId = document.getElementById('supplierSelect').value;
+    if (!supplierId) {
+        alert('Please select a supplier first');
+        return;
+    }
+
+    const key = `${lineId}_${supplierId}`;
+    const price = parseFloat(document.getElementById(`price_${lineId}`).value) || 0;
+    const leadTime = document.getElementById(`leadtime_${lineId}`).value || '';
+    const notes = document.getElementById(`notes_${lineId}`).value || '';
+
+    quoteLinesData[key] = {
+        line_id: lineId,
+        supplier_id: parseInt(supplierId),
+        unit_price: price,
+        lead_time: leadTime,
+        notes: notes,
+        is_no_bid: false
+    };
+
+    updateLineStatus(lineId);
+}
+
+function markNoBid(lineId) {
+    const supplierId = document.getElementById('supplierSelect').value;
+    if (!supplierId) {
+        alert('Please select a supplier first');
+        return;
+    }
+
+    const key = `${lineId}_${supplierId}`;
+    quoteLinesData[key] = {
+        line_id: lineId,
+        supplier_id: parseInt(supplierId),
+        unit_price: 0,
+        lead_time: '',
+        notes: 'No bid',
+        is_no_bid: true
+    };
+
+    // Clear inputs
+    document.getElementById(`price_${lineId}`).value = '';
+    document.getElementById(`leadtime_${lineId}`).value = '';
+    document.getElementById(`notes_${lineId}`).value = 'No bid';
+
+    updateLineStatus(lineId);
+}
+
+function clearLine(lineId) {
+    const supplierId = document.getElementById('supplierSelect').value;
+    if (!supplierId) return;
+
+    const key = `${lineId}_${supplierId}`;
+    delete quoteLinesData[key];
+
+    document.getElementById(`price_${lineId}`).value = '';
+    document.getElementById(`leadtime_${lineId}`).value = '';
+    document.getElementById(`notes_${lineId}`).value = '';
+
+    updateLineStatus(lineId);
+}
+
+function updateLineStatus(lineId) {
+    const supplierId = document.getElementById('supplierSelect').value;
+    const key = `${lineId}_${supplierId}`;
+    const quoteData = quoteLinesData[key];
+    const card = document.querySelector(`.line-card[data-line-id="${lineId}"]`);
+
+    if (!card) return;
+
+    card.classList.remove('has-quote', 'is-no-bid');
+    if (quoteData?.is_no_bid) {
+        card.classList.add('is-no-bid');
+    } else if (quoteData?.unit_price > 0) {
+        card.classList.add('has-quote');
+    }
+}
+
+{% if email_message_id %}
+async function loadEmailBody() {
+    const btn = document.getElementById('loadEmailBtn');
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading...';
+
+    try {
+        const response = await fetch(`/emails/graph/message/${EMAIL_MESSAGE_ID}`);
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            throw new Error('Failed to load email');
+        }
+
+        const text = parseEmailBodyText(data.message || {});
+        document.getElementById('responseText').value = text || '';
+
+    } catch (error) {
+        alert('Failed to load email: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
+    }
+}
+
+function parseEmailBodyText(message) {
+    if (!message?.body) return '';
+    if (message.body.contentType === 'text') return message.body.content || '';
+    return htmlToPlainText(message.body.content || '');
+}
+
+function htmlToPlainText(html) {
+    if (!html) return '';
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    doc.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+    doc.querySelectorAll('td, th').forEach(cell => cell.appendChild(doc.createTextNode('\t')));
+    doc.querySelectorAll('tr').forEach(row => row.appendChild(doc.createTextNode('\n')));
+    let text = doc.body ? doc.body.textContent || '' : '';
+    text = text.replace(/\n{3,}/g, '\n\n');
+    return text.trim();
+}
+{% endif %}
+
+async function extractQuote() {
+    const text = document.getElementById('responseText').value;
+    if (!text.trim()) {
+        alert('Please paste the supplier response first');
+        return;
+    }
+
+    const supplierId = document.getElementById('supplierSelect').value;
+    if (!supplierId) {
+        alert('Please select a supplier first');
+        return;
+    }
+
+    const btn = document.getElementById('extractBtn');
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Extracting...';
+
+    try {
+        // Build context parts for the AI
+        const contextParts = partsData.map(l =>
+            `Line ${l.line_number}: ${l.part_number} (Qty: ${l.quantity})`
+        ).join('\n');
+
+        const response = await fetch('/parts_list/extract_supplier_quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                quote_text: text,
+                context_parts: contextParts
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Extraction failed');
+        }
+
+        // Apply extracted data
+        const extracted = data.items || [];
+        let matched = 0;
+
+        extracted.forEach(item => {
+            // Match by part number
+            const partNum = (item.part_number || '').trim().toUpperCase();
+            const line = partsData.find(l =>
+                l.part_number.trim().toUpperCase() === partNum
+            );
+
+            if (line) {
+                const key = `${line.id}_${supplierId}`;
+                quoteLinesData[key] = {
+                    line_id: line.id,
+                    supplier_id: parseInt(supplierId),
+                    unit_price: parseFloat(item.unit_price) || 0,
+                    lead_time: item.lead_time || '',
+                    notes: item.notes || '',
+                    is_no_bid: item.is_no_bid || false
+                };
+                matched++;
+            }
+        });
+
+        renderLines();
+        alert(`Extracted ${extracted.length} items, matched ${matched} parts`);
+
+    } catch (error) {
+        alert('Extraction failed: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
+    }
+}
+
+async function saveQuote() {
+    const supplierId = document.getElementById('supplierSelect').value;
+    if (!supplierId) {
+        alert('Please select a supplier');
+        return;
+    }
+
+    const quoteRef = document.getElementById('quoteReference').value;
+    const quoteDate = document.getElementById('quoteDate').value;
+    const currencyId = document.getElementById('quoteCurrency').value;
+
+    // Collect quote lines for this supplier
+    const linesToSave = [];
+    Object.values(quoteLinesData).forEach(q => {
+        if (q.supplier_id === parseInt(supplierId) && (q.unit_price > 0 || q.is_no_bid)) {
+            linesToSave.push(q);
+        }
+    });
+
+    if (!linesToSave.length) {
+        alert('No quotes to save. Please enter at least one price or no-bid.');
+        return;
+    }
+
+    const btn = document.getElementById('saveQuoteBtn');
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+
+    try {
+        // Step 1: Create the quote header
+        const createResponse = await fetch(`/parts_list/parts-lists/${PARTS_LIST_ID}/supplier-quotes/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                supplier_id: parseInt(supplierId),
+                quote_reference: quoteRef,
+                quote_date: quoteDate,
+                currency_id: parseInt(currencyId),
+                email_message_id: EMAIL_MESSAGE_ID || null,
+                email_conversation_id: EMAIL_CONVERSATION_ID || null
+            })
+        });
+
+        const createData = await createResponse.json();
+
+        if (!createResponse.ok || !createData.success) {
+            throw new Error(createData.message || createData.error || 'Failed to create quote');
+        }
+
+        const quoteId = createData.quote_id;
+
+        // Step 2: Save the quote lines
+        const linesPayload = linesToSave.map(line => ({
+            parts_list_line_id: line.line_id,
+            unit_price: line.unit_price || 0,
+            lead_time: line.lead_time || '',
+            notes: line.notes || '',
+            is_no_bid: line.is_no_bid || false
+        }));
+
+        const linesResponse = await fetch(`/parts_list/parts-lists/${PARTS_LIST_ID}/supplier-quotes/${quoteId}/lines/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lines: linesPayload })
+        });
+
+        const linesData = await linesResponse.json();
+
+        if (!linesResponse.ok || !linesData.success) {
+            throw new Error(linesData.message || linesData.error || 'Failed to save quote lines');
+        }
+
+        alert(`Saved ${linesToSave.length} quote lines`);
+
+        // Redirect back to costing page
+        window.location.href = `/parts_list/parts-list-costing/${PARTS_LIST_ID}`;
+
+    } catch (error) {
+        alert('Failed to save: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
+    }
+}
+
+function formatPrice(price) {
+    if (!price) return '';
+    return new Intl.NumberFormat('en-GB', {
+        style: 'currency',
+        currency: 'GBP',
+        minimumFractionDigits: 2
+    }).format(price);
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+// Re-render and load existing quotes when supplier changes
+document.getElementById('supplierSelect').addEventListener('change', async function() {
+    const supplierId = this.value;
+    if (supplierId) {
+        await loadExistingQuotes(supplierId);
+    }
+    renderLines();
+});
+</script>
+{% endblock %}

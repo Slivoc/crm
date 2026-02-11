@@ -1,0 +1,559 @@
+{% extends base_template %}
+
+{% block title %}{{ list_name }} - Parts List{% endblock %}
+
+{% block content %}
+<div class="parts-list-mobile">
+    <!-- Header Card -->
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="flex-grow-1 min-width-0">
+                    <h6 class="mb-1 text-truncate">{{ list_name }}</h6>
+                    {% if customer_name %}
+                    <div class="small text-muted">
+                        <i class="bi bi-building me-1"></i>{{ customer_name }}
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="text-end">
+                    {% if status_name %}
+                    <span class="badge bg-{{ 'success' if status_name == 'Quoted' else 'warning' if status_name == 'In Progress' else 'secondary' }}">
+                        {{ status_name }}
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+            {% if list_notes %}
+            <div class="small text-muted mt-2 notes-preview">{{ list_notes[:100] }}{% if list_notes|length > 100 %}...{% endif %}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="row g-2 mb-3">
+        <div class="col-4">
+            <div class="stat-card text-center">
+                <div class="stat-value" id="linesCount">{{ lines|length }}</div>
+                <div class="stat-label">Lines</div>
+            </div>
+        </div>
+        <div class="col-4">
+            <div class="stat-card text-center">
+                <div class="stat-value" id="quotedCount">-</div>
+                <div class="stat-label">Quoted</div>
+            </div>
+        </div>
+        <div class="col-4">
+            <div class="stat-card text-center">
+                <div class="stat-value" id="costedCount">-</div>
+                <div class="stat-label">Costed</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lines List -->
+    <div class="card">
+        <div class="card-header py-2 d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="bi bi-list-ul me-1"></i>Parts</h6>
+            <a href="{{ url_for('parts_list.parts_list_costing', list_id=list_id) }}" class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-pencil"></i>
+            </a>
+        </div>
+        <div class="card-body p-0" id="linesContainer">
+            {% for line in lines %}
+            <div class="line-item" onclick="openLineDetails({{ line.id }}, '{{ line.customer_part_number or line.base_part_number | e }}')">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1 min-width-0">
+                        <div class="line-part-number">{{ line.customer_part_number or line.base_part_number or '-' }}</div>
+                        {% if line.description %}
+                        <div class="line-description">{{ line.description[:50] }}{% if line.description|length > 50 %}...{% endif %}</div>
+                        {% endif %}
+                    </div>
+                    <div class="text-end">
+                        <span class="qty-badge">x{{ line.quantity or 1 }}</span>
+                        {% if line.chosen_supplier_id %}
+                        <div class="small text-success mt-1"><i class="bi bi-check-circle"></i></div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="text-center text-muted py-4">No parts in this list</div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="card mt-3">
+        <div class="card-header py-2">
+            <h6 class="mb-0">Actions</h6>
+        </div>
+        <div class="list-group list-group-flush">
+            <a href="{{ url_for('parts_list.parts_list_costing', list_id=list_id) }}" class="list-group-item list-group-item-action">
+                <i class="bi bi-calculator me-2"></i>Costing View
+            </a>
+            <a href="{{ url_for('parts_list.parts_list_sourcing', list_id=list_id) }}" class="list-group-item list-group-item-action">
+                <i class="bi bi-truck me-2"></i>Sourcing View
+            </a>
+            <a href="{{ url_for('parts_list.view_parts_lists') }}" class="list-group-item list-group-item-action">
+                <i class="bi bi-arrow-left me-2"></i>Back to Lists
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Line Details / Potential Suppliers Modal -->
+<div class="modal fade" id="lineDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-fullscreen">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white py-2">
+                <h6 class="modal-title text-truncate" id="linePartNumber" style="max-width: 80%;">Part Details</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0" id="lineDetailsContent">
+                <div class="text-center py-5">
+                    <div class="spinner-border spinner-border-sm" role="status"></div>
+                    <p class="mt-2 mb-0 small">Loading suppliers...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.parts-list-mobile {
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
+.stat-card {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 12px 8px;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #0d6efd;
+}
+
+.stat-label {
+    font-size: 0.7rem;
+    color: #6c757d;
+    text-transform: uppercase;
+}
+
+.line-item {
+    padding: 12px;
+    border-bottom: 1px solid #e9ecef;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.line-item:active {
+    background: #f0f0f0;
+}
+
+.line-item:last-child {
+    border-bottom: none;
+}
+
+.line-part-number {
+    font-weight: 600;
+    font-family: monospace;
+    font-size: 0.9rem;
+}
+
+.line-description {
+    font-size: 0.75rem;
+    color: #6c757d;
+}
+
+.qty-badge {
+    background: #e9ecef;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.notes-preview {
+    font-style: italic;
+}
+
+/* Modal Supplier Cards */
+.supplier-section {
+    padding: 12px;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.supplier-section:last-child {
+    border-bottom: none;
+}
+
+.supplier-section-header {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #495057;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.supplier-card {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+}
+
+.supplier-card.mapped {
+    background: #d1e7dd;
+    border-left: 3px solid #198754;
+}
+
+.supplier-card.vqs {
+    background: #cfe2ff;
+    border-left: 3px solid #0d6efd;
+}
+
+.supplier-card.quoted {
+    background: #fff3cd;
+    border-left: 3px solid #ffc107;
+}
+
+.supplier-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.supplier-meta {
+    font-size: 0.75rem;
+    color: #6c757d;
+}
+
+.supplier-price {
+    font-weight: 700;
+    color: #198754;
+}
+
+.add-supplier-btn {
+    padding: 4px 8px;
+    font-size: 0.75rem;
+}
+
+.source-badge {
+    font-size: 0.65rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.min-width-0 {
+    min-width: 0;
+}
+</style>
+
+<script>
+const LIST_ID = {{ list_id }};
+let currentLineId = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Calculate stats
+    calculateStats();
+});
+
+function calculateStats() {
+    const lines = {{ loaded_list.lines | tojson }};
+    let quoted = 0;
+    let costed = 0;
+
+    lines.forEach(line => {
+        if (line.chosen_supplier_id) costed++;
+        // We'd need quote data to count quoted accurately
+    });
+
+    document.getElementById('costedCount').textContent = costed;
+    document.getElementById('quotedCount').textContent = '-'; // Would need additional data
+}
+
+async function openLineDetails(lineId, partNumber) {
+    currentLineId = lineId;
+    document.getElementById('linePartNumber').textContent = partNumber;
+
+    const content = document.getElementById('lineDetailsContent');
+    content.innerHTML = `
+        <div class="text-center py-5">
+            <div class="spinner-border spinner-border-sm" role="status"></div>
+            <p class="mt-2 mb-0 small">Loading potential suppliers...</p>
+        </div>
+    `;
+
+    const modal = new bootstrap.Modal(document.getElementById('lineDetailsModal'));
+    modal.show();
+
+    try {
+        // Fetch all supplier data sources in parallel
+        const [ilsData, quotesData, suggestedData] = await Promise.all([
+            fetchIlsData(lineId),
+            fetchQuotesData(lineId),
+            fetchSuggestedSuppliers(lineId)
+        ]);
+
+        renderSupplierSources(ilsData, quotesData, suggestedData, partNumber);
+
+    } catch (error) {
+        console.error('Error loading suppliers:', error);
+        content.innerHTML = `
+            <div class="text-center text-danger py-5">
+                <i class="bi bi-exclamation-triangle display-4"></i>
+                <p class="mt-2">Failed to load supplier data</p>
+            </div>
+        `;
+    }
+}
+
+async function fetchIlsData(lineId) {
+    try {
+        const response = await fetch(`/parts_list/api/parts-lists/${LIST_ID}/lines/${lineId}/ils-data`);
+        const data = await response.json();
+        return data.success ? data.results : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+async function fetchQuotesData(lineId) {
+    try {
+        const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/lines/${lineId}/quotes`);
+        const data = await response.json();
+        return data.success ? data.quotes : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+async function fetchSuggestedSuppliers(lineId) {
+    try {
+        const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/lines/${lineId}/suggested-suppliers`);
+        const data = await response.json();
+        return data.success ? data.suppliers : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function renderSupplierSources(ilsData, quotesData, suggestedData, partNumber) {
+    const content = document.getElementById('lineDetailsContent');
+
+    // Count suppliers by source
+    const mappedIls = ilsData.filter(r => r.supplier_id);
+    const unmappedIls = ilsData.filter(r => !r.supplier_id);
+
+    let html = '';
+
+    // Part info header
+    html += `
+        <div class="p-3 bg-light border-bottom">
+            <div class="fw-semibold">${escapeHtml(partNumber)}</div>
+            <div class="small text-muted">Line #${currentLineId}</div>
+        </div>
+    `;
+
+    // Already suggested suppliers
+    if (suggestedData.length > 0) {
+        html += `
+            <div class="supplier-section">
+                <div class="supplier-section-header">
+                    <i class="bi bi-star-fill text-warning"></i>
+                    Suggested Suppliers (${suggestedData.length})
+                </div>
+                ${suggestedData.map(s => `
+                    <div class="supplier-card">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <div class="supplier-name">${escapeHtml(s.supplier_name)}</div>
+                                <div class="supplier-meta">
+                                    <span class="source-badge bg-secondary text-white">${escapeHtml(s.source_type || 'Manual')}</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-sm btn-outline-danger" onclick="removeSuggested(${s.id})">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    // Supplier quotes
+    if (quotesData.length > 0) {
+        html += `
+            <div class="supplier-section">
+                <div class="supplier-section-header">
+                    <i class="bi bi-receipt text-success"></i>
+                    Supplier Quotes (${quotesData.length})
+                </div>
+                ${quotesData.map(q => `
+                    <div class="supplier-card quoted">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <div class="supplier-name">${escapeHtml(q.supplier_name)}</div>
+                                <div class="supplier-meta">
+                                    ${q.quoted_part_number ? `MPN: ${escapeHtml(q.quoted_part_number)}` : ''}
+                                    ${q.manufacturer ? ` | ${escapeHtml(q.manufacturer)}` : ''}
+                                </div>
+                                ${q.lead_time_days ? `<div class="supplier-meta">Lead: ${q.lead_time_days} days</div>` : ''}
+                            </div>
+                            <div class="text-end">
+                                ${q.unit_price ? `<div class="supplier-price">${q.symbol || ''}${parseFloat(q.unit_price).toFixed(2)}</div>` : ''}
+                                ${q.is_no_bid ? '<span class="badge bg-danger">No Bid</span>' : ''}
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    // ILS - Mapped suppliers (preferred)
+    if (mappedIls.length > 0) {
+        html += `
+            <div class="supplier-section">
+                <div class="supplier-section-header">
+                    <i class="bi bi-globe text-info"></i>
+                    ILS - Mapped Suppliers (${mappedIls.length})
+                </div>
+                ${mappedIls.map(r => `
+                    <div class="supplier-card mapped">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="flex-grow-1 min-width-0">
+                                <div class="supplier-name">${escapeHtml(r.supplier_name)}</div>
+                                <div class="supplier-meta">
+                                    ${r.ils_company_name ? escapeHtml(r.ils_company_name) : ''}
+                                    ${r.quantity ? ` | Qty: ${r.quantity}` : ''}
+                                    ${r.condition_code ? ` | ${r.condition_code}` : ''}
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                ${r.price ? `<div class="supplier-price">$${parseFloat(r.price).toFixed(2)}</div>` : ''}
+                                <button class="btn btn-sm btn-outline-primary add-supplier-btn mt-1" onclick="addSuggested(${r.supplier_id}, 'ILS')">
+                                    <i class="bi bi-plus"></i> Add
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    // ILS - Unmapped suppliers
+    if (unmappedIls.length > 0) {
+        html += `
+            <div class="supplier-section">
+                <div class="supplier-section-header">
+                    <i class="bi bi-globe text-secondary"></i>
+                    ILS - Unmapped (${unmappedIls.length})
+                </div>
+                ${unmappedIls.slice(0, 10).map(r => `
+                    <div class="supplier-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="flex-grow-1 min-width-0">
+                                <div class="supplier-name">${escapeHtml(r.ils_company_name || 'Unknown')}</div>
+                                <div class="supplier-meta">
+                                    ${r.ils_cage_code ? `CAGE: ${r.ils_cage_code}` : ''}
+                                    ${r.quantity ? ` | Qty: ${r.quantity}` : ''}
+                                    ${r.condition_code ? ` | ${r.condition_code}` : ''}
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                ${r.price ? `<div class="supplier-price">$${parseFloat(r.price).toFixed(2)}</div>` : ''}
+                                <span class="badge bg-secondary">Not mapped</span>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+                ${unmappedIls.length > 10 ? `<div class="text-muted small text-center py-2">+ ${unmappedIls.length - 10} more</div>` : ''}
+            </div>
+        `;
+    }
+
+    // No suppliers found
+    if (suggestedData.length === 0 && quotesData.length === 0 && ilsData.length === 0) {
+        html += `
+            <div class="text-center text-muted py-5">
+                <i class="bi bi-inbox display-4"></i>
+                <p class="mt-2">No potential suppliers found</p>
+                <p class="small">Upload ILS data or request quotes to see suppliers here</p>
+            </div>
+        `;
+    }
+
+    content.innerHTML = html;
+}
+
+async function addSuggested(supplierId, sourceType) {
+    if (!currentLineId || !supplierId) return;
+
+    try {
+        const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/lines/${currentLineId}/suggested-suppliers/add`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                supplier_id: supplierId,
+                source_type: sourceType || 'Mobile'
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Show brief success feedback
+            alert('Supplier added to suggestions');
+            // Refresh the modal
+            const partNumber = document.getElementById('linePartNumber').textContent;
+            openLineDetails(currentLineId, partNumber);
+        } else {
+            alert(data.message || 'Failed to add supplier');
+        }
+    } catch (error) {
+        alert('Error adding supplier');
+    }
+}
+
+async function removeSuggested(suggestedId) {
+    if (!currentLineId || !suggestedId) return;
+
+    if (!confirm('Remove this supplier from suggestions?')) return;
+
+    try {
+        const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/lines/${currentLineId}/suggested-suppliers/${suggestedId}/remove`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Refresh the modal
+            const partNumber = document.getElementById('linePartNumber').textContent;
+            openLineDetails(currentLineId, partNumber);
+        } else {
+            alert(data.message || 'Failed to remove supplier');
+        }
+    } catch (error) {
+        alert('Error removing supplier');
+    }
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

@@ -3024,11 +3024,19 @@ def list_emails():
     return render_template('emails.html', mailbox=mailbox, graph=graph)
 
 
+def _is_mobile():
+    """Check if the request is from a mobile device."""
+    user_agent = request.headers.get('User-Agent', '').lower()
+    mobile_keywords = ['mobile', 'android', 'iphone', 'ipad']
+    return any(keyword in user_agent for keyword in mobile_keywords)
+
+
 @emails_bp.route('/emails/mailbox')
 def mailbox_page():
     graph = _get_graph_settings()
     graph_user = session.get("graph_last_user")
-    return render_template('emails_mailbox.html', graph=graph, graph_user=graph_user)
+    template = 'emails_mailbox_mobile.html' if _is_mobile() else 'emails_mailbox.html'
+    return render_template(template, graph=graph, graph_user=graph_user)
 
 
 @emails_bp.route('/emails/mailbox-settings', methods=['GET', 'POST'])

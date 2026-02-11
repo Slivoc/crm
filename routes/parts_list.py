@@ -46,6 +46,13 @@ def _execute_with_cursor(cur, query, params=None):
     return cur
 
 
+def _is_mobile():
+    """Check if the request is from a mobile device."""
+    user_agent = request.headers.get('User-Agent', '').lower()
+    mobile_keywords = ['mobile', 'android', 'iphone', 'ipad']
+    return any(keyword in user_agent for keyword in mobile_keywords)
+
+
 def _safe_row_get(row, key, default=None):
     """
     Return a key from a DB row that could be a dict (psycopg RealDictRow) or sqlite3.Row.
@@ -6504,7 +6511,8 @@ def view_parts_list(list_id):
         (header['name'], None)
     ]
 
-    return render_template('view_parts_list.html',
+    template = 'view_parts_list_mobile.html' if _is_mobile() else 'view_parts_list.html'
+    return render_template(template,
                            breadcrumbs=breadcrumbs,
                            loaded_list=loaded_list,
                            list_id=list_id,
@@ -6515,7 +6523,8 @@ def view_parts_list(list_id):
                            project_id=header.get('project_id'),
                            project_name=header.get('project_name'),
                            status_id=header.get('status_id'),
-                           status_name=header.get('status_name'))
+                           status_name=header.get('status_name'),
+                           lines=[dict(line) for line in lines])
 
 
 @parts_list_bp.route('/extract-quote-from-pdf', methods=['POST'])
@@ -6947,7 +6956,8 @@ def quick_supplier_quote(list_id, supplier_id=None):
             except (TypeError, ValueError):
                 proponent_supplier_id = None
 
-    return render_template('quick_supplier_quote.html',
+    template = 'quick_supplier_quote_mobile.html' if _is_mobile() else 'quick_supplier_quote.html'
+    return render_template(template,
                            list_id=list_id,
                            list_name=header['name'],
                            supplier_id=supplier_id,
@@ -6959,6 +6969,7 @@ def quick_supplier_quote(list_id, supplier_id=None):
                            email_message_id=email_message_id,
                            email_conversation_id=email_conversation_id,
                            proponent_supplier_id=proponent_supplier_id,
+                           current_date=datetime.now().strftime('%Y-%m-%d'),
                            cache_bust=cache_bust)
 
 

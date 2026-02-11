@@ -1768,16 +1768,17 @@ def test_portal_analyze():
                     elif actual_source in ['sales_order', 'recent_sale']:
                         sale = db_execute("""
                             SELECT 
-                                so.reference,
+                                so.sales_order_ref as reference,
                                 sol.unit_price_gbp,
-                                so.date_created,
+                                so.date_entered as date_created,
                                 c.name as customer_name
                             FROM sales_order_lines sol
                             JOIN sales_orders so ON so.id = sol.sales_order_id
+                            JOIN sales_statuses ss ON ss.id = so.sales_status_id
                             JOIN customers c ON c.id = so.customer_id
                             WHERE sol.base_part_number = ?
-                            AND so.status != 'cancelled'
-                            ORDER BY so.date_created DESC
+                            AND ss.status_name NOT IN ('Cancelled', 'Completed')
+                            ORDER BY so.date_entered DESC
                             LIMIT 1
                         """, (base_pn,), fetch='one')
 

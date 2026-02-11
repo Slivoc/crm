@@ -474,6 +474,27 @@ def analyze_quote():
 
         rate_column = get_currency_rate_column()
         with db_cursor() as cursor:
+            base_numbers = []
+            for part in parts:
+                part_number = (part.get('part_number') or '').strip()
+                if not part_number:
+                    continue
+                base_number = create_base_part_number(part_number)
+                if base_number:
+                    base_numbers.append(base_number)
+
+            canonical_map = {}
+            if base_numbers:
+                unique_base_numbers = list(dict.fromkeys(base_numbers))
+                placeholders = ",".join(["?"] * len(unique_base_numbers))
+                rows = _execute_with_cursor(cursor, f"""
+                    SELECT base_part_number, part_number
+                    FROM part_numbers
+                    WHERE base_part_number IN ({placeholders})
+                """, tuple(unique_base_numbers)).fetchall()
+                if rows:
+                    canonical_map = {row['base_part_number']: row['part_number'] for row in rows}
+
             for part in parts:
                 part_number = part.get('part_number', '').strip()
                 if not part_number:
@@ -481,13 +502,18 @@ def analyze_quote():
 
                 quantity = int(part.get('quantity', 1))
                 base_part_number = create_base_part_number(part_number)
+                canonical_part_number = canonical_map.get(base_part_number)
+                display_part_number = canonical_part_number or part_number
+                requested_part_number = part_number
 
                 try:
                     agreement_price = get_customer_pricing_agreement(user['customer_id'], base_part_number)
                     if agreement_price:
                         result = {
-                            'part_number': part_number,
+                            'part_number': display_part_number,
                             'base_part_number': base_part_number,
+                            'requested_part_number': requested_part_number if display_part_number != requested_part_number else None,
+                            'quoted_part_number': display_part_number if display_part_number != requested_part_number else None,
                             'quantity_requested': quantity,
                             'in_stock': False,
                             'estimated_price': agreement_price,
@@ -675,8 +701,10 @@ def analyze_quote():
                     estimated_lead_days = int(estimated_lead_days) if estimated_lead_days > 0 else 0
 
                     result = {
-                        'part_number': part_number,
+                        'part_number': display_part_number,
                         'base_part_number': base_part_number,
+                        'requested_part_number': requested_part_number if display_part_number != requested_part_number else None,
+                        'quoted_part_number': display_part_number if display_part_number != requested_part_number else None,
                         'quantity_requested': quantity,
                         'in_stock': has_stock,
                         'stock_available': has_stock
@@ -1008,16 +1036,29 @@ def get_quote_request_details(request_id):
             SELECT 
                 pqrl.*,
                 c.currency_code,
-                c.{rate_column} as currency_rate
+                c.{rate_column} as currency_rate,
+                cql.display_part_number,
+                cql.quoted_part_number
             FROM portal_quote_request_lines pqrl
             LEFT JOIN currencies c ON c.id = pqrl.quoted_currency_id
+            LEFT JOIN parts_list_lines pll
+                ON pll.parts_list_id = ?
+                AND pll.line_number = pqrl.line_number
+            LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
             WHERE pqrl.portal_quote_request_id = ?
             ORDER BY pqrl.line_number
-        """, (request_id,), fetch='all') or []
+        """, (request_data.get('parts_list_id'), request_id), fetch='all') or []
 
         normalized_lines = []
         for line in lines:
             line_dict = dict(line)
+            requested_part_number = line_dict.get('part_number')
+            quoted_part_number = line_dict.get('quoted_part_number') or line_dict.get('display_part_number')
+            if quoted_part_number and requested_part_number and quoted_part_number != requested_part_number:
+                line_dict['requested_part_number'] = requested_part_number
+                line_dict['part_number'] = quoted_part_number
+                line_dict['quoted_part_number'] = quoted_part_number
+
             line_dict['quoted_price'] = _convert_to_base_currency(
                 line_dict.get('quoted_price'),
                 currency_id=line_dict.get('quoted_currency_id'),

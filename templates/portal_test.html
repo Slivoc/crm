@@ -557,6 +557,11 @@ function createResultCard(result) {
         sourceDetailsHTML = '<div class="no-data">No source details available</div>';
     }
 
+    const requestedPart = result.requested_part_number;
+    const requestedPartLine = requestedPart && requestedPart !== result.part_number
+        ? `<br><small class="text-muted">Requested: ${requestedPart}</small>`
+        : '';
+
     return `
         <div class="result-card">
             <div class="result-header">
@@ -565,6 +570,7 @@ function createResultCard(result) {
                     <span class="quantity-badge">Qty: ${result.quantity_requested}</span>
                     ${result.base_part_number !== result.part_number ?
                         `<br><small class="text-muted">Base: ${result.base_part_number}</small>` : ''}
+                    ${requestedPartLine}
                 </div>
                 <span class="status-badge ${statusClass}">${statusText}</span>
             </div>

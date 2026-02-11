@@ -1,0 +1,804 @@
+{% extends base_template %}
+
+{% block title %}Mobile Inbox{% endblock %}
+
+{% block content %}
+<div class="mobile-mailbox">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0">
+            <i class="bi bi-envelope me-2"></i>Inbox
+            <span class="badge bg-secondary ms-1" id="mailboxCount">0</span>
+        </h5>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshMailboxBtn">
+            <i class="bi bi-arrow-clockwise"></i>
+        </button>
+    </div>
+
+    <!-- Search -->
+    <div class="mb-3">
+        <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" class="form-control" id="emailSearch" placeholder="Search emails...">
+        </div>
+    </div>
+
+    <!-- Email List -->
+    <div id="emailListContainer" class="mb-3">
+        <div class="text-center text-muted py-5">
+            <div class="spinner-border spinner-border-sm" role="status"></div>
+            <p class="mt-2 mb-0">Loading emails...</p>
+        </div>
+    </div>
+
+    <!-- Load More -->
+    <div class="text-center mb-3">
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="loadMoreBtn" style="display: none;">
+            Load more
+        </button>
+    </div>
+</div>
+
+<!-- Email Detail Modal -->
+<div class="modal fade" id="emailDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-fullscreen">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white py-2">
+                <h6 class="modal-title text-truncate" id="emailSubject" style="max-width: 80%;">Email</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <!-- Email Meta -->
+                <div class="p-3 border-bottom bg-light">
+                    <div class="d-flex align-items-center mb-2">
+                        <div class="sender-avatar rounded-circle d-flex align-items-center justify-content-center me-2"
+                             id="senderAvatar" style="width: 40px; height: 40px; background: #4f46e5; color: white; font-weight: 600;">
+                            ?
+                        </div>
+                        <div class="flex-grow-1 min-width-0">
+                            <div class="fw-semibold text-truncate" id="emailFrom">Unknown</div>
+                            <div class="text-muted small text-truncate" id="emailFromEmail"></div>
+                        </div>
+                    </div>
+                    <div class="small text-muted" id="emailDate"></div>
+
+                    <!-- Company Badge -->
+                    <div id="companyBadge" class="mt-2" style="display: none;">
+                        <span class="badge bg-info">
+                            <i class="bi bi-building me-1"></i>
+                            <span id="companyName"></span>
+                        </span>
+                    </div>
+
+                    <!-- Supplier Badge -->
+                    <div id="supplierBadge" class="mt-2" style="display: none;">
+                        <span class="badge bg-success">
+                            <i class="bi bi-truck me-1"></i>
+                            <span id="supplierName"></span>
+                        </span>
+                    </div>
+
+                    <!-- Detected Parts List -->
+                    <div id="detectedListBadge" class="mt-2" style="display: none;">
+                        <span class="badge bg-warning text-dark">
+                            <i class="bi bi-list-ul me-1"></i>
+                            Parts List #<span id="detectedListId"></span>
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="p-3 border-bottom">
+                    <div class="d-grid gap-2">
+                        <button type="button" class="btn btn-primary" id="createPartsListBtn">
+                            <i class="bi bi-list-ul me-1"></i>Create Parts List
+                        </button>
+                        <button type="button" class="btn btn-success" id="quickQuoteBtn" style="display: none;">
+                            <i class="bi bi-lightning-charge me-1"></i>Quick Supplier Quote
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" id="scanPartsBtn">
+                            <i class="bi bi-magic me-1"></i>Scan for Parts (AI)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Scan Results -->
+                <div id="scanResultsSection" class="p-3 border-bottom" style="display: none;">
+                    <h6 class="mb-2">
+                        <i class="bi bi-search me-1"></i>Scan Results
+                    </h6>
+                    <div id="scanResultsContent"></div>
+                </div>
+
+                <!-- Email Body -->
+                <div class="p-3">
+                    <iframe id="emailBodyFrame" class="w-100 border-0" style="min-height: 400px;"></iframe>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Supplier Selection Modal -->
+<div class="modal fade" id="supplierSelectModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title">
+                    <i class="bi bi-truck me-2"></i>Select Supplier
+                </h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="text" class="form-control mb-3" id="supplierSearchInput" placeholder="Search suppliers...">
+                <div id="supplierSearchResults" class="list-group" style="max-height: 300px; overflow-y: auto;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.mobile-mailbox {
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
+.mobile-mailbox .email-item {
+    padding: 10px 12px;
+    border-bottom: 1px solid #e9ecef;
+    cursor: pointer;
+    transition: background 0.2s;
+    overflow: hidden;
+}
+
+.mobile-mailbox .email-item:hover,
+.mobile-mailbox .email-item:active {
+    background: #f8f9fa;
+}
+
+.mobile-mailbox .email-item.unread {
+    background: #fff;
+    border-left: 3px solid #0d6efd;
+}
+
+.mobile-mailbox .email-item.read {
+    background: #f8f9fa;
+}
+
+.mobile-mailbox .email-sender {
+    font-weight: 600;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mobile-mailbox .email-subject {
+    font-size: 0.85rem;
+    color: #495057;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+.mobile-mailbox .email-date {
+    font-size: 0.7rem;
+    color: #6c757d;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.mobile-mailbox .email-avatar {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: white;
+    flex-shrink: 0;
+}
+
+.mobile-mailbox .email-content {
+    min-width: 0;
+    flex: 1;
+}
+
+#emailBodyFrame {
+    background: white;
+}
+
+.scan-result-card {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+.part-badge {
+    display: inline-block;
+    background: #e9ecef;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    margin: 2px;
+}
+</style>
+
+<script>
+const graphSeed = {{ graph | tojson }};
+let messageCache = [];
+let selectedMessage = null;
+let selectedMessageId = null;
+let selectedPartsListId = null;
+let selectedSupplierId = null;
+let mailboxNextToken = null;
+let mailboxIsLoading = false;
+let selectedSupplierData = null;
+let pendingQuoteListId = null;
+
+const MAILBOX_PAGE_SIZE = 20;
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadEmails();
+
+    document.getElementById('refreshMailboxBtn').addEventListener('click', () => {
+        messageCache = [];
+        mailboxNextToken = null;
+        loadEmails();
+    });
+
+    document.getElementById('loadMoreBtn').addEventListener('click', () => {
+        if (mailboxNextToken && !mailboxIsLoading) {
+            loadEmails(mailboxNextToken);
+        }
+    });
+
+    document.getElementById('emailSearch').addEventListener('input', debounce(function() {
+        const query = this.value.toLowerCase();
+        filterEmails(query);
+    }, 300));
+
+    document.getElementById('createPartsListBtn').addEventListener('click', createPartsList);
+    document.getElementById('quickQuoteBtn').addEventListener('click', openQuickQuote);
+    document.getElementById('scanPartsBtn').addEventListener('click', scanForParts);
+
+    // Supplier search
+    document.getElementById('supplierSearchInput').addEventListener('input', debounce(function() {
+        searchSuppliers(this.value);
+    }, 300));
+});
+
+function debounce(func, wait) {
+    let timeout;
+    return function(...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+    };
+}
+
+async function loadEmails(nextToken = null) {
+    if (mailboxIsLoading) return;
+    mailboxIsLoading = true;
+
+    const container = document.getElementById('emailListContainer');
+    const loadMoreBtn = document.getElementById('loadMoreBtn');
+
+    if (!nextToken) {
+        container.innerHTML = `
+            <div class="text-center text-muted py-5">
+                <div class="spinner-border spinner-border-sm" role="status"></div>
+                <p class="mt-2 mb-0">Loading emails...</p>
+            </div>
+        `;
+    }
+
+    try {
+        let url = `/emails/graph/messages?top=${MAILBOX_PAGE_SIZE}`;
+        if (nextToken) {
+            url += `&skip_token=${encodeURIComponent(nextToken)}`;
+        }
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to load emails');
+        }
+
+        const messages = data.messages || [];
+        mailboxNextToken = data.next_token || null;
+
+        if (!nextToken) {
+            messageCache = messages;
+        } else {
+            messageCache = [...messageCache, ...messages];
+        }
+
+        renderEmailList();
+        document.getElementById('mailboxCount').textContent = messageCache.length;
+        loadMoreBtn.style.display = mailboxNextToken ? 'inline-block' : 'none';
+
+    } catch (error) {
+        console.error('Error loading emails:', error);
+        if (!nextToken) {
+            container.innerHTML = `
+                <div class="text-center text-danger py-5">
+                    <i class="bi bi-exclamation-triangle display-4"></i>
+                    <p class="mt-2">Failed to load emails</p>
+                    <button class="btn btn-sm btn-outline-primary" onclick="loadEmails()">Retry</button>
+                </div>
+            `;
+        }
+    } finally {
+        mailboxIsLoading = false;
+    }
+}
+
+function renderEmailList(messages = null) {
+    const container = document.getElementById('emailListContainer');
+    const items = messages || messageCache;
+
+    if (!items.length) {
+        container.innerHTML = `
+            <div class="text-center text-muted py-5">
+                <i class="bi bi-inbox display-4"></i>
+                <p class="mt-2">No emails found</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = items.map(msg => {
+        const from = msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || 'Unknown';
+        const subject = msg.subject || '(No subject)';
+        const date = formatRelativeDate(msg.receivedDateTime);
+        const isRead = msg.isRead;
+        const initials = getInitials(from);
+        const color = getAvatarColor(from);
+
+        return `
+            <div class="email-item ${isRead ? 'read' : 'unread'}" onclick="openEmail('${msg.id}')">
+                <div class="d-flex align-items-start">
+                    <div class="email-avatar me-2" style="background: ${color};">${initials}</div>
+                    <div class="email-content">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="email-sender">${escapeHtml(from)}</div>
+                            <div class="email-date ms-2">${date}</div>
+                        </div>
+                        <div class="email-subject">${escapeHtml(subject)}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function filterEmails(query) {
+    if (!query) {
+        renderEmailList();
+        return;
+    }
+
+    const filtered = messageCache.filter(msg => {
+        const from = (msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || '').toLowerCase();
+        const subject = (msg.subject || '').toLowerCase();
+        const preview = (msg.bodyPreview || '').toLowerCase();
+        return from.includes(query) || subject.includes(query) || preview.includes(query);
+    });
+
+    renderEmailList(filtered);
+}
+
+async function openEmail(messageId) {
+    const message = messageCache.find(m => m.id === messageId);
+    if (!message) return;
+
+    selectedMessage = message;
+    selectedMessageId = messageId;
+
+    // Parse parts list from subject
+    const parsed = parsePartsAvailabilitySubject(message.subject);
+    selectedPartsListId = parsed?.listId || null;
+    selectedSupplierId = parsed?.supplierId || null;
+
+    // Update modal content
+    document.getElementById('emailSubject').textContent = message.subject || '(No subject)';
+    document.getElementById('emailFrom').textContent = message.from?.emailAddress?.name || 'Unknown';
+    document.getElementById('emailFromEmail').textContent = message.from?.emailAddress?.address || '';
+    document.getElementById('emailDate').textContent = formatFullDate(message.receivedDateTime);
+
+    const initials = getInitials(message.from?.emailAddress?.name);
+    const color = getAvatarColor(message.from?.emailAddress?.name);
+    document.getElementById('senderAvatar').textContent = initials;
+    document.getElementById('senderAvatar').style.background = color;
+
+    // Show/hide quick quote button
+    const quickQuoteBtn = document.getElementById('quickQuoteBtn');
+    if (selectedPartsListId) {
+        quickQuoteBtn.style.display = 'block';
+        quickQuoteBtn.innerHTML = `<i class="bi bi-lightning-charge me-1"></i>Quick Quote (PL #${selectedPartsListId})`;
+        document.getElementById('detectedListBadge').style.display = 'block';
+        document.getElementById('detectedListId').textContent = selectedPartsListId;
+    } else {
+        quickQuoteBtn.style.display = 'none';
+        document.getElementById('detectedListBadge').style.display = 'none';
+    }
+
+    // Hide scan results initially
+    document.getElementById('scanResultsSection').style.display = 'none';
+
+    // Load email body
+    loadEmailBody(messageId);
+
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('emailDetailModal'));
+    modal.show();
+}
+
+async function loadEmailBody(messageId) {
+    const frame = document.getElementById('emailBodyFrame');
+
+    try {
+        const response = await fetch(`/emails/graph/message/${encodeURIComponent(messageId)}`);
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            throw new Error('Failed to load email');
+        }
+
+        const message = data.message;
+        let html = message.body?.content || '<p>No content</p>';
+
+        // Basic sanitization and styling
+        const styledHtml = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        font-size: 14px;
+                        line-height: 1.5;
+                        padding: 0;
+                        margin: 0;
+                        word-wrap: break-word;
+                    }
+                    img { max-width: 100%; height: auto; }
+                    table { max-width: 100%; }
+                    pre { white-space: pre-wrap; }
+                </style>
+            </head>
+            <body>${html}</body>
+            </html>
+        `;
+
+        frame.srcdoc = styledHtml;
+
+        // Auto-resize frame
+        frame.onload = () => {
+            try {
+                const height = frame.contentDocument.body.scrollHeight;
+                frame.style.height = Math.max(400, height + 50) + 'px';
+            } catch(e) {}
+        };
+
+    } catch (error) {
+        console.error('Error loading email body:', error);
+        frame.srcdoc = '<p class="text-danger p-3">Failed to load email content</p>';
+    }
+}
+
+async function createPartsList() {
+    if (!selectedMessage) return;
+
+    const btn = document.getElementById('createPartsListBtn');
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creating...';
+
+    try {
+        const bodyText = extractTextFromBody();
+        const payload = {
+            subject: selectedMessage.subject || '',
+            sender_email: selectedMessage.from?.emailAddress?.address || '',
+            body_text: bodyText || selectedMessage.bodyPreview || '',
+            message_id: selectedMessage.id || '',
+            conversation_id: selectedMessage.conversationId || ''
+        };
+
+        const response = await fetch('/parts_list/outlook/macro', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            const msg = data.parts_count === 0
+                ? 'Created empty parts list'
+                : `Created parts list #${data.list_id} with ${data.parts_count} parts`;
+            alert(msg);
+
+            // Redirect to the list
+            window.location.href = data.redirect_url || `/parts_list/view/${data.list_id}`;
+        } else {
+            alert(data.message || 'Failed to create parts list');
+        }
+    } catch (error) {
+        console.error('Error creating parts list:', error);
+        alert('Error creating parts list');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
+    }
+}
+
+function openQuickQuote() {
+    if (!selectedPartsListId) {
+        // Need to select a supplier first
+        pendingQuoteListId = null;
+        const modal = new bootstrap.Modal(document.getElementById('supplierSelectModal'));
+        modal.show();
+        return;
+    }
+
+    let url = `/parts_list/parts-lists/${selectedPartsListId}/quick-quote`;
+    if (selectedSupplierId) {
+        url += `/${selectedSupplierId}`;
+    } else if (selectedSupplierData?.id) {
+        url += `/${selectedSupplierData.id}`;
+    }
+
+    // Add email context
+    const params = new URLSearchParams();
+    if (selectedMessage?.id) {
+        params.set('email_message_id', selectedMessage.id);
+    }
+    if (selectedMessage?.conversationId) {
+        params.set('email_conversation_id', selectedMessage.conversationId);
+    }
+    const query = params.toString();
+    if (query) {
+        url += `?${query}`;
+    }
+
+    window.location.href = url;
+}
+
+async function scanForParts() {
+    if (!selectedMessage) return;
+
+    const btn = document.getElementById('scanPartsBtn');
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning...';
+
+    try {
+        const bodyText = extractTextFromBody();
+        const payload = {
+            text: bodyText || selectedMessage.bodyPreview || '',
+            supplier_id: selectedSupplierData?.id || null
+        };
+
+        const response = await fetch('/emails/mailbox/scan-parts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Scan failed');
+        }
+
+        renderScanResults(data);
+
+    } catch (error) {
+        console.error('Scan error:', error);
+        alert(error.message || 'Scan failed');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
+    }
+}
+
+function renderScanResults(data) {
+    const section = document.getElementById('scanResultsSection');
+    const content = document.getElementById('scanResultsContent');
+
+    const parts = data.parts || [];
+    const suggestions = data.suggestions || [];
+
+    if (!parts.length && !suggestions.length) {
+        content.innerHTML = '<p class="text-muted mb-0">No parts detected in this email.</p>';
+        section.style.display = 'block';
+        return;
+    }
+
+    let html = '';
+
+    // Show detected parts
+    if (parts.length) {
+        html += '<div class="mb-3"><strong>Detected Parts:</strong><div class="mt-1">';
+        parts.forEach(p => {
+            html += `<span class="part-badge">${escapeHtml(p.part_number)}${p.quantity ? ' x' + p.quantity : ''}</span>`;
+        });
+        html += '</div></div>';
+    }
+
+    // Show matching lists
+    if (suggestions.length) {
+        html += '<div><strong>Matching Lists:</strong>';
+        suggestions.forEach(s => {
+            const hasSupplier = selectedSupplierData?.id;
+            html += `
+                <div class="scan-result-card">
+                    <div class="fw-semibold">PL #${s.parts_list_id} - ${escapeHtml(s.parts_list_name || 'Parts List')}</div>
+                    <div class="small text-muted">${escapeHtml(s.customer_name || 'Unknown customer')}</div>
+                    <div class="small mb-2">
+                        <span class="badge bg-primary">${s.match_count} match${s.match_count !== 1 ? 'es' : ''}</span>
+                    </div>
+                    ${hasSupplier
+                        ? `<a href="/parts_list/parts-lists/${s.parts_list_id}/quick-quote/${selectedSupplierData.id}?email_message_id=${encodeURIComponent(selectedMessage?.id || '')}" class="btn btn-sm btn-primary">Open Quick Quote</a>`
+                        : `<button class="btn btn-sm btn-outline-primary" onclick="selectSupplierForList(${s.parts_list_id})">Select Supplier</button>`
+                    }
+                    <a href="/parts_list/view/${s.parts_list_id}" class="btn btn-sm btn-outline-secondary ms-1" target="_blank">View List</a>
+                </div>
+            `;
+        });
+        html += '</div>';
+    }
+
+    content.innerHTML = html;
+    section.style.display = 'block';
+}
+
+function selectSupplierForList(listId) {
+    pendingQuoteListId = listId;
+    const modal = new bootstrap.Modal(document.getElementById('supplierSelectModal'));
+    modal.show();
+}
+
+async function searchSuppliers(query) {
+    const results = document.getElementById('supplierSearchResults');
+
+    if (!query || query.length < 2) {
+        results.innerHTML = '<div class="text-muted small p-3">Type at least 2 characters...</div>';
+        return;
+    }
+
+    try {
+        const response = await fetch(`/suppliers/search_suppliers?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+
+        if (!data.length) {
+            results.innerHTML = '<div class="text-muted small p-3">No suppliers found</div>';
+            return;
+        }
+
+        results.innerHTML = data.map(s => `
+            <button type="button" class="list-group-item list-group-item-action" onclick="selectSupplier(${s.id}, '${escapeHtml(s.name)}')">
+                <div class="fw-semibold">${escapeHtml(s.name)}</div>
+                ${s.email ? `<div class="small text-muted">${escapeHtml(s.email)}</div>` : ''}
+            </button>
+        `).join('');
+
+    } catch (error) {
+        results.innerHTML = '<div class="text-danger small p-3">Error searching suppliers</div>';
+    }
+}
+
+function selectSupplier(supplierId, supplierName) {
+    selectedSupplierData = { id: supplierId, name: supplierName };
+
+    // Close supplier modal
+    const supplierModal = bootstrap.Modal.getInstance(document.getElementById('supplierSelectModal'));
+    if (supplierModal) {
+        supplierModal.hide();
+    }
+
+    // Update supplier badge
+    document.getElementById('supplierName').textContent = supplierName;
+    document.getElementById('supplierBadge').style.display = 'block';
+
+    // If we have a pending list, go to quick quote
+    const listId = pendingQuoteListId || selectedPartsListId;
+    if (listId) {
+        let url = `/parts_list/parts-lists/${listId}/quick-quote/${supplierId}`;
+        const params = new URLSearchParams();
+        if (selectedMessage?.id) {
+            params.set('email_message_id', selectedMessage.id);
+        }
+        const query = params.toString();
+        if (query) url += `?${query}`;
+
+        window.location.href = url;
+    }
+
+    pendingQuoteListId = null;
+}
+
+function extractTextFromBody() {
+    try {
+        const frame = document.getElementById('emailBodyFrame');
+        if (frame.contentDocument?.body) {
+            return frame.contentDocument.body.innerText || '';
+        }
+    } catch(e) {}
+    return selectedMessage?.bodyPreview || '';
+}
+
+function parsePartsAvailabilitySubject(subject) {
+    if (!subject) return null;
+    const match = subject.match(/parts availability request\s*-\s*(\d+)(?:-(\d+))?/i);
+    if (!match) return null;
+    return {
+        listId: match[1],
+        supplierId: match[2] || null
+    };
+}
+
+function formatRelativeDate(dateString) {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m`;
+    if (diffHours < 24) return `${diffHours}h`;
+    if (diffDays < 7) return `${diffDays}d`;
+
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+function formatFullDate(dateString) {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-GB', {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function getInitials(name) {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+}
+
+function getAvatarColor(name) {
+    if (!name) return '#6c757d';
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+        hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const colors = ['#4f46e5', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#be185d', '#4338ca'];
+    return colors[Math.abs(hash) % colors.length];
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}
