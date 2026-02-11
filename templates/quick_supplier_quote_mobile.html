@@ -67,9 +67,15 @@
         <div class="card-body">
             {% if email_message_id %}
             <div class="mb-2">
-                <button class="btn btn-outline-primary btn-sm w-100" id="loadEmailBtn">
-                    <i class="bi bi-envelope me-1"></i>Load from Email
-                </button>
+                <div class="d-flex gap-2">
+                    <select class="form-select form-select-sm" id="emailSourceSelect" style="flex: 1;">
+                        <option value="body">Email body</option>
+                    </select>
+                    <button class="btn btn-outline-primary btn-sm" id="loadEmailBtn" style="white-space: nowrap;">
+                        <i class="bi bi-download me-1"></i>Load
+                    </button>
+                </div>
+                <div class="small text-muted mt-1" id="emailSourceStatus"></div>
             </div>
             {% endif %}
             <textarea class="form-control mb-2" id="responseText" rows="4"
@@ -177,7 +183,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('expandAllBtn').addEventListener('click', toggleExpandAll);
 
     {% if email_message_id %}
-    document.getElementById('loadEmailBtn').addEventListener('click', loadEmailBody);
+    document.getElementById('loadEmailBtn').addEventListener('click', loadSelectedSource);
+    loadEmailAttachments();
     {% endif %}
 });
 
@@ -416,11 +423,71 @@ function updateLineStatus(lineId) {
 }
 
 {% if email_message_id %}
+const emailSourceSelect = document.getElementById('emailSourceSelect');
+const emailSourceStatus = document.getElementById('emailSourceStatus');
+
+function setEmailStatus(message, isError = false) {
+    if (!emailSourceStatus) return;
+    emailSourceStatus.textContent = message || '';
+    emailSourceStatus.classList.toggle('text-danger', isError);
+    emailSourceStatus.classList.toggle('text-muted', !isError);
+}
+
+async function loadEmailAttachments() {
+    if (!EMAIL_MESSAGE_ID || !emailSourceSelect) return;
+    setEmailStatus('Loading attachments...');
+    try {
+        const response = await fetch(`/emails/graph/message/${EMAIL_MESSAGE_ID}/attachments`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            setEmailStatus('');
+            return;
+        }
+        const attachments = (data.attachments || []).filter(att => !att.is_inline);
+        if (!attachments.length) {
+            setEmailStatus('No attachments');
+            return;
+        }
+        attachments.forEach(att => {
+            const option = document.createElement('option');
+            option.value = `attachment:${att.id}`;
+            const isPdf = att.is_pdf || (att.name || '').toLowerCase().endsWith('.pdf');
+            const label = att.name ? `${isPdf ? '📄 ' : ''}${att.name}` : 'Attachment';
+            option.textContent = label;
+            option.dataset.contentType = att.content_type || '';
+            option.dataset.isPdf = isPdf ? '1' : '0';
+            option.dataset.name = att.name || 'attachment';
+            emailSourceSelect.appendChild(option);
+        });
+        setEmailStatus(`${attachments.length} attachment(s)`);
+    } catch (error) {
+        setEmailStatus('');
+    }
+}
+
+async function loadSelectedSource() {
+    const value = emailSourceSelect.value;
+    if (value === 'body') {
+        await loadEmailBody();
+    } else if (value.startsWith('attachment:')) {
+        const attachmentId = value.split(':')[1];
+        const option = emailSourceSelect.selectedOptions[0];
+        const isPdf = option?.dataset.isPdf === '1';
+        const name = option?.dataset.name || 'attachment';
+        if (isPdf) {
+            await loadPdfAttachment(attachmentId, name);
+        } else {
+            setEmailStatus('Only PDF attachments supported', true);
+        }
+    }
+}
+
 async function loadEmailBody() {
     const btn = document.getElementById('loadEmailBtn');
     const original = btn.innerHTML;
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    setEmailStatus('Loading email...');
 
     try {
         const response = await fetch(`/emails/graph/message/${EMAIL_MESSAGE_ID}`);
@@ -432,13 +499,69 @@ async function loadEmailBody() {
 
         const text = parseEmailBodyText(data.message || {});
         document.getElementById('responseText').value = text || '';
+        setEmailStatus(text ? 'Loaded email body' : 'Email body was empty');
 
     } catch (error) {
-        alert('Failed to load email: ' + error.message);
+        setEmailStatus('Failed to load email', true);
     } finally {
         btn.disabled = false;
         btn.innerHTML = original;
     }
+}
+
+async function loadPdfAttachment(attachmentId, fileName) {
+    const btn = document.getElementById('loadEmailBtn');
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    setEmailStatus('Loading PDF...');
+
+    try {
+        // Get attachment content
+        const response = await fetch(`/emails/graph/message/${EMAIL_MESSAGE_ID}/attachments/${attachmentId}`);
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            throw new Error('Failed to load attachment');
+        }
+
+        const attachment = data.attachment || {};
+        setEmailStatus('Extracting text...');
+
+        // Convert base64 to blob and extract text
+        const blob = base64ToBlob(attachment.content_bytes, attachment.content_type || 'application/pdf');
+        const formData = new FormData();
+        formData.append('file', blob, fileName);
+
+        const textResponse = await fetch('/parts_list/extract-pdf-text', {
+            method: 'POST',
+            body: formData
+        });
+        const textData = await textResponse.json();
+
+        if (!textResponse.ok || !textData.success) {
+            throw new Error(textData.message || 'Failed to extract PDF text');
+        }
+
+        document.getElementById('responseText').value = textData.text || '';
+        setEmailStatus(textData.text ? `Extracted from ${fileName}` : 'PDF was empty');
+
+    } catch (error) {
+        setEmailStatus(error.message || 'Failed to load PDF', true);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
+    }
+}
+
+function base64ToBlob(base64, contentType) {
+    const byteChars = atob(base64);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) {
+        byteNumbers[i] = byteChars.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    return new Blob([byteArray], { type: contentType || 'application/octet-stream' });
 }
 
 function parseEmailBodyText(message) {
