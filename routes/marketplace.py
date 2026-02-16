@@ -23,6 +23,7 @@ from models import get_db
 from routes.portal_api import _analyze_quote_internal, get_portal_setting
 from integrations.mirakl.client import MiraklClient, MiraklError
 from integrations.mirakl.services.offers import build_offers_csv
+from openpyxl import load_workbook
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,162 @@ def _dedupe_csv_headers(csv_bytes):
     rebuilt = f"{updated_line}{line_ending}{remainder}"
     return rebuilt.encode('utf-8')
 
+
+def _normalize_import_header(header):
+    return re.sub(r'[^a-z0-9]+', '', str(header or '').strip().lower())
+
+
+def _parse_import_bool(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    if text in ('1', 'true', 'yes', 'y', 'on'):
+        return True
+    if text in ('0', 'false', 'no', 'n', 'off'):
+        return False
+    return None
+
+
+def _decode_csv_bytes(csv_bytes):
+    try:
+        return csv_bytes.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return csv_bytes.decode('latin-1', errors='replace')
+
+
+def _detect_csv_delimiter(csv_text):
+    first_line = csv_text.splitlines()[0] if csv_text else ''
+    if '\t' in first_line:
+        return '\t'
+    if ';' in first_line and first_line.count(';') > first_line.count(','):
+        return ';'
+    return ','
+
+
+def _read_import_rows(uploaded_file, filename):
+    extension = os.path.splitext(filename.lower())[1]
+
+    if extension == '.xlsx':
+        workbook = load_workbook(io.BytesIO(uploaded_file.read()), read_only=True, data_only=True)
+        worksheet = workbook.active
+        row_iter = worksheet.iter_rows(values_only=True)
+        headers = next(row_iter, None)
+        if not headers:
+            return []
+
+        output_rows = []
+        for row_number, values in enumerate(row_iter, start=2):
+            row_data = {}
+            for idx, raw_header in enumerate(headers):
+                header = str(raw_header or '').strip()
+                if not header:
+                    continue
+                row_data[header] = values[idx] if idx < len(values) else None
+            output_rows.append((row_number, row_data))
+        return output_rows
+
+    csv_bytes = uploaded_file.read()
+    if not csv_bytes:
+        return []
+    csv_text = _decode_csv_bytes(csv_bytes)
+    delimiter = _detect_csv_delimiter(csv_text)
+    reader = csv.DictReader(io.StringIO(csv_text), delimiter=delimiter)
+    output_rows = []
+    for row_number, row in enumerate(reader, start=2):
+        output_rows.append((row_number, row))
+    return output_rows
+
+
+def _build_marketplace_updates_from_row(row_data, valid_categories):
+    # Airbus export column -> internal field mapping.
+    column_map = {
+        'code': 'part_number',
+        'sku': 'part_number',
+        'productid': 'part_number',
+        'mkpcategory': 'mkp_category',
+        'descriptionen': 'mkp_description',
+        'name': 'mkp_name',
+        'productsummaryen': 'mkp_product_summary',
+        'productpresentationen': 'mkp_product_presentation',
+        'productunit': 'mkp_product_unit',
+        'packagecontent': 'mkp_package_content',
+        'packagecontentunit': 'mkp_package_content_unit',
+        'thirdlevel': 'mkp_third_level',
+        'dangerous': 'mkp_dangerous',
+        'eccn': 'mkp_eccn',
+        'serialized': 'mkp_serialized',
+        'logcard': 'mkp_log_card',
+        'easaf1': 'mkp_easaf1',
+    }
+
+    extracted = {}
+    for raw_header, raw_value in (row_data or {}).items():
+        normalized = _normalize_import_header(raw_header)
+        mapped_field = column_map.get(normalized)
+        if not mapped_field:
+            continue
+        # Prefer first identifier field encountered.
+        if mapped_field in extracted and mapped_field == 'part_number':
+            continue
+        extracted[mapped_field] = raw_value
+
+    part_ref = str(extracted.get('part_number') or '').strip()
+    if not part_ref:
+        return None, None, "Missing part identifier (expected one of: code, sku, product-id)."
+
+    updates = {}
+    text_fields = (
+        'mkp_description',
+        'mkp_name',
+        'mkp_product_summary',
+        'mkp_product_presentation',
+        'mkp_product_unit',
+        'mkp_package_content_unit',
+        'mkp_third_level',
+        'mkp_eccn',
+    )
+    bool_fields = ('mkp_dangerous', 'mkp_serialized', 'mkp_log_card', 'mkp_easaf1')
+
+    category_value = extracted.get('mkp_category')
+    if category_value is not None:
+        category_text = str(category_value).strip()
+        if category_text:
+            if category_text not in valid_categories:
+                return part_ref, None, f"Invalid category: {category_text}"
+            updates['mkp_category'] = category_text
+
+    for field in text_fields:
+        value = extracted.get(field)
+        if value is None:
+            continue
+        value_text = str(value).strip()
+        if value_text:
+            updates[field] = value_text
+
+    package_content_value = extracted.get('mkp_package_content')
+    if package_content_value is not None:
+        package_content_text = str(package_content_value).strip()
+        if package_content_text:
+            parsed = _coerce_int(package_content_text, default=None)
+            if parsed is None:
+                return part_ref, None, f"Invalid packageContent value: {package_content_text}"
+            updates['mkp_package_content'] = parsed
+
+    for field in bool_fields:
+        parsed_bool = _parse_import_bool(extracted.get(field))
+        if parsed_bool is not None:
+            updates[field] = 1 if parsed_bool else 0
+
+    if not updates:
+        return part_ref, None, "No importable marketplace detail fields found in row."
+
+    return part_ref, updates, None
+
+
 def _normalize_prefixes(prefixes):
     cleaned = []
     for prefix in prefixes or []:
@@ -236,6 +393,89 @@ def _get_portal_estimates(parts, customer_id):
         for item in results
         if item.get('base_part_number') or item.get('part_number')
     }
+
+
+@marketplace_bp.route('/import-details-file', methods=['POST'])
+def import_marketplace_details_file():
+    """
+    Import Airbus marketplace CSV/XLSX and update non-commercial marketplace fields.
+    Price/quantity/stock values are intentionally ignored.
+    """
+    db = None
+    try:
+        file = request.files.get('file')
+        if not file or not file.filename:
+            return jsonify({'success': False, 'error': 'CSV/XLSX file is required'}), 400
+
+        filename = file.filename
+        extension = os.path.splitext(filename.lower())[1]
+        if extension not in ('.csv', '.xlsx'):
+            return jsonify({'success': False, 'error': 'Only .csv and .xlsx files are supported'}), 400
+
+        rows = _read_import_rows(file, filename)
+        if not rows:
+            return jsonify({'success': False, 'error': 'Uploaded file is empty'}), 400
+
+        valid_categories = set(get_available_categories())
+        db = get_db()
+        cursor = db.cursor()
+
+        processed = 0
+        updated = 0
+        changed = 0
+        skipped_no_match = 0
+        skipped_no_updates = 0
+        row_errors = []
+
+        for row_number, row_data in rows:
+            processed += 1
+            part_ref, field_updates, row_error = _build_marketplace_updates_from_row(row_data, valid_categories)
+            if row_error:
+                skipped_no_updates += 1
+                if len(row_errors) < 20:
+                    row_errors.append(f"Row {row_number}: {row_error}")
+                continue
+
+            cursor.execute(
+                "SELECT 1 FROM part_numbers WHERE base_part_number = ? OR part_number = ? LIMIT 1",
+                (part_ref, part_ref),
+            )
+            part_exists = cursor.fetchone() is not None
+            if not part_exists:
+                skipped_no_match += 1
+                if len(row_errors) < 20:
+                    row_errors.append(f"Row {row_number}: Part not found for '{part_ref}'.")
+                continue
+
+            updated += 1
+            set_clause = ", ".join(f"{field} = ?" for field in field_updates.keys())
+            params = list(field_updates.values()) + [part_ref, part_ref]
+            cursor.execute(
+                f"UPDATE part_numbers SET {set_clause} WHERE base_part_number = ? OR part_number = ?",
+                params
+            )
+            if cursor.rowcount > 0:
+                changed += cursor.rowcount
+
+        db.commit()
+
+        return jsonify({
+            'success': True,
+            'message': 'Marketplace detail import complete.',
+            'summary': {
+                'processed_rows': processed,
+                'updated_rows': updated,
+                'changed_rows': changed,
+                'skipped_no_match': skipped_no_match,
+                'skipped_no_updates': skipped_no_updates,
+            },
+            'errors': row_errors,
+        }), 200
+    except Exception as e:
+        logger.exception("Error importing marketplace details file")
+        if db:
+            db.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @marketplace_bp.route('/export-page', methods=['GET'])
