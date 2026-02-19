@@ -303,6 +303,12 @@ def create_project():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+
+@projects_bp.route('/<int:project_id>', methods=['GET'], endpoint='view_project')
+def view_project(project_id):
+    return redirect(url_for('projects.edit_project', project_id=project_id))
+
+
 @projects_bp.route('/<int:project_id>/edit', methods=['GET', 'POST'])
 def edit_project(project_id):
     project = get_project_by_id(project_id)  # Fetch project, including description

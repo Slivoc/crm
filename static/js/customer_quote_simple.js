@@ -802,6 +802,10 @@ document.addEventListener('DOMContentLoaded', function() {
         // 1. Get Selected Columns
         const selectedCols = {};
         document.querySelectorAll('.email-col-check').forEach(cb => selectedCols[cb.value] = cb.checked);
+        const selectedColumnCount = Math.max(
+            1,
+            Object.values(selectedCols).filter(Boolean).length
+        );
 
         // 2. Build Headers
         let headers = '';
@@ -822,7 +826,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // 3. Start Table HTML
         let html = `<table class="table table-sm" style="border-collapse:collapse;font-family:Arial, sans-serif;font-size:0.9rem;margin:auto;max-width:900px;">
-          <thead><tr style="background:#f8f9fa;">${headers}</tr></thead><tbody>`;
+          <thead>
+            <tr style="background:#eef3ff;">
+              <th align="left" colspan="${selectedColumnCount}" style="${hStyle}font-weight:700;">Parts List ID: ${LIST_ID}</th>
+            </tr>
+            <tr style="background:#f8f9fa;">${headers}</tr>
+          </thead><tbody>`;
 
         // 4. Loop Through Rows
         document.querySelectorAll('.quote-row').forEach(row => {
@@ -1203,8 +1212,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function setEmailQuoteActionsEnabled(enabled) {
         const copyBtn = document.getElementById('copyEmailQuoteBtn');
+        const copyTableOnlyBtn = document.getElementById('copyEmailQuoteTableOnlyBtn');
         const sendBtn = document.getElementById('sendEmailQuoteBtn');
         if (copyBtn) copyBtn.disabled = !enabled;
+        if (copyTableOnlyBtn) copyTableOnlyBtn.disabled = !enabled;
         if (sendBtn) sendBtn.disabled = !enabled;
     }
 
@@ -1261,6 +1272,34 @@ document.addEventListener('DOMContentLoaded', function() {
         const tableHtml = buildEmailQuoteTable();
         updateEmailQuoteWarnings();
         return `${messageHtml}<br><br>${tableHtml}`;
+    }
+
+    function htmlToPlainText(html) {
+        return (html || '')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/p>/gi, '\n\n')
+            .replace(/<[^>]+>/g, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
+    function getEmailQuoteTableHtml() {
+        const emailBody = document.getElementById('emailQuoteBody');
+        const tableEl = emailBody ? emailBody.querySelector('table') : null;
+        if (tableEl) {
+            return tableEl.outerHTML;
+        }
+        return buildEmailQuoteTable();
+    }
+
+    async function copyHtmlToClipboard(htmlContent) {
+        const plainText = htmlToPlainText(htmlContent);
+        await navigator.clipboard.write([
+            new ClipboardItem({
+                'text/html': new Blob([htmlContent], { type: 'text/html' }),
+                'text/plain': new Blob([plainText], { type: 'text/plain' })
+            })
+        ]);
     }
 
     async function executeEmailQuote(statusId = null, statusName = null) {
@@ -1388,18 +1427,30 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('copyEmailQuoteBtn').addEventListener('click', async function() {
         const bodyHtml = document.getElementById('emailQuoteBody').innerHTML;
-        const plainText = bodyHtml.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n\n').replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim();
         const btn = this;
         const originalHtml = btn.innerHTML;
         try {
-            await navigator.clipboard.write([
-                new ClipboardItem({ 'text/html': new Blob([bodyHtml], { type: 'text/html' }), 'text/plain': new Blob([plainText], { type: 'text/plain' }) })
-            ]);
+            await copyHtmlToClipboard(bodyHtml);
             btn.innerHTML = '<i class="bi bi-check me-1"></i>Copied!';
             btn.className = 'btn btn-success';
             setTimeout(() => { btn.innerHTML = originalHtml; btn.className = 'btn btn-primary'; }, 1500);
         } catch (e) { alert('Copy failed'); }
     });
+
+    const copyTableOnlyBtn = document.getElementById('copyEmailQuoteTableOnlyBtn');
+    if (copyTableOnlyBtn) {
+        copyTableOnlyBtn.addEventListener('click', async function() {
+            const tableHtml = getEmailQuoteTableHtml();
+            const btn = this;
+            const originalHtml = btn.innerHTML;
+            try {
+                await copyHtmlToClipboard(tableHtml);
+                btn.innerHTML = '<i class="bi bi-check me-1"></i>Copied!';
+                btn.className = 'btn btn-success';
+                setTimeout(() => { btn.innerHTML = originalHtml; btn.className = 'btn btn-outline-primary'; }, 1500);
+            } catch (e) { alert('Copy failed'); }
+        });
+    }
 
     const replySelect = document.getElementById('emailQuoteReplySelect');
     if (replySelect) {
