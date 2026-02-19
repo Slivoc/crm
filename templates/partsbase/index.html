@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}PartsBase Test Console{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div class="mb-3">
+    {% for category, message in messages %}
+    <div class="alert alert-{{ 'warning' if category == 'message' else category }} mb-2" role="alert">{{ message }}</div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endwith %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                <i class="bi bi-cloud-arrow-up me-2"></i>
+                PartsBase Test Console
+            </h5>
+        </div>
+        <div class="card-body">
+            <p class="mb-2 text-muted">Use this module to validate authentication and test the 3-step inventory availability workflow.</p>
+            <ul class="mb-0 text-muted">
+                <li>Step 1: Upload a ZIP with part numbers</li>
+                <li>Step 2: Check request status by ID</li>
+                <li>Step 3: Download the result file by ID</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header"><strong>Connection Check</strong></div>
+                <div class="card-body">
+                    <form method="post">
+                        <input type="hidden" name="action" value="token_test">
+                        <button type="submit" class="btn btn-primary">Request Access Token</button>
+                    </form>
+                    {% if token_test_response %}
+                    <hr>
+                    <pre class="bg-light p-3 border rounded small mb-0">{{ token_test_response | tojson(indent=2) }}</pre>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header"><strong>Step 1: Submit Batch Search</strong></div>
+                <div class="card-body">
+                    <form method="post">
+                        <input type="hidden" name="action" value="batch_search">
+                        <label for="parts" class="form-label">Part numbers (one per line)</label>
+                        <textarea id="parts" name="parts" rows="8" class="form-control" placeholder="MS24566-8\n2N2222\nSN74HC00N">{{ submitted_parts }}</textarea>
+                        <button type="submit" class="btn btn-success mt-3">Upload Test ZIP</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header"><strong>Step 2: Check Status</strong></div>
+                <div class="card-body">
+                    <form method="post" class="row g-2 align-items-end">
+                        <input type="hidden" name="action" value="status_check">
+                        <div class="col-12">
+                            <label for="status_request_id" class="form-label">Request ID</label>
+                            <input id="status_request_id" name="status_request_id" class="form-control" value="{{ status_request_id }}" required>
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-outline-primary">Check Status</button>
+                        </div>
+                    </form>
+                    {% if status_response %}
+                    <hr>
+                    <pre class="bg-light p-3 border rounded small mb-0">{{ status_response | tojson(indent=2) }}</pre>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header"><strong>Step 3: Download Result File</strong></div>
+                <div class="card-body">
+                    <form method="post" class="row g-2 align-items-end">
+                        <input type="hidden" name="action" value="download_result">
+                        <div class="col-12">
+                            <label for="result_request_id" class="form-label">Request ID</label>
+                            <input id="result_request_id" name="result_request_id" class="form-control" value="{{ result_request_id }}" required>
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-outline-success">Download Result</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        {% if last_submit_response %}
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header"><strong>Submit Response</strong></div>
+                <div class="card-body">
+                    <pre class="bg-light p-3 border rounded small mb-0">{{ last_submit_response | tojson(indent=2) }}</pre>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
