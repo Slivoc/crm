@@ -140,6 +140,167 @@ def _coerce_price(value):
         return ''
 
 
+def _coerce_bool(value, *, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = str(value).strip().lower()
+    if text in ('1', 'true', 'yes', 'y', 'on'):
+        return True
+    if text in ('0', 'false', 'no', 'n', 'off'):
+        return False
+    return default
+
+
+def _coerce_text(value, *, default=''):
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text if text else default
+
+
+def _coerce_optional_text(value):
+    text = _coerce_text(value, default='')
+    return text if text else None
+
+
+def _normalize_marketplace_export_defaults(raw_defaults):
+    payload = raw_defaults or {}
+    description_mode = _coerce_text(payload.get('description_mode'), default='part_number')
+    if description_mode not in ('part_number', 'none'):
+        description_mode = 'part_number'
+
+    package_content = _coerce_int(payload.get('package_content'), default=1)
+    if package_content <= 0:
+        package_content = 1
+
+    return {
+        'description_mode': description_mode,
+        'mkp_eccn': _coerce_optional_text(payload.get('mkp_eccn')),
+        'mkp_product_unit': _coerce_optional_text(payload.get('mkp_product_unit')),
+        'mkp_package_content': package_content,
+        'mkp_package_content_unit': _coerce_optional_text(payload.get('mkp_package_content_unit')),
+        'mkp_third_level': _coerce_optional_text(payload.get('mkp_third_level')),
+        'mkp_dangerous': _coerce_bool(payload.get('mkp_dangerous'), default=False),
+        'mkp_serialized': _coerce_bool(payload.get('mkp_serialized'), default=False),
+        'mkp_log_card': _coerce_bool(payload.get('mkp_log_card'), default=False),
+        'mkp_easaf1': _coerce_bool(payload.get('mkp_easaf1'), default=False),
+    }
+
+
+def _get_marketplace_export_defaults():
+    raw = {
+        'description_mode': get_portal_setting('marketplace_export_default_description_mode'),
+        'mkp_eccn': get_portal_setting('marketplace_export_default_mkp_eccn'),
+        'mkp_product_unit': get_portal_setting('marketplace_export_default_mkp_product_unit'),
+        'mkp_package_content': get_portal_setting('marketplace_export_default_mkp_package_content'),
+        'mkp_package_content_unit': get_portal_setting('marketplace_export_default_mkp_package_content_unit'),
+        'mkp_third_level': get_portal_setting('marketplace_export_default_mkp_third_level'),
+        'mkp_dangerous': get_portal_setting('marketplace_export_default_mkp_dangerous'),
+        'mkp_serialized': get_portal_setting('marketplace_export_default_mkp_serialized'),
+        'mkp_log_card': get_portal_setting('marketplace_export_default_mkp_log_card'),
+        'mkp_easaf1': get_portal_setting('marketplace_export_default_mkp_easaf1'),
+    }
+    return _normalize_marketplace_export_defaults(raw)
+
+
+def _is_blank(value):
+    if value is None:
+        return True
+    return isinstance(value, str) and not value.strip()
+
+
+def _coerce_positive_number(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            number = float(text.replace(',', '.'))
+        except ValueError:
+            return None
+    return number if number > 0 else None
+
+
+def _part_identifier(record):
+    return str(record.get('part_number') or record.get('base_part_number') or '').strip()
+
+
+def _get_offer_missing_required_fields(offer):
+    missing = []
+    if _is_blank(offer.get('sku')):
+        missing.append('sku')
+    if _is_blank(offer.get('product-id')):
+        missing.append('product-id')
+    if _is_blank(offer.get('product-id-type')):
+        missing.append('product-id-type')
+    if _coerce_positive_number(offer.get('price')) is None:
+        missing.append('price')
+    if _coerce_positive_number(offer.get('quantity')) is None:
+        missing.append('quantity')
+    if _is_blank(offer.get('state')):
+        missing.append('state')
+    return missing
+
+
+def _get_product_missing_required_fields(part):
+    missing = []
+    if not _part_identifier(part):
+        missing.extend(['code', 'sku', 'product-id'])
+    if _is_blank(part.get('mkp_category')):
+        missing.append('mkpCategory')
+    if _coerce_positive_number(part.get('price')) is None:
+        missing.append('price')
+    if _coerce_positive_number(part.get('quantity')) is None:
+        missing.append('quantity')
+    if _is_blank(part.get('condition') or 'New'):
+        missing.append('state')
+    if _is_blank(part.get('mkp_description')) and _is_blank(part.get('description')):
+        missing.append('description [en]')
+    if _is_blank(part.get('mkp_eccn')):
+        missing.append('eccn')
+    if _is_blank(part.get('mkp_product_unit')):
+        missing.append('productUnit')
+    if _coerce_positive_number(part.get('mkp_package_content')) is None:
+        missing.append('packageContent')
+    if _is_blank(part.get('mkp_package_content_unit')):
+        missing.append('packageContentUnit')
+    if _is_blank(part.get('mkp_third_level')):
+        missing.append('thirdLevel')
+    if part.get('mkp_dangerous') is None:
+        missing.append('dangerous')
+    if part.get('mkp_serialized') is None:
+        missing.append('serialized')
+    if part.get('mkp_log_card') is None:
+        missing.append('logCard')
+    if part.get('mkp_easaf1') is None:
+        missing.append('easaf1')
+    return list(dict.fromkeys(missing))
+
+
+def _split_valid_rows(rows, missing_fields_func, id_func):
+    valid_rows = []
+    invalid_rows = []
+    for idx, row in enumerate(rows, start=1):
+        missing = missing_fields_func(row)
+        if missing:
+            invalid_rows.append({
+                'row': idx,
+                'id': id_func(row),
+                'missing_fields': missing,
+            })
+            continue
+        valid_rows.append(row)
+    return valid_rows, invalid_rows
+
+
 def _dedupe_csv_headers(csv_bytes):
     text = csv_bytes.decode('utf-8-sig', errors='replace')
     if not text:
@@ -333,7 +494,7 @@ def _build_marketplace_updates_from_row(row_data, valid_categories):
     for field in bool_fields:
         parsed_bool = _parse_import_bool(extracted.get(field))
         if parsed_bool is not None:
-            updates[field] = 1 if parsed_bool else 0
+            updates[field] = parsed_bool
 
     if not updates:
         return part_ref, None, "No importable marketplace detail fields found in row."
@@ -415,6 +576,8 @@ def import_marketplace_details_file():
         rows = _read_import_rows(file, filename)
         if not rows:
             return jsonify({'success': False, 'error': 'Uploaded file is empty'}), 400
+        total_rows = len(rows)
+        logger.info("Marketplace details import started: filename=%s rows=%s", filename, total_rows)
 
         valid_categories = set(get_available_categories())
         db = get_db()
@@ -436,18 +599,6 @@ def import_marketplace_details_file():
                     row_errors.append(f"Row {row_number}: {row_error}")
                 continue
 
-            cursor.execute(
-                "SELECT 1 FROM part_numbers WHERE base_part_number = ? OR part_number = ? LIMIT 1",
-                (part_ref, part_ref),
-            )
-            part_exists = cursor.fetchone() is not None
-            if not part_exists:
-                skipped_no_match += 1
-                if len(row_errors) < 20:
-                    row_errors.append(f"Row {row_number}: Part not found for '{part_ref}'.")
-                continue
-
-            updated += 1
             set_clause = ", ".join(f"{field} = ?" for field in field_updates.keys())
             params = list(field_updates.values()) + [part_ref, part_ref]
             cursor.execute(
@@ -455,9 +606,32 @@ def import_marketplace_details_file():
                 params
             )
             if cursor.rowcount > 0:
+                updated += cursor.rowcount
                 changed += cursor.rowcount
+            else:
+                skipped_no_match += 1
+                if len(row_errors) < 20:
+                    row_errors.append(f"Row {row_number}: Part not found for '{part_ref}'.")
+
+            if processed % 250 == 0:
+                logger.info(
+                    "Marketplace details import progress: processed=%s/%s matched=%s no_match=%s skipped=%s",
+                    processed,
+                    total_rows,
+                    updated,
+                    skipped_no_match,
+                    skipped_no_updates,
+                )
 
         db.commit()
+        logger.info(
+            "Marketplace details import completed: processed=%s matched=%s changed=%s no_match=%s skipped=%s",
+            processed,
+            updated,
+            changed,
+            skipped_no_match,
+            skipped_no_updates,
+        )
 
         return jsonify({
             'success': True,
@@ -485,12 +659,50 @@ def export_page():
     mirakl_base_url = get_portal_setting('mirakl_base_url')
     mirakl_shop_id = get_portal_setting('mirakl_shop_id')
     mirakl_api_key = get_portal_setting('mirakl_api_key')
+    marketplace_export_defaults = _get_marketplace_export_defaults()
     return render_template(
         'marketplace_export.html',
         mirakl_base_url=mirakl_base_url,
         mirakl_shop_id=mirakl_shop_id,
         mirakl_api_key_set=bool(mirakl_api_key),
+        marketplace_export_defaults=marketplace_export_defaults,
     )
+
+
+@marketplace_bp.route('/export-defaults', methods=['GET'])
+def marketplace_export_defaults_get():
+    return jsonify({'success': True, 'defaults': _get_marketplace_export_defaults()}), 200
+
+
+@marketplace_bp.route('/export-defaults', methods=['POST'])
+def marketplace_export_defaults_save():
+    data = request.get_json() or {}
+    defaults = _normalize_marketplace_export_defaults(data.get('defaults'))
+
+    db = get_db()
+    cursor = None
+    try:
+        cursor = db.cursor()
+        _upsert_portal_setting(cursor, 'marketplace_export_default_description_mode', defaults['description_mode'])
+        _upsert_portal_setting(cursor, 'marketplace_export_default_mkp_eccn', defaults['mkp_eccn'] or '')
+        _upsert_portal_setting(cursor, 'marketplace_export_default_mkp_product_unit', defaults['mkp_product_unit'] or '')
+        _upsert_portal_setting(cursor, 'marketplace_export_default_mkp_package_content', str(defaults['mkp_package_content']))
+        _upsert_portal_setting(cursor, 'marketplace_export_default_mkp_package_content_unit', defaults['mkp_package_content_unit'] or '')
+        _upsert_portal_setting(cursor, 'marketplace_export_default_mkp_third_level', defaults['mkp_third_level'] or '')
+        _upsert_portal_setting(cursor, 'marketplace_export_default_mkp_dangerous', '1' if defaults['mkp_dangerous'] else '0')
+        _upsert_portal_setting(cursor, 'marketplace_export_default_mkp_serialized', '1' if defaults['mkp_serialized'] else '0')
+        _upsert_portal_setting(cursor, 'marketplace_export_default_mkp_log_card', '1' if defaults['mkp_log_card'] else '0')
+        _upsert_portal_setting(cursor, 'marketplace_export_default_mkp_easaf1', '1' if defaults['mkp_easaf1'] else '0')
+        db.commit()
+    except Exception as exc:
+        logger.exception("Failed to save marketplace export defaults")
+        db.rollback()
+        return jsonify({'success': False, 'error': str(exc)}), 500
+    finally:
+        if cursor:
+            cursor.close()
+
+    return jsonify({'success': True, 'defaults': defaults}), 200
 
 
 @marketplace_bp.route('/mirakl', methods=['GET'])
@@ -946,9 +1158,12 @@ def update_marketplace_fields(base_part_number):
             if field in data:
                 updates.append(f"{field} = ?")
                 value = data[field]
-                # Convert booleans properly for SQLite
                 if field in ('mkp_dangerous', 'mkp_serialized', 'mkp_log_card', 'mkp_easaf1'):
-                    value = 1 if value else 0
+                    if value is not None:
+                        parsed_bool = _parse_import_bool(value)
+                        if parsed_bool is None:
+                            return jsonify({'error': f'Invalid boolean value for {field}'}), 400
+                        value = parsed_bool
                 params.append(value)
 
         if not updates:
@@ -1280,6 +1495,8 @@ def export_to_marketplace():
         export_data = json.loads(export_data_str)
         base_part_numbers = export_data.get('base_part_numbers', [])
         default_quantity = int(export_data.get('default_quantity') or 1)
+        skip_invalid_mandatory = _coerce_bool(export_data.get('skip_invalid_mandatory'), default=False)
+        export_defaults = _normalize_marketplace_export_defaults(export_data.get('defaults'))
 
         if not base_part_numbers:
             return jsonify({'error': 'No parts selected for export'}), 400
@@ -1343,30 +1560,49 @@ def export_to_marketplace():
                 lead_time = 0 if in_stock else default_lead_days
             lead_time_value = _coerce_int(lead_time, default=default_lead_days)
 
+            part_number = row['part_number'] or row['base_part_number']
+            resolved_description = _coerce_text(row['mkp_description'], default='')
+            if not resolved_description and export_defaults['description_mode'] == 'part_number':
+                resolved_description = part_number or ''
+
             parts_data.append({
                 'base_part_number': row['base_part_number'],
-                'part_number': row['part_number'],
+                'part_number': part_number,
                 'mkp_category': row['mkp_category'],
-                'mkp_description': row['mkp_description'],
+                'mkp_description': resolved_description,
                 'mkp_name': row['mkp_name'],
                 'mkp_product_summary': row['mkp_product_summary'],
                 'mkp_product_presentation': row['mkp_product_presentation'],
-                'mkp_product_unit': row['mkp_product_unit'],
-                'mkp_package_content': row['mkp_package_content'],
-                'mkp_package_content_unit': row['mkp_package_content_unit'],
-                'mkp_third_level': row['mkp_third_level'],
-                'mkp_dangerous': row['mkp_dangerous'],
-                'mkp_eccn': row['mkp_eccn'],
-                'mkp_serialized': row['mkp_serialized'],
-                'mkp_log_card': row['mkp_log_card'],
-                'mkp_easaf1': row['mkp_easaf1'],
-                'description': '',
+                'mkp_product_unit': _coerce_text(row['mkp_product_unit'], default=export_defaults['mkp_product_unit'] or ''),
+                'mkp_package_content': _coerce_int(row['mkp_package_content'], default=export_defaults['mkp_package_content']),
+                'mkp_package_content_unit': _coerce_text(row['mkp_package_content_unit'], default=export_defaults['mkp_package_content_unit'] or ''),
+                'mkp_third_level': _coerce_text(row['mkp_third_level'], default=export_defaults['mkp_third_level'] or ''),
+                'mkp_dangerous': _coerce_bool(row['mkp_dangerous'], default=export_defaults['mkp_dangerous']),
+                'mkp_eccn': _coerce_text(row['mkp_eccn'], default=export_defaults['mkp_eccn'] or ''),
+                'mkp_serialized': _coerce_bool(row['mkp_serialized'], default=export_defaults['mkp_serialized']),
+                'mkp_log_card': _coerce_bool(row['mkp_log_card'], default=export_defaults['mkp_log_card']),
+                'mkp_easaf1': _coerce_bool(row['mkp_easaf1'], default=export_defaults['mkp_easaf1']),
+                'description': resolved_description,
                 'manufacturer': '',
                 'quantity': quantity,
                 'price': _coerce_price(price),
                 'condition': 'New',
                 'lead_time_days': lead_time_value,
             })
+
+        skipped_invalid = []
+        if skip_invalid_mandatory:
+            parts_data, skipped_invalid = _split_valid_rows(
+                parts_data,
+                _get_product_missing_required_fields,
+                _part_identifier,
+            )
+            if not parts_data:
+                return jsonify({
+                    'error': 'All selected lines are missing mandatory fields.',
+                    'skipped_invalid_count': len(skipped_invalid),
+                    'skipped_invalid_preview': skipped_invalid[:20],
+                }), 400
 
         # Generate CSV file
         csv_file = export_parts_to_airbus_marketplace_csv(parts_data)
@@ -1546,9 +1782,25 @@ def mirakl_import_offers():
     data = request.get_json() or {}
     offers = data.get('offers') or []
     import_mode = data.get('import_mode', 'NORMAL')
+    skip_invalid_mandatory = _coerce_bool(data.get('skip_invalid_mandatory'), default=False)
 
     if not offers:
         return jsonify({'success': False, 'error': 'offers array is required'}), 400
+
+    skipped_invalid = []
+    if skip_invalid_mandatory:
+        offers, skipped_invalid = _split_valid_rows(
+            offers,
+            _get_offer_missing_required_fields,
+            lambda row: str(row.get('sku') or '').strip(),
+        )
+        if not offers:
+            return jsonify({
+                'success': False,
+                'error': 'All provided offers are missing mandatory fields.',
+                'skipped_invalid_count': len(skipped_invalid),
+                'skipped_invalid_preview': skipped_invalid[:20],
+            }), 400
 
     try:
         csv_bytes = build_offers_csv(offers)
@@ -1558,7 +1810,12 @@ def mirakl_import_offers():
     try:
         result = client.import_offers(csv_bytes, import_mode=import_mode)
         logger.info("Mirakl offer import result: %s", result)
-        return jsonify({'success': True, 'result': result}), 200
+        return jsonify({
+            'success': True,
+            'result': result,
+            'skipped_invalid_count': len(skipped_invalid),
+            'skipped_invalid_preview': skipped_invalid[:20],
+        }), 200
     except MiraklError as exc:
         logger.exception("Mirakl offer import failed")
         return jsonify({'success': False, 'error': str(exc)}), 502
@@ -1577,9 +1834,25 @@ def mirakl_import_products():
     data = request.get_json() or {}
     parts = data.get('parts') or []
     import_mode = data.get('import_mode', 'NORMAL')
+    skip_invalid_mandatory = _coerce_bool(data.get('skip_invalid_mandatory'), default=False)
 
     if not parts:
         return jsonify({'success': False, 'error': 'parts array is required'}), 400
+
+    skipped_invalid = []
+    if skip_invalid_mandatory:
+        parts, skipped_invalid = _split_valid_rows(
+            parts,
+            _get_product_missing_required_fields,
+            _part_identifier,
+        )
+        if not parts:
+            return jsonify({
+                'success': False,
+                'error': 'All provided product lines are missing mandatory fields.',
+                'skipped_invalid_count': len(skipped_invalid),
+                'skipped_invalid_preview': skipped_invalid[:20],
+            }), 400
 
     try:
         # Use the Airbus marketplace export function to build the full template CSV
@@ -1593,7 +1866,12 @@ def mirakl_import_products():
     try:
         result = client.import_products(csv_bytes, import_mode=import_mode)
         logger.info("Mirakl product import result: %s", result)
-        return jsonify({'success': True, 'result': result}), 200
+        return jsonify({
+            'success': True,
+            'result': result,
+            'skipped_invalid_count': len(skipped_invalid),
+            'skipped_invalid_preview': skipped_invalid[:20],
+        }), 200
     except MiraklError as exc:
         logger.exception("Mirakl product import failed")
         return jsonify({'success': False, 'error': str(exc)}), 502

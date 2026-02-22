@@ -235,6 +235,83 @@
                 <input type="number" class="form-control" id="defaultQuantity" value="1" min="1" step="1">
                 <small class="form-text text-muted">Used when stock quantity is unavailable.</small>
             </div>
+            <div class="col-md-3 mb-3">
+                <label class="form-label fw-bold">Default Description</label>
+                <select class="form-select" id="defaultDescriptionMode">
+                    <option value="part_number">Use part number</option>
+                    <option value="none">Leave blank</option>
+                </select>
+            </div>
+            <div class="col-md-3 mb-3">
+                <label class="form-label fw-bold">Default ECCN</label>
+                <input type="text" class="form-control" id="defaultMkpEccn" value="EAR">
+            </div>
+            <div class="col-md-3 mb-3">
+                <label class="form-label fw-bold">Default Product Unit</label>
+                <select class="form-select" id="defaultMkpProductUnit">
+                    <option value="EA">EA</option>
+                    <option value="KG">KG</option>
+                    <option value="M">M</option>
+                    <option value="L">L</option>
+                    <option value="SET">SET</option>
+                    <option value="BOX">BOX</option>
+                </select>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-3 mb-3">
+                <label class="form-label fw-bold">Default Package Content</label>
+                <input type="number" class="form-control" id="defaultMkpPackageContent" value="1" min="1" step="1">
+            </div>
+            <div class="col-md-3 mb-3">
+                <label class="form-label fw-bold">Default Package Content Unit</label>
+                <select class="form-select" id="defaultMkpPackageContentUnit">
+                    <option value="EA">EA</option>
+                    <option value="KG">KG</option>
+                    <option value="M">M</option>
+                    <option value="L">L</option>
+                    <option value="SET">SET</option>
+                    <option value="BOX">BOX</option>
+                </select>
+            </div>
+            <div class="col-md-3 mb-3">
+                <label class="form-label fw-bold">Default Third Level</label>
+                <input type="text" class="form-control" id="defaultMkpThirdLevel" value="EA">
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-2 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="defaultMkpDangerous">
+                    <label class="form-check-label fw-bold" for="defaultMkpDangerous">Dangerous</label>
+                </div>
+            </div>
+            <div class="col-md-2 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="defaultMkpSerialized">
+                    <label class="form-check-label fw-bold" for="defaultMkpSerialized">Serialized</label>
+                </div>
+            </div>
+            <div class="col-md-2 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="defaultMkpLogCard">
+                    <label class="form-check-label fw-bold" for="defaultMkpLogCard">Log Card</label>
+                </div>
+            </div>
+            <div class="col-md-2 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="defaultMkpEasaf1">
+                    <label class="form-check-label fw-bold" for="defaultMkpEasaf1">EASA F1</label>
+                </div>
+            </div>
+        </div>
+        <div class="row mt-2">
+            <div class="col">
+                <button class="btn btn-sm btn-outline-secondary" id="saveMarketplaceDefaultsBtn">
+                    <i class="bi bi-save"></i> Save Export Defaults
+                </button>
+                <span class="small text-muted ms-2" id="saveDefaultsStatus"></span>
+            </div>
         </div>
     </div>
 
@@ -327,6 +404,12 @@
                             <option value="products">Product export (products + offers)</option>
                             <option value="offers">Offer update only</option>
                         </select>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="skipInvalidMandatoryFields">
+                            <label class="form-check-label small text-muted" for="skipInvalidMandatoryFields">
+                                Skip lines missing mandatory fields
+                            </label>
+                        </div>
                         <button class="btn btn-lg btn-success" id="exportToCsvBtn">
                             <i class="bi bi-download"></i> Download CSV
                         </button>
@@ -568,12 +651,14 @@
 
 {% block extra_js %}
 <script>
+const MARKETPLACE_EXPORT_DEFAULTS = {{ marketplace_export_defaults | tojson }};
 let allParts = [];
 let categories = [];
 let currentEditingPartNumber = null;
 let loadStatusTimer = null;
 
 $(document).ready(function() {
+    applySavedMarketplaceDefaults();
     loadCategories();
 
     // Apply filters
@@ -588,6 +673,7 @@ $(document).ready(function() {
         $('#pricingOnly').prop('checked', false);
         $('#partNumberSearch').val('');
         $('#defaultQuantity').val(1);
+        applySavedMarketplaceDefaults();
     });
 
     // Export button
@@ -609,6 +695,10 @@ $(document).ready(function() {
 
     $('#importAirbusDetailsBtn').click(function() {
         importAirbusDetailsFile();
+    });
+
+    $('#saveMarketplaceDefaultsBtn').click(function() {
+        saveMarketplaceDefaults();
     });
 
     // Auto-categorize missing
@@ -1317,6 +1407,262 @@ function downloadCsv(csvContent, filename) {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
 }
+
+function coercePositiveNumber(value) {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+    const parsed = parseFloat(String(value).replace(',', '.'));
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return null;
+    }
+    return parsed;
+}
+
+function coerceBool(value, defaultValue = false) {
+    if (value === null || value === undefined) {
+        return defaultValue;
+    }
+    if (typeof value === 'boolean') {
+        return value;
+    }
+    if (typeof value === 'number') {
+        return value !== 0;
+    }
+    const text = String(value).trim().toLowerCase();
+    if (['1', 'true', 'yes', 'y', 'on'].includes(text)) {
+        return true;
+    }
+    if (['0', 'false', 'no', 'n', 'off'].includes(text)) {
+        return false;
+    }
+    return defaultValue;
+}
+
+function getMarketplaceDefaults() {
+    return {
+        description_mode: $('#defaultDescriptionMode').val() || 'part_number',
+        mkp_eccn: ($('#defaultMkpEccn').val() || '').trim(),
+        mkp_product_unit: $('#defaultMkpProductUnit').val() || 'EA',
+        mkp_package_content: parseInt($('#defaultMkpPackageContent').val(), 10) || 1,
+        mkp_package_content_unit: $('#defaultMkpPackageContentUnit').val() || 'EA',
+        mkp_third_level: ($('#defaultMkpThirdLevel').val() || 'EA').trim(),
+        mkp_dangerous: $('#defaultMkpDangerous').is(':checked'),
+        mkp_serialized: $('#defaultMkpSerialized').is(':checked'),
+        mkp_log_card: $('#defaultMkpLogCard').is(':checked'),
+        mkp_easaf1: $('#defaultMkpEasaf1').is(':checked')
+    };
+}
+
+function applySavedMarketplaceDefaults() {
+    const defaults = MARKETPLACE_EXPORT_DEFAULTS || {};
+    $('#defaultDescriptionMode').val(defaults.description_mode || 'part_number');
+    $('#defaultMkpEccn').val(defaults.mkp_eccn || 'EAR');
+    $('#defaultMkpProductUnit').val(defaults.mkp_product_unit || 'EA');
+    $('#defaultMkpPackageContent').val(defaults.mkp_package_content || 1);
+    $('#defaultMkpPackageContentUnit').val(defaults.mkp_package_content_unit || 'EA');
+    $('#defaultMkpThirdLevel').val(defaults.mkp_third_level || 'EA');
+    $('#defaultMkpDangerous').prop('checked', !!defaults.mkp_dangerous);
+    $('#defaultMkpSerialized').prop('checked', !!defaults.mkp_serialized);
+    $('#defaultMkpLogCard').prop('checked', !!defaults.mkp_log_card);
+    $('#defaultMkpEasaf1').prop('checked', !!defaults.mkp_easaf1);
+}
+
+function saveMarketplaceDefaults() {
+    const defaults = getMarketplaceDefaults();
+    $('#saveMarketplaceDefaultsBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Saving...');
+    $('#saveDefaultsStatus').text('Saving...');
+
+    $.ajax({
+        url: '/marketplace/export-defaults',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ defaults: defaults })
+    }).done(function(response) {
+        if (response.success) {
+            $('#saveDefaultsStatus').text('Saved.');
+        } else {
+            $('#saveDefaultsStatus').text('Save failed.');
+            alert('Failed to save defaults: ' + (response.error || 'Unknown error'));
+        }
+    }).fail(function(xhr) {
+        const error = (xhr.responseJSON && xhr.responseJSON.error) || xhr.statusText || 'Unknown error';
+        $('#saveDefaultsStatus').text('Save failed.');
+        alert('Failed to save defaults: ' + error);
+    }).always(function() {
+        $('#saveMarketplaceDefaultsBtn').prop('disabled', false).html('<i class="bi bi-save"></i> Save Export Defaults');
+    });
+}
+
+function resolveDefaultDescription(part, defaults) {
+    const current = (part.mkp_description || '').trim();
+    if (current) {
+        return current;
+    }
+    if (defaults.description_mode === 'part_number') {
+        return (part.part_number || part.base_part_number || '').trim();
+    }
+    return '';
+}
+
+function buildProductPayload(part, defaultQuantity, defaults) {
+    const partNumber = (part.part_number || part.base_part_number || '').trim();
+    const stockQty = parseInt(part.stock_qty, 10);
+    const quantity = part.in_stock && Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
+    const leadTime = part.estimated_lead_days ?? 7;
+    const description = resolveDefaultDescription(part, defaults);
+
+    return {
+        part_number: partNumber,
+        mkp_category: part.mkp_category,
+        mkp_description: description,
+        mkp_name: part.mkp_name || '',
+        mkp_product_summary: part.mkp_product_summary || '',
+        mkp_product_presentation: part.mkp_product_presentation || '',
+        mkp_product_unit: (part.mkp_product_unit || defaults.mkp_product_unit || 'EA'),
+        mkp_package_content: part.mkp_package_content || defaults.mkp_package_content || 1,
+        mkp_package_content_unit: (part.mkp_package_content_unit || defaults.mkp_package_content_unit || 'EA'),
+        mkp_third_level: (part.mkp_third_level || defaults.mkp_third_level || 'EA'),
+        mkp_dangerous: part.mkp_dangerous !== null && part.mkp_dangerous !== undefined
+            ? coerceBool(part.mkp_dangerous, false)
+            : defaults.mkp_dangerous,
+        mkp_eccn: (part.mkp_eccn || defaults.mkp_eccn || '').trim(),
+        mkp_serialized: part.mkp_serialized !== null && part.mkp_serialized !== undefined
+            ? coerceBool(part.mkp_serialized, false)
+            : defaults.mkp_serialized,
+        mkp_log_card: part.mkp_log_card !== null && part.mkp_log_card !== undefined
+            ? coerceBool(part.mkp_log_card, false)
+            : defaults.mkp_log_card,
+        mkp_easaf1: part.mkp_easaf1 !== null && part.mkp_easaf1 !== undefined
+            ? coerceBool(part.mkp_easaf1, false)
+            : defaults.mkp_easaf1,
+        description: description,
+        manufacturer: '',
+        quantity: quantity,
+        price: part.estimated_price ?? '',
+        condition: 'New',
+        lead_time_days: leadTime
+    };
+}
+
+function buildOfferPayload(part, defaultQuantity, defaults) {
+    const partNumber = (part.part_number || part.base_part_number || '').trim();
+    const stockQty = parseInt(part.stock_qty, 10);
+    const quantity = part.in_stock && Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
+    const leadTime = part.estimated_lead_days ?? 7;
+
+    return {
+        'sku': partNumber,
+        'product-id': partNumber,
+        'product-id-type': 'SHOP_SKU',
+        'price': part.estimated_price ?? '',
+        'quantity': quantity,
+        'state': '11',
+        'leadtime-to-ship': leadTime,
+        'description': resolveDefaultDescription(part, defaults)
+    };
+}
+
+function validateMandatoryForProductPayload(payload) {
+    const missing = [];
+    const partNumber = (payload.part_number || '').trim();
+    const quantity = coercePositiveNumber(payload.quantity);
+    const price = coercePositiveNumber(payload.price);
+    const description = (payload.mkp_description || payload.description || '').trim();
+
+    if (!partNumber) {
+        missing.push('code');
+        missing.push('sku');
+        missing.push('product-id');
+    }
+    if (!(payload.mkp_category || '').trim()) {
+        missing.push('mkpCategory');
+    }
+    if (!description) {
+        missing.push('description [en]');
+    }
+    if (!(payload.mkp_eccn || '').trim()) {
+        missing.push('eccn');
+    }
+    if (!(payload.mkp_product_unit || '').trim()) {
+        missing.push('productUnit');
+    }
+    if (coercePositiveNumber(payload.mkp_package_content) === null) {
+        missing.push('packageContent');
+    }
+    if (!(payload.mkp_package_content_unit || '').trim()) {
+        missing.push('packageContentUnit');
+    }
+    if (!(payload.mkp_third_level || '').trim()) {
+        missing.push('thirdLevel');
+    }
+    if (price === null) {
+        missing.push('price');
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+        missing.push('quantity');
+    }
+    return missing;
+    if (payload.mkp_dangerous === null || payload.mkp_dangerous === undefined) {
+        missing.push('dangerous');
+    }
+    if (payload.mkp_serialized === null || payload.mkp_serialized === undefined) {
+        missing.push('serialized');
+    }
+    if (payload.mkp_log_card === null || payload.mkp_log_card === undefined) {
+        missing.push('logCard');
+    }
+    if (payload.mkp_easaf1 === null || payload.mkp_easaf1 === undefined) {
+        missing.push('easaf1');
+    }
+    return missing;
+}
+
+function validateMandatoryForOfferPayload(offer) {
+    const missing = [];
+    const partNumber = (offer['sku'] || '').trim();
+    const quantity = coercePositiveNumber(offer['quantity']);
+    const price = coercePositiveNumber(offer['price']);
+
+    if (!partNumber) {
+        missing.push('sku');
+        missing.push('product-id');
+    }
+    if (price === null) {
+        missing.push('price');
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+        missing.push('quantity');
+    }
+    return missing;
+}
+
+function splitValidParts(parts, mode, defaults) {
+    const defaultQuantity = parseInt($('#defaultQuantity').val(), 10) || 1;
+    const valid = [];
+    const invalid = [];
+
+    parts.forEach((part, index) => {
+        const payload = mode === 'offers'
+            ? buildOfferPayload(part, defaultQuantity, defaults)
+            : buildProductPayload(part, defaultQuantity, defaults);
+        const missing = mode === 'offers'
+            ? validateMandatoryForOfferPayload(payload)
+            : validateMandatoryForProductPayload(payload);
+        if (missing.length > 0) {
+            invalid.push({
+                row: index + 1,
+                id: payload.part_number || payload['sku'] || part.part_number || part.base_part_number || '',
+                missing_fields: missing
+            });
+            return;
+        }
+        valid.push(part);
+    });
+
+    return { valid, invalid };
+}
+
 function exportToCsv() {
     const categorizedParts = allParts.filter(p => p.mkp_category);
 
@@ -1325,12 +1671,30 @@ function exportToCsv() {
         return;
     }
 
+    const skipInvalidMandatory = $('#skipInvalidMandatoryFields').is(':checked');
+    const defaults = getMarketplaceDefaults();
+    let exportParts = categorizedParts;
+    if (skipInvalidMandatory) {
+        const split = splitValidParts(categorizedParts, 'products', defaults);
+        exportParts = split.valid;
+        if (split.invalid.length > 0) {
+            $('#exportStatus').text(`Skipping ${split.invalid.length} line(s) missing mandatory product fields.`);
+            console.warn('Skipped invalid product lines:', split.invalid);
+        }
+        if (exportParts.length === 0) {
+            alert('All selected lines are missing mandatory fields. Nothing to export.');
+            return;
+        }
+    }
+
     $('#exportToCsvBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Generating...');
 
     // Prepare export data with pricing
     const exportData = {
-        base_part_numbers: categorizedParts.map(p => p.base_part_number),
-        default_quantity: parseInt($('#defaultQuantity').val(), 10) || 1
+        base_part_numbers: exportParts.map(p => p.base_part_number),
+        default_quantity: parseInt($('#defaultQuantity').val(), 10) || 1,
+        skip_invalid_mandatory: skipInvalidMandatory,
+        defaults: defaults
     };
     
     // Create a form and submit it to trigger download
@@ -1372,9 +1736,28 @@ function pushOffersToMarketplace() {
 
     const pushMode = $('#miraklPushMode').val() || 'products';
     const isOfferUpdate = pushMode === 'offers';
+    const skipInvalidMandatory = $('#skipInvalidMandatoryFields').is(':checked');
+    const defaults = getMarketplaceDefaults();
+    let partsToPush = categorizedParts;
+    let skippedInvalid = [];
+    if (skipInvalidMandatory) {
+        const split = splitValidParts(categorizedParts, pushMode, defaults);
+        partsToPush = split.valid;
+        skippedInvalid = split.invalid;
+        if (skippedInvalid.length > 0) {
+            $('#exportStatus').text(`Skipping ${skippedInvalid.length} line(s) missing mandatory ${isOfferUpdate ? 'offer' : 'product'} fields.`);
+            console.warn('Skipped invalid marketplace lines:', skippedInvalid);
+        }
+    }
+
+    if (partsToPush.length === 0) {
+        alert('All selected lines are missing mandatory fields. Nothing to push.');
+        return;
+    }
+
     const confirmText = isOfferUpdate
-        ? `Push offer update for ${categorizedParts.length} parts to Airbus Marketplace now?`
-        : `Push ${categorizedParts.length} products to Airbus Marketplace now?`;
+        ? `Push offer update for ${partsToPush.length} parts to Airbus Marketplace now?`
+        : `Push ${partsToPush.length} products to Airbus Marketplace now?`;
 
     if (!confirm(confirmText)) {
         return;
@@ -1385,62 +1768,15 @@ function pushOffersToMarketplace() {
 
     const defaultQuantity = parseInt($('#defaultQuantity').val(), 10) || 1;
 
-    // Build full Airbus template data for each part
-    const parts = categorizedParts.map((part) => {
-        const partNumber = part.part_number || part.base_part_number || '';
-        const stockQty = parseInt(part.stock_qty, 10);
-        const quantity = part.in_stock && Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
-        const leadTime = part.estimated_lead_days ?? 7;
-
-        return {
-            'part_number': partNumber,
-            'mkp_category': part.mkp_category,
-            'mkp_description': part.mkp_description || '',
-            'mkp_name': part.mkp_name || '',
-            'mkp_product_summary': part.mkp_product_summary || '',
-            'mkp_product_presentation': part.mkp_product_presentation || '',
-            'mkp_product_unit': part.mkp_product_unit || 'EA',
-            'mkp_package_content': part.mkp_package_content || 1,
-            'mkp_package_content_unit': part.mkp_package_content_unit || 'EA',
-            'mkp_third_level': part.mkp_third_level || 'EA',
-            'mkp_dangerous': part.mkp_dangerous || false,
-            'mkp_eccn': part.mkp_eccn || '',
-            'mkp_serialized': part.mkp_serialized || false,
-            'mkp_log_card': part.mkp_log_card || false,
-            'mkp_easaf1': part.mkp_easaf1 || false,
-            'description': part.mkp_description || '',
-            'manufacturer': '',
-            'quantity': quantity,
-            'price': part.estimated_price ?? '',
-            'condition': 'New',
-            'lead_time_days': leadTime
-        };
-    });
-
-    const offers = categorizedParts.map((part) => {
-        const partNumber = part.part_number || part.base_part_number || '';
-        const stockQty = parseInt(part.stock_qty, 10);
-        const quantity = part.in_stock && Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
-        const leadTime = part.estimated_lead_days ?? 7;
-
-        return {
-            'sku': partNumber,
-            'product-id': partNumber,
-            'product-id-type': 'SHOP_SKU',
-            'price': part.estimated_price ?? '',
-            'quantity': quantity,
-            'state': '11',
-            'leadtime-to-ship': leadTime,
-            'description': part.mkp_description || ''
-        };
-    });
+    const parts = partsToPush.map((part) => buildProductPayload(part, defaultQuantity, defaults));
+    const offers = partsToPush.map((part) => buildOfferPayload(part, defaultQuantity, defaults));
 
     const endpoint = isOfferUpdate
         ? '/marketplace/mirakl/offers/import'
         : '/marketplace/mirakl/products/import';
     const payload = isOfferUpdate
-        ? { offers: offers, import_mode: 'NORMAL' }
-        : { parts: parts, import_mode: 'NORMAL' };
+        ? { offers: offers, import_mode: 'NORMAL', skip_invalid_mandatory: skipInvalidMandatory }
+        : { parts: parts, import_mode: 'NORMAL', skip_invalid_mandatory: skipInvalidMandatory };
 
     $.ajax({
         url: endpoint,
@@ -1451,7 +1787,9 @@ function pushOffersToMarketplace() {
         if (response.success) {
             const importId = response.result && response.result.import_id ? response.result.import_id : 'unknown';
             const modeLabel = isOfferUpdate ? 'Offer update' : 'Product export';
-            $('#exportStatus').text(`${modeLabel} started. Import ID: ${importId}`);
+            const skipped = response.skipped_invalid_count || skippedInvalid.length || 0;
+            const skippedText = skipped > 0 ? ` Skipped ${skipped} invalid line(s).` : '';
+            $('#exportStatus').text(`${modeLabel} started. Import ID: ${importId}.${skippedText}`);
         } else {
             $('#exportStatus').text(response.error || 'Mirakl import failed.');
             alert('Mirakl import failed: ' + (response.error || 'Unknown error'));
@@ -1540,6 +1878,11 @@ function importAirbusDetailsFile() {
 
     $('#importAirbusDetailsBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Importing...');
     $('#exportStatus').text('Importing Airbus detail file...');
+    const startedAt = Date.now();
+    const progressTimer = window.setInterval(function () {
+        const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+        $('#exportStatus').text(`Importing Airbus detail file... still processing (${elapsedSeconds}s elapsed).`);
+    }, 5000);
 
     const formData = new FormData();
     formData.append('file', file);
@@ -1573,6 +1916,7 @@ function importAirbusDetailsFile() {
         $('#exportStatus').text(error);
         alert('Import failed: ' + error);
     }).always(function() {
+        window.clearInterval(progressTimer);
         $('#importAirbusDetailsBtn').prop('disabled', false).html('<i class="bi bi-file-earmark-arrow-up"></i> Import Airbus Detail File');
     });
 }

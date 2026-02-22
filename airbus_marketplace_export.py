@@ -2,6 +2,7 @@
 Export parts to Airbus Marketplace format
 """
 import logging
+import os
 from datetime import datetime
 import csv
 from openpyxl import Workbook
@@ -90,6 +91,10 @@ AIRBUS_MARKETPLACE_HEADERS = [
 ]
 
 
+def _airbus_bool(value):
+    return 'TRUE' if bool(value) else 'FALSE'
+
+
 def _build_airbus_row(part):
     part_number = part.get('part_number', '')
     mkp_category = part.get('mkp_category', '')
@@ -110,11 +115,18 @@ def _build_airbus_row(part):
     mkp_package_content = part.get('mkp_package_content') if part.get('mkp_package_content') is not None else 1
     mkp_package_content_unit = part.get('mkp_package_content_unit') or 'EA'
     mkp_third_level = part.get('mkp_third_level') or 'PC'  # PC = piece, valid value
-    mkp_dangerous = 'true' if part.get('mkp_dangerous') else 'false'
+    mkp_dangerous = _airbus_bool(part.get('mkp_dangerous'))
     mkp_eccn = part.get('mkp_eccn') or 'EAR'  # EAR = Export Administration Regulations (default for commercial)
-    mkp_serialized = 'true' if part.get('mkp_serialized') else 'false'
-    mkp_log_card = 'true' if part.get('mkp_log_card') else 'false'
-    mkp_easaf1 = 'true' if part.get('mkp_easaf1') else 'false'
+    mkp_serialized = _airbus_bool(part.get('mkp_serialized'))
+    mkp_log_card = _airbus_bool(part.get('mkp_log_card'))
+    # easaf1 is operator-specific in Airbus/Mirakl and may be a constrained value-list,
+    # not a generic boolean. Use configured tokens when provided; otherwise leave blank.
+    easaf1_true_value = (os.getenv('MIRAKL_EASAF1_TRUE_VALUE') or '').strip()
+    easaf1_false_value = (os.getenv('MIRAKL_EASAF1_FALSE_VALUE') or '').strip()
+    if easaf1_true_value or easaf1_false_value:
+        mkp_easaf1 = easaf1_true_value if part.get('mkp_easaf1') else easaf1_false_value
+    else:
+        mkp_easaf1 = _airbus_bool(part.get('mkp_easaf1'))
 
     return [
         mkp_category,  # mkpCategory
