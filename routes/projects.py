@@ -78,51 +78,159 @@ def _coerce_usage_list(values):
 def _fetch_project_parts_list_rows(project_id):
     rows = db_execute(
         """
+        WITH linked_project_lines AS (
+            SELECT
+                ppl.parts_list_id,
+                ppl.parts_list_line_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY ppl.parts_list_line_id
+                    ORDER BY COALESCE(ppl.date_modified, ppl.date_created) DESC, ppl.id DESC
+                ) AS rn
+            FROM project_parts_list_lines ppl
+            WHERE ppl.project_id = ?
+              AND ppl.parts_list_id IS NOT NULL
+              AND ppl.parts_list_line_id IS NOT NULL
+        ),
+        linked_lines AS (
+            SELECT
+                pl.id AS parts_list_id,
+                pl.name AS parts_list_name,
+                pll.id AS parts_list_line_id,
+                pll.line_number,
+                pll.customer_part_number,
+                pll.base_part_number,
+                pll.description,
+                pll.quantity AS requested_qty,
+                pll.chosen_supplier_id,
+                COALESCE(pll.parent_line_id, pll.id) AS quote_line_key
+            FROM linked_project_lines lpl
+            JOIN parts_lists pl ON pl.id = lpl.parts_list_id
+            JOIN parts_list_lines pll ON pll.id = lpl.parts_list_line_id
+            WHERE lpl.rn = 1
+        ),
+        latest_supplier_quotes AS (
+            SELECT
+                ranked.quote_line_key,
+                ranked.supplier_quote_id,
+                ranked.supplier_id,
+                ranked.quote_reference,
+                ranked.quote_date,
+                ranked.currency_code,
+                ranked.supplier_quote_line_id,
+                ranked.quoted_part_number,
+                ranked.manufacturer,
+                ranked.quantity_quoted,
+                ranked.unit_price,
+                ranked.lead_time_days,
+                ranked.condition_code,
+                ranked.certifications,
+                ranked.is_no_bid,
+                ranked.line_notes
+            FROM (
+                SELECT
+                    sql.parts_list_line_id AS quote_line_key,
+                    sq.id AS supplier_quote_id,
+                    sq.supplier_id,
+                    sq.quote_reference,
+                    sq.quote_date,
+                    curr.currency_code,
+                    sql.id AS supplier_quote_line_id,
+                    sql.quoted_part_number,
+                    sql.manufacturer,
+                    sql.quantity_quoted,
+                    sql.unit_price,
+                    sql.lead_time_days,
+                    sql.condition_code,
+                    sql.certifications,
+                    sql.is_no_bid,
+                    sql.line_notes,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY sql.parts_list_line_id
+                        ORDER BY COALESCE(sql.date_modified, sql.date_created) DESC, sql.id DESC
+                    ) AS rn
+                FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                LEFT JOIN currencies curr ON curr.id = sq.currency_id
+            ) ranked
+            WHERE ranked.rn = 1
+        ),
+        latest_customer_quotes AS (
+            SELECT
+                ranked.parts_list_line_id,
+                ranked.customer_quote_line_id,
+                ranked.customer_quote_status,
+                ranked.customer_quote_price_gbp,
+                ranked.customer_quote_margin_percent,
+                ranked.customer_quote_part_number,
+                ranked.customer_quote_manufacturer,
+                ranked.customer_quote_lead_days,
+                ranked.customer_quote_condition,
+                ranked.customer_quote_certs,
+                ranked.customer_quote_no_bid,
+                ranked.customer_quote_notes
+            FROM (
+                SELECT
+                    cql.parts_list_line_id,
+                    cql.id AS customer_quote_line_id,
+                    cql.quoted_status AS customer_quote_status,
+                    cql.quote_price_gbp AS customer_quote_price_gbp,
+                    cql.margin_percent AS customer_quote_margin_percent,
+                    cql.quoted_part_number AS customer_quote_part_number,
+                    cql.manufacturer AS customer_quote_manufacturer,
+                    cql.lead_days AS customer_quote_lead_days,
+                    cql.standard_condition AS customer_quote_condition,
+                    cql.standard_certs AS customer_quote_certs,
+                    cql.is_no_bid AS customer_quote_no_bid,
+                    cql.line_notes AS customer_quote_notes,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY cql.parts_list_line_id
+                        ORDER BY COALESCE(cql.date_modified, cql.date_created) DESC, cql.id DESC
+                    ) AS rn
+                FROM customer_quote_lines cql
+            ) ranked
+            WHERE ranked.rn = 1
+        )
         SELECT
-            pl.id AS parts_list_id,
-            pl.name AS parts_list_name,
-            pll.id AS parts_list_line_id,
-            pll.line_number,
-            pll.customer_part_number,
-            pll.base_part_number,
-            pll.description,
-            pll.quantity AS requested_qty,
-            sq.id AS supplier_quote_id,
-            s.name AS supplier_name,
-            sq.quote_reference,
-            sq.quote_date,
-            curr.currency_code,
-            sql.id AS supplier_quote_line_id,
-            sql.quoted_part_number,
-            sql.manufacturer,
-            sql.quantity_quoted,
-            sql.unit_price,
-            sql.lead_time_days,
-            sql.condition_code,
-            sql.certifications,
-            sql.is_no_bid,
-            sql.line_notes,
-            cql.id AS customer_quote_line_id,
-            cql.quoted_status AS customer_quote_status,
-            cql.quote_price_gbp AS customer_quote_price_gbp,
-            cql.margin_percent AS customer_quote_margin_percent,
-            cql.quoted_part_number AS customer_quote_part_number,
-            cql.manufacturer AS customer_quote_manufacturer,
-            cql.lead_days AS customer_quote_lead_days,
-            cql.standard_condition AS customer_quote_condition,
-            cql.standard_certs AS customer_quote_certs,
-            cql.is_no_bid AS customer_quote_no_bid,
-            cql.line_notes AS customer_quote_notes
-        FROM parts_lists pl
-        JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
-        LEFT JOIN parts_list_supplier_quote_lines sql
-            ON sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
-        LEFT JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-        LEFT JOIN suppliers s ON s.id = sq.supplier_id
-        LEFT JOIN currencies curr ON curr.id = sq.currency_id
-        LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
-        WHERE pl.project_id = ?
-        ORDER BY pl.id, pll.line_number, sql.id
+            ll.parts_list_id,
+            ll.parts_list_name,
+            ll.parts_list_line_id,
+            ll.line_number,
+            ll.customer_part_number,
+            ll.base_part_number,
+            ll.description,
+            ll.requested_qty,
+            lsq.supplier_quote_id,
+            COALESCE(chosen_supplier.name, quote_supplier.name) AS supplier_name,
+            lsq.quote_reference,
+            lsq.quote_date,
+            lsq.currency_code,
+            lsq.supplier_quote_line_id,
+            lsq.quoted_part_number,
+            lsq.manufacturer,
+            lsq.quantity_quoted,
+            lsq.unit_price,
+            lsq.lead_time_days,
+            lsq.condition_code,
+            lsq.certifications,
+            lsq.is_no_bid,
+            lsq.line_notes,
+            lcq.customer_quote_line_id,
+            lcq.customer_quote_status,
+            lcq.customer_quote_price_gbp,
+            lcq.customer_quote_margin_percent,
+            lcq.customer_quote_part_number,
+            lcq.customer_quote_manufacturer,
+            lcq.customer_quote_lead_days,
+            lcq.customer_quote_condition,
+            lcq.customer_quote_certs,
+            lcq.customer_quote_no_bid,
+            lcq.customer_quote_notes
+        FROM linked_lines ll
+        LEFT JOIN latest_supplier_quotes lsq ON lsq.quote_line_key = ll.quote_line_key
+        LEFT JOIN latest_customer_quotes lcq ON lcq.parts_list_line_id = ll.parts_list_line_id
+        LEFT JOIN suppliers chosen_supplier ON chosen_supplier.id = ll.chosen_supplier_id
+        LEFT JOIN suppliers quote_supplier ON quote_supplier.id = lsq.supplier_id
+        ORDER BY ll.parts_list_id, ll.line_number, ll.parts_list_line_id
         """,
         (project_id,),
         fetch='all',
