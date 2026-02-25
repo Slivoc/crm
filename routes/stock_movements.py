@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, render_template, redirect, url_for
 import pandas as pd
 import os
+import re
 from datetime import datetime
 from werkzeug.utils import secure_filename
 import numpy as np
@@ -363,17 +364,8 @@ def remove_specific_stock():
 
 # New functionality for stock movement imports
 def create_base_part_number(part_number):
-    """Create a normalized base part number from a part number"""
-    # Remove common prefixes, suffixes, and normalize
-    base = part_number.upper().strip()
-    # Remove common manufacturer prefixes
-    for prefix in ['MS', 'NAS', 'AN', 'AS']:
-        if base.startswith(prefix):
-            base = base[len(prefix):]
-            break
-    # Remove dashes and spaces
-    base = base.replace('-', '').replace(' ', '')
-    return base if base else part_number.upper()
+    """Create a normalized base part number by stripping non-alphanumeric chars."""
+    return re.sub(r'[^a-zA-Z0-9]', '', str(part_number or '')).upper()
 
 
 def create_part_on_demand(cur, system_part_number, part_number=None):
@@ -1081,9 +1073,10 @@ def stock_levels_mapping(file_id):
 
 @stock_movements_bp.route('/upload-stock-levels/process', methods=['POST'])
 def process_stock_levels_upload():
-    """Process stock levels upload - NUKES EVERYTHING and rebuilds from CSV"""
+    """Process stock levels upload by rebuilding part_numbers.stock from uploaded file."""
     data = request.get_json()
     file_id = data.get('file_id')
+    mapping = data.get('mapping') or {}
 
     if not file_id:
         return jsonify(success=False, message="Missing file_id"), 400
@@ -1104,22 +1097,78 @@ def process_stock_levels_upload():
             'processed': 0,
             'created': 0,
             'deleted': 0,
+            'not_found': 0,
             'errors': []
         }
 
-        # Hard-coded column names from ERP
-        ERP_ID_COL = 'id'  # Optional unique identifier from ERP
-        PART_NUMBER_COL = 'partNumber'
-        PART_ID_COL = 'partId'  # Optional system part number
-        QUANTITY_COL = 'remainingQty'
-        COST_COL = 'unitCost'
+        # Resolve mapped columns (mapping values are column indices from UI).
+        def _mapped_column_name(field_name):
+            index_raw = mapping.get(field_name)
+            if index_raw is None:
+                return None
+            try:
+                idx = int(index_raw)
+            except (TypeError, ValueError):
+                return None
+            if idx < 0 or idx >= len(df.columns):
+                return None
+            return df.columns[idx]
 
-        # Verify required columns exist
-        required_cols = [PART_NUMBER_COL, QUANTITY_COL]
+        part_col = _mapped_column_name('part_number') or 'partNumber'
+        qty_col = _mapped_column_name('stock_quantity') or 'remainingQty'
+        cost_col = _mapped_column_name('unit_price') or 'unitCost'
+
+        required_cols = [part_col, qty_col]
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
             missing_list = ", ".join(missing_cols)
-            return jsonify(success=False, message=f"Required column(s) '{missing_list}' not found in CSV"), 400
+            return jsonify(success=False, message=f"Required column(s) '{missing_list}' not found in file"), 400
+
+        # First pass: collapse duplicate part numbers by normalized base part number.
+        aggregated_stock = {}
+        for idx, row in df.iterrows():
+            raw_part_number = str(row.get(part_col, '')).strip()
+            if not raw_part_number or raw_part_number.lower() in ['nan', 'none']:
+                continue
+
+            base_part_number = create_base_part_number(raw_part_number)
+            if not base_part_number:
+                continue
+
+            try:
+                quantity = float(str(row.get(qty_col, '')).strip())
+            except (ValueError, TypeError):
+                results['errors'].append(f"Row {idx + 1}: Invalid quantity format")
+                continue
+
+            if quantity < 0:
+                results['errors'].append(f"Row {idx + 1}: Quantity cannot be negative")
+                continue
+
+            unit_price = None
+            if cost_col in df.columns:
+                try:
+                    price_str = str(row.get(cost_col, '')).strip()
+                    if price_str and price_str.lower() not in ['nan', 'none', '']:
+                        price_str = price_str.replace('$', '').replace(',', '')
+                        unit_price = float(price_str)
+                except (ValueError, TypeError):
+                    unit_price = None
+
+            entry = aggregated_stock.setdefault(
+                base_part_number,
+                {
+                    'quantity': 0.0,
+                    'sample_part_number': raw_part_number,
+                    'cost_quantity': 0.0,
+                    'cost_total': 0.0,
+                }
+            )
+            entry['quantity'] += quantity
+            if unit_price is not None and quantity > 0:
+                entry['cost_quantity'] += quantity
+                entry['cost_total'] += unit_price * quantity
+            results['processed'] += 1
 
         # Run destructive reset inside a transaction
         conn = get_db_connection()
@@ -1141,117 +1190,58 @@ def process_stock_levels_upload():
             print("Reset all stock levels to 0")
             conn.commit()
 
-            # Process each row, committing as we go so a single failure doesn't abort the entire import
-            for idx, row in df.iterrows():
+            # Rebuild stock totals by base part number from collapsed import values.
+            for base_part_number, values in aggregated_stock.items():
+                quantity = values['quantity']
+                sample_part_number = values['sample_part_number']
+                if quantity <= 0:
+                    continue
+
                 try:
-                    # Get ERP ID (optional)
-                    erp_id = None
-                    if ERP_ID_COL in df.columns:
-                        erp_id = str(row[ERP_ID_COL]).strip()
-                        if erp_id.lower() in ['nan', 'none', '']:
-                            erp_id = None
-
-                    # Get part number
-                    part_number = str(row[PART_NUMBER_COL]).strip()
-
-                    # Get system part number (partId) if available
-                    system_part_number = None
-                    if PART_ID_COL in df.columns:
-                        system_part_number = str(row[PART_ID_COL]).strip()
-                        if system_part_number.lower() in ['nan', 'none', '']:
-                            system_part_number = None
-
-                    if not part_number or part_number.lower() in ['nan', 'none', '']:
-                        continue
-
-                    # Get quantity
-                    try:
-                        quantity = float(str(row[QUANTITY_COL]).strip())
-                    except (ValueError, TypeError):
-                        results['errors'].append(f"Row {idx + 1}: Invalid quantity format")
-                        continue
-
-                    if quantity < 0:
-                        results['errors'].append(f"Row {idx + 1}: Quantity cannot be negative")
-                        continue
-
-                    # Get optional cost
-                    unit_price = None
-                    if COST_COL in df.columns:
-                        try:
-                            price_str = str(row[COST_COL]).strip()
-                            if price_str and price_str.lower() not in ['nan', 'none', '']:
-                                price_str = price_str.replace('$', '').replace(',', '')
-                                unit_price = float(price_str)
-                        except (ValueError, TypeError):
-                            pass
-
-                    row_created = False
-
-                    # Look up base_part_number
                     _execute_with_cursor(
                         cur,
-                        "SELECT base_part_number FROM part_numbers WHERE part_number = ? OR system_part_number = ?",
-                        (part_number, system_part_number),
+                        "SELECT base_part_number FROM part_numbers WHERE base_part_number = ?",
+                        (base_part_number,),
                     )
-                    result = cur.fetchone()
+                    part_row = cur.fetchone()
 
-                    if not result:
-                        # Part doesn't exist - create it on-demand
-                        base_part_number = create_part_on_demand(
-                            cur,
-                            system_part_number or part_number,
-                            part_number,
-                        )
-                        results['errors'].append(
-                            f"Row {idx + 1}: Created new part {system_part_number or part_number}"
-                        )
-                    else:
-                        base_part_number = (
-                            result['base_part_number'] if isinstance(result, dict)
-                            else result[0]
-                        )
+                    if not part_row:
+                        create_part_on_demand(cur, sample_part_number, sample_part_number)
+                        results['not_found'] += 1
 
-                    # Create new stock movement with ERP ID as reference
-                    if quantity > 0:
-                        _execute_with_cursor(
-                            cur,
-                            """
-                            INSERT INTO stock_movements
-                            (base_part_number, movement_type, quantity, available_quantity,
-                             cost_per_unit, reference, notes)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                base_part_number,
-                                'IN',
-                                quantity,
-                                quantity,
-                                unit_price,
-                                f"ERP-{erp_id}" if erp_id else f"IMPORT-{file_id}-ROW-{idx + 1}",
-                                f"Stock from ERP import",
-                            ),
-                        )
+                    _execute_with_cursor(
+                        cur,
+                        "UPDATE part_numbers SET stock = ? WHERE base_part_number = ?",
+                        (quantity, base_part_number),
+                    )
 
-                        # Update part_numbers stock total
-                        _execute_with_cursor(
-                            cur,
-                            "UPDATE part_numbers SET stock = stock + ? WHERE base_part_number = ?",
-                            (quantity, base_part_number),
-                        )
+                    # Keep one synthetic stock movement per base part for legacy stock views.
+                    average_cost = None
+                    if values['cost_quantity'] > 0:
+                        average_cost = values['cost_total'] / values['cost_quantity']
 
-                        row_created = True
+                    _execute_with_cursor(
+                        cur,
+                        """
+                        INSERT INTO stock_movements
+                        (base_part_number, movement_type, quantity, available_quantity,
+                         cost_per_unit, reference, notes)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            base_part_number,
+                            'IN',
+                            quantity,
+                            quantity,
+                            average_cost,
+                            f"STOCK-IMPORT-{file_id}",
+                            "Collapsed stock import total",
+                        ),
+                    )
 
-                    if row_created:
-                        results['created'] += 1
-
-                    results['processed'] += 1
-
-                    conn.commit()
-
+                    results['created'] += 1
                 except Exception as e:
-                    print(f"Error processing row {idx + 1}: {e}")
-                    results['errors'].append(f"Row {idx + 1}: {str(e)}")
+                    results['errors'].append(f"Base {base_part_number}: {str(e)}")
                     conn.rollback()
                     try:
                         cur.close()
