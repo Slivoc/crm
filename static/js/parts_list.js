@@ -2910,6 +2910,9 @@ function analyzePartsWithLineIds(partsArray) {
             part_number: part.customer_part_number || part.part_number,
             quantity: part.quantity
         };
+        if (part.base_part_number) {
+            item.base_part_number = part.base_part_number;
+        }
         if (part.id) {
             item.line_id = part.id;
         }
