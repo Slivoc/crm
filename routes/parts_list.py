@@ -1960,6 +1960,7 @@ def analyze_parts_list():
         processed_parts = []
         for part_row in parts_data:
             part_number = part_row.get('part_number', '').strip()
+            provided_base_part_number = (part_row.get('base_part_number') or '').strip()
             if not part_number:
                 continue
 
@@ -1974,7 +1975,7 @@ def analyze_parts_list():
                     'line_number': part_row.get('line_number')
                 })
             else:
-                base_part_number = create_base_part_number(part_number)
+                base_part_number = provided_base_part_number or create_base_part_number(part_number)
                 processed_parts.append({
                     'part_number': part_number,
                     'base_part_number': base_part_number,
@@ -2340,7 +2341,7 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         SELECT 
             sm.movement_id,
             sm.base_part_number,
-            pn.part_number,
+            COALESCE(pn.part_number, sm.base_part_number) as part_number,
             sm.datecode,
             sm.movement_date,
             sm.cost_per_unit,
@@ -2348,7 +2349,7 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
             sm.available_quantity,
             sm.reference
         FROM stock_movements sm
-        JOIN part_numbers pn ON sm.base_part_number = pn.base_part_number
+        LEFT JOIN part_numbers pn ON sm.base_part_number = pn.base_part_number
         WHERE sm.base_part_number = ?
           AND sm.movement_type = 'IN' 
           AND sm.available_quantity > 0
