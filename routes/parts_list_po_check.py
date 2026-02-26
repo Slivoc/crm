@@ -1134,9 +1134,8 @@ def get_supplier_insight():
                 WHERE sol.base_part_number = ?
                   AND so.date_entered >= ?
                 """,
-                (base_part_number, sales_cutoff),
-                fetch='one'
-            ) or {}
+                (base_part_number, sales_cutoff)
+            ).fetchone() or {}
 
             # Supplier specific cost history first; fallback to all suppliers for this part.
             cost_history = []
@@ -1153,9 +1152,8 @@ def get_supplier_insight():
                     ORDER BY pl.date_created DESC
                     LIMIT 30
                     """,
-                    (base_part_number, supplier_id),
-                    fetch='all'
-                ) or []
+                    (base_part_number, supplier_id)
+                ).fetchall() or []
 
             if not cost_history:
                 cost_history = _execute_with_cursor(
@@ -1169,9 +1167,8 @@ def get_supplier_insight():
                     ORDER BY pl.date_created DESC
                     LIMIT 30
                     """,
-                    (base_part_number,),
-                    fetch='all'
-                ) or []
+                    (base_part_number,)
+                ).fetchall() or []
 
         order_count = int(sales_stats.get('order_count') or 0)
         avg_qty = float(sales_stats.get('avg_qty') or 0)
