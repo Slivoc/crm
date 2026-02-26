@@ -74,6 +74,23 @@ def _safe_int(val):
         return None
 
 
+def _normalize_parts_list_line_part_number(line):
+    """Return a normalized base part number from a parts list line row."""
+    if not line:
+        return ''
+
+    # Prefer stored base_part_number when present (some historical rows have
+    # empty customer_part_number but a valid normalized base part number).
+    # Fall back to customer_part_number and always normalize for consistency.
+    stored_base = line.get('base_part_number')
+    if stored_base:
+        normalized = _normalize_part_number(stored_base)
+        if normalized:
+            return normalized
+
+    return _normalize_part_number(line.get('customer_part_number'))
+
+
 def extract_customer_po_data(po_text):
     """
     Use OpenAI to extract customer purchase order information from text.
@@ -320,8 +337,7 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
     # Always re-normalize to ensure consistency (stored base_part_number may be from old normalization)
     pn_lookup = {}
     for line in parts_list_lines:
-        # Always normalize fresh from customer_part_number to ensure consistency
-        base_pn = _normalize_part_number(line['customer_part_number'])
+        base_pn = _normalize_parts_list_line_part_number(line)
         if base_pn:
             if base_pn not in pn_lookup:
                 pn_lookup[base_pn] = []
@@ -1015,9 +1031,8 @@ def find_near_matches():
 
         for line in parts_list_lines:
             # Try both stored base_part_number and freshly normalized customer_part_number
-            stored_base = line.get('base_part_number') or ''
             customer_pn = line.get('customer_part_number') or ''
-            line_base_pn = _normalize_part_number(stored_base) if stored_base else _normalize_part_number(customer_pn)
+            line_base_pn = _normalize_parts_list_line_part_number(line)
 
             if not line_base_pn:
                 continue
