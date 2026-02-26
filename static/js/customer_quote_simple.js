@@ -715,10 +715,13 @@ document.addEventListener('DOMContentLoaded', function() {
             if (unitCost <= 0) return;
 
             rows.push({
+                rowKey: lineData.id,
                 lineData,
                 effectiveQty,
                 unitCost,
-                supplierDisplay
+                supplierDisplay,
+                basePartNumber: lineData.base_part_number,
+                supplierId: lineData.chosen_supplier_id || null
             });
         });
         return rows;
@@ -742,6 +745,26 @@ document.addEventListener('DOMContentLoaded', function() {
         if (previousValue && suppliers.includes(previousValue)) {
             filterSelect.value = previousValue;
         }
+    }
+
+    const purchasingInsightsByLineId = new Map();
+
+    function getPriceInsightLabel(insight) {
+        if (!insight || !insight.price_insight) return '-';
+        if (!insight.price_insight.has_history) return 'No history';
+        return insight.price_insight.label || '-';
+    }
+
+    function getSuggestedQtyLabel(instructionRow, insight) {
+        if (insight && insight.quantity_recommendation && Number.isFinite(insight.quantity_recommendation.suggested_quantity)) {
+            const suggested = Number(insight.quantity_recommendation.suggested_quantity);
+            const current = Number(instructionRow.effectiveQty || 0);
+            if (suggested > current) {
+                return `${suggested} (buy +${suggested - current})`;
+            }
+            return `${suggested}`;
+        }
+        return '-';
     }
 
     function renderPurchasingInstructionsTable(filterSupplier) {
@@ -769,6 +792,8 @@ document.addEventListener('DOMContentLoaded', function() {
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Currency</th>
       <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;">Line Total</th>
       <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;">Lead Time (days)</th>
+      <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Suggested Buy Qty</th>
+      <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Price vs History</th>
     </tr>
   </thead>
   <tbody>`;
@@ -779,6 +804,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const currency = lineData.chosen_currency_code || 'GBP';
             const leadDays = lineData.chosen_lead_days || '';
             const cellStyle = 'padding:6px 8px;border:1px solid #dee2e6;';
+            const lineInsight = purchasingInsightsByLineId.get(row.rowKey);
 
             html += `<tr>
               <td align="left" style="${cellStyle}">${lineData.line_number || ''}</td>
@@ -789,10 +815,63 @@ document.addEventListener('DOMContentLoaded', function() {
               <td align="left" style="${cellStyle}">${currency}</td>
               <td align="right" style="${cellStyle}">${lineTotal.toFixed(2)}</td>
               <td align="right" style="${cellStyle}">${leadDays}</td>
+              <td align="left" style="${cellStyle}">${getSuggestedQtyLabel(row, lineInsight)}</td>
+              <td align="left" style="${cellStyle}">${getPriceInsightLabel(lineInsight)}</td>
             </tr>`;
         });
         html += `</tbody></table>`;
         return html;
+    }
+
+    async function loadPurchasingInsights() {
+        const statusEl = document.getElementById('purchasingInsightsStatus');
+        const supplierFilter = document.getElementById('purchasingSupplierFilter')?.value || '';
+        const allRows = collectPurchasingInstructionRows();
+        const filteredRows = supplierFilter
+            ? allRows.filter(row => row.supplierDisplay === supplierFilter)
+            : allRows;
+
+        const rowsToFetch = filteredRows.filter(row => row.basePartNumber && !purchasingInsightsByLineId.has(row.rowKey));
+        if (rowsToFetch.length === 0) {
+            if (statusEl) statusEl.textContent = 'Suggestions already loaded for current filter.';
+            renderPurchasingInstructionsTable();
+            return;
+        }
+
+        if (statusEl) statusEl.textContent = `Loading suggestions for ${rowsToFetch.length} line(s)...`;
+
+        let successCount = 0;
+        for (const row of rowsToFetch) {
+            const payload = {
+                base_part_number: row.basePartNumber,
+                po_quantity: parseInt(row.effectiveQty, 10) || 0,
+                supplier_id: row.supplierId,
+                supplier_cost: row.unitCost
+            };
+
+            try {
+                const response = await fetch('/parts-list/po-check/supplier-insight', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (response.ok && result.success) {
+                    purchasingInsightsByLineId.set(row.rowKey, result);
+                    successCount += 1;
+                }
+            } catch (error) {
+                console.warn('Failed to load purchasing insight', row.rowKey, error);
+            }
+        }
+
+        if (statusEl) {
+            statusEl.textContent = successCount > 0
+                ? `Loaded ${successCount}/${rowsToFetch.length} suggestion(s).`
+                : 'Could not load suggestions.';
+        }
+
+        renderPurchasingInstructionsTable();
     }
 
    // Build Email Quote Table (Fixed: Shows No Bids, Hides Empty Prices)
@@ -964,6 +1043,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // Purchasing Instructions
     document.getElementById('purchasing-instructions-btn').addEventListener('click', function() {
         renderPurchasingInstructionsTable();
+        const statusEl = document.getElementById('purchasingInsightsStatus');
+        if (statusEl) statusEl.textContent = '';
         new bootstrap.Modal(document.getElementById('purchasingModal')).show();
     });
 
@@ -971,6 +1052,18 @@ document.addEventListener('DOMContentLoaded', function() {
     if (purchasingSupplierFilter) {
         purchasingSupplierFilter.addEventListener('change', function() {
             renderPurchasingInstructionsTable(this.value);
+        });
+    }
+
+    const loadPurchasingInsightsBtn = document.getElementById('loadPurchasingInsightsBtn');
+    if (loadPurchasingInsightsBtn) {
+        loadPurchasingInsightsBtn.addEventListener('click', async function() {
+            const originalHtml = this.innerHTML;
+            this.disabled = true;
+            this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading...';
+            await loadPurchasingInsights();
+            this.innerHTML = originalHtml;
+            this.disabled = false;
         });
     }
 
