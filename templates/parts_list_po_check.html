@@ -395,6 +395,29 @@
         background: #f8d7da;
         color: #842029;
     }
+
+    .line-focus-toolbar {
+        background: #eef5ff;
+        border-bottom: 1px solid #d7e6ff;
+        padding: 8px 12px;
+    }
+    .line-focus-toolbar .focus-progress {
+        font-size: 0.8rem;
+        color: #495057;
+        font-weight: 600;
+    }
+    .results-table tbody tr.focus-row {
+        outline: 2px solid #0d6efd;
+        outline-offset: -2px;
+        background: #eef5ff !important;
+    }
+    .results-table tbody tr.completed-row {
+        opacity: 0.75;
+    }
+    .results-table .line-complete-cell {
+        width: 40px;
+        text-align: center;
+    }
 </style>
 
 <div class="container-fluid mt-4 po-check-page">
@@ -629,11 +652,33 @@
                 </div>
             </div>
 
+            <div class="line-focus-toolbar d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div class="d-flex align-items-center gap-2">
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="lineFocusMode">
+                        <label class="form-check-label small" for="lineFocusMode">Line-by-line focus mode</label>
+                    </div>
+                    <span class="focus-progress" id="lineFocusProgress">0 complete</span>
+                </div>
+                <div class="btn-group btn-group-sm" role="group" aria-label="Focus navigation">
+                    <button type="button" class="btn btn-outline-secondary" id="focusPrevBtn" disabled>
+                        <i class="bi bi-arrow-up"></i> Prev
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" id="focusNextBtn" disabled>
+                        Next <i class="bi bi-arrow-down"></i>
+                    </button>
+                    <button type="button" class="btn btn-outline-primary" id="focusCompleteBtn" disabled>
+                        <i class="bi bi-check2"></i> Mark complete
+                    </button>
+                </div>
+            </div>
+
             <!-- Match Details Table -->
             <div class="table-responsive">
                 <table class="table table-hover table-sm mb-0 results-table" id="resultsTable">
                     <colgroup>
                         <col class="col-line">
+                        <col style="width: 4%;">
                         <col class="col-part">
                         <col class="col-qty">
                         <col class="col-price">
@@ -649,13 +694,14 @@
                     </colgroup>
                     <thead class="table-light">
                         <tr>
-                            <th colspan="4" class="text-center bg-light border-end">PO Line</th>
+                            <th colspan="5" class="text-center bg-light border-end">PO Line</th>
                             <th colspan="3" class="text-center bg-light border-end">Checks</th>
                             <th colspan="3" class="text-center border-end quote-col" style="background: #e8f4e8 !important;">Our Quote</th>
                             <th colspan="3" class="text-center supplier-col" style="background: #e8f0f8 !important;">Supplier</th>
                         </tr>
                         <tr>
                             <th style="width: 40px;">#</th>
+                            <th class="text-center" style="width: 45px;">Done</th>
                             <th>Part Number</th>
                             <th class="text-center">Qty</th>
                             <th class="text-end border-end">Price</th>
@@ -793,6 +839,9 @@ document.addEventListener('DOMContentLoaded', function() {
     let matchResults = null;
     let rawText = '';
     const supplierInsightCache = {};
+    let visibleRowIndices = [];
+    let activeRowIndex = null;
+    const completedLineIndices = new Set();
 
     // Elements
     const customerSelect = document.getElementById('customerSelect');
@@ -809,6 +858,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const resetBtn = document.getElementById('resetBtn');
     const loadingOverlay = document.getElementById('loadingOverlay');
     const loadingText = document.getElementById('loadingText');
+    const lineFocusMode = document.getElementById('lineFocusMode');
+    const lineFocusProgress = document.getElementById('lineFocusProgress');
+    const focusPrevBtn = document.getElementById('focusPrevBtn');
+    const focusNextBtn = document.getElementById('focusNextBtn');
+    const focusCompleteBtn = document.getElementById('focusCompleteBtn');
 
     // Initialize Select2 for customer dropdown
     $(customerSelect).select2({
@@ -1099,6 +1153,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function renderResultsTable() {
         const tbody = document.getElementById('resultsTableBody');
         tbody.innerHTML = '';
+        visibleRowIndices = [];
 
         const supplierFilter = document.getElementById('supplierFilter').value;
 
@@ -1137,9 +1192,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
             row.innerHTML = `
                 <td class="text-center text-muted">${po.line_number || index + 1}</td>
+                <td class="line-complete-cell">
+                    <input type="checkbox" class="form-check-input line-complete-checkbox" data-index="${index}" ${completedLineIndices.has(index) ? 'checked' : ''}>
+                </td>
                 <td class="part-number-cell">
                     ${escapeHtml(po.part_number)}
-                    <button class="btn btn-outline-secondary copy-btn" onclick="copyToClipboard('${escapeHtml(po.part_number)}')" title="Copy">
+                    <button class="btn btn-outline-secondary copy-btn copy-part-btn" data-index="${index}" onclick="copyToClipboard('${escapeHtml(po.part_number)}')" title="Copy">
                         <i class="bi bi-clipboard"></i>
                     </button>
                     ${conf === 'none' ? `
@@ -1211,7 +1269,14 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             tbody.appendChild(row);
+            visibleRowIndices.push(index);
         });
+
+        ensureActiveRow();
+        applyRowFocusStyles();
+        bindLineTrackingEvents(tbody);
+        updateFocusProgress();
+        updateFocusControls();
 
         // Attach event listeners to find-match buttons
         tbody.querySelectorAll('.find-match-btn').forEach(btn => {
@@ -1229,6 +1294,100 @@ document.addEventListener('DOMContentLoaded', function() {
                 openSupplierInsightModal(this);
             });
         });
+    }
+
+
+    function bindLineTrackingEvents(tbody) {
+        tbody.querySelectorAll('.line-complete-checkbox').forEach(input => {
+            input.addEventListener('change', function() {
+                const index = Number(this.dataset.index);
+                if (this.checked) {
+                    completedLineIndices.add(index);
+                } else {
+                    completedLineIndices.delete(index);
+                }
+                applyRowFocusStyles();
+                updateFocusProgress();
+                updateFocusControls();
+            });
+        });
+
+        tbody.querySelectorAll('.copy-part-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const currentIndex = Number(this.dataset.index);
+                if (!lineFocusMode.checked) return;
+                completedLineIndices.add(currentIndex);
+                moveToNextUncompleted(currentIndex);
+                const checkbox = tbody.querySelector(`.line-complete-checkbox[data-index="${currentIndex}"]`);
+                if (checkbox) checkbox.checked = true;
+                applyRowFocusStyles();
+                updateFocusProgress();
+                updateFocusControls();
+            });
+        });
+    }
+
+    function ensureActiveRow() {
+        if (!visibleRowIndices.length) {
+            activeRowIndex = null;
+            return;
+        }
+        if (activeRowIndex !== null && visibleRowIndices.includes(activeRowIndex)) {
+            return;
+        }
+        activeRowIndex = visibleRowIndices.find(index => !completedLineIndices.has(index)) ?? visibleRowIndices[0];
+    }
+
+    function applyRowFocusStyles() {
+        const tbody = document.getElementById('resultsTableBody');
+        tbody.querySelectorAll('tr').forEach(row => {
+            const rowIndex = Number(row.dataset.index);
+            row.classList.toggle('focus-row', lineFocusMode.checked && rowIndex === activeRowIndex);
+            row.classList.toggle('completed-row', completedLineIndices.has(rowIndex));
+        });
+    }
+
+    function updateFocusProgress() {
+        const totalVisible = visibleRowIndices.length;
+        const completedVisible = visibleRowIndices.filter(index => completedLineIndices.has(index)).length;
+        lineFocusProgress.textContent = `${completedVisible} / ${totalVisible} complete`;
+    }
+
+    function moveToNextUncompleted(currentIndex = null) {
+        if (!visibleRowIndices.length) return;
+        const startIdx = currentIndex !== null ? visibleRowIndices.indexOf(currentIndex) : visibleRowIndices.indexOf(activeRowIndex);
+        for (let i = 1; i <= visibleRowIndices.length; i++) {
+            const candidate = visibleRowIndices[(Math.max(startIdx, -1) + i) % visibleRowIndices.length];
+            if (!completedLineIndices.has(candidate)) {
+                activeRowIndex = candidate;
+                scrollToActiveRow();
+                return;
+            }
+        }
+        activeRowIndex = visibleRowIndices[0];
+        scrollToActiveRow();
+    }
+
+    function moveToPrevVisible() {
+        if (!visibleRowIndices.length) return;
+        const currentPos = Math.max(visibleRowIndices.indexOf(activeRowIndex), 0);
+        activeRowIndex = visibleRowIndices[(currentPos - 1 + visibleRowIndices.length) % visibleRowIndices.length];
+        scrollToActiveRow();
+    }
+
+    function scrollToActiveRow() {
+        const activeRow = document.querySelector(`#resultsTableBody tr[data-index="${activeRowIndex}"]`);
+        if (activeRow && lineFocusMode.checked) {
+            activeRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+
+    function updateFocusControls() {
+        const hasRows = visibleRowIndices.length > 0;
+        const enabled = hasRows && lineFocusMode.checked;
+        focusPrevBtn.disabled = !enabled;
+        focusNextBtn.disabled = !enabled;
+        focusCompleteBtn.disabled = !enabled;
     }
 
     function getInsightBadgeClass(rating) {
@@ -1388,6 +1547,12 @@ document.addEventListener('DOMContentLoaded', function() {
             extractedData = null;
             matchResults = null;
             rawText = '';
+            visibleRowIndices = [];
+            activeRowIndex = null;
+            completedLineIndices.clear();
+            lineFocusMode.checked = false;
+            updateFocusProgress();
+            updateFocusControls();
             confirmBtn.disabled = true;
             confirmBtn.innerHTML = '<i class="bi bi-check-circle me-2"></i>Accept Matches & Mark Won';
         }
@@ -1423,6 +1588,36 @@ document.addEventListener('DOMContentLoaded', function() {
         if (matchResults) {
             renderResultsTable();
         }
+    });
+
+    lineFocusMode.addEventListener('change', function() {
+        ensureActiveRow();
+        applyRowFocusStyles();
+        updateFocusControls();
+        if (this.checked) {
+            scrollToActiveRow();
+        }
+    });
+
+    focusNextBtn.addEventListener('click', function() {
+        moveToNextUncompleted();
+        applyRowFocusStyles();
+    });
+
+    focusPrevBtn.addEventListener('click', function() {
+        moveToPrevVisible();
+        applyRowFocusStyles();
+    });
+
+    focusCompleteBtn.addEventListener('click', function() {
+        if (activeRowIndex === null) return;
+        completedLineIndices.add(activeRowIndex);
+        const checkbox = document.querySelector(`.line-complete-checkbox[data-index="${activeRowIndex}"]`);
+        if (checkbox) checkbox.checked = true;
+        moveToNextUncompleted(activeRowIndex);
+        applyRowFocusStyles();
+        updateFocusProgress();
+        updateFocusControls();
     });
 
     // Near-match modal functionality
