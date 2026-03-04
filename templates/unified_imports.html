@@ -143,7 +143,7 @@
                 </div>
                 <div class="card-body">
                     <p class="card-text text-danger"><strong>Warning:</strong> This will REPLACE all existing stock levels!</p>
-                    <p class="card-text small">Required columns: <code>partNumber</code>, <code>remainingQty</code>, <code>unitCost</code> (optional)</p>
+                    <p class="card-text small">Required columns: <code>partNumber</code>, <code>remainingQty</code>, <code>unitCost</code> (optional). Part numbers are normalized (special chars stripped) and duplicate rows are summed.</p>
                     <p class="text-muted small mb-3">
                         Latest record: {{ latest_dates.stock_levels or 'No records yet' }}
                     </p>
@@ -160,7 +160,7 @@
                     </div>
                 </div>
                 <div class="card-footer text-muted">
-                    <small>CSV format with partNumber, remainingQty, unitCost columns</small>
+                    <small>CSV format with partNumber, remainingQty, unitCost columns; duplicates are auto-collapsed by base part number.</small>
                 </div>
             </div>
         </div>

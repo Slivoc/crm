@@ -104,9 +104,23 @@ class PartsBaseClient:
         lines = ['PartNumber'] + normalized
         csv_payload = '\n'.join(lines).encode('utf-8')
 
+        # PartsBase expects a schema descriptor alongside the CSV file inside
+        # the uploaded ZIP. Without this file, the API rejects the upload with
+        # `Schema file wasn't found`.
+        schema_payload = '\n'.join(
+            [
+                '[parts.csv]',
+                'ColNameHeader=True',
+                'Format=CSVDelimited',
+                'MaxScanRows=0',
+                'CharacterSet=65001',
+            ]
+        ).encode('utf-8')
+
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zip_file:
             zip_file.writestr('parts.csv', csv_payload)
+            zip_file.writestr('schema.ini', schema_payload)
         return buffer.getvalue()
 
     @staticmethod

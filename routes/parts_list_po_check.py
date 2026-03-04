@@ -15,6 +15,8 @@ import json
 import re
 import os
 import base64
+from math import ceil
+from datetime import datetime, timedelta
 import requests
 from urllib.parse import quote
 from openai import OpenAI
@@ -70,6 +72,23 @@ def _safe_int(val):
         return int(float(val))
     except (ValueError, TypeError):
         return None
+
+
+def _normalize_parts_list_line_part_number(line):
+    """Return a normalized base part number from a parts list line row."""
+    if not line:
+        return ''
+
+    # Prefer stored base_part_number when present (some historical rows have
+    # empty customer_part_number but a valid normalized base part number).
+    # Fall back to customer_part_number and always normalize for consistency.
+    stored_base = line.get('base_part_number')
+    if stored_base:
+        normalized = _normalize_part_number(stored_base)
+        if normalized:
+            return normalized
+
+    return _normalize_part_number(line.get('customer_part_number'))
 
 
 def extract_customer_po_data(po_text):
@@ -321,21 +340,11 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
     quoted_lookup = {}
     requested_lookup = {}
     for line in parts_list_lines:
-        requested_pn = line.get('customer_part_number') or ''
-        quoted_pn = line.get('quoted_part_number') or requested_pn
-
-        quoted_base_pn = _normalize_part_number(quoted_pn)
-        requested_base_pn = _normalize_part_number(requested_pn)
-
-        if quoted_base_pn:
-            if quoted_base_pn not in quoted_lookup:
-                quoted_lookup[quoted_base_pn] = []
-            quoted_lookup[quoted_base_pn].append(line)
-
-        if requested_base_pn:
-            if requested_base_pn not in requested_lookup:
-                requested_lookup[requested_base_pn] = []
-            requested_lookup[requested_base_pn].append(line)
+        base_pn = _normalize_parts_list_line_part_number(line)
+        if base_pn:
+            if base_pn not in pn_lookup:
+                pn_lookup[base_pn] = []
+            pn_lookup[base_pn].append(line)
 
     # Match each PO line
     for po_line in po_lines:
@@ -434,6 +443,7 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                 # Supplier info (cost side)
                 if best_match['supplier_name']:
                     match_result['supplier_info'] = {
+                        'id': best_match.get('chosen_supplier_id'),
                         'name': best_match['supplier_name'],
                         'cost': float(best_match['chosen_cost']) if best_match['chosen_cost'] else None,
                         'cost_currency': best_match.get('cost_currency'),
@@ -1046,11 +1056,9 @@ def find_near_matches():
         logger.info(f"Searching through {len(parts_list_lines)} parts list lines for customer {customer_id}")
 
         for line in parts_list_lines:
+            # Try both stored base_part_number and freshly normalized customer_part_number
             customer_pn = line.get('customer_part_number') or ''
-            quoted_pn = line.get('quoted_part_number') or customer_pn
-            requested_base_pn = _normalize_part_number(customer_pn)
-            quoted_base_pn = _normalize_part_number(quoted_pn)
-            line_base_pn = quoted_base_pn or requested_base_pn
+            line_base_pn = _normalize_parts_list_line_part_number(line)
 
             if not requested_base_pn and not quoted_base_pn:
                 continue
@@ -1130,4 +1138,150 @@ def find_near_matches():
 
     except Exception as e:
         logger.exception("Failed to find near matches")
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_po_check_bp.route('/po-check/supplier-insight', methods=['POST'])
+@login_required
+def get_supplier_insight():
+    """Return lazy-loaded supplier insight for PO checker rows."""
+    try:
+        data = request.get_json(silent=True) or {}
+        base_part_number = _normalize_part_number(data.get('base_part_number') or data.get('part_number'))
+        po_quantity = _safe_int(data.get('po_quantity')) or 0
+        supplier_id = _safe_int(data.get('supplier_id'))
+        supplier_cost = _safe_float(data.get('supplier_cost'))
+
+        if not base_part_number:
+            return jsonify(success=False, message='base_part_number is required'), 400
+
+        sales_cutoff = (datetime.utcnow() - timedelta(days=730)).strftime('%Y-%m-%d')
+
+        with db_cursor() as cur:
+            sales_stats = _execute_with_cursor(
+                cur,
+                """
+                SELECT
+                    COUNT(*) as line_count,
+                    COUNT(DISTINCT so.id) as order_count,
+                    COALESCE(AVG(sol.quantity), 0) as avg_qty,
+                    COALESCE(MAX(sol.quantity), 0) as max_qty,
+                    COALESCE(SUM(sol.quantity), 0) as total_qty,
+                    MAX(so.date_entered) as last_sale_date
+                FROM sales_order_lines sol
+                JOIN sales_orders so ON so.id = sol.sales_order_id
+                WHERE sol.base_part_number = ?
+                  AND so.date_entered >= ?
+                """,
+                (base_part_number, sales_cutoff)
+            ).fetchone() or {}
+
+            # Supplier specific cost history first; fallback to all suppliers for this part.
+            cost_history = []
+            if supplier_id:
+                cost_history = _execute_with_cursor(
+                    cur,
+                    """
+                    SELECT pll.chosen_cost as cost
+                    FROM parts_list_lines pll
+                    JOIN parts_lists pl ON pl.id = pll.parts_list_id
+                    WHERE pll.base_part_number = ?
+                      AND pll.chosen_supplier_id = ?
+                      AND pll.chosen_cost IS NOT NULL
+                    ORDER BY pl.date_created DESC
+                    LIMIT 30
+                    """,
+                    (base_part_number, supplier_id)
+                ).fetchall() or []
+
+            if not cost_history:
+                cost_history = _execute_with_cursor(
+                    cur,
+                    """
+                    SELECT pll.chosen_cost as cost
+                    FROM parts_list_lines pll
+                    JOIN parts_lists pl ON pl.id = pll.parts_list_id
+                    WHERE pll.base_part_number = ?
+                      AND pll.chosen_cost IS NOT NULL
+                    ORDER BY pl.date_created DESC
+                    LIMIT 30
+                    """,
+                    (base_part_number,)
+                ).fetchall() or []
+
+        order_count = int(sales_stats.get('order_count') or 0)
+        avg_qty = float(sales_stats.get('avg_qty') or 0)
+        max_qty = int(sales_stats.get('max_qty') or 0)
+        total_qty = int(sales_stats.get('total_qty') or 0)
+
+        demand_buffer_qty = ceil(avg_qty * 1.25) if avg_qty > 0 else 0
+        reference_qty = max(po_quantity, max_qty, demand_buffer_qty)
+        suggested_quantity = reference_qty if order_count >= 3 else po_quantity
+
+        quantity_recommendation = {
+            'po_quantity': po_quantity,
+            'suggested_quantity': suggested_quantity,
+            'should_buy_extra': suggested_quantity > po_quantity,
+            'reason': None,
+            'order_count_24m': order_count,
+            'avg_qty_24m': round(avg_qty, 1),
+            'max_qty_24m': max_qty,
+            'total_qty_24m': total_qty
+        }
+
+        if quantity_recommendation['should_buy_extra']:
+            quantity_recommendation['reason'] = (
+                f"Historical demand suggests up to {suggested_quantity} units "
+                f"(max order {max_qty}, avg {avg_qty:.1f})."
+            )
+        else:
+            quantity_recommendation['reason'] = 'PO quantity looks aligned with recent demand.'
+
+        historical_costs = [float(r['cost']) for r in cost_history if r.get('cost') is not None]
+        price_insight = {
+            'has_history': bool(historical_costs),
+            'rating': 'unknown',
+            'label': 'No history',
+            'avg_cost': None,
+            'min_cost': None,
+            'max_cost': None,
+            'sample_size': len(historical_costs),
+            'difference_vs_avg': None
+        }
+
+        if historical_costs:
+            avg_cost = sum(historical_costs) / len(historical_costs)
+            min_cost = min(historical_costs)
+            max_cost = max(historical_costs)
+            price_insight.update({
+                'avg_cost': round(avg_cost, 4),
+                'min_cost': round(min_cost, 4),
+                'max_cost': round(max_cost, 4)
+            })
+
+            if supplier_cost is not None:
+                diff = supplier_cost - avg_cost
+                price_insight['difference_vs_avg'] = round(diff, 4)
+
+                if supplier_cost <= min_cost * 1.02:
+                    price_insight['rating'] = 'excellent'
+                    price_insight['label'] = 'Excellent vs history'
+                elif supplier_cost <= avg_cost * 0.97:
+                    price_insight['rating'] = 'good'
+                    price_insight['label'] = 'Good vs history'
+                elif supplier_cost <= avg_cost * 1.05:
+                    price_insight['rating'] = 'fair'
+                    price_insight['label'] = 'In line with history'
+                else:
+                    price_insight['rating'] = 'high'
+                    price_insight['label'] = 'High vs history'
+
+        return jsonify(
+            success=True,
+            base_part_number=base_part_number,
+            quantity_recommendation=quantity_recommendation,
+            price_insight=price_insight
+        )
+    except Exception as e:
+        logger.exception('get_supplier_insight failed')
         return jsonify(success=False, message=str(e)), 500
