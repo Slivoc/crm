@@ -275,6 +275,18 @@
         background: white;
         z-index: 10;
     }
+    .results-table tbody tr.copy-active {
+        box-shadow: inset 0 0 0 2px rgba(13, 110, 253, 0.35);
+    }
+    .results-table tbody tr.copy-active td:first-child {
+        font-weight: 700;
+    }
+    .results-table tbody tr.copy-done {
+        opacity: 0.72;
+    }
+    .results-table tbody tr.copy-done td {
+        filter: saturate(0.75);
+    }
 
     .supplier-info {
         font-size: 0.85rem;
@@ -747,6 +759,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let extractedData = null;
     let matchResults = null;
     let rawText = '';
+    let currentCopyIndex = null;
 
     // Elements
     const customerSelect = document.getElementById('customerSelect');
@@ -1091,7 +1104,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 <td class="text-center text-muted">${po.line_number || index + 1}</td>
                 <td class="part-number-cell">
                     ${escapeHtml(po.part_number)}
-                    <button class="btn btn-outline-secondary copy-btn" onclick="copyToClipboard('${escapeHtml(po.part_number)}')" title="Copy">
+                    <button class="btn btn-outline-secondary copy-btn copy-line-btn"
+                            data-row-index="${index}"
+                            data-copy-text="${escapeHtml(po.part_number)}"
+                            title="Copy">
                         <i class="bi bi-clipboard"></i>
                     </button>
                     ${conf === 'none' ? `
@@ -1109,6 +1125,12 @@ document.addEventListener('DOMContentLoaded', function() {
                         ${pl && pl.is_repeat ? ' · Repeat order' : ''}
                         ${m && m.quote_status === 'quoted' ? '<span class="badge bg-success ms-1" style="font-size:0.6rem">Q</span>' : ''}
                     </div>
+                    ${m && m.match_basis === 'requested' &&
+                        m.quoted_part_number &&
+                        normalizePartNumberClient(m.quoted_part_number) !== normalizePartNumberClient(m.requested_part_number)
+                        ? `<div class="small text-warning">Matched requested PN; quoted as ${escapeHtml(m.quoted_part_number)}</div>`
+                        : ''
+                    }
                 </td>
                 <td class="text-center">${po.quantity}</td>
                 <td class="text-end border-end">${po.unit_price ? formatCurrency(po.unit_price) : '-'}</td>
@@ -1141,10 +1163,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     ${sup && sup.name ? `<div class="small text-muted">${escapeHtml(sup.name)}</div>` : ''}
                 </td>
                 <td class="text-center supplier-col" style="background: #f8fafc;">
-                    ${sup ? (sup.quantity || '-') : '-'}
+                    ${sup ? (sup.quoted_quantity || sup.quantity || '-') : '-'}
+                    ${sup && sup.requested_quantity ? `<div class="small text-muted">Req ${formatQuantity(sup.requested_quantity)}</div>` : ''}
                 </td>
                 <td class="text-end supplier-col" style="background: #f8fafc;">
                     ${sup && sup.cost ? formatCurrency(sup.cost) : '-'}
+                    ${sup && sup.cost_currency ? `<div class="small text-muted">${escapeHtml(sup.cost_currency)}</div>` : ''}
                 </td>
             `;
 
@@ -1161,6 +1185,26 @@ document.addEventListener('DOMContentLoaded', function() {
                 );
             });
         });
+
+        tbody.querySelectorAll('.copy-line-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const rowIndex = parseInt(this.dataset.rowIndex);
+                setCopyProgress(rowIndex);
+                copyToClipboard(this.dataset.copyText || '');
+            });
+        });
+
+        tbody.querySelectorAll('tr').forEach(row => {
+            row.addEventListener('click', function(event) {
+                if (event.target.closest('button, a')) return;
+                const rowIndex = parseInt(this.dataset.index);
+                if (Number.isFinite(rowIndex)) {
+                    setCopyProgress(rowIndex);
+                }
+            });
+        });
+
+        applyCopyProgressStyles();
     }
 
     // Confirm button
@@ -1211,6 +1255,7 @@ document.addEventListener('DOMContentLoaded', function() {
             extractedData = null;
             matchResults = null;
             rawText = '';
+            currentCopyIndex = null;
             confirmBtn.disabled = true;
             confirmBtn.innerHTML = '<i class="bi bi-check-circle me-2"></i>Accept Matches & Mark Won';
         }
@@ -1343,11 +1388,14 @@ document.addEventListener('DOMContentLoaded', function() {
             parts_list_id: match.parts_list_id,
             line_number: match.line_number,
             part_number: match.part_number,
+            requested_part_number: match.requested_part_number || match.part_number,
+            quoted_part_number: match.quoted_part_number || match.part_number,
             quantity: match.quantity,
             price: match.price,
             lead_days: match.lead_days,
             quote_status: match.quote_status,
-            is_no_bid: match.is_no_bid || false
+            is_no_bid: match.is_no_bid || false,
+            match_basis: match.match_basis || 'quoted'
         };
         matchResult.parts_list = {
             id: match.parts_list_id,
@@ -1360,8 +1408,11 @@ document.addEventListener('DOMContentLoaded', function() {
             matchResult.supplier_info = {
                 name: match.supplier_name,
                 cost: match.supplier_cost,
+                cost_currency: match.cost_currency,
                 lead_days: match.supplier_lead_days,
-                quantity: match.quantity
+                quantity: match.quoted_quantity || match.quantity,
+                requested_quantity: match.requested_quantity,
+                quoted_quantity: match.quoted_quantity || match.quantity
             };
         }
 
@@ -1375,6 +1426,11 @@ document.addEventListener('DOMContentLoaded', function() {
         if (poLine.unit_price && match.price && Math.abs(poLine.unit_price - match.price) > 0.01) {
             const diff = poLine.unit_price - match.price;
             matchResult.discrepancies.push(`Price: PO has ${poLine.unit_price.toFixed(2)}, quoted ${match.price.toFixed(2)} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
+        }
+        if (match.match_basis === 'requested' &&
+            match.quoted_part_number &&
+            normalizePartNumberClient(match.quoted_part_number) !== normalizePartNumberClient(match.requested_part_number)) {
+            matchResult.discrepancies.push(`PN: PO matches requested ${match.requested_part_number}, quoted as ${match.quoted_part_number}`);
         }
 
         matchResult.match_confidence = matchResult.discrepancies.length > 0 ? 'partial' : 'exact';
@@ -1428,6 +1484,27 @@ document.addEventListener('DOMContentLoaded', function() {
         loadingOverlay.classList.remove('show');
     }
 
+    function setCopyProgress(index) {
+        if (!Number.isFinite(index)) return;
+        currentCopyIndex = index;
+        applyCopyProgressStyles();
+    }
+
+    function applyCopyProgressStyles() {
+        document.querySelectorAll('#resultsTableBody tr').forEach(row => {
+            const rowIndex = parseInt(row.dataset.index);
+            row.classList.remove('copy-active', 'copy-done');
+            if (!Number.isFinite(rowIndex) || currentCopyIndex === null) {
+                return;
+            }
+            if (rowIndex < currentCopyIndex) {
+                row.classList.add('copy-done');
+            } else if (rowIndex === currentCopyIndex) {
+                row.classList.add('copy-active');
+            }
+        });
+    }
+
     function escapeHtml(str) {
         if (!str) return '';
         const div = document.createElement('div');
@@ -1442,6 +1519,14 @@ document.addEventListener('DOMContentLoaded', function() {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
         }).format(value);
+    }
+
+    function normalizePartNumberClient(value) {
+        if (!value) return '';
+        return String(value)
+            .toUpperCase()
+            .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+            .replace(/[^A-Z0-9]/g, '');
     }
 
     function parseIsoDate(dateStr) {

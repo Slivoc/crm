@@ -152,6 +152,29 @@
     .add-step-input::placeholder {
         color: #adb5bd;
     }
+    .add-step-row {
+        display: flex;
+        gap: 6px;
+        margin-top: 0.5rem;
+    }
+    .add-step-row .add-step-input {
+        margin-top: 0 !important;
+        flex: 1;
+    }
+    .add-step-btn {
+        border: 1px solid #198754;
+        background: #198754;
+        color: #fff;
+        border-radius: 4px;
+        padding: 0 10px;
+        font-weight: 600;
+        line-height: 1;
+        min-width: 34px;
+    }
+    .add-step-btn:hover {
+        background: #157347;
+        border-color: #157347;
+    }
 
     /* History link */
     .history-link {
@@ -453,10 +476,16 @@ function renderNextSteps(entry) {
 
     // Add new step input
     html += `
-        <input type="text" class="add-step-input mt-2"
-               placeholder="+ Add step (Enter to save)"
-               data-entry-id="${entry.id}"
-               onkeypress="if(event.key==='Enter') { addStep(${entry.id}, this.value, this); event.preventDefault(); }">
+        <div class="add-step-row">
+            <input type="text" class="add-step-input"
+                   placeholder="+ Add step"
+                   data-entry-id="${entry.id}"
+                   onkeydown="if(event.key==='Enter') { addStep(${entry.id}, this.value, this); event.preventDefault(); }">
+            <button type="button" class="add-step-btn" title="Save step"
+                    onclick="addStep(${entry.id}, this.previousElementSibling.value, this.previousElementSibling)">
+                +
+            </button>
+        </div>
     `;
 
     // Show history link if there are completed steps (to see who/when)

@@ -629,7 +629,7 @@
     </div>
   </div>
 
-  <!-- Three Column Data Section: Quotes by Day, Top Parts Lists, Next Actions -->
+  <!-- Three Column Data Section: Quotes by Day, Top Parts Lists, Next Steps -->
   <div class="row mb-4">
     <!-- Quotes by Day Column -->
     <div class="col-lg-4 mb-4 mb-lg-0">
@@ -745,21 +745,23 @@
       </div>
     </div>
 
-    <!-- Next Actions Column -->
+    <!-- Team Tracker Steps Column -->
     <div class="col-lg-4">
       <div class="card h-100 shadow-sm border-0">
         <div class="card-header border-0 bg-white py-2">
           <div class="d-flex align-items-center justify-content-between">
             <div class="d-flex align-items-center">
-              <i class="bi bi-arrow-right-circle text-info me-2"></i>
-              <h6 class="card-title mb-0 fw-semibold small">Next Actions</h6>
+              <i class="bi bi-list-check text-info me-2"></i>
+              <h6 class="card-title mb-0 fw-semibold small">Next Steps</h6>
             </div>
-            <small class="text-muted" style="font-size: 0.7rem;">{{ next_action_month_label }}</small>
+            <a href="{{ url_for('team_tracker.team_tracker_page') }}" class="text-muted text-decoration-none" style="font-size: 0.7rem;">
+              Team Tracker
+            </a>
           </div>
         </div>
         <div class="card-body p-0 overflow-auto" style="min-height: 250px; max-height: 350px;">
-            {% if next_action_customers %}
-                {% for item in next_action_customers %}
+            {% if tracker_step_customers %}
+                {% for item in tracker_step_customers %}
                   <div class="parts-panel-item">
                     <div class="d-flex justify-content-between align-items-center mb-1">
                       <span class="small fw-medium">{{ item.name }}</span>
@@ -767,20 +769,50 @@
                         <i class="bi bi-box-arrow-up-right"></i>
                       </a>
                     </div>
-                    <p class="text-muted mb-1" style="font-size: 0.7rem; line-height: 1.3;">{{ item.notes[:80] }}{% if item.notes|length > 80 %}...{% endif %}</p>
-                    <input type="text"
-                           class="form-control form-control-sm next-action-response-input"
-                           style="font-size: 0.75rem; padding: 0.25rem 0.5rem;"
-                           placeholder="Enter response..."
-                           value="{{ item.response or '' }}"
-                           data-customer-id="{{ item.id }}"
-                           data-target-month="{{ item.target_month }}">
+
+                    {% if item.open_steps %}
+                      <ul class="tracker-step-list mb-1">
+                        {% for step in item.open_steps[:4] %}
+                          <li>
+                            <input class="form-check-input activity-step-toggle"
+                                   type="checkbox"
+                                   data-step-id="{{ step.id }}"
+                                   aria-label="Mark step complete">
+                            <span class="tracker-step-label">{{ step.description }}</span>
+                          </li>
+                        {% endfor %}
+                      </ul>
+                      {% if item.open_count > 4 %}
+                        <small class="text-muted d-block" style="font-size: 0.68rem;">+{{ item.open_count - 4 }} more open</small>
+                      {% endif %}
+                    {% else %}
+                      <small class="text-muted d-block mb-1" style="font-size: 0.68rem;">No open steps</small>
+                    {% endif %}
+
+                    {% if item.completed_preview %}
+                      <small class="text-muted d-block mt-1" style="font-size: 0.68rem;">Recent completed</small>
+                      <ul class="tracker-step-list completed mb-0">
+                        {% for step in item.completed_preview %}
+                          <li>
+                            <input class="form-check-input activity-step-toggle"
+                                   type="checkbox"
+                                   data-step-id="{{ step.id }}"
+                                   checked
+                                   aria-label="Mark step incomplete">
+                            <span class="tracker-step-label">{{ step.description }}</span>
+                          </li>
+                        {% endfor %}
+                      </ul>
+                      {% if item.completed_count > 2 %}
+                        <small class="text-muted d-block" style="font-size: 0.68rem;">+{{ item.completed_count - 2 }} older completed</small>
+                      {% endif %}
+                    {% endif %}
                   </div>
                 {% endfor %}
             {% else %}
               <div class="text-center text-muted py-4">
                 <i class="bi bi-inbox d-block mb-2 opacity-50"></i>
-                <small>No next actions for {{ next_action_month_label }}</small>
+                <small>No team tracker steps yet</small>
               </div>
             {% endif %}
         </div>
@@ -975,6 +1007,37 @@ a.parts-panel-item:hover {
   background-color: #e9f5e9;
 }
 
+.tracker-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tracker-step-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  margin-bottom: 0.3rem;
+}
+
+.tracker-step-list.completed li span {
+  color: #6c757d;
+  text-decoration: line-through;
+}
+
+.activity-step-toggle {
+  margin-top: 0;
+  cursor: pointer;
+}
+
+.tracker-step-label {
+  margin: 0;
+  flex: 1;
+  word-break: break-word;
+}
+
 /* Enhanced News Section Styles */
 .news-preview-card {
   border: 1px solid #e9ecef;
@@ -1157,6 +1220,32 @@ document.addEventListener('DOMContentLoaded', function() {
                 window.customerOverviewModal.show(customerId);
             }
         });
+    });
+
+    // Team tracker step toggle (from activity panel)
+    document.addEventListener('change', function(e) {
+        var checkbox = e.target.closest('.activity-step-toggle');
+        if (!checkbox) return;
+
+        var stepId = checkbox.dataset.stepId;
+        if (!stepId) return;
+
+        checkbox.disabled = true;
+        fetch('/team-tracker/step/' + stepId + '/toggle', { method: 'POST' })
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                if (!data.success) {
+                    checkbox.checked = !checkbox.checked;
+                    checkbox.disabled = false;
+                    return;
+                }
+                // Refresh to keep ordering/counts consistent with server state.
+                window.location.reload();
+            })
+            .catch(function() {
+                checkbox.checked = !checkbox.checked;
+                checkbox.disabled = false;
+            });
     });
 });
 </script>

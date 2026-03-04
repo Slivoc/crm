@@ -294,6 +294,7 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
             cur.currency_code as cost_currency,
             -- Customer quote line data (the actual quoted price/lead time to customer)
             cql.id as quote_line_id,
+            cql.quoted_part_number,
             cql.quote_price_gbp,
             cql.lead_days as quoted_lead_days,
             cql.base_cost_gbp,
@@ -313,17 +314,28 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
         fetch='all'
     ) or []
 
-    # Build lookup by normalized part number
-    # Key: base_part_number, Value: list of matching lines (most recent first)
-    # Always re-normalize to ensure consistency (stored base_part_number may be from old normalization)
-    pn_lookup = {}
+    # Build lookups by normalized part number:
+    # - quoted_lookup: preferred match path using quoted/displayed part number
+    # - requested_lookup: fallback path using originally requested customer part number
+    # Values are lists of matching lines (most recent first due to ORDER BY)
+    quoted_lookup = {}
+    requested_lookup = {}
     for line in parts_list_lines:
-        # Always normalize fresh from customer_part_number to ensure consistency
-        base_pn = _normalize_part_number(line['customer_part_number'])
-        if base_pn:
-            if base_pn not in pn_lookup:
-                pn_lookup[base_pn] = []
-            pn_lookup[base_pn].append(line)
+        requested_pn = line.get('customer_part_number') or ''
+        quoted_pn = line.get('quoted_part_number') or requested_pn
+
+        quoted_base_pn = _normalize_part_number(quoted_pn)
+        requested_base_pn = _normalize_part_number(requested_pn)
+
+        if quoted_base_pn:
+            if quoted_base_pn not in quoted_lookup:
+                quoted_lookup[quoted_base_pn] = []
+            quoted_lookup[quoted_base_pn].append(line)
+
+        if requested_base_pn:
+            if requested_base_pn not in requested_lookup:
+                requested_lookup[requested_base_pn] = []
+            requested_lookup[requested_base_pn].append(line)
 
     # Match each PO line
     for po_line in po_lines:
@@ -341,8 +353,14 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
             'match_confidence': 'none'
         }
 
-        # Look for matches
-        candidates = pn_lookup.get(po_base_pn, [])
+        # Look for matches:
+        # 1) Prefer quoted/displayed part number
+        # 2) Fallback to requested/original customer part number
+        candidates = quoted_lookup.get(po_base_pn, [])
+        matched_on_requested = False
+        if not candidates:
+            candidates = requested_lookup.get(po_base_pn, [])
+            matched_on_requested = bool(candidates)
 
         if candidates:
             # Find best match - prefer exact quantity match, then closest quantity
@@ -394,12 +412,15 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                     'line_id': best_match['line_id'],
                     'parts_list_id': best_match['parts_list_id'],
                     'line_number': float(best_match['line_number']) if best_match['line_number'] else None,
-                    'part_number': best_match['customer_part_number'],
+                    'part_number': best_match.get('quoted_part_number') or best_match['customer_part_number'],
+                    'requested_part_number': best_match['customer_part_number'],
+                    'quoted_part_number': best_match.get('quoted_part_number') or best_match['customer_part_number'],
                     'quantity': best_match['chosen_qty'] or best_match['quantity'],
                     'price': quoted_price,  # Customer quoted price from customer_quote_lines
                     'lead_days': quoted_lead_days,  # Lead days from customer_quote_lines
                     'quote_status': quote_status,
-                    'is_no_bid': best_match.get('is_no_bid', False)
+                    'is_no_bid': best_match.get('is_no_bid', False),
+                    'match_basis': 'requested' if matched_on_requested else 'quoted'
                 }
 
                 match_result['parts_list'] = {
@@ -417,8 +438,21 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                         'cost': float(best_match['chosen_cost']) if best_match['chosen_cost'] else None,
                         'cost_currency': best_match.get('cost_currency'),
                         'lead_days': best_match.get('chosen_lead_days'),
-                        'quantity': best_match.get('chosen_qty') or best_match.get('quantity')
+                        'quantity': best_match.get('chosen_qty') or best_match.get('quantity'),
+                        'requested_quantity': best_match.get('quantity'),
+                        'quoted_quantity': best_match.get('chosen_qty') or best_match.get('quantity')
                     }
+
+                # If we matched via requested part number while the quoted part differs,
+                # explicitly flag it so users can spot substitutions.
+                requested_pn = best_match.get('customer_part_number') or ''
+                quoted_pn = best_match.get('quoted_part_number') or requested_pn
+                requested_base = _normalize_part_number(requested_pn)
+                quoted_base = _normalize_part_number(quoted_pn)
+                if matched_on_requested and quoted_base and requested_base and quoted_base != requested_base:
+                    match_result['discrepancies'].append(
+                        f"PN: PO matches requested {requested_pn}, quoted as {quoted_pn}"
+                    )
 
                 # Check for discrepancies
                 matched_qty = best_match['chosen_qty'] or best_match['quantity'] or 1
@@ -989,6 +1023,7 @@ def find_near_matches():
                 cur.currency_code as cost_currency,
                 cql.quote_price_gbp,
                 cql.lead_days as quoted_lead_days,
+                cql.quoted_part_number,
                 cql.quoted_status,
                 cql.is_no_bid
             FROM parts_list_lines pll
@@ -1011,12 +1046,13 @@ def find_near_matches():
         logger.info(f"Searching through {len(parts_list_lines)} parts list lines for customer {customer_id}")
 
         for line in parts_list_lines:
-            # Try both stored base_part_number and freshly normalized customer_part_number
-            stored_base = line.get('base_part_number') or ''
             customer_pn = line.get('customer_part_number') or ''
-            line_base_pn = _normalize_part_number(stored_base) if stored_base else _normalize_part_number(customer_pn)
+            quoted_pn = line.get('quoted_part_number') or customer_pn
+            requested_base_pn = _normalize_part_number(customer_pn)
+            quoted_base_pn = _normalize_part_number(quoted_pn)
+            line_base_pn = quoted_base_pn or requested_base_pn
 
-            if not line_base_pn:
+            if not requested_base_pn and not quoted_base_pn:
                 continue
 
             # Use line_id for deduplication instead of part number
@@ -1025,8 +1061,15 @@ def find_near_matches():
             if line_key in seen_parts:
                 continue
 
-            # Calculate similarity score
-            score = _similarity_score(search_base_pn, line_base_pn)
+            # Prefer scoring against quoted PN, with fallback to requested PN.
+            quoted_score = _similarity_score(search_base_pn, quoted_base_pn) if quoted_base_pn else -1
+            requested_score = _similarity_score(search_base_pn, requested_base_pn) if requested_base_pn else -1
+            if quoted_score >= requested_score:
+                score = quoted_score
+                match_basis = 'quoted'
+            else:
+                score = requested_score
+                match_basis = 'requested'
 
             # Log high-scoring matches for debugging
             if score >= 50:
@@ -1049,17 +1092,23 @@ def find_near_matches():
                     'parts_list_name': line['parts_list_name'],
                     'parts_list_date': line['parts_list_date'].isoformat() if line['parts_list_date'] else None,
                     'line_number': float(line['line_number']) if line['line_number'] else None,
-                    'part_number': line['customer_part_number'],
+                    'part_number': quoted_pn or customer_pn,
                     'base_part_number': line_base_pn,
+                    'requested_part_number': customer_pn,
+                    'quoted_part_number': quoted_pn,
                     'quantity': line['chosen_qty'] or line['quantity'],
                     'price': quoted_price,
                     'lead_days': quoted_lead_days,
                     'status_name': line['status_name'],
                     'supplier_name': line['supplier_name'],
                     'supplier_cost': float(line['chosen_cost']) if line['chosen_cost'] else None,
+                    'cost_currency': line.get('cost_currency'),
                     'supplier_lead_days': line['chosen_lead_days'],
+                    'requested_quantity': line.get('quantity'),
+                    'quoted_quantity': line.get('chosen_qty') or line.get('quantity'),
                     'quote_status': line.get('quoted_status'),
                     'is_no_bid': line.get('is_no_bid', False),
+                    'match_basis': match_basis,
                     'score': score
                 })
 

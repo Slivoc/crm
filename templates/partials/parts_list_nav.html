@@ -35,16 +35,14 @@
                        {% if active_page == 'emails' %}aria-current="page"{% endif %}>
                         <i class="bi bi-envelope"></i>
                     </a>
-                    {% if not customer_name %}
-                        <button type="button"
-                                class="btn btn-sm pl-icon-btn text-primary"
-                                data-bs-toggle="modal"
-                                data-bs-target="#assignCustomerModal"
-                                title="Assign Customer"
-                                aria-label="Assign Customer">
-                            <i class="bi bi-person-plus"></i>
-                        </button>
-                    {% endif %}
+                    <button type="button"
+                            class="btn btn-sm pl-icon-btn text-primary"
+                            data-bs-toggle="modal"
+                            data-bs-target="#assignCustomerModal"
+                            title="{{ 'Assign Customer' if not customer_name else 'Reassign Customer/Contact' }}"
+                            aria-label="{{ 'Assign Customer' if not customer_name else 'Reassign Customer/Contact' }}">
+                        <i class="bi {{ 'bi-person-plus' if not customer_name else 'bi-person-gear' }}"></i>
+                    </button>
                     <button type="button"
                             class="btn btn-sm pl-icon-btn text-danger"
                             id="delete-parts-list-btn"
@@ -443,7 +441,6 @@
 })();
 </script>
 
-{% if not customer_name %}
 <style>
 .pl-assign-results {
     position: relative;
@@ -474,10 +471,15 @@
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Assign Customer and Contact</h5>
+                <h5 class="modal-title">{{ 'Assign Customer and Contact' if not customer_name else 'Reassign Customer and Contact' }}</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
+                {% if customer_name %}
+                    <div class="alert alert-light border py-2">
+                        Current: <strong>{{ customer_name }}</strong>{% if contact_name %} | {{ contact_name }}{% endif %}
+                    </div>
+                {% endif %}
                 <div class="mb-3">
                     <label for="assign-customer-input" class="form-label">Customer</label>
                     <input type="text" class="form-control" id="assign-customer-input" placeholder="Search customer...">
@@ -485,7 +487,10 @@
                     <div id="assign-customer-selected" class="pl-assign-selected mt-2" style="display:none;"></div>
                 </div>
                 <div class="mb-3">
-                    <label for="assign-contact-input" class="form-label">Contact (optional)</label>
+                    <div class="d-flex align-items-center justify-content-between">
+                        <label for="assign-contact-input" class="form-label mb-0">Contact (optional)</label>
+                        <button type="button" class="btn btn-link btn-sm p-0" id="assign-contact-clear">Clear</button>
+                    </div>
                     <input type="text" class="form-control" id="assign-contact-input" placeholder="Search contact...">
                     <div id="assign-contact-results" class="pl-assign-results"></div>
                     <div id="assign-contact-selected" class="pl-assign-selected mt-2" style="display:none;"></div>
@@ -495,7 +500,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" id="assign-customer-save">Assign</button>
+                <button type="button" class="btn btn-primary" id="assign-customer-save">{{ 'Assign' if not customer_name else 'Save Changes' }}</button>
             </div>
         </div>
     </div>
@@ -513,8 +518,15 @@
     const contactInput = document.getElementById('assign-contact-input');
     const contactResults = document.getElementById('assign-contact-results');
     const contactSelected = document.getElementById('assign-contact-selected');
+    const contactClearBtn = document.getElementById('assign-contact-clear');
     const errorEl = document.getElementById('assign-customer-error');
     const saveBtn = document.getElementById('assign-customer-save');
+
+    const currentCustomerId = {{ customer_id|default(None)|tojson }};
+    const currentCustomerName = {{ customer_name|default(None)|tojson }};
+    const currentContactId = {{ contact_id|default(None)|tojson }};
+    const currentContactName = {{ contact_name|default(None)|tojson }};
+    const currentContactEmail = {{ contact_email|default(None)|tojson }};
 
     let selectedCustomer = null;
     let selectedContact = null;
@@ -555,6 +567,22 @@
         contactSelected.textContent = contact.full_name + (contact.email ? ` (${contact.email})` : '');
         contactInput.value = '';
         contactResults.innerHTML = '';
+    }
+
+    if (contactClearBtn) {
+        contactClearBtn.addEventListener('click', () => setSelectedContact(null));
+    }
+
+    if (currentCustomerId && currentCustomerName) {
+        setSelectedCustomer({ id: currentCustomerId, name: currentCustomerName });
+    }
+    if (currentContactId && currentContactName) {
+        setSelectedContact({
+            id: currentContactId,
+            full_name: currentContactName,
+            email: currentContactEmail,
+            customer_id: currentCustomerId
+        });
     }
 
     function renderResults(container, items, onClick) {
@@ -663,4 +691,3 @@
     }
 })();
 </script>
-{% endif %}

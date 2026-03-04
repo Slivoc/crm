@@ -69,6 +69,11 @@ def _parse_datetime_value(value):
     return None
 
 
+def _month_start(reference_date, months_ago=0):
+    """Return the first day of the month N months before reference_date."""
+    return reference_date.replace(day=1) - relativedelta(months=months_ago)
+
+
 def _strip_html(value: str) -> str:
     if not value:
         return ''
@@ -1455,28 +1460,80 @@ def activity(salesperson_id):
             print(f"DEBUG: Error loading top quoted lists: {e}")
             top_quoted_lists = []
 
-        next_action_customers = []
-        next_action_month = datetime.now().strftime('%Y-%m')
-        next_action_month_label = datetime.now().strftime('%B %Y')
+        tracker_step_customers = []
         try:
-            db = get_db_connection()
-            next_action_rows = db.execute(
+            tracker_rows = db_execute(
                 """
-                SELECT c.id, c.name, t.notes, t.response, t.target_month
-                FROM customer_monthly_targets t
-                JOIN customers c ON c.id = t.customer_id
-                WHERE t.salesperson_id = ?
-                  AND t.target_month = ?
-                  AND t.notes IS NOT NULL
-                  AND TRIM(t.notes) <> ''
-                ORDER BY c.name
+                SELECT
+                    e.id AS entry_id,
+                    c.id AS customer_id,
+                    c.name AS customer_name,
+                    ns.id AS step_id,
+                    ns.description AS step_description,
+                    ns.is_completed,
+                    ns.completed_at,
+                    ns.position,
+                    ns.created_at
+                FROM team_tracker_entries e
+                JOIN customers c ON c.id = e.customer_id
+                LEFT JOIN team_tracker_next_steps ns ON ns.entry_id = e.id
+                WHERE e.salesperson_id = ?
+                  AND e.is_active = TRUE
+                ORDER BY c.name ASC, ns.is_completed ASC, ns.position ASC, ns.created_at ASC
                 """,
-                (salesperson_id, next_action_month)
-            ).fetchall()
-            next_action_customers = [dict(row) for row in next_action_rows]
-            db.close()
+                (salesperson_id,),
+                fetch='all'
+            ) or []
+
+            grouped_steps = {}
+            for row in [dict(r) for r in tracker_rows]:
+                customer_id = row.get('customer_id')
+                if customer_id not in grouped_steps:
+                    grouped_steps[customer_id] = {
+                        'entry_id': row.get('entry_id'),
+                        'id': customer_id,
+                        'name': row.get('customer_name') or '',
+                        'open_steps': [],
+                        'completed_steps': []
+                    }
+
+                step_id = row.get('step_id')
+                if not step_id:
+                    continue
+
+                step_data = {
+                    'id': step_id,
+                    'description': row.get('step_description') or '',
+                    'completed_at': row.get('completed_at')
+                }
+                if row.get('is_completed'):
+                    grouped_steps[customer_id]['completed_steps'].append(step_data)
+                else:
+                    grouped_steps[customer_id]['open_steps'].append(step_data)
+
+            tracker_step_customers = []
+            for customer in grouped_steps.values():
+                if not customer['open_steps'] and not customer['completed_steps']:
+                    continue
+
+                sorted_completed = sorted(
+                    customer['completed_steps'],
+                    key=lambda s: (
+                        s.get('completed_at').isoformat()
+                        if hasattr(s.get('completed_at'), 'isoformat')
+                        else str(s.get('completed_at') or '')
+                    ),
+                    reverse=True
+                )
+                customer['completed_preview'] = sorted_completed[:2]
+                customer['open_count'] = len(customer['open_steps'])
+                customer['completed_count'] = len(customer['completed_steps'])
+                tracker_step_customers.append(customer)
+
+            tracker_step_customers.sort(key=lambda c: (c['name'] or '').lower())
+
         except Exception as e:
-            print(f"DEBUG: Error loading next action customers: {e}")
+            print(f"DEBUG: Error loading team tracker steps: {e}")
 
         t_render = time.perf_counter()
         response = render_template(template,
@@ -1491,8 +1548,7 @@ def activity(salesperson_id):
             quoted_status_id=quoted_status_id,
             parts_date_range=parts_date_range,
             parts_custom_date=parts_custom_date,
-            next_action_customers=next_action_customers,
-            next_action_month_label=next_action_month_label
+            tracker_step_customers=tracker_step_customers
         )
         timings['render_template'] = time.perf_counter() - t_render
         return response
@@ -2486,8 +2542,8 @@ def sales_data(salesperson_id):
             month_dict = {}  # For mapping month strings to positions
 
             for i in range(24):  # Changed from 12 to 24
-                # Calculate month date (go backwards from current month)
-                month_date = (today.replace(day=1) - timedelta(days=30 * i)).replace(day=1)
+                # Use calendar month arithmetic to avoid duplicate/skip month labels.
+                month_date = _month_start(today, i)
                 month_label = month_date.strftime('%b %Y')  # e.g. "Jan 2025"
                 month_key = month_date.strftime('%Y-%m')  # e.g. "2025-01"
 
@@ -2528,8 +2584,7 @@ def sales_data(salesperson_id):
             result['monthly_goal_series'] = goal_series
 
             # 4. Personal sales data with customer breakdown
-            start_date = (today.replace(day=1) - timedelta(days=730)).strftime(
-                '%Y-%m-%d')  # Changed from 365 to 730 days
+            start_date = f"{month_keys[0]}-01"
 
             # Get monthly totals
             query = """
@@ -4408,7 +4463,7 @@ def monthly_breakdown(salesperson_id, month_index):
         # Calculate the target month based on month_index (0 = 23 months ago, 23 = current month)
         today = datetime.now().date()
         months_back = 23 - month_index
-        target_month_start = (today.replace(day=1) - timedelta(days=30 * months_back)).replace(day=1)
+        target_month_start = _month_start(today, months_back)
 
         if months_back == 0:
             target_month_end = today
@@ -4627,18 +4682,20 @@ def customer_sales_data(salesperson_id, customer_id):
 
         # Generate month labels for the past 24 months
         chart_labels = []
+        month_keys = []
         month_dict = {}
 
         for i in range(24):
-            month_date = (today.replace(day=1) - timedelta(days=30 * i)).replace(day=1)
+            month_date = _month_start(today, i)
             month_label = month_date.strftime('%b %Y')
             month_key = month_date.strftime('%Y-%m')
 
             chart_labels.insert(0, month_label)
+            month_keys.insert(0, month_key)
             month_dict[month_key] = 23 - i
 
         # Get sales data for ALL associated customers
-        start_date = (today.replace(day=1) - timedelta(days=730)).strftime('%Y-%m-%d')
+        start_date = f"{month_keys[0]}-01"
         today_str = today.strftime('%Y-%m-%d')
 
         # UPDATED: Query for all associated customers' monthly sales
