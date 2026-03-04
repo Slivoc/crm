@@ -635,9 +635,16 @@
     <div class="col-lg-4 mb-4 mb-lg-0">
       <div class="card h-100 shadow-sm border-0">
         <div class="card-header border-0 bg-white py-2">
-          <div class="d-flex align-items-center">
-            <i class="bi bi-graph-up-arrow text-success me-2"></i>
-            <h6 class="card-title mb-0 fw-semibold small">Quotes by Day</h6>
+          <div class="d-flex align-items-center justify-content-between gap-2">
+            <div class="d-flex align-items-center">
+              <i class="bi bi-graph-up-arrow text-success me-2"></i>
+              <h6 class="card-title mb-0 fw-semibold small">Quotes by Day</h6>
+            </div>
+            <small class="text-muted text-nowrap"
+                   id="quotesMonthConversion"
+                   data-month-quote-value="{{ this_month_quotes_value_gbp or 0 }}">
+              Month Conv: --
+            </small>
           </div>
         </div>
         <div class="card-body p-0 overflow-auto" style="min-height: 250px; max-height: 350px;">

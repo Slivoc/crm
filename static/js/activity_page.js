@@ -2232,6 +2232,22 @@ document.addEventListener('DOMContentLoaded', function() {
                         `Orders: ${data.month_sales.order_count}`;
                 }
 
+                const monthConversionEl = document.getElementById('quotesMonthConversion');
+                if (monthConversionEl && data.month_sales) {
+                    const monthQuoteValue = parseFloat(monthConversionEl.dataset.monthQuoteValue || '0') || 0;
+                    const monthSalesValue = Number(data.month_sales.total_value || 0);
+                    const monthLabel = new Date().toLocaleString('en-GB', { month: 'short', year: 'numeric' });
+
+                    if (monthQuoteValue > 0) {
+                        const conversionRate = (monthSalesValue / monthQuoteValue) * 100;
+                        monthConversionEl.textContent = `${monthLabel} Conv: ${conversionRate.toFixed(1)}%`;
+                        monthConversionEl.title = `Sales GBP ${monthSalesValue.toFixed(2)} / Quotes GBP ${monthQuoteValue.toFixed(2)}`;
+                    } else {
+                        monthConversionEl.textContent = `${monthLabel} Conv: N/A`;
+                        monthConversionEl.title = 'No quoted value this calendar month';
+                    }
+                }
+
                 // Store original data
                 let personalUpdated = false;
                 let accountUpdated = false;

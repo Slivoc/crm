@@ -1307,6 +1307,7 @@ def activity(salesperson_id):
             call_list_prefill = None
 
         quotes_by_day = []
+        this_month_quotes_value_gbp = 0.0
         try:
             quote_rows = db_execute(
                 """
@@ -1348,9 +1349,31 @@ def activity(salesperson_id):
                 }
                 for row in [dict(r) for r in quote_rows]
             ]
+
+            month_quote_row = db_execute(
+                """
+                SELECT
+                    COALESCE(SUM(
+                        COALESCE(cql.quote_price_gbp, 0) *
+                        COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                    ), 0) AS quoted_value_gbp
+                FROM customer_quote_lines cql
+                JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+                JOIN parts_lists pl ON pl.id = pll.parts_list_id
+                WHERE pl.salesperson_id = ?
+                  AND cql.quoted_status = 'quoted'
+                  AND cql.quoted_on IS NOT NULL
+                  AND cql.quoted_on::date BETWEEN date_trunc('month', CURRENT_DATE)::date AND CURRENT_DATE
+                """,
+                (salesperson_id,),
+                fetch='one'
+            )
+            if month_quote_row:
+                this_month_quotes_value_gbp = float(month_quote_row['quoted_value_gbp'] or 0)
         except Exception as e:
             print(f"DEBUG: Error loading quotes by day: {e}")
             quotes_by_day = []
+            this_month_quotes_value_gbp = 0.0
 
         quoted_status_id = request.args.get('quoted_status_id', default=None, type=int)
         parts_date_range = request.args.get('parts_date_range', default='14days', type=str)
@@ -1548,7 +1571,8 @@ def activity(salesperson_id):
             quoted_status_id=quoted_status_id,
             parts_date_range=parts_date_range,
             parts_custom_date=parts_custom_date,
-            tracker_step_customers=tracker_step_customers
+            tracker_step_customers=tracker_step_customers,
+            this_month_quotes_value_gbp=this_month_quotes_value_gbp
         )
         timings['render_template'] = time.perf_counter() - t_render
         return response
