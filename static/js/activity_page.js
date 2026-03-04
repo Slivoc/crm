@@ -2418,32 +2418,60 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function buildCommunicationsTable(communicationsData, showGroupHeaders = false) {
-        const allComms = [];
+        const groupedByCompany = {};
+        let totalComms = 0;
+
         Object.keys(communicationsData).forEach(type => {
             Object.keys(communicationsData[type] || {}).forEach(company => {
-                communicationsData[type][company].forEach(comm => {
-                    allComms.push({
+                (communicationsData[type][company] || []).forEach(comm => {
+                    const companyName = company || 'Unknown Company';
+                    const contactName = comm.contact_name || 'Unknown Contact';
+
+                    if (!groupedByCompany[companyName]) {
+                        groupedByCompany[companyName] = {};
+                    }
+                    if (!groupedByCompany[companyName][contactName]) {
+                        groupedByCompany[companyName][contactName] = [];
+                    }
+
+                    groupedByCompany[companyName][contactName].push({
                         ...comm,
                         communication_type: type,
-                        company_name: company
+                        company_name: companyName
                     });
+                    totalComms += 1;
                 });
             });
         });
 
-        if (allComms.length === 0) {
+        if (totalComms === 0) {
             return `<div class="text-center py-5 text-muted">
                 <i class="bi bi-chat-dots fs-1"></i>
                 <p class="mt-3">No communications found</p>
             </div>`;
         }
 
-        allComms.sort((a, b) => {
-            if (!a.time && !b.time) return 0;
-            if (!a.time) return 1;
-            if (!b.time) return -1;
-            return b.time.localeCompare(a.time);
-        });
+        const parseCommDate = comm => {
+            const full = comm.full_datetime || '';
+            if (full) {
+                const fullDate = new Date(full);
+                if (!Number.isNaN(fullDate.getTime())) return fullDate;
+            }
+            const time = comm.time || '';
+            if (time) {
+                const timeDate = new Date(`1970-01-01T${time}`);
+                if (!Number.isNaN(timeDate.getTime())) return timeDate;
+            }
+            return null;
+        };
+
+        const formatCommTime = comm => {
+            const date = parseCommDate(comm);
+            if (!date) return '';
+            return date.toLocaleTimeString([], {
+                hour: '2-digit', minute: '2-digit', hour12: true
+            });
+        };
 
         let html = `<table class="table"><thead><tr>
             <th style="width: 25%;">Contact</th>
@@ -2452,48 +2480,63 @@ document.addEventListener('DOMContentLoaded', function() {
             <th style="width: 15%;">Time</th>
         </tr></thead><tbody>`;
 
-        let currentType = '';
-        allComms.forEach(comm => {
-            if (showGroupHeaders && comm.communication_type !== currentType) {
-                html += `<tr><td colspan="4" class="table-secondary fw-bold">
-                    <i class="bi bi-${getIconForCommType(comm.communication_type)} me-2"></i>
-                    ${comm.communication_type}
+        const companyNames = Object.keys(groupedByCompany).sort((a, b) => a.localeCompare(b));
+        companyNames.forEach(companyName => {
+            const companyContacts = groupedByCompany[companyName];
+            const companyTotal = Object.values(companyContacts)
+                .reduce((sum, comms) => sum + comms.length, 0);
+
+            html += `<tr><td colspan="4" class="table-secondary fw-bold">
+                <i class="bi bi-building me-2"></i>${companyName}
+                <span class="badge bg-light text-dark ms-2">${companyTotal}</span>
+            </td></tr>`;
+
+            const contactNames = Object.keys(companyContacts).sort((a, b) => a.localeCompare(b));
+            contactNames.forEach(contactName => {
+                const contactComms = companyContacts[contactName].sort((a, b) => {
+                    const aDate = parseCommDate(a);
+                    const bDate = parseCommDate(b);
+                    if (!aDate && !bDate) return 0;
+                    if (!aDate) return 1;
+                    if (!bDate) return -1;
+                    return bDate - aDate;
+                });
+
+                const firstComm = contactComms[0] || {};
+                html += `<tr><td colspan="4" class="table-light">
+                    <span class="fw-semibold">${contactName}</span>
+                    ${firstComm.job_title ? `<span class="small text-muted ms-2">${firstComm.job_title}</span>` : ''}
                 </td></tr>`;
-                currentType = comm.communication_type;
-            }
 
-            const timeFormatted = comm.time ?
-                new Date(`1970-01-01T${comm.time}`).toLocaleTimeString([], {
-                    hour: '2-digit', minute: '2-digit', hour12: true
-                }) : '';
+                contactComms.forEach(comm => {
+                    if (showGroupHeaders) {
+                        // Semantic hook for the "All" tab where mixed types are shown.
+                    }
 
-            const notes = comm.notes && comm.notes.trim() ?
-                comm.notes : 'No notes recorded';
-            const notesClass = comm.notes && comm.notes.trim() ?
-                '' : 'text-muted fst-italic';
+                    const notes = comm.notes && comm.notes.trim() ?
+                        comm.notes : 'No notes recorded';
+                    const notesClass = comm.notes && comm.notes.trim() ?
+                        '' : 'text-muted fst-italic';
 
-            html += `<tr>
-                <td>
-                    <div class="fw-semibold">${comm.contact_name}</div>
-                    <div class="small text-muted">
-                        ${comm.company_name}
-                        ${comm.job_title ? ` • ${comm.job_title}` : ''}
-                    </div>
-                </td>
-                <td>
-                    <span class="badge bg-light text-dark">
-                        <i class="bi bi-${getIconForCommType(comm.communication_type)} me-1"></i>
-                        ${comm.communication_type}
-                    </span>
-                </td>
-                <td><div class="${notesClass}">${notes}</div></td>
-                <td class="text-end small text-muted">${timeFormatted}</td>
-            </tr>`;
+                    html += `<tr>
+                        <td class="ps-4">
+                            <div class="small text-muted">${companyName}</div>
+                        </td>
+                        <td>
+                            <span class="badge bg-light text-dark">
+                                <i class="bi bi-${getIconForCommType(comm.communication_type)} me-1"></i>
+                                ${comm.communication_type}
+                            </span>
+                        </td>
+                        <td><div class="${notesClass}">${notes}</div></td>
+                        <td class="text-end small text-muted">${formatCommTime(comm)}</td>
+                    </tr>`;
+                });
+            });
         });
 
         return html + '</tbody></table>';
     }
-
     function getIconForCommType(type) {
         const icons = {
             'Phone': 'telephone', 'Call': 'telephone', 'Email': 'envelope',
@@ -2761,4 +2804,5 @@ document.getElementById('callListContent').addEventListener('click', function(e)
         modal.show();
     }
 });
+
 
