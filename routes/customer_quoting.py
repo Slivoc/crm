@@ -101,19 +101,35 @@ def _to_decimal(value, default):
     return parsed if parsed is not None else default
 
 
-def _get_condition_and_certs(cur, parts_list_line_id, supplier_id):
-    """
-    Resolve condition/certs for a line:
-    1) Latest non-empty from supplier quote for chosen supplier
-    2) Otherwise supplier's standard defaults
-    Returns tuple (condition, certs) using empty strings when missing.
-    """
+def _get_supplier_quote_metadata(cur, parts_list_line_id, supplier_id, source_type=None, source_reference=None):
+    """Resolve supplier metadata for a line, preferring the explicitly chosen quote line."""
     condition = None
     certs = None
+    manufacturer = None
 
-    if supplier_id:
-        quote = _execute_with_cursor(cur, """
-            SELECT sql.condition_code, sql.certifications
+    explicit_quote = None
+    source_type_value = (source_type or '').strip().lower()
+    if source_type_value == 'quote' and source_reference is not None:
+        explicit_quote = _execute_with_cursor(cur, """
+            SELECT sql.condition_code, sql.certifications, sql.manufacturer
+            FROM parts_list_supplier_quote_lines sql
+            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            WHERE sql.parts_list_line_id = ?
+              AND sq.supplier_id = ?
+              AND CAST(sql.id AS TEXT) = ?
+              AND sql.is_no_bid = FALSE
+            LIMIT 1
+        """, (parts_list_line_id, supplier_id, str(source_reference))).fetchone()
+
+    if explicit_quote:
+        condition = (explicit_quote['condition_code'] or '').strip() or None
+        certs = (explicit_quote['certifications'] or '').strip() or None
+        manufacturer = (explicit_quote['manufacturer'] or '').strip() or None
+
+    latest_quote = None
+    if supplier_id and (not condition or not certs or not manufacturer):
+        latest_quote = _execute_with_cursor(cur, """
+            SELECT sql.condition_code, sql.certifications, sql.manufacturer
             FROM parts_list_supplier_quote_lines sql
             JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
             WHERE sql.parts_list_line_id = ?
@@ -122,15 +138,21 @@ def _get_condition_and_certs(cur, parts_list_line_id, supplier_id):
               AND (
                     (sql.condition_code IS NOT NULL AND TRIM(sql.condition_code) != '')
                  OR (sql.certifications IS NOT NULL AND TRIM(sql.certifications) != '')
+                 OR (sql.manufacturer IS NOT NULL AND TRIM(sql.manufacturer) != '')
               )
             ORDER BY sq.quote_date DESC, sql.date_modified DESC, sql.id DESC
             LIMIT 1
             """, (parts_list_line_id, supplier_id)).fetchone()
 
-        if quote:
-            condition = (quote['condition_code'] or '').strip() or None
-            certs = (quote['certifications'] or '').strip() or None
+    if latest_quote:
+        if not condition:
+            condition = (latest_quote['condition_code'] or '').strip() or None
+        if not certs:
+            certs = (latest_quote['certifications'] or '').strip() or None
+        if not manufacturer:
+            manufacturer = (latest_quote['manufacturer'] or '').strip() or None
 
+    if supplier_id and (not condition or not certs):
         supplier_defaults = _execute_with_cursor(
             cur,
             "SELECT standard_condition, standard_certs FROM suppliers WHERE id = ?",
@@ -143,7 +165,28 @@ def _get_condition_and_certs(cur, parts_list_line_id, supplier_id):
             if not certs:
                 certs = (supplier_defaults['standard_certs'] or '').strip() or None
 
-    return condition or '', certs or ''
+    return {
+        'condition': condition or '',
+        'certs': certs or '',
+        'manufacturer': manufacturer or ''
+    }
+
+
+def _get_condition_and_certs(cur, parts_list_line_id, supplier_id, source_type=None, source_reference=None):
+    """
+    Resolve condition/certs for a line:
+    1) Latest non-empty from supplier quote for chosen supplier
+    2) Otherwise supplier's standard defaults
+    Returns tuple (condition, certs) using empty strings when missing.
+    """
+    metadata = _get_supplier_quote_metadata(
+        cur,
+        parts_list_line_id,
+        supplier_id,
+        source_type=source_type,
+        source_reference=source_reference,
+    )
+    return metadata['condition'], metadata['certs']
 
 
 @customer_quoting_bp.route('/parts-lists/<int:list_id>/customer-quote', methods=['GET'])
@@ -416,6 +459,8 @@ def calculate_base_costs(list_id):
                     pll.chosen_supplier_id,
                     pll.chosen_cost,
                     pll.chosen_currency_id,
+                    pll.chosen_source_type,
+                    pll.chosen_source_reference,
                     c.exchange_rate_to_base as exchange_rate_to_eur,
                     cql.id as quote_line_id,
                     cql.quoted_status
@@ -439,16 +484,27 @@ def calculate_base_costs(list_id):
                 else:
                     base_cost_gbp = chosen_cost
 
+                metadata = _get_supplier_quote_metadata(
+                    cur,
+                    line['id'],
+                    line['chosen_supplier_id'],
+                    source_type=line['chosen_source_type'],
+                    source_reference=line['chosen_source_reference']
+                )
+
                 if line['quote_line_id']:
                     _execute_with_cursor(cur, """
                         UPDATE customer_quote_lines 
                         SET base_cost_gbp = ?,
+                            standard_condition = ?,
+                            standard_certs = ?,
+                            manufacturer = ?,
                             date_modified = CURRENT_TIMESTAMP
                         WHERE id = ?
-                    """, (base_cost_gbp, line['quote_line_id']))
+                    """, (base_cost_gbp, metadata['condition'], metadata['certs'], metadata['manufacturer'], line['quote_line_id']))
                     updated_count += 1
                 else:
-                    condition, certs = _get_condition_and_certs(cur, line['id'], line['chosen_supplier_id'])
+                    condition, certs = metadata['condition'], metadata['certs']
                     _execute_with_cursor(cur, """
                         INSERT INTO customer_quote_lines 
                         (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line, margin_percent, quote_price_gbp, quoted_status, standard_condition, standard_certs)
@@ -483,6 +539,8 @@ def calculate_delivery_costs(list_id):
                     pll.chosen_lead_days,
                     pll.chosen_cost,
                     pll.chosen_currency_id,
+                    pll.chosen_source_type,
+                    pll.chosen_source_reference,
                     COALESCE(pll.chosen_qty, pll.quantity) as effective_quantity,
                     c.exchange_rate_to_base as exchange_rate_to_eur,
                     s.delivery_cost as supplier_delivery_cost,
@@ -530,21 +588,29 @@ def calculate_delivery_costs(list_id):
                         supplier_lead_days = line['chosen_lead_days'] or 0
                         customer_lead_days = supplier_lead_days + supplier_buffer
 
+                        metadata = _get_supplier_quote_metadata(
+                            cur,
+                            line['parts_list_line_id'],
+                            supplier_id,
+                            source_type=line['chosen_source_type'],
+                            source_reference=line['chosen_source_reference']
+                        )
+
                         if not line['quote_line_id']:
                             chosen_cost = line['chosen_cost'] or 0
                             exchange_rate = line['exchange_rate_to_eur'] or 1
                             base_cost_gbp = chosen_cost / exchange_rate if exchange_rate != 0 else chosen_cost
                             margin = 0
                             quote_price = base_cost_gbp + delivery_per_unit
-                            condition, certs = _get_condition_and_certs(cur, line['parts_list_line_id'], supplier_id)
+                            condition, certs = metadata['condition'], metadata['certs']
 
                             _execute_with_cursor(cur, """
                                 INSERT INTO customer_quote_lines 
                                 (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line, 
-                                 margin_percent, quote_price_gbp, lead_days, quoted_status, standard_condition, standard_certs)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, 'created', ?, ?)
+                                 margin_percent, quote_price_gbp, lead_days, quoted_status, standard_condition, standard_certs, manufacturer)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?)
                             """, (line['parts_list_line_id'], base_cost_gbp, delivery_per_unit, delivery_per_line,
-                                  margin, quote_price, customer_lead_days, condition, certs))
+                                  margin, quote_price, customer_lead_days, condition, certs, metadata['manufacturer']))
                             created_count += 1
                         else:
                             base_cost = line['base_cost_gbp'] or 0
@@ -563,10 +629,14 @@ def calculate_delivery_costs(list_id):
                                     delivery_per_line = ?,
                                     lead_days = ?,
                                     quote_price_gbp = ?,
+                                    standard_condition = ?,
+                                    standard_certs = ?,
+                                    manufacturer = ?,
                                     date_modified = CURRENT_TIMESTAMP
                                 WHERE id = ?
                             """, (
-                                delivery_per_unit, delivery_per_line, customer_lead_days, quote_price, line['quote_line_id']))
+                                delivery_per_unit, delivery_per_line, customer_lead_days, quote_price,
+                                metadata['condition'], metadata['certs'], metadata['manufacturer'], line['quote_line_id']))
                             updated_count += 1
 
         return jsonify(success=True, updated_count=updated_count, created_count=created_count, skipped=skipped_count)
@@ -589,6 +659,8 @@ def calculate_base_cost_line(list_id, line_id):
                     pll.chosen_supplier_id,
                     pll.chosen_cost,
                     pll.chosen_currency_id,
+                    pll.chosen_source_type,
+                    pll.chosen_source_reference,
                     c.exchange_rate_to_base as exchange_rate_to_eur,
                     cql.id as quote_line_id,
                     cql.quote_price_gbp,
@@ -613,19 +685,30 @@ def calculate_base_cost_line(list_id, line_id):
             exchange_rate = line['exchange_rate_to_eur'] or 1
             base_cost_gbp = line['chosen_cost'] / exchange_rate if exchange_rate != 0 else line['chosen_cost']
 
+            metadata = _get_supplier_quote_metadata(
+                cur,
+                line_id,
+                line['chosen_supplier_id'],
+                source_type=line['chosen_source_type'],
+                source_reference=line['chosen_source_reference']
+            )
+
             update_quote_price = False
             if line['quote_line_id']:
                 _execute_with_cursor(cur, """
                     UPDATE customer_quote_lines 
                     SET base_cost_gbp = ?,
+                        standard_condition = ?,
+                        standard_certs = ?,
+                        manufacturer = ?,
                         date_modified = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (base_cost_gbp, line['quote_line_id']))
+                """, (base_cost_gbp, metadata['condition'], metadata['certs'], metadata['manufacturer'], line['quote_line_id']))
                 quote_price = line['quote_price_gbp']
                 margin_percent = line['margin_percent'] or 0
                 delivery_per_line = line['delivery_per_line'] or 0
             else:
-                condition, certs = _get_condition_and_certs(cur, line_id, line['chosen_supplier_id'])
+                condition, certs = metadata['condition'], metadata['certs']
                 _execute_with_cursor(cur, """
                     INSERT INTO customer_quote_lines 
                     (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line,
@@ -668,6 +751,8 @@ def calculate_delivery_line(list_id, line_id):
                     pll.chosen_lead_days,
                     pll.chosen_cost,
                     pll.chosen_currency_id,
+                    pll.chosen_source_type,
+                    pll.chosen_source_reference,
                     COALESCE(pll.chosen_qty, pll.quantity) as effective_quantity,
                     c.exchange_rate_to_base as exchange_rate_to_eur,
                     s.delivery_cost as supplier_delivery_cost,
@@ -714,19 +799,27 @@ def calculate_delivery_line(list_id, line_id):
             supplier_buffer = line['supplier_buffer'] or 0
             customer_lead_days = supplier_lead_days + supplier_buffer
 
+            metadata = _get_supplier_quote_metadata(
+                cur,
+                line['parts_list_line_id'],
+                supplier_id,
+                source_type=line['chosen_source_type'],
+                source_reference=line['chosen_source_reference']
+            )
+
             if not line['quote_line_id']:
                 chosen_cost = line['chosen_cost'] or 0
                 exchange_rate = line['exchange_rate_to_eur'] or 1
                 base_cost_gbp = chosen_cost / exchange_rate if exchange_rate != 0 else chosen_cost
                 margin = 0
                 quote_price = base_cost_gbp + delivery_per_unit
-                condition, certs = _get_condition_and_certs(cur, line['parts_list_line_id'], supplier_id)
+                condition, certs = metadata['condition'], metadata['certs']
 
                 _execute_with_cursor(cur, """
                     INSERT INTO customer_quote_lines 
                     (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line,
-                     margin_percent, quote_price_gbp, lead_days, quoted_status, standard_condition, standard_certs)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'created', ?, ?)
+                     margin_percent, quote_price_gbp, lead_days, quoted_status, standard_condition, standard_certs, manufacturer)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?)
                 """, (
                     line['parts_list_line_id'],
                     base_cost_gbp,
@@ -736,7 +829,8 @@ def calculate_delivery_line(list_id, line_id):
                     quote_price,
                     customer_lead_days,
                     condition,
-                    certs
+                    certs,
+                    metadata['manufacturer']
                 ))
             else:
                 base_cost = line['base_cost_gbp'] or 0
@@ -755,6 +849,9 @@ def calculate_delivery_line(list_id, line_id):
                         delivery_per_line = ?,
                         lead_days = ?,
                         quote_price_gbp = ?,
+                        standard_condition = ?,
+                        standard_certs = ?,
+                        manufacturer = ?,
                         date_modified = CURRENT_TIMESTAMP
                     WHERE id = ?
                 """, (
@@ -762,6 +859,9 @@ def calculate_delivery_line(list_id, line_id):
                     delivery_per_line,
                     customer_lead_days,
                     quote_price,
+                    metadata['condition'],
+                    metadata['certs'],
+                    metadata['manufacturer'],
                     line['quote_line_id']
                 ))
 
@@ -1286,6 +1386,8 @@ def bulk_apply_margin(list_id):
                     pll.chosen_qty,
                     pll.chosen_cost,
                     pll.chosen_currency_id,
+                    pll.chosen_source_type,
+                    pll.chosen_source_reference,
                     c.exchange_rate_to_base as exchange_rate_to_eur,
                     cql.id as quote_line_id,
                     cql.base_cost_gbp,
@@ -1473,6 +1575,8 @@ def bulk_margin_apply(list_id):
                     pll.id as parts_list_line_id,
                     pll.chosen_cost,
                     pll.chosen_currency_id,
+                    pll.chosen_source_type,
+                    pll.chosen_source_reference,
                     c.exchange_rate_to_base as exchange_rate_to_eur,
                     cql.id as quote_line_id,
                     cql.base_cost_gbp,

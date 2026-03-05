@@ -1417,12 +1417,12 @@ function useQuoteForLine(lineId, quoteLineId, supplierId, supplierName, cost, cu
 
     // Update lead days
     const leadInput = row.querySelector('.lead-days-input');
-    if (leadInput && leadDays) leadInput.value = leadDays;
+    if (leadInput) leadInput.value = leadDays ?? '';
 
     // Update chosen quantity if provided
     const chosenQtyInput = row.querySelector('.chosen-qty-input');
-    if (chosenQtyInput && quotedQuantity) {
-        chosenQtyInput.value = quotedQuantity;
+    if (chosenQtyInput) {
+        chosenQtyInput.value = quotedQuantity ?? '';
     }
 
     // Pull supplier quote notes into the notes column so they are visible/saved
