@@ -1038,11 +1038,20 @@ def get_rfq_lines_by_part_number(base_part_number):
 # Fetch sales order lines by base_part_number with customer information
 def get_sales_order_lines_by_part_number(base_part_number):
     sales_order_lines = query_all('''
-        SELECT sol.id, sol.line_number, sol.quantity, sol.price, customers.name as customer
+        SELECT
+            sol.id,
+            sol.line_number,
+            sol.quantity,
+            sol.price,
+            so.id AS sales_order_id,
+            so.sales_order_ref,
+            so.date_entered,
+            customers.name AS customer
         FROM sales_order_lines sol
         JOIN sales_orders so ON sol.sales_order_id = so.id
         JOIN customers ON so.customer_id = customers.id
         WHERE sol.base_part_number = ?
+        ORDER BY so.date_entered DESC, so.id DESC, sol.line_number ASC
     ''', (base_part_number,))
     return [dict(line) for line in sales_order_lines]
 

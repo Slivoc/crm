@@ -242,25 +242,24 @@
     color: #0d6efd;
 }
 
-/* Grid Layout */
-.dashboard-grid {
+/* Layout */
+.secondary-grid {
     display: grid;
     grid-template-columns: repeat(12, 1fr);
-    gap: 1.5rem;
+    gap: 1rem;
 }
 
-.col-span-4 { grid-column: span 4; }
-.col-span-6 { grid-column: span 6; }
-.col-span-8 { grid-column: span 8; }
-.col-span-12 { grid-column: span 12; }
+.secondary-col {
+    grid-column: span 4;
+}
 
 @media (max-width: 1200px) {
-    .col-span-4, .col-span-6, .col-span-8 { grid-column: span 6; }
+    .secondary-col { grid-column: span 6; }
 }
 
 @media (max-width: 768px) {
-    .col-span-4, .col-span-6, .col-span-8 { grid-column: span 12; }
-    .dashboard-grid { gap: 1rem; }
+    .secondary-col { grid-column: span 12; }
+    .secondary-grid { gap: 0.75rem; }
 }
 
 /* Price formatting */
@@ -357,7 +356,7 @@
 
 /* Scrollable table container */
 .table-scroll {
-    max-height: 400px;
+    max-height: 360px;
     overflow-y: auto;
 }
 
@@ -479,158 +478,108 @@
         </div>
     </div>
 
-    <!-- Main Dashboard Grid -->
-    <div class="dashboard-grid">
-        <!-- Left Column - Charts & Equivalents -->
-        <div class="col-span-4">
-            <!-- Global Equivalents -->
-            <div class="section-card">
-                <div class="section-header">
-                    <h5><i class="bi bi-link-45deg text-primary"></i>Global Equivalents</h5>
-                    <span class="badge bg-secondary">{{ global_alternatives|length }}</span>
-                </div>
-                <div class="section-body has-padding">
-                    {% if global_alternatives %}
-                    <div class="equiv-badges" id="global-alts-list">
-                        {% for alt in global_alternatives %}
-                        <a href="{{ url_for('parts.view_part_number', base_part_number=alt) }}" class="equiv-badge">
-                            {{ alt }}
-                        </a>
-                        {% endfor %}
-                    </div>
-                    {% else %}
-                    <p id="global-alts-empty" class="text-muted mb-0 small">No global equivalents defined yet.</p>
-                    <div class="equiv-badges d-none" id="global-alts-list"></div>
-                    {% endif %}
+    <div class="section-card">
+        <div class="section-body">
+            <ul class="nav nav-tabs-modern nav-tabs px-3 pt-3" id="dataTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="sales-orders-tab" data-bs-toggle="tab" data-bs-target="#sales-orders" type="button">
+                        <i class="bi bi-cart-check me-1"></i>Sales Orders
+                        <span class="badge bg-purple" style="background:#6f42c1;">{{ sales_order_lines|length }}</span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="parts-lists-tab" data-bs-toggle="tab" data-bs-target="#parts-lists" type="button">
+                        <i class="bi bi-list-check me-1"></i>Parts Lists
+                        <span class="badge bg-primary">{{ parts_list_lines|length }}</span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="supplier-quotes-tab" data-bs-toggle="tab" data-bs-target="#supplier-quotes" type="button">
+                        <i class="bi bi-receipt me-1"></i>Supplier Quotes
+                        <span class="badge bg-success">{{ supplier_quotes|length }}</span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="purchase-orders-tab" data-bs-toggle="tab" data-bs-target="#purchase-orders" type="button">
+                        <i class="bi bi-truck me-1"></i>Purchase Orders
+                        <span class="badge bg-warning text-dark">{{ po_lines|length }}</span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="boms-tab" data-bs-toggle="tab" data-bs-target="#boms" type="button">
+                        <i class="bi bi-diagram-3 me-1"></i>BOMs
+                        <span class="badge bg-info">{{ bom_lines|length }}</span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="approvals-tab" data-bs-toggle="tab" data-bs-target="#approvals" type="button">
+                        <i class="bi bi-patch-check me-1"></i>Approvals
+                        <span class="badge bg-danger">{{ manufacturer_approvals|length }}</span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="excess-tab" data-bs-toggle="tab" data-bs-target="#excess" type="button">
+                        <i class="bi bi-box-seam me-1"></i>Excess
+                        <span class="badge bg-secondary">{{ excess_lines|length }}</span>
+                    </button>
+                </li>
+            </ul>
 
-                    <div class="add-equiv-area mt-3">
-                        <label class="form-label small text-muted mb-1">Add equivalents (comma/space/newline separated)</label>
-                        <textarea id="global-alts-input" class="form-control form-control-sm mb-2" rows="2" placeholder="e.g. CR3212-2-2, NAS1097AD3-3"></textarea>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <button type="button" class="btn btn-sm btn-primary" onclick="saveGlobalAlternatives('{{ part_number.base_part_number }}')">
-                                <i class="bi bi-plus-lg me-1"></i>Add
-                            </button>
-                            <small id="global-alts-status" class="text-muted"></small>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Industry Distribution -->
-            <div class="section-card">
-                <div class="section-header">
-                    <h5><i class="bi bi-pie-chart text-info"></i>Industry Distribution</h5>
-                </div>
-                <div class="section-body has-padding">
-                    {% if chart_data.labels %}
-                    <div class="chart-container">
-                        <canvas id="industryChart"></canvas>
+            <div class="tab-content" id="dataTabsContent">
+                <!-- Sales Orders Tab -->
+                <div class="tab-pane fade show active" id="sales-orders" role="tabpanel">
+                    {% if sales_order_lines %}
+                    <div class="table-scroll">
+                        <table class="modern-table">
+                            <thead>
+                                <tr>
+                                    <th>Order / Customer</th>
+                                    <th class="text-center">Line #</th>
+                                    <th class="text-center">Qty</th>
+                                    <th class="text-end">Price</th>
+                                    <th>Entry Date</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for sol in sales_order_lines %}
+                                <tr>
+                                    <td>
+                                        <a href="{{ url_for('sales_orders.edit_sales_order', sales_order_id=sol.sales_order_id) }}" class="quick-link">
+                                            {{ sol.sales_order_ref or ('SO #' ~ sol.sales_order_id) }}
+                                        </a>
+                                        <div class="small text-muted">{{ sol.customer or '-' }}</div>
+                                    </td>
+                                    <td class="text-center">{{ sol.line_number }}</td>
+                                    <td class="text-center">{{ sol.quantity }}</td>
+                                    <td class="text-end price">{{ "%.2f"|format(sol.price) if sol.price else '-' }}</td>
+                                    <td>
+                                        {% if sol.date_entered %}
+                                            {{ sol.date_entered if sol.date_entered is string else sol.date_entered.strftime('%d %b %Y') }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
                     {% else %}
                     <div class="empty-state">
-                        <i class="bi bi-pie-chart"></i>
-                        <p>No industry data available</p>
+                        <i class="bi bi-cart-check"></i>
+                        <p>No sales orders found</p>
                     </div>
                     {% endif %}
                 </div>
-            </div>
 
-            <!-- Top Customers -->
-            <div class="section-card">
-                <div class="section-header">
-                    <h5><i class="bi bi-people text-success"></i>Top Customers</h5>
-                </div>
-                <div class="section-body">
-                    {% if top_customers %}
-                    <table class="modern-table">
-                        <thead>
-                            <tr>
-                                <th>Customer</th>
-                                <th class="text-center">Orders</th>
-                                <th class="text-end">Qty</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for customer in top_customers %}
-                            <tr>
-                                <td>{{ customer.name }}</td>
-                                <td class="text-center">{{ customer.order_count }}</td>
-                                <td class="text-end">{{ "{:,}".format(customer.total_quantity|int) }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                    {% else %}
-                    <div class="empty-state">
-                        <i class="bi bi-people"></i>
-                        <p>No customer data yet</p>
-                    </div>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-
-        <!-- Right Column - Tabbed Data -->
-        <div class="col-span-8">
-            <div class="section-card">
-                <div class="section-body">
-                    <!-- Tab Navigation -->
-                    <ul class="nav nav-tabs-modern nav-tabs px-3 pt-3" id="dataTabs" role="tablist">
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link active" id="parts-lists-tab" data-bs-toggle="tab" data-bs-target="#parts-lists" type="button">
-                                <i class="bi bi-list-check me-1"></i>Parts Lists
-                                <span class="badge bg-primary">{{ parts_list_lines|length }}</span>
-                            </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="supplier-quotes-tab" data-bs-toggle="tab" data-bs-target="#supplier-quotes" type="button">
-                                <i class="bi bi-receipt me-1"></i>Supplier Quotes
-                                <span class="badge bg-success">{{ supplier_quotes|length }}</span>
-                            </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="sales-orders-tab" data-bs-toggle="tab" data-bs-target="#sales-orders" type="button">
-                                <i class="bi bi-cart-check me-1"></i>Sales Orders
-                                <span class="badge bg-purple" style="background:#6f42c1;">{{ sales_order_lines|length }}</span>
-                            </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="purchase-orders-tab" data-bs-toggle="tab" data-bs-target="#purchase-orders" type="button">
-                                <i class="bi bi-truck me-1"></i>Purchase Orders
-                                <span class="badge bg-warning text-dark">{{ po_lines|length }}</span>
-                            </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="boms-tab" data-bs-toggle="tab" data-bs-target="#boms" type="button">
-                                <i class="bi bi-diagram-3 me-1"></i>BOMs
-                                <span class="badge bg-info">{{ bom_lines|length }}</span>
-                            </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="approvals-tab" data-bs-toggle="tab" data-bs-target="#approvals" type="button">
-                                <i class="bi bi-patch-check me-1"></i>Approvals
-                                <span class="badge bg-danger">{{ manufacturer_approvals|length }}</span>
-                            </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="excess-tab" data-bs-toggle="tab" data-bs-target="#excess" type="button">
-                                <i class="bi bi-box-seam me-1"></i>Excess
-                                <span class="badge bg-secondary">{{ excess_lines|length }}</span>
-                            </button>
-                        </li>
-                    </ul>
-
-                    <!-- Tab Content -->
-                    <div class="tab-content" id="dataTabsContent">
-                        <!-- Parts Lists Tab -->
-                        <div class="tab-pane fade show active" id="parts-lists" role="tabpanel">
+                <!-- Parts Lists Tab -->
+                <div class="tab-pane fade" id="parts-lists" role="tabpanel">
                             {% if parts_list_lines %}
                             <div class="table-scroll">
                                 <table class="modern-table">
                                     <thead>
                                         <tr>
-                                            <th>Parts List</th>
-                                            <th>Customer</th>
+                                            <th>Parts List / Customer</th>
                                             <th>Status</th>
                                             <th class="text-center">Qty</th>
                                             <th class="text-end">Cost</th>
@@ -645,8 +594,8 @@
                                                 <a href="{{ url_for('parts_list.view_parts_list', list_id=line.parts_list_id) }}" class="quick-link">
                                                     {{ line.parts_list_name }}
                                                 </a>
+                                                <div class="small text-muted">{{ line.customer_name or '-' }}</div>
                                             </td>
-                                            <td>{{ line.customer_name or '-' }}</td>
                                             <td>
                                                 <span class="status-badge {% if line.status_name == 'Won' %}won{% elif line.status_name == 'Quoted' %}quoted{% elif line.status_name == 'New' %}new{% else %}pending{% endif %}">
                                                     {{ line.status_name or 'Unknown' }}
@@ -669,8 +618,8 @@
                             {% endif %}
                         </div>
 
-                        <!-- Supplier Quotes Tab -->
-                        <div class="tab-pane fade" id="supplier-quotes" role="tabpanel">
+                <!-- Supplier Quotes Tab -->
+                <div class="tab-pane fade" id="supplier-quotes" role="tabpanel">
                             {% if supplier_quotes %}
                             <div class="table-scroll">
                                 <table class="modern-table">
@@ -726,47 +675,8 @@
                             {% endif %}
                         </div>
 
-                        <!-- Sales Orders Tab -->
-                        <div class="tab-pane fade" id="sales-orders" role="tabpanel">
-                            {% if sales_order_lines %}
-                            <div class="table-scroll">
-                                <table class="modern-table">
-                                    <thead>
-                                        <tr>
-                                            <th>SO Line ID</th>
-                                            <th>Customer</th>
-                                            <th class="text-center">Line #</th>
-                                            <th class="text-center">Qty</th>
-                                            <th class="text-end">Price</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {% for sol in sales_order_lines %}
-                                        <tr>
-                                            <td>
-                                                <a href="{{ url_for('sales_orders.edit_sales_order', sales_order_id=sol.id) }}" class="quick-link">
-                                                    #{{ sol.id }}
-                                                </a>
-                                            </td>
-                                            <td>{{ sol.customer }}</td>
-                                            <td class="text-center">{{ sol.line_number }}</td>
-                                            <td class="text-center">{{ sol.quantity }}</td>
-                                            <td class="text-end price">{{ "%.2f"|format(sol.price) if sol.price else '-' }}</td>
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
-                            </div>
-                            {% else %}
-                            <div class="empty-state">
-                                <i class="bi bi-cart-check"></i>
-                                <p>No sales orders found</p>
-                            </div>
-                            {% endif %}
-                        </div>
-
-                        <!-- Purchase Orders Tab -->
-                        <div class="tab-pane fade" id="purchase-orders" role="tabpanel">
+                <!-- Purchase Orders Tab -->
+                <div class="tab-pane fade" id="purchase-orders" role="tabpanel">
                             {% if po_lines %}
                             <div class="table-scroll">
                                 <table class="modern-table">
@@ -804,8 +714,8 @@
                             {% endif %}
                         </div>
 
-                        <!-- BOMs Tab -->
-                        <div class="tab-pane fade" id="boms" role="tabpanel">
+                <!-- BOMs Tab -->
+                <div class="tab-pane fade" id="boms" role="tabpanel">
                             {% if bom_lines %}
                             <div class="table-scroll">
                                 <table class="modern-table">
@@ -857,8 +767,8 @@
                             {% endif %}
                         </div>
 
-                        <!-- Manufacturer Approvals Tab -->
-                        <div class="tab-pane fade" id="approvals" role="tabpanel">
+                <!-- Manufacturer Approvals Tab -->
+                <div class="tab-pane fade" id="approvals" role="tabpanel">
                             {% if manufacturer_approvals %}
                             <div class="p-3">
                                 {% for approval in manufacturer_approvals %}
@@ -899,8 +809,8 @@
                             {% endif %}
                         </div>
 
-                        <!-- Excess Lists Tab -->
-                        <div class="tab-pane fade" id="excess" role="tabpanel">
+                <!-- Excess Lists Tab -->
+                <div class="tab-pane fade" id="excess" role="tabpanel">
                             {% if excess_lines %}
                             <div class="table-scroll">
                                 <table class="modern-table">
@@ -948,8 +858,95 @@
                                 <p>No excess inventory found</p>
                             </div>
                             {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    <div class="secondary-grid mt-3">
+        <div class="secondary-col">
+            <div class="section-card">
+                <div class="section-header">
+                    <h5><i class="bi bi-link-45deg text-primary"></i>Global Equivalents</h5>
+                    <span class="badge bg-secondary">{{ global_alternatives|length }}</span>
+                </div>
+                <div class="section-body has-padding">
+                    {% if global_alternatives %}
+                    <div class="equiv-badges" id="global-alts-list">
+                        {% for alt in global_alternatives %}
+                        <a href="{{ url_for('parts.view_part_number', base_part_number=alt) }}" class="equiv-badge">
+                            {{ alt }}
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p id="global-alts-empty" class="text-muted mb-0 small">No global equivalents defined yet.</p>
+                    <div class="equiv-badges d-none" id="global-alts-list"></div>
+                    {% endif %}
+
+                    <div class="add-equiv-area mt-3">
+                        <label class="form-label small text-muted mb-1">Add equivalents (comma/space/newline separated)</label>
+                        <textarea id="global-alts-input" class="form-control form-control-sm mb-2" rows="2" placeholder="e.g. CR3212-2-2, NAS1097AD3-3"></textarea>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <button type="button" class="btn btn-sm btn-primary" onclick="saveGlobalAlternatives('{{ part_number.base_part_number }}')">
+                                <i class="bi bi-plus-lg me-1"></i>Add
+                            </button>
+                            <small id="global-alts-status" class="text-muted"></small>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+        <div class="secondary-col">
+            <div class="section-card">
+                <div class="section-header">
+                    <h5><i class="bi bi-pie-chart text-info"></i>Industry Distribution</h5>
+                </div>
+                <div class="section-body has-padding">
+                    {% if chart_data.labels %}
+                    <div class="chart-container">
+                        <canvas id="industryChart"></canvas>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-pie-chart"></i>
+                        <p>No industry data available</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="secondary-col">
+            <div class="section-card">
+                <div class="section-header">
+                    <h5><i class="bi bi-people text-success"></i>Top Customers</h5>
+                </div>
+                <div class="section-body">
+                    {% if top_customers %}
+                    <table class="modern-table">
+                        <thead>
+                            <tr>
+                                <th>Customer</th>
+                                <th class="text-center">Orders</th>
+                                <th class="text-end">Qty</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for customer in top_customers %}
+                            <tr>
+                                <td>{{ customer.name }}</td>
+                                <td class="text-center">{{ customer.order_count }}</td>
+                                <td class="text-end">{{ "{:,}".format(customer.total_quantity|int) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-people"></i>
+                        <p>No customer data yet</p>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
