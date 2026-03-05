@@ -1202,6 +1202,11 @@ document.addEventListener('DOMContentLoaded', function() {
             row.dataset.index = index;
             row.dataset.supplier = sup ? sup.name : '';
 
+            const selectedPartNumber = m && m.part_number ? m.part_number : null;
+            const displayPartNumber = selectedPartNumber || po.part_number;
+            const hasAlternateSelection = Boolean(selectedPartNumber)
+                && normalizePartNumberClient(selectedPartNumber) !== normalizePartNumberClient(po.part_number);
+
             const matchLabel = conf === 'exact' ? 'Match' : conf === 'partial' ? 'Discrepancy' : 'No Match';
 
             const requiredDelivery = po.required_delivery_date || extractedData?.required_delivery_date || null;
@@ -1224,8 +1229,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     <input type="checkbox" class="form-check-input line-complete-checkbox" data-index="${index}" ${completedLineIndices.has(index) ? 'checked' : ''}>
                 </td>
                 <td class="part-number-cell">
-                    ${escapeHtml(po.part_number)}
-                    <button class="btn btn-outline-secondary copy-btn copy-part-btn" data-index="${index}" onclick="copyToClipboard('${escapeHtml(po.part_number)}')" title="Copy">
+                    ${escapeHtml(displayPartNumber)}
+                    <button class="btn btn-outline-secondary copy-btn copy-part-btn" data-index="${index}" onclick="copyToClipboard('${escapeHtml(displayPartNumber)}')" title="Copy">
                         <i class="bi bi-clipboard"></i>
                     </button>
                     <button class="btn btn-sm btn-outline-primary ms-1 find-match-btn"
@@ -1241,6 +1246,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         ${pl && pl.is_repeat ? ' · Repeat order' : ''}
                         ${m && m.quote_status === 'quoted' ? '<span class="badge bg-success ms-1" style="font-size:0.6rem">Q</span>' : ''}
                     </div>
+                    ${hasAlternateSelection
+                        ? `<div class="small text-warning">PO PN: ${escapeHtml(po.part_number)}</div>`
+                        : ''
+                    }
                     ${m && m.match_basis === 'requested' &&
                         m.quoted_part_number &&
                         normalizePartNumberClient(m.quoted_part_number) !== normalizePartNumberClient(m.requested_part_number)
