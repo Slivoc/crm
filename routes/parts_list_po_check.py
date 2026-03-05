@@ -340,11 +340,16 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
     quoted_lookup = {}
     requested_lookup = {}
     for line in parts_list_lines:
-        base_pn = _normalize_parts_list_line_part_number(line)
-        if base_pn:
-            if base_pn not in pn_lookup:
-                pn_lookup[base_pn] = []
-            pn_lookup[base_pn].append(line)
+        quoted_base_pn = _normalize_part_number(
+            line.get('quoted_part_number') or line.get('customer_part_number') or line.get('base_part_number')
+        )
+        requested_base_pn = _normalize_parts_list_line_part_number(line)
+
+        if quoted_base_pn:
+            quoted_lookup.setdefault(quoted_base_pn, []).append(line)
+
+        if requested_base_pn:
+            requested_lookup.setdefault(requested_base_pn, []).append(line)
 
     # Match each PO line
     for po_line in po_lines:
