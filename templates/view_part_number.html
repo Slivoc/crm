@@ -133,6 +133,26 @@
     gap: 0.5rem;
 }
 
+.section-toggle {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: inherit;
+    text-align: left;
+}
+
+.section-toggle .toggle-icon {
+    transition: transform 0.2s ease;
+}
+
+.section-toggle[aria-expanded="true"] .toggle-icon {
+    transform: rotate(180deg);
+}
+
 .section-card .section-header .badge {
     font-size: 0.75rem;
     font-weight: 500;
@@ -486,10 +506,15 @@
             <!-- Global Equivalents -->
             <div class="section-card">
                 <div class="section-header">
-                    <h5><i class="bi bi-link-45deg text-primary"></i>Global Equivalents</h5>
-                    <span class="badge bg-secondary">{{ global_alternatives|length }}</span>
+                    <button class="section-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#globalEquivalentsBody" aria-expanded="false" aria-controls="globalEquivalentsBody">
+                        <h5><i class="bi bi-link-45deg text-primary"></i>Global Equivalents</h5>
+                        <div>
+                            <span class="badge bg-secondary me-2">{{ global_alternatives|length }}</span>
+                            <i class="bi bi-chevron-down toggle-icon"></i>
+                        </div>
+                    </button>
                 </div>
-                <div class="section-body has-padding">
+                <div class="section-body has-padding collapse" id="globalEquivalentsBody">
                     {% if global_alternatives %}
                     <div class="equiv-badges" id="global-alts-list">
                         {% for alt in global_alternatives %}
@@ -519,9 +544,12 @@
             <!-- Industry Distribution -->
             <div class="section-card">
                 <div class="section-header">
-                    <h5><i class="bi bi-pie-chart text-info"></i>Industry Distribution</h5>
+                    <button class="section-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#industryDistributionBody" aria-expanded="false" aria-controls="industryDistributionBody">
+                        <h5><i class="bi bi-pie-chart text-info"></i>Industry Distribution</h5>
+                        <i class="bi bi-chevron-down toggle-icon"></i>
+                    </button>
                 </div>
-                <div class="section-body has-padding">
+                <div class="section-body has-padding collapse" id="industryDistributionBody">
                     {% if chart_data.labels %}
                     <div class="chart-container">
                         <canvas id="industryChart"></canvas>
@@ -572,8 +600,178 @@
 
         <!-- Right Column - Tabbed Data -->
         <div class="col-span-8">
+            <!-- Default visible sections -->
+            <div class="section-card">
+                <div class="section-header">
+                    <h5><i class="bi bi-clock-history text-primary"></i>Recent Sales Orders</h5>
+                </div>
+                <div class="section-body">
+                    {% if sales_order_lines %}
+                    <div class="table-scroll">
+                        <table class="modern-table">
+                            <thead>
+                                <tr>
+                                    <th>Order #</th>
+                                    <th>Customer</th>
+                                    <th class="text-center">Qty</th>
+                                    <th class="text-end">Price</th>
+                                    <th class="text-center">Line #</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for sale in sales_order_lines[:10] %}
+                                <tr>
+                                    <td>
+                                        <a href="{{ url_for('sales_orders.view_sales_order', so_id=sale.id) }}" class="quick-link">#{{ sale.id }}</a>
+                                    </td>
+                                    <td>{{ sale.customer or '-' }}</td>
+                                    <td class="text-center">{{ sale.quantity }}</td>
+                                    <td class="text-end price">{{ "%.2f"|format(sale.price) if sale.price else '-' }}</td>
+                                    <td class="text-center">{{ sale.line_number or '-' }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-cart-check"></i>
+                        <p>No sales orders found</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="section-card">
+                <div class="section-header">
+                    <h5><i class="bi bi-list-check text-primary"></i>Parts List Customer Quotes</h5>
+                </div>
+                <div class="section-body">
+                    {% if parts_list_lines %}
+                    <div class="table-scroll">
+                        <table class="modern-table">
+                            <thead>
+                                <tr>
+                                    <th>Parts List</th>
+                                    <th>Customer</th>
+                                    <th>Status</th>
+                                    <th class="text-center">Qty</th>
+                                    <th class="text-end">Price</th>
+                                    <th>Date</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for line in parts_list_lines[:10] %}
+                                <tr>
+                                    <td>
+                                        <a href="{{ url_for('parts_list.view_parts_list', list_id=line.parts_list_id) }}" class="quick-link">
+                                            {{ line.parts_list_name }}
+                                        </a>
+                                    </td>
+                                    <td>{{ line.customer_name or '-' }}</td>
+                                    <td>{{ line.status_name or 'Unknown' }}</td>
+                                    <td class="text-center">{{ line.quantity }}</td>
+                                    <td class="text-end price">{{ "%.2f"|format(line.chosen_price) if line.chosen_price else '-' }}</td>
+                                    <td>{{ line.date_created.strftime('%d %b %Y') if line.date_created else '-' }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-list-check"></i>
+                        <p>No parts list customer quotes found</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="section-card">
+                <div class="section-header">
+                    <h5><i class="bi bi-truck text-primary"></i>Recent Purchase Orders</h5>
+                </div>
+                <div class="section-body">
+                    {% if po_lines %}
+                    <div class="table-scroll">
+                        <table class="modern-table">
+                            <thead>
+                                <tr>
+                                    <th>PO #</th>
+                                    <th>Supplier</th>
+                                    <th class="text-center">Qty</th>
+                                    <th class="text-end">Cost</th>
+                                    <th class="text-center">Line #</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for po in po_lines[:10] %}
+                                <tr>
+                                    <td>
+                                        <a href="{{ url_for('purchase_orders.edit_purchase_order', purchase_order_id=po.id) }}" class="quick-link">{{ po.purchase_order_ref or '-' }}</a>
+                                    </td>
+                                    <td>{{ po.supplier or '-' }}</td>
+                                    <td class="text-center">{{ po.quantity }}</td>
+                                    <td class="text-end price">{{ "%.2f"|format(po.price) if po.price else '-' }}</td>
+                                    <td class="text-center">{{ po.line_number or '-' }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-truck"></i>
+                        <p>No purchase orders found</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="section-card">
+                <div class="section-header">
+                    <h5><i class="bi bi-box-seam text-primary"></i>Stock List Listings</h5>
+                </div>
+                <div class="section-body">
+                    {% if excess_lines %}
+                    <div class="table-scroll">
+                        <table class="modern-table">
+                            <thead>
+                                <tr>
+                                    <th>Source</th>
+                                    <th>Type</th>
+                                    <th class="text-center">Qty</th>
+                                    <th>Manufacturer</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for excess in excess_lines[:10] %}
+                                <tr>
+                                    <td>
+                                        <a href="{{ url_for('excess.edit_excess_list', list_id=excess.excess_list_id) }}" class="quick-link">{{ excess.source_name or '-' }}</a>
+                                    </td>
+                                    <td>{{ excess.source_type|capitalize if excess.source_type else '-' }}</td>
+                                    <td class="text-center">{{ excess.quantity or '-' }}</td>
+                                    <td>{{ excess.manufacturer or '-' }}</td>
+                                    <td>{{ excess.status|capitalize if excess.status else '-' }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-box-seam"></i>
+                        <p>No stock list listings found</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
             <div class="section-card">
                 <div class="section-body">
+                    <div class="px-3 pt-3 pb-1 text-muted small fw-semibold text-uppercase">Optional details</div>
                     <!-- Tab Navigation -->
                     <ul class="nav nav-tabs-modern nav-tabs px-3 pt-3" id="dataTabs" role="tablist">
                         <li class="nav-item" role="presentation">
