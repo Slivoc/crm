@@ -734,8 +734,8 @@
                             <th class="text-center" style="width: 70px;">Qty</th>
                             <th class="text-center border-end" style="width: 80px;">Price</th>
                             <th class="text-center quote-col" style="background: #f0f8f0;">Lead</th>
-                            <th class="text-center quote-col" style="background: #f0f8f0;">Qty</th>
                             <th class="text-center quote-col" style="background: #f0f8f0;">Req Qty</th>
+                            <th class="text-center quote-col" style="background: #f0f8f0;">Qty</th>
                             <th class="text-end border-end quote-col" style="background: #f0f8f0;">Price</th>
                             <th class="text-center supplier-col" style="background: #f0f4f8;">Lead</th>
                             <th class="text-center supplier-col" style="background: #f0f4f8;">Qty</th>
@@ -1277,10 +1277,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     ${m && m.lead_days ? `${m.lead_days}d` : '-'}
                 </td>
                 <td class="text-center quote-col" style="background: #f8fcf8;">
-                    ${m ? (m.quantity || '-') : '-'}
+                    ${m ? formatQuantity(m.required_quantity ?? m.quantity) : '-'}
                 </td>
                 <td class="text-center quote-col" style="background: #f8fcf8;">
-                    ${m ? formatQuantity(m.required_quantity ?? m.quantity) : '-'}
+                    ${m ? (m.quantity || '-') : '-'}
                 </td>
                 <td class="text-end border-end quote-col" style="background: #f8fcf8;">
                     ${m && m.price ? formatCurrency(m.price) : '-'}
