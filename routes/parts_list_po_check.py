@@ -429,6 +429,7 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                     'part_number': best_match.get('quoted_part_number') or best_match['customer_part_number'],
                     'requested_part_number': best_match['customer_part_number'],
                     'quoted_part_number': best_match.get('quoted_part_number') or best_match['customer_part_number'],
+                    'required_quantity': best_match['quantity'],
                     'quantity': best_match['chosen_qty'] or best_match['quantity'],
                     'price': quoted_price,  # Customer quoted price from customer_quote_lines
                     'lead_days': quoted_lead_days,  # Lead days from customer_quote_lines
@@ -1064,6 +1065,9 @@ def find_near_matches():
             # Try both stored base_part_number and freshly normalized customer_part_number
             customer_pn = line.get('customer_part_number') or ''
             line_base_pn = _normalize_parts_list_line_part_number(line)
+            quoted_pn = line.get('quoted_part_number') or customer_pn
+            quoted_base_pn = _normalize_part_number(quoted_pn)
+            requested_base_pn = _normalize_part_number(customer_pn)
 
             if not requested_base_pn and not quoted_base_pn:
                 continue
@@ -1109,6 +1113,7 @@ def find_near_matches():
                     'base_part_number': line_base_pn,
                     'requested_part_number': customer_pn,
                     'quoted_part_number': quoted_pn,
+                    'required_quantity': line.get('quantity'),
                     'quantity': line['chosen_qty'] or line['quantity'],
                     'price': quoted_price,
                     'lead_days': quoted_lead_days,
@@ -1143,6 +1148,88 @@ def find_near_matches():
 
     except Exception as e:
         logger.exception("Failed to find near matches")
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_po_check_bp.route('/po-check/match-candidates', methods=['POST'])
+@login_required
+def list_match_candidates():
+    """Return recent quoted lines for manual PO matching overrides."""
+    data = request.get_json(force=True)
+    customer_id = data.get('customer_id')
+
+    if not customer_id:
+        return jsonify(success=False, message="Customer ID is required"), 400
+
+    try:
+        rows = db_execute(
+            """
+            SELECT
+                pll.id AS line_id,
+                pll.parts_list_id,
+                pll.line_number,
+                pll.customer_part_number,
+                pll.quantity,
+                pll.chosen_qty,
+                pll.chosen_cost,
+                pll.chosen_lead_days,
+                pl.name AS parts_list_name,
+                pl.date_created AS parts_list_date,
+                pls.name AS status_name,
+                s.name AS supplier_name,
+                cur.currency_code AS cost_currency,
+                cql.quote_price_gbp,
+                cql.lead_days AS quoted_lead_days,
+                cql.quoted_part_number,
+                cql.quoted_status,
+                cql.is_no_bid
+            FROM parts_list_lines pll
+            JOIN parts_lists pl ON pl.id = pll.parts_list_id
+            LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
+            LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
+            LEFT JOIN currencies cur ON cur.id = pll.chosen_currency_id
+            LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+            WHERE pl.customer_id = ?
+            ORDER BY pl.date_created DESC, pll.line_number ASC
+            LIMIT 300
+            """,
+            (customer_id,),
+            fetch='all'
+        ) or []
+
+        candidates = []
+        for row in rows:
+            requested_pn = row.get('customer_part_number') or ''
+            quoted_pn = row.get('quoted_part_number') or requested_pn
+            candidates.append({
+                'line_id': row['line_id'],
+                'parts_list_id': row['parts_list_id'],
+                'parts_list_name': row['parts_list_name'],
+                'parts_list_date': row['parts_list_date'].isoformat() if row['parts_list_date'] else None,
+                'line_number': float(row['line_number']) if row['line_number'] else None,
+                'part_number': quoted_pn,
+                'requested_part_number': requested_pn,
+                'quoted_part_number': quoted_pn,
+                'required_quantity': row.get('quantity'),
+                'quantity': row.get('chosen_qty') or row.get('quantity'),
+                'price': float(row['quote_price_gbp']) if row.get('quote_price_gbp') else None,
+                'lead_days': row.get('quoted_lead_days') or row.get('chosen_lead_days'),
+                'status_name': row.get('status_name'),
+                'supplier_name': row.get('supplier_name'),
+                'supplier_cost': float(row['chosen_cost']) if row.get('chosen_cost') else None,
+                'cost_currency': row.get('cost_currency'),
+                'supplier_lead_days': row.get('chosen_lead_days'),
+                'requested_quantity': row.get('quantity'),
+                'quoted_quantity': row.get('chosen_qty') or row.get('quantity'),
+                'quote_status': row.get('quoted_status'),
+                'is_no_bid': row.get('is_no_bid', False),
+                'match_basis': 'manual',
+                'score': None
+            })
+
+        return jsonify(success=True, matches=candidates)
+    except Exception as e:
+        logger.exception("Manual match candidates failed")
         return jsonify(success=False, message=str(e)), 500
 
 
