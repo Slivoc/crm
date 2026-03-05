@@ -426,6 +426,18 @@
     .results-table tbody tr.completed-row {
         opacity: 0.75;
     }
+    .results-table.focus-mode-active tbody tr.completed-row {
+        opacity: 0.42;
+    }
+    .results-table.focus-mode-active tbody tr.completed-row td {
+        filter: grayscale(0.95) blur(0.6px);
+    }
+    .results-table.focus-mode-active tbody tr.completed-row:not(.focus-row) td:nth-child(3),
+    .results-table.focus-mode-active tbody tr.completed-row:not(.focus-row) td:nth-child(4),
+    .results-table.focus-mode-active tbody tr.completed-row:not(.focus-row) td:nth-child(5) {
+        text-decoration: line-through;
+        text-decoration-thickness: 2px;
+    }
     .results-table .line-complete-cell {
         width: 40px;
         text-align: center;
@@ -700,6 +712,7 @@
                         <col class="col-quote">
                         <col class="col-quote">
                         <col class="col-quote">
+                        <col class="col-quote">
                         <col class="col-supplier">
                         <col class="col-supplier">
                         <col class="col-supplier">
@@ -708,7 +721,7 @@
                         <tr>
                             <th colspan="5" class="text-center bg-light border-end">PO Line</th>
                             <th colspan="3" class="text-center bg-light border-end">Checks</th>
-                            <th colspan="3" class="text-center border-end quote-col" style="background: #e8f4e8 !important;">Our Quote</th>
+                            <th colspan="4" class="text-center border-end quote-col" style="background: #e8f4e8 !important;">Our Quote</th>
                             <th colspan="3" class="text-center supplier-col" style="background: #e8f0f8 !important;">Supplier</th>
                         </tr>
                         <tr>
@@ -721,6 +734,7 @@
                             <th class="text-center" style="width: 70px;">Qty</th>
                             <th class="text-center border-end" style="width: 80px;">Price</th>
                             <th class="text-center quote-col" style="background: #f0f8f0;">Lead</th>
+                            <th class="text-center quote-col" style="background: #f0f8f0;">Req Qty</th>
                             <th class="text-center quote-col" style="background: #f0f8f0;">Qty</th>
                             <th class="text-end border-end quote-col" style="background: #f0f8f0;">Price</th>
                             <th class="text-center supplier-col" style="background: #f0f4f8;">Lead</th>
@@ -799,6 +813,7 @@
                     </div>
                 </div>
                 <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-primary" id="showAllMatchesBtn">Show all quote lines</button>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 </div>
             </div>
@@ -875,6 +890,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const focusPrevBtn = document.getElementById('focusPrevBtn');
     const focusNextBtn = document.getElementById('focusNextBtn');
     const focusCompleteBtn = document.getElementById('focusCompleteBtn');
+    const showAllMatchesBtn = document.getElementById('showAllMatchesBtn');
 
     // Initialize Select2 for customer dropdown
     $(customerSelect).select2({
@@ -1186,6 +1202,11 @@ document.addEventListener('DOMContentLoaded', function() {
             row.dataset.index = index;
             row.dataset.supplier = sup ? sup.name : '';
 
+            const selectedPartNumber = m && m.part_number ? m.part_number : null;
+            const displayPartNumber = selectedPartNumber || po.part_number;
+            const hasAlternateSelection = Boolean(selectedPartNumber)
+                && normalizePartNumberClient(selectedPartNumber) !== normalizePartNumberClient(po.part_number);
+
             const matchLabel = conf === 'exact' ? 'Match' : conf === 'partial' ? 'Discrepancy' : 'No Match';
 
             const requiredDelivery = po.required_delivery_date || extractedData?.required_delivery_date || null;
@@ -1208,25 +1229,27 @@ document.addEventListener('DOMContentLoaded', function() {
                     <input type="checkbox" class="form-check-input line-complete-checkbox" data-index="${index}" ${completedLineIndices.has(index) ? 'checked' : ''}>
                 </td>
                 <td class="part-number-cell">
-                    ${escapeHtml(po.part_number)}
-                    <button class="btn btn-outline-secondary copy-btn copy-part-btn" data-index="${index}" onclick="copyToClipboard('${escapeHtml(po.part_number)}')" title="Copy">
+                    ${escapeHtml(displayPartNumber)}
+                    <button class="btn btn-outline-secondary copy-btn copy-part-btn" data-index="${index}" onclick="copyToClipboard('${escapeHtml(displayPartNumber)}')" title="Copy">
                         <i class="bi bi-clipboard"></i>
                     </button>
-                    ${conf === 'none' ? `
-                        <button class="btn btn-sm btn-outline-primary ms-1 find-match-btn"
+                    <button class="btn btn-sm btn-outline-primary ms-1 find-match-btn"
                                 data-index="${index}"
                                 data-part-number="${escapeHtml(po.part_number)}"
                                 data-quantity="${po.quantity}"
-                                title="Find similar part numbers">
+                                title="Find or manually select match">
                             <i class="bi bi-search"></i>
                         </button>
-                    ` : ''}
                     <div class="small text-muted">
                         ${matchLabel}
                         ${pl ? ` · PL <a href="/parts_list/view/${pl.id}" target="_blank" class="fw-bold">${pl.id}</a>` : ''}
                         ${pl && pl.is_repeat ? ' · Repeat order' : ''}
                         ${m && m.quote_status === 'quoted' ? '<span class="badge bg-success ms-1" style="font-size:0.6rem">Q</span>' : ''}
                     </div>
+                    ${hasAlternateSelection
+                        ? `<div class="small text-warning">PO PN: ${escapeHtml(po.part_number)}</div>`
+                        : ''
+                    }
                     ${m && m.match_basis === 'requested' &&
                         m.quoted_part_number &&
                         normalizePartNumberClient(m.quoted_part_number) !== normalizePartNumberClient(m.requested_part_number)
@@ -1254,6 +1277,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     ${m && m.lead_days ? `${m.lead_days}d` : '-'}
                 </td>
                 <td class="text-center quote-col" style="background: #f8fcf8;">
+                    ${m ? formatQuantity(m.required_quantity ?? m.quantity) : '-'}
+                </td>
+                <td class="text-center quote-col" style="background: #f8fcf8;">
                     ${m ? (m.quantity || '-') : '-'}
                 </td>
                 <td class="text-end border-end quote-col" style="background: #f8fcf8;">
@@ -1266,10 +1292,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 </td>
                 <td class="text-center supplier-col" style="background: #f8fafc;">
                     ${sup ? (sup.quoted_quantity || sup.quantity || '-') : '-'}
-                    ${sup && sup.requested_quantity ? `<div class="small text-muted">Req ${formatQuantity(sup.requested_quantity)}</div>` : ''}
                 </td>
                 <td class="text-end supplier-col" style="background: #f8fafc;">
-                    ${sup && sup.cost ? formatCurrency(sup.cost) : '-'}
+                    ${sup && sup.cost ? formatCurrencyWithCode(sup.cost, sup.cost_currency) : '-'}
                     ${sup && sup.cost && po.base_part_number ? `
                         <span class="supplier-insight-pill" data-insight-status></span>
                         <button class="btn btn-sm btn-outline-secondary ms-1 supplier-insight-btn" title="Supplier insights">
@@ -1335,10 +1360,19 @@ document.addEventListener('DOMContentLoaded', function() {
             button.addEventListener('click', function() {
                 const currentIndex = Number(this.dataset.index);
                 if (!lineFocusMode.checked) return;
-                completedLineIndices.add(currentIndex);
-                moveToNextUncompleted(currentIndex);
-                const checkbox = tbody.querySelector(`.line-complete-checkbox[data-index="${currentIndex}"]`);
-                if (checkbox) checkbox.checked = true;
+
+                // Keep the currently copied line visible/active.
+                // In focus mode we only mark the immediately previous visible line as complete,
+                // so the copied part is never obscured while it is being worked.
+                const currentPos = visibleRowIndices.indexOf(currentIndex);
+                if (currentPos > 0) {
+                    const previousIndex = visibleRowIndices[currentPos - 1];
+                    completedLineIndices.add(previousIndex);
+                    const previousCheckbox = tbody.querySelector(`.line-complete-checkbox[data-index="${previousIndex}"]`);
+                    if (previousCheckbox) previousCheckbox.checked = true;
+                }
+
+                activeRowIndex = currentIndex;
                 applyRowFocusStyles();
                 updateFocusProgress();
                 updateFocusControls();
@@ -1407,6 +1441,11 @@ document.addEventListener('DOMContentLoaded', function() {
         focusPrevBtn.disabled = !enabled;
         focusNextBtn.disabled = !enabled;
         focusCompleteBtn.disabled = !enabled;
+    }
+
+    function syncFocusModeTableState() {
+        const table = document.getElementById('resultsTable');
+        table.classList.toggle('focus-mode-active', lineFocusMode.checked);
     }
 
     function getInsightBadgeClass(rating) {
@@ -1570,6 +1609,7 @@ document.addEventListener('DOMContentLoaded', function() {
             activeRowIndex = null;
             completedLineIndices.clear();
             lineFocusMode.checked = false;
+            syncFocusModeTableState();
             updateFocusProgress();
             updateFocusControls();
             confirmBtn.disabled = true;
@@ -1609,7 +1649,10 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    syncFocusModeTableState();
+
     lineFocusMode.addEventListener('change', function() {
+        syncFocusModeTableState();
         ensureActiveRow();
         applyRowFocusStyles();
         updateFocusControls();
@@ -1643,6 +1686,33 @@ document.addEventListener('DOMContentLoaded', function() {
     let nearMatchModal = null;
     let currentNearMatchIndex = null;
 
+    showAllMatchesBtn.addEventListener('click', function() {
+        const customerId = $(customerSelect).val();
+        if (!customerId) return;
+        document.getElementById('nearMatchLoading').style.display = 'block';
+        document.getElementById('nearMatchResults').style.display = 'none';
+
+        fetch('{{ url_for("parts_list_po_check.list_match_candidates") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customer_id: customerId })
+        })
+        .then(response => response.json())
+        .then(result => {
+            document.getElementById('nearMatchLoading').style.display = 'none';
+            document.getElementById('nearMatchResults').style.display = 'block';
+            renderNearMatchList(result, true);
+        })
+        .catch(error => {
+            console.error('Failed to fetch manual match candidates:', error);
+            document.getElementById('nearMatchLoading').style.display = 'none';
+            document.getElementById('nearMatchResults').style.display = 'block';
+            document.getElementById('nearMatchList').innerHTML = '';
+            document.getElementById('nearMatchEmpty').style.display = 'block';
+            document.getElementById('nearMatchEmpty').innerHTML = '<i class="bi bi-exclamation-circle me-1"></i> Error loading quote lines';
+        });
+    });
+
     function openNearMatchModal(index, partNumber, quantity) {
         currentNearMatchIndex = index;
         document.getElementById('nearMatchPOPartNumber').textContent = partNumber;
@@ -1673,46 +1743,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(result => {
             document.getElementById('nearMatchLoading').style.display = 'none';
             document.getElementById('nearMatchResults').style.display = 'block';
-
-            const listContainer = document.getElementById('nearMatchList');
-            const emptyMsg = document.getElementById('nearMatchEmpty');
-
-            if (!result.success || !result.matches || result.matches.length === 0) {
-                listContainer.innerHTML = '';
-                emptyMsg.style.display = 'block';
-                // Show debug info
-                const debugInfo = result.search_base_pn
-                    ? `<div class="small text-muted mt-2">Searched for: ${escapeHtml(result.search_base_pn)}<br>Checked ${result.total_candidates || 0} parts</div>`
-                    : '';
-                emptyMsg.innerHTML = `<i class="bi bi-x-circle me-1"></i> No similar parts found${debugInfo}`;
-                return;
-            }
-
-            emptyMsg.style.display = 'none';
-            listContainer.innerHTML = '';
-
-            result.matches.forEach(match => {
-                const scoreClass = match.score >= 80 ? 'high' : match.score >= 50 ? 'medium' : 'low';
-                const item = document.createElement('div');
-                item.className = 'near-match-item';
-                item.innerHTML = `
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div>
-                            <div class="fw-bold font-monospace">${escapeHtml(match.part_number)}</div>
-                            <div class="small text-muted">
-                                PL #${match.parts_list_id} · Qty: ${match.quantity}
-                                ${match.price ? ` · Price: ${formatCurrency(match.price)}` : ''}
-                            </div>
-                            ${match.supplier_name ? `<div class="small text-muted">Supplier: ${escapeHtml(match.supplier_name)}</div>` : ''}
-                        </div>
-                        <span class="match-score ${scoreClass}">${match.score}% match</span>
-                    </div>
-                `;
-                item.addEventListener('click', () => {
-                    selectNearMatch(match);
-                });
-                listContainer.appendChild(item);
-            });
+            renderNearMatchList(result, false);
         })
         .catch(error => {
             console.error('Failed to fetch near matches:', error);
@@ -1721,6 +1752,57 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('nearMatchList').innerHTML = '';
             document.getElementById('nearMatchEmpty').style.display = 'block';
             document.getElementById('nearMatchEmpty').innerHTML = '<i class="bi bi-exclamation-circle me-1"></i> Error fetching matches';
+        });
+    }
+
+
+    function renderNearMatchList(result, manualMode) {
+        const listContainer = document.getElementById('nearMatchList');
+        const emptyMsg = document.getElementById('nearMatchEmpty');
+
+        if (!result.success || !result.matches || result.matches.length === 0) {
+            listContainer.innerHTML = '';
+            emptyMsg.style.display = 'block';
+            if (manualMode) {
+                emptyMsg.innerHTML = '<i class="bi bi-x-circle me-1"></i> No quote lines available';
+            } else {
+                const debugInfo = result.search_base_pn
+                    ? `<div class="small text-muted mt-2">Searched for: ${escapeHtml(result.search_base_pn)}<br>Checked ${result.total_candidates || 0} parts</div>`
+                    : '';
+                emptyMsg.innerHTML = `<i class="bi bi-x-circle me-1"></i> No similar parts found${debugInfo}`;
+            }
+            return;
+        }
+
+        emptyMsg.style.display = 'none';
+        listContainer.innerHTML = '';
+
+        result.matches.forEach(match => {
+            const scoreClass = match.score >= 80 ? 'high' : match.score >= 50 ? 'medium' : 'low';
+            const scoreBadge = manualMode
+                ? '<span class="badge bg-secondary-subtle text-secondary-emphasis">Manual</span>'
+                : `<span class="match-score ${scoreClass}">${match.score}% match</span>`;
+
+            const item = document.createElement('div');
+            item.className = 'near-match-item';
+            item.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <div class="fw-bold font-monospace">${escapeHtml(match.part_number)}</div>
+                        <div class="small text-muted">
+                            PL #${match.parts_list_id}${match.line_number ? ` · Line ${match.line_number}` : ''} · Qty: ${formatQuantity(match.quantity)}
+                            ${match.required_quantity ? ` · Req ${formatQuantity(match.required_quantity)}` : ''}
+                            ${match.price ? ` · Price: ${formatCurrency(match.price)}` : ''}
+                        </div>
+                        ${match.supplier_name ? `<div class="small text-muted">Supplier: ${escapeHtml(match.supplier_name)}</div>` : ''}
+                    </div>
+                    ${scoreBadge}
+                </div>
+            `;
+            item.addEventListener('click', () => {
+                selectNearMatch(match);
+            });
+            listContainer.appendChild(item);
         });
     }
 
@@ -1736,6 +1818,7 @@ document.addEventListener('DOMContentLoaded', function() {
             part_number: match.part_number,
             requested_part_number: match.requested_part_number || match.part_number,
             quoted_part_number: match.quoted_part_number || match.part_number,
+            required_quantity: match.required_quantity ?? match.quantity,
             quantity: match.quantity,
             price: match.price,
             lead_days: match.lead_days,
@@ -1865,6 +1948,12 @@ document.addEventListener('DOMContentLoaded', function() {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
         }).format(value);
+    }
+
+    function formatCurrencyWithCode(value, currencyCode) {
+        const base = formatCurrency(value);
+        if (base === '-') return '-';
+        return currencyCode ? `${base} ${escapeHtml(currencyCode)}` : base;
     }
 
     function normalizePartNumberClient(value) {

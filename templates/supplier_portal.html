@@ -306,7 +306,14 @@ async function loadScrapeStatus(supplier) {
                         <div class="alert alert-info mb-2">
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <strong>${scrape.parts_list_name || 'Unknown List'}</strong>
-                                <span class="badge bg-primary">${scrape.status}</span>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge bg-primary">${scrape.status}</span>
+                                    <button class="btn btn-sm btn-outline-danger"
+                                            onclick="cancelScrape('monroe', ${scrape.id})"
+                                            title="Cancel this scrape">
+                                        <i class="fas fa-stop"></i> Cancel
+                                    </button>
+                                </div>
                             </div>
                             <div class="mb-2">
                                 <strong>Progress:</strong> ${scrape.processed_lines} / ${scrape.total_lines} parts
@@ -593,6 +600,32 @@ function refreshScrapeQueue() {
     const selectedFilter = document.querySelector('input[name="supplierFilter"]:checked').value;
     const supplier = selectedFilter === 'all' ? 'monroe' : selectedFilter;
     loadScrapeQueue(supplier);
+}
+
+// Cancel active scrape
+async function cancelScrape(supplier, statusId) {
+    if (!confirm('Cancel this scrape? Any in-flight request will finish, then processing will stop.')) {
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/supplier-portal/api/scrape-cancel/${supplier}/${statusId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+
+        if (data.success) {
+            showAlert('Scrape cancelled', 'warning');
+            loadScrapeStatus(supplier);
+            refreshScrapeQueue();
+            return;
+        }
+
+        showAlert(data.message || 'Failed to cancel scrape', 'danger');
+    } catch (error) {
+        showAlert('Error cancelling scrape: ' + error, 'danger');
+    }
 }
 
 // Trigger Monroe Scrape by Parts List ID

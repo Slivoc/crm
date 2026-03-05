@@ -133,6 +133,26 @@
     gap: 0.5rem;
 }
 
+.section-toggle {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: inherit;
+    text-align: left;
+}
+
+.section-toggle .toggle-icon {
+    transition: transform 0.2s ease;
+}
+
+.section-toggle[aria-expanded="true"] .toggle-icon {
+    transform: rotate(180deg);
+}
+
 .section-card .section-header .badge {
     font-size: 0.75rem;
     font-weight: 500;

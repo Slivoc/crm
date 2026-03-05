@@ -132,6 +132,9 @@ def generate_sql_query(user_query):
     7. For aggregate totals (especially SUM), default NULL results to zero with COALESCE
     8. For part number lookups, prefer case-insensitive exact matching with LOWER(column) = LOWER('value')
     9. When filtering by year from date/timestamp columns, use PostgreSQL EXTRACT(YEAR FROM ...)
+    7. For aggregate totals (especially SUM), default NULL results to zero with COALESCE
+    8. For part number lookups, prefer case-insensitive exact matching with LOWER(column) = LOWER('value')
+    9. When filtering by year from date/timestamp columns, use PostgreSQL EXTRACT(YEAR FROM ...)
 
     Bad examples:
     - "SELECT * FROM part_numbers WHERE base_part_number = base_part_number"  # Self-reference
