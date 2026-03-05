@@ -1554,6 +1554,14 @@ def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer,
         failed = 0
 
         for line in lines:
+            # Stop early if user cancelled this scrape from Supplier Portal
+            cur.execute("SELECT status FROM supplier_scrape_status WHERE id = ?", (status_id,))
+            status_row = cur.fetchone()
+            if status_row and status_row['status'] == 'cancelled':
+                logging.info(f"Monroe status {status_id}: cancelled by user")
+                conn.close()
+                return
+
             part_number = line['customer_part_number'] or line['base_part_number']
             if not part_number:
                 processed += 1
@@ -1642,6 +1650,14 @@ def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer,
         pl_row = cur.fetchone()
         parts_list_name = pl_row['name'] if pl_row else f"Parts List #{list_id}"
         customer_name = pl_row['customer_name'] if pl_row and pl_row['customer_name'] else None
+
+        # If cancelled while finishing up, do not overwrite cancellation status.
+        cur.execute("SELECT status FROM supplier_scrape_status WHERE id = ?", (status_id,))
+        status_row = cur.fetchone()
+        if status_row and status_row['status'] == 'cancelled':
+            conn.close()
+            logging.info(f"Monroe status {status_id}: cancellation preserved during finalization")
+            return
 
         # Update final status
         cur.execute("""

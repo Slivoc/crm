@@ -380,7 +380,7 @@ def get_scrape_status(supplier_key):
                 completed_at
             FROM supplier_scrape_status
             WHERE supplier_key = ?
-              AND status IN ('completed', 'failed')
+              AND status IN ('completed', 'failed', 'cancelled')
               AND {date_filter}
             ORDER BY started_at DESC
             LIMIT 10
@@ -390,6 +390,58 @@ def get_scrape_status(supplier_key):
         conn.close()
 
         return jsonify(success=True, active=active, recent=recent)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@supplier_portal_bp.route('/api/scrape-cancel/<supplier_key>/<int:status_id>', methods=['POST'])
+@login_required
+def cancel_scrape(supplier_key, status_id):
+    """Cancel an active scrape session for a supplier."""
+    if supplier_key not in ['monroe']:
+        return jsonify(success=False, message="Unknown supplier"), 400
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id, status
+            FROM supplier_scrape_status
+            WHERE id = ?
+              AND supplier_key = ?
+        """, (status_id, supplier_key))
+        row = cur.fetchone()
+
+        if not row:
+            conn.close()
+            return jsonify(success=False, message="Scrape session not found"), 404
+
+        if row['status'] in ('completed', 'failed', 'cancelled'):
+            conn.close()
+            return jsonify(success=False, message=f"Scrape is already {row['status']}"), 400
+
+        cur.execute("""
+            UPDATE supplier_scrape_status
+            SET status = 'cancelled',
+                error_message = 'Cancelled by user',
+                completed_at = CURRENT_TIMESTAMP,
+                current_part_number = NULL
+            WHERE id = ?
+              AND supplier_key = ?
+              AND status IN ('queued', 'in_progress')
+        """, (status_id, supplier_key))
+
+        updated = cur.rowcount
+        conn.commit()
+        conn.close()
+
+        if updated == 0:
+            return jsonify(success=False, message="Scrape could not be cancelled"), 409
+
+        return jsonify(success=True, message="Scrape cancellation requested")
 
     except Exception as e:
         logging.exception(e)
