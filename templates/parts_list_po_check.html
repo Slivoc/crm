@@ -426,6 +426,18 @@
     .results-table tbody tr.completed-row {
         opacity: 0.75;
     }
+    .results-table.focus-mode-active tbody tr.completed-row {
+        opacity: 0.42;
+    }
+    .results-table.focus-mode-active tbody tr.completed-row td {
+        filter: grayscale(0.95) blur(0.6px);
+    }
+    .results-table.focus-mode-active tbody tr.completed-row td:nth-child(3),
+    .results-table.focus-mode-active tbody tr.completed-row td:nth-child(4),
+    .results-table.focus-mode-active tbody tr.completed-row td:nth-child(5) {
+        text-decoration: line-through;
+        text-decoration-thickness: 2px;
+    }
     .results-table .line-complete-cell {
         width: 40px;
         text-align: center;
@@ -1409,6 +1421,11 @@ document.addEventListener('DOMContentLoaded', function() {
         focusCompleteBtn.disabled = !enabled;
     }
 
+    function syncFocusModeTableState() {
+        const table = document.getElementById('resultsTable');
+        table.classList.toggle('focus-mode-active', lineFocusMode.checked);
+    }
+
     function getInsightBadgeClass(rating) {
         if (rating === 'excellent' || rating === 'good') return 'good';
         if (rating === 'fair') return 'fair';
@@ -1570,6 +1587,7 @@ document.addEventListener('DOMContentLoaded', function() {
             activeRowIndex = null;
             completedLineIndices.clear();
             lineFocusMode.checked = false;
+            syncFocusModeTableState();
             updateFocusProgress();
             updateFocusControls();
             confirmBtn.disabled = true;
@@ -1609,7 +1627,10 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    syncFocusModeTableState();
+
     lineFocusMode.addEventListener('change', function() {
+        syncFocusModeTableState();
         ensureActiveRow();
         applyRowFocusStyles();
         updateFocusControls();
