@@ -622,7 +622,7 @@
                                 {% for sale in sales_order_lines[:10] %}
                                 <tr>
                                     <td>
-                                        <a href="{{ url_for('sales_orders.view_sales_order', so_id=sale.id) }}" class="quick-link">#{{ sale.id }}</a>
+                                        <a href="{{ url_for('sales_orders.edit_sales_order', sales_order_id=sale.id) }}" class="quick-link">#{{ sale.id }}</a>
                                     </td>
                                     <td>{{ sale.customer or '-' }}</td>
                                     <td class="text-center">{{ sale.quantity }}</td>
