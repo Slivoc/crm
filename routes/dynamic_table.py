@@ -36,6 +36,29 @@ def _execute_with_cursor(cur, query: str, params=None):
     else:
         cur.execute(_prepare_query(query), params)
     return cur
+
+
+def _normalize_aggregate_nulls(sql_query: str, rows_as_dicts):
+    """Normalize NULL aggregate outputs to 0 for dynamic-query usability.
+
+    Postgres returns NULL for SUM/AVG/etc when no matching rows exist.
+    For this UI, users typically expect 0 for numeric totals.
+    """
+    if not rows_as_dicts:
+        return rows_as_dicts
+
+    if 'sum(' not in sql_query.lower() and 'avg(' not in sql_query.lower() and 'count(' not in sql_query.lower():
+        return rows_as_dicts
+
+    normalized = []
+    for row in rows_as_dicts:
+        out = dict(row)
+        for key, value in out.items():
+            if value is None and any(token in key.lower() for token in ('total', 'sum', 'qty', 'quantity', 'count', 'avg', 'value')):
+                out[key] = 0
+        normalized.append(out)
+    return normalized
+
 def generate_sql_query(user_query):
     # Database structure with full schema
     db_structure = """
@@ -86,7 +109,9 @@ def generate_sql_query(user_query):
     Table: parts_list_no_response_dismissals (id, email_id, dismissed_at)
     Table: customer_quote_lines (id, parts_list_line_id, display_part_number, quoted_part_number, manufacturer, base_cost_gbp, margin_percent, quote_price_gbp, is_no_bid, line_notes, date_created, date_modified, delivery_per_unit, delivery_per_line, quoted_status, lead_days, standard_condition, standard_certs)
     Important Notes:
-    - The base_part_number field is used across multiple tables as a reference
+    - base_part_number is an internal join key across tables
+    - part_number is the user-facing part identifier in part_numbers
+    - If the user asks for "part number", prefer filtering on part_numbers.part_number unless they explicitly ask for base_part_number
     - Columns like system_part_number in part_numbers are distinct fields
     """
 
@@ -104,16 +129,20 @@ def generate_sql_query(user_query):
     4. Only use quotes for actual string literals
     5. Join tables when needed to access data across tables
     6. Ensure column references are from the correct tables
+    7. For aggregate totals (especially SUM), default NULL results to zero with COALESCE
+    8. For part number lookups, prefer case-insensitive exact matching with LOWER(column) = LOWER('value')
+    9. When filtering by year from date/timestamp columns, use PostgreSQL EXTRACT(YEAR FROM ...)
 
     Bad examples:
-    - "SELECT * FROM part_numbers WHERE base_part_number = part_number"  # Self-reference
+    - "SELECT * FROM part_numbers WHERE base_part_number = base_part_number"  # Self-reference
     - "SELECT * FROM part_numbers WHERE base_part_number = 'system_part_number'"  # Wrong: treats column as string
     - "SELECT * FROM part_numbers WHERE base_part_number = system_code"  # Wrong: system_code is from customers table
+    - "SELECT SUM(sol.quantity) FROM sales_order_lines sol WHERE sol.base_part_number = 'C10218'"  # Wrong when user asked for part_number
 
     Good examples:
-    - "SELECT * FROM part_numbers WHERE base_part_number = system_part_number"  # Correct column comparison
-    - "SELECT * FROM part_numbers WHERE base_part_number = 'ABC123'"  # Actual string literal
-    - "SELECT p.*, c.system_code FROM part_numbers p JOIN customers c ON ..."  # Correct cross-table reference
+    - "SELECT * FROM part_numbers WHERE part_number = 'ABC123'"  # User-facing part-number filter
+    - "SELECT p.part_number, c.system_code FROM part_numbers p JOIN customers c ON ..."  # Correct cross-table reference
+    - "SELECT COALESCE(SUM(sol.quantity), 0) AS total_quantity_sold FROM sales_order_lines sol JOIN part_numbers pn ON sol.base_part_number = pn.base_part_number WHERE LOWER(pn.part_number) = LOWER('c10218') AND EXTRACT(YEAR FROM sol.delivery_date) = 2026"  # Postgres-safe aggregate + case-insensitive exact match
 
     Important rules:
     1. Never compare a column to itself (e.g., avoid 'WHERE column = column')
@@ -122,14 +151,17 @@ def generate_sql_query(user_query):
     4. Do NOT add quotes around column names in comparisons
     5. Only use quotes for actual string literals
     6. Return only the SQL query without any formatting or comments
+    7. For SUM/aggregate metrics intended for totals, wrap with COALESCE(..., 0)
+    8. For part-number equality filters, use case-insensitive exact matching via LOWER(left) = LOWER(right_literal)
+    9. If the request says "part_number" (and not "base_part_number"), filter using part_numbers.part_number; use base_part_number only for joins or explicit requests
 
     Bad examples:
     - "SELECT * FROM part_numbers WHERE base_part_number = part_number"  # Self-reference
     - "SELECT * FROM part_numbers WHERE base_part_number = 'system_part_number'"  # Wrong: treats column as string
 
     Good examples:
-    - "SELECT * FROM part_numbers WHERE base_part_number = system_part_number"  # Correct column comparison
-    - "SELECT * FROM part_numbers WHERE base_part_number = 'ABC123'"  # Actual string literal
+    - "SELECT * FROM part_numbers WHERE part_number = 'ABC123'"  # Actual string literal for user-facing part number
+    - "SELECT * FROM sales_order_lines WHERE base_part_number = 'ABC123'"  # Use only when user explicitly requests base_part_number
     """
 
     try:
@@ -213,6 +245,8 @@ def execute_query(sql_query):
             else:
                 # Fallback for tuple rows
                 rows_as_dicts = [dict(zip(columns, r)) for r in rows]
+
+            rows_as_dicts = _normalize_aggregate_nulls(sql_query, rows_as_dicts)
 
             current_app.logger.info(
                 "Query returned %d rows with columns: %s", len(rows_as_dicts), columns
