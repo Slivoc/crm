@@ -104,6 +104,9 @@ def generate_sql_query(user_query):
     4. Only use quotes for actual string literals
     5. Join tables when needed to access data across tables
     6. Ensure column references are from the correct tables
+    7. For aggregate totals (especially SUM), default NULL results to zero with COALESCE
+    8. For part number lookups, prefer case-insensitive exact matching with LOWER(column) = LOWER('value')
+    9. When filtering by year from date/timestamp columns, use PostgreSQL EXTRACT(YEAR FROM ...)
 
     Bad examples:
     - "SELECT * FROM part_numbers WHERE base_part_number = part_number"  # Self-reference
@@ -114,6 +117,7 @@ def generate_sql_query(user_query):
     - "SELECT * FROM part_numbers WHERE base_part_number = system_part_number"  # Correct column comparison
     - "SELECT * FROM part_numbers WHERE base_part_number = 'ABC123'"  # Actual string literal
     - "SELECT p.*, c.system_code FROM part_numbers p JOIN customers c ON ..."  # Correct cross-table reference
+    - "SELECT COALESCE(SUM(sol.quantity), 0) AS total_quantity_sold FROM sales_order_lines sol JOIN part_numbers pn ON sol.base_part_number = pn.base_part_number WHERE LOWER(pn.part_number) = LOWER('c10218') AND EXTRACT(YEAR FROM sol.delivery_date) = 2026"  # Postgres-safe aggregate + case-insensitive exact match
 
     Important rules:
     1. Never compare a column to itself (e.g., avoid 'WHERE column = column')
@@ -122,6 +126,8 @@ def generate_sql_query(user_query):
     4. Do NOT add quotes around column names in comparisons
     5. Only use quotes for actual string literals
     6. Return only the SQL query without any formatting or comments
+    7. For SUM/aggregate metrics intended for totals, wrap with COALESCE(..., 0)
+    8. For part-number equality filters, use case-insensitive exact matching via LOWER(left) = LOWER(right_literal)
 
     Bad examples:
     - "SELECT * FROM part_numbers WHERE base_part_number = part_number"  # Self-reference
