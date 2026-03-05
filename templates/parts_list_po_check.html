@@ -1360,10 +1360,19 @@ document.addEventListener('DOMContentLoaded', function() {
             button.addEventListener('click', function() {
                 const currentIndex = Number(this.dataset.index);
                 if (!lineFocusMode.checked) return;
-                completedLineIndices.add(currentIndex);
-                moveToNextUncompleted(currentIndex);
-                const checkbox = tbody.querySelector(`.line-complete-checkbox[data-index="${currentIndex}"]`);
-                if (checkbox) checkbox.checked = true;
+
+                // Keep the currently copied line visible/active.
+                // In focus mode we only mark the immediately previous visible line as complete,
+                // so the copied part is never obscured while it is being worked.
+                const currentPos = visibleRowIndices.indexOf(currentIndex);
+                if (currentPos > 0) {
+                    const previousIndex = visibleRowIndices[currentPos - 1];
+                    completedLineIndices.add(previousIndex);
+                    const previousCheckbox = tbody.querySelector(`.line-complete-checkbox[data-index="${previousIndex}"]`);
+                    if (previousCheckbox) previousCheckbox.checked = true;
+                }
+
+                activeRowIndex = currentIndex;
                 applyRowFocusStyles();
                 updateFocusProgress();
                 updateFocusControls();
