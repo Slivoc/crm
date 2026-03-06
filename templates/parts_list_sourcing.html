@@ -76,16 +76,16 @@
 }
 
 /* Suggested Section */
-.sourcing-table thead th:nth-child(8),
-.sourcing-table tbody td:nth-child(8) {
+.sourcing-table thead th:nth-child(9),
+.sourcing-table tbody td:nth-child(9) {
     background-color: #f0f8f4 !important;
     border-left: 2px solid #198754 !important;
     border-right: 2px solid #198754 !important;
 }
 
 /* Contact Section */
-.sourcing-table thead th:nth-child(9),
-.sourcing-table tbody td:nth-child(9) {
+.sourcing-table thead th:nth-child(10),
+.sourcing-table tbody td:nth-child(10) {
     background-color: #faf5ff !important;
     border-left: 2px solid #6f42c1 !important;
     border-right: 2px solid #6f42c1 !important;
@@ -353,6 +353,7 @@
         <th style="width:200px;" class="section-header-col section-header-purchasing">Recent VQ</th>
         <th style="width:200px;" class="section-header-col section-header-purchasing">Excess</th>
         <th style="width:100px;" class="section-header-col section-header-ils">ILS</th>
+        <th style="width:220px;" class="section-header-col">QPL Approvals</th>
         <th style="width:180px;" class="section-header-col section-header-suggested">Suggested</th>
         <th style="width:180px;" class="section-header-col section-header-contact">Contacted</th>
     </tr>
@@ -684,6 +685,20 @@
     </div>
 </td>
 
+                            <!-- QPL -->
+<td class="{% if line.qpl_approval_count %}populated{% endif %}">
+    {% if line.qpl_approval_count %}
+        <span class="badge bg-primary">{{ line.qpl_approval_count }} approvals</span>
+        {% if line.qpl_manufacturers_display %}
+            <div class="mt-1">
+                <small class="text-muted-sm">{{ line.qpl_manufacturers_display }}</small>
+            </div>
+        {% endif %}
+    {% else %}
+        <em class="text-muted">No approvals</em>
+    {% endif %}
+</td>
+
                             <!-- Suggested Column -->
 <td class="{% if line.suggested_suppliers %}populated{% endif %}">
     {% if line.suggested_suppliers %}
@@ -694,16 +709,21 @@
             <div class="d-flex justify-content-between align-items-center py-1 border-bottom">
                 <div>
                     <strong>{{ sup.supplier_name }}</strong>
+                    {% if sup.source_type == 'qpl_map' %}
+                        <span class="badge bg-info text-dark ms-1">QPL match</span>
+                    {% endif %}
                     {% if sup.contact_name %}
                         <br><small class="text-muted-sm">{{ sup.contact_name }}</small>
                     {% endif %}
                 </div>
+                {% if sup.id %}
                 <button class="btn-icon btn-remove remove-supplier-btn"
                         data-suggested-id="{{ sup.id }}"
                         data-line-id="{{ line.id }}"
                         title="Remove">
                     <i class="bi bi-x"></i>
                 </button>
+                {% endif %}
             </div>
             {% endfor %}
 
@@ -714,16 +734,21 @@
                 <div class="d-flex justify-content-between align-items-center py-1 border-bottom">
                     <div>
                         <strong>{{ sup.supplier_name }}</strong>
+                        {% if sup.source_type == 'qpl_map' %}
+                            <span class="badge bg-info text-dark ms-1">QPL match</span>
+                        {% endif %}
                         {% if sup.contact_name %}
                             <br><small class="text-muted-sm">{{ sup.contact_name }}</small>
                         {% endif %}
                     </div>
+                    {% if sup.id %}
                     <button class="btn-icon btn-remove remove-supplier-btn"
                             data-suggested-id="{{ sup.id }}"
                             data-line-id="{{ line.id }}"
                             title="Remove">
                         <i class="bi bi-x"></i>
                     </button>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>

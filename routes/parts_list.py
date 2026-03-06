@@ -82,6 +82,39 @@ def _ensure_part_number(base_part_number, part_number):
     )
 
 
+def _normalize_company_name_for_match(name):
+    """Normalize company names to improve loose matching across systems."""
+    if not name:
+        return ''
+
+    value = re.sub(r'[^a-z0-9 ]+', ' ', str(name).lower())
+    tokens = [
+        token for token in value.split()
+        if token not in {
+            'ltd', 'limited', 'inc', 'llc', 'plc', 'corp', 'corporation',
+            'co', 'company', 'gmbh', 'sa', 'bv', 'ag', 'srl', 'pte', 'group'
+        }
+    ]
+    return ''.join(tokens)
+
+
+def _is_supplier_match_for_qpl(qpl_name, supplier_name):
+    """Best-effort loose matching between QPL manufacturer names and supplier names."""
+    qpl_norm = _normalize_company_name_for_match(qpl_name)
+    supplier_norm = _normalize_company_name_for_match(supplier_name)
+    if not qpl_norm or not supplier_norm:
+        return False
+
+    if qpl_norm == supplier_norm:
+        return True
+
+    min_len = min(len(qpl_norm), len(supplier_norm))
+    if min_len < 6:
+        return False
+
+    return qpl_norm in supplier_norm or supplier_norm in qpl_norm
+
+
 def _repair_project_linked_parts_list_lines(list_id):
     """
     For project-linked lists created from project parts, ensure base_part_number/description
@@ -5553,6 +5586,22 @@ def parts_list_sourcing(list_id):
                 SELECT 
                     pll.*,
                     s.name as chosen_supplier_name,
+                    (
+                        SELECT COUNT(*)
+                        FROM manufacturer_approvals ma
+                        WHERE ma.airbus_material_base = pll.base_part_number
+                           OR ma.manufacturer_part_number_base = pll.base_part_number
+                    ) as qpl_approval_count,
+                    (
+                        SELECT STRING_AGG(
+                            DISTINCT TRIM(ma.manufacturer_name),
+                            ', ' ORDER BY TRIM(ma.manufacturer_name)
+                        )
+                        FROM manufacturer_approvals ma
+                        WHERE (ma.airbus_material_base = pll.base_part_number
+                               OR ma.manufacturer_part_number_base = pll.base_part_number)
+                          AND TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
+                    ) as qpl_manufacturers_display,
                     (SELECT COUNT(*) 
                      FROM parts_list_line_suggested_suppliers 
                      WHERE parts_list_line_id = pll.id) as suggested_suppliers_count,
@@ -5708,6 +5757,44 @@ def parts_list_sourcing(list_id):
                     WHERE ss.parts_list_line_id = ?
                     ORDER BY ss.date_added DESC
                 """, (line['id'],)).fetchall()
+
+                existing_suggested_supplier_ids = {
+                    int(_safe_row_get(sup, 'supplier_id'))
+                    for sup in suggested_suppliers
+                    if _safe_row_get(sup, 'supplier_id') is not None
+                }
+
+                qpl_names = []
+                qpl_display = (line.get('qpl_manufacturers_display') or '').strip()
+                if qpl_display:
+                    qpl_names = [name.strip() for name in qpl_display.split(',') if name.strip()]
+
+                if qpl_names:
+                    matched_suppliers = _execute_with_cursor(cur, """
+                        SELECT id, name, contact_name, contact_email
+                        FROM suppliers
+                        WHERE is_active = 1
+                    """).fetchall() or []
+
+                    for supplier_row in matched_suppliers:
+                        supplier_id = _safe_row_get(supplier_row, 'id')
+                        supplier_name = _safe_row_get(supplier_row, 'name')
+                        if not supplier_id or not supplier_name:
+                            continue
+                        if int(supplier_id) in existing_suggested_supplier_ids:
+                            continue
+
+                        if any(_is_supplier_match_for_qpl(qpl_name, supplier_name) for qpl_name in qpl_names):
+                            suggested_suppliers.append({
+                                'id': None,
+                                'supplier_id': supplier_id,
+                                'supplier_name': supplier_name,
+                                'contact_name': _safe_row_get(supplier_row, 'contact_name'),
+                                'contact_email': _safe_row_get(supplier_row, 'contact_email'),
+                                'source_type': 'qpl_map',
+                                'date_added': None,
+                            })
+                            existing_suggested_supplier_ids.add(int(supplier_id))
 
                 # UPDATED: Get email history WITH quoted prices
                 email_history_rows = _execute_with_cursor(cur, """
