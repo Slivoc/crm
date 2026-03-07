@@ -115,6 +115,83 @@ def _is_supplier_match_for_qpl(qpl_name, supplier_name):
     return qpl_norm in supplier_norm or supplier_norm in qpl_norm
 
 
+def _qpl_mapping_table_exists(cur):
+    row = _execute_with_cursor(cur, """
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name = 'qpl_manufacturer_supplier_mappings'
+        LIMIT 1
+    """).fetchone()
+    return row is not None
+
+
+def _load_qpl_mapping_supplier_map(cur):
+    if not _qpl_mapping_table_exists(cur):
+        return {}
+
+    rows = _execute_with_cursor(cur, """
+        SELECT
+            m.manufacturer_name_normalized,
+            m.manufacturer_name,
+            m.supplier_id,
+            s.name AS supplier_name,
+            s.contact_name,
+            s.contact_email
+        FROM qpl_manufacturer_supplier_mappings m
+        JOIN suppliers s ON s.id = m.supplier_id
+    """).fetchall() or []
+
+    supplier_map = {}
+    for row in rows:
+        normalized = (_safe_row_get(row, 'manufacturer_name_normalized') or '').strip()
+        supplier_id = _safe_row_get(row, 'supplier_id')
+        if not normalized or not supplier_id:
+            continue
+        supplier_map[normalized] = {
+            'manufacturer_name': _safe_row_get(row, 'manufacturer_name'),
+            'supplier_id': supplier_id,
+            'supplier_name': _safe_row_get(row, 'supplier_name'),
+            'contact_name': _safe_row_get(row, 'contact_name'),
+            'contact_email': _safe_row_get(row, 'contact_email'),
+        }
+
+    return supplier_map
+
+
+def _upsert_qpl_supplier_mapping(manufacturer_name, supplier_id):
+    normalized = _normalize_company_name_for_match(manufacturer_name)
+    if not normalized or not supplier_id:
+        return False
+
+    try:
+        db_execute(
+            """
+            INSERT INTO qpl_manufacturer_supplier_mappings (
+                manufacturer_name,
+                manufacturer_name_normalized,
+                supplier_id
+            )
+            VALUES (?, ?, ?)
+            ON CONFLICT (manufacturer_name_normalized)
+            DO UPDATE SET
+                manufacturer_name = EXCLUDED.manufacturer_name,
+                supplier_id = EXCLUDED.supplier_id,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (manufacturer_name, normalized, supplier_id),
+            commit=True,
+        )
+        return True
+    except Exception as mapping_error:
+        error_text = str(mapping_error).lower()
+        # Keep sourcing flow working before migration is applied.
+        if 'qpl_manufacturer_supplier_mappings' in error_text:
+            logging.warning("QPL mapping table missing; run migration for persistent mappings.")
+            return False
+        raise
+
+
 def _repair_project_linked_parts_list_lines(list_id):
     """
     For project-linked lists created from project parts, ensure base_part_number/description
@@ -5002,6 +5079,7 @@ def add_suggested_supplier(list_id, line_id):
         data = request.get_json()
         supplier_id = data.get('supplier_id')
         source_type = data.get('source_type', 'manual')
+        manufacturer_name = (data.get('manufacturer_name') or '').strip()
 
         if not supplier_id:
             return jsonify(success=False, message='Supplier ID required'), 400
@@ -5017,6 +5095,8 @@ def add_suggested_supplier(list_id, line_id):
         )
 
         if existing:
+            if source_type == 'qpl_map' and manufacturer_name:
+                _upsert_qpl_supplier_mapping(manufacturer_name, supplier_id)
             supplier = db_execute(
                 """
                 SELECT name FROM suppliers WHERE id = ?
@@ -5057,6 +5137,9 @@ def add_suggested_supplier(list_id, line_id):
         )
 
         suggested_id = row['id'] if row else None
+
+        if source_type == 'qpl_map' and manufacturer_name:
+            _upsert_qpl_supplier_mapping(manufacturer_name, supplier_id)
 
         # Return supplier name and suggested_id for live UI update
         return jsonify(
@@ -5581,6 +5664,32 @@ def parts_list_sourcing(list_id):
             _repair_project_linked_parts_list_lines(list_id)
 
         with db_cursor() as cur:
+            # Some migrated databases do not have suppliers.is_active yet.
+            # Check schema first so we do not abort the transaction with a bad query.
+            has_supplier_is_active = _execute_with_cursor(cur, """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'suppliers'
+                  AND column_name = 'is_active'
+                LIMIT 1
+            """).fetchone() is not None
+
+            if has_supplier_is_active:
+                qpl_supplier_rows = _execute_with_cursor(cur, """
+                    SELECT id, name, contact_name, contact_email
+                    FROM suppliers
+                    WHERE COALESCE(is_active, TRUE) = TRUE
+                    ORDER BY name
+                """).fetchall() or []
+            else:
+                qpl_supplier_rows = _execute_with_cursor(cur, """
+                    SELECT id, name, contact_name, contact_email
+                    FROM suppliers
+                    ORDER BY name
+                """).fetchall() or []
+            qpl_saved_mapping_map = _load_qpl_mapping_supplier_map(cur)
+
             # Get all lines with base sourcing info AND supplier name for chosen cost
             lines = _execute_with_cursor(cur, """
                 SELECT 
@@ -5769,32 +5878,67 @@ def parts_list_sourcing(list_id):
                 if qpl_display:
                     qpl_names = [name.strip() for name in qpl_display.split(',') if name.strip()]
 
+                qpl_manufacturers = []
                 if qpl_names:
-                    matched_suppliers = _execute_with_cursor(cur, """
-                        SELECT id, name, contact_name, contact_email
-                        FROM suppliers
-                        WHERE is_active = 1
-                    """).fetchall() or []
-
-                    for supplier_row in matched_suppliers:
-                        supplier_id = _safe_row_get(supplier_row, 'id')
-                        supplier_name = _safe_row_get(supplier_row, 'name')
-                        if not supplier_id or not supplier_name:
+                    # Keep order stable and remove duplicates.
+                    seen_qpl_names = set()
+                    unique_qpl_names = []
+                    for qpl_name in qpl_names:
+                        qpl_key = qpl_name.strip().lower()
+                        if not qpl_key or qpl_key in seen_qpl_names:
                             continue
-                        if int(supplier_id) in existing_suggested_supplier_ids:
-                            continue
+                        seen_qpl_names.add(qpl_key)
+                        unique_qpl_names.append(qpl_name)
 
-                        if any(_is_supplier_match_for_qpl(qpl_name, supplier_name) for qpl_name in qpl_names):
+                    for qpl_name in unique_qpl_names:
+                        normalized_qpl_name = _normalize_company_name_for_match(qpl_name)
+                        saved_mapping = qpl_saved_mapping_map.get(normalized_qpl_name)
+
+                        matched_supplier = None
+                        mapping_source = None
+                        if saved_mapping:
+                            matched_supplier = {
+                                'id': saved_mapping.get('supplier_id'),
+                                'name': saved_mapping.get('supplier_name'),
+                                'contact_name': saved_mapping.get('contact_name'),
+                                'contact_email': saved_mapping.get('contact_email'),
+                            }
+                            mapping_source = 'saved_map'
+                        else:
+                            for supplier_row in qpl_supplier_rows:
+                                supplier_name = _safe_row_get(supplier_row, 'name')
+                                if not supplier_name:
+                                    continue
+                                if _is_supplier_match_for_qpl(qpl_name, supplier_name):
+                                    matched_supplier = supplier_row
+                                    mapping_source = 'name_match'
+                                    break
+
+                        matched_supplier_id = _safe_row_get(matched_supplier, 'id') if matched_supplier else None
+                        matched_supplier_name = _safe_row_get(matched_supplier, 'name') if matched_supplier else None
+                        already_suggested = bool(
+                            matched_supplier_id and int(matched_supplier_id) in existing_suggested_supplier_ids
+                        )
+
+                        qpl_manufacturers.append({
+                            'manufacturer_name': qpl_name,
+                            'matched_supplier_id': matched_supplier_id,
+                            'matched_supplier_name': matched_supplier_name,
+                            'already_suggested': already_suggested,
+                            'mapping_source': mapping_source,
+                        })
+
+                        if matched_supplier and not already_suggested:
                             suggested_suppliers.append({
                                 'id': None,
-                                'supplier_id': supplier_id,
-                                'supplier_name': supplier_name,
-                                'contact_name': _safe_row_get(supplier_row, 'contact_name'),
-                                'contact_email': _safe_row_get(supplier_row, 'contact_email'),
+                                'supplier_id': matched_supplier_id,
+                                'supplier_name': matched_supplier_name,
+                                'contact_name': _safe_row_get(matched_supplier, 'contact_name'),
+                                'contact_email': _safe_row_get(matched_supplier, 'contact_email'),
                                 'source_type': 'qpl_map',
                                 'date_added': None,
                             })
-                            existing_suggested_supplier_ids.add(int(supplier_id))
+                            existing_suggested_supplier_ids.add(int(matched_supplier_id))
 
                 # UPDATED: Get email history WITH quoted prices
                 email_history_rows = _execute_with_cursor(cur, """
@@ -5849,6 +5993,7 @@ def parts_list_sourcing(list_id):
                 line_dict['excess_data'] = [dict(r) for r in excess_data]
                 line_dict['ils_data'] = [dict(r) for r in ils_data]
                 line_dict['suggested_suppliers'] = [dict(r) for r in suggested_suppliers]
+                line_dict['qpl_manufacturers'] = qpl_manufacturers
                 line_dict['email_history'] = email_history
 
                 lines_with_data.append(line_dict)

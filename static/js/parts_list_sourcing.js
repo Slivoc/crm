@@ -85,16 +85,26 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // Function to show supplier selection modal
-    function showSupplierSelectModal(lineId) {
+    function showSupplierSelectModal(lineId, options = {}) {
+        const prefillSearch = options.prefillSearch || '';
+        const modalTitle = options.modalTitle || 'Add Supplier';
+        const sourceType = options.sourceType || 'manual';
+        const helperText = options.helperText || '';
+        const helperTextEscaped = String(helperText)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+
         const modalHTML = `
             <div class="modal fade" id="supplierSelectModal" tabindex="-1" aria-hidden="true">
                 <div class="modal-dialog">
                     <div class="modal-content">
                         <div class="modal-header">
-                            <h5 class="modal-title">Add Supplier</h5>
+                            <h5 class="modal-title">${modalTitle}</h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                         </div>
                         <div class="modal-body">
+                            ${helperTextEscaped ? `<div class="text-muted-sm mb-2">${helperTextEscaped}</div>` : ''}
                             <div class="mb-3">
                                 <label class="form-label">Search Supplier:</label>
                                 <input type="text" class="form-control" id="supplier-search" placeholder="Type to search...">
@@ -141,6 +151,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     );
                     displaySuppliers(filtered);
                 });
+
+                if (prefillSearch) {
+                    searchInput.value = prefillSearch;
+                    searchInput.dispatchEvent(new Event('input'));
+                }
             })
             .catch(error => {
                 document.getElementById('supplier-list').innerHTML = `
@@ -154,7 +169,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const supplierId = supplierItem.dataset.supplierId;
             const supplierName = supplierItem.dataset.supplierName;
-            addSuggestedSupplier(lineId, supplierId, supplierName, 'manual');
+            addSuggestedSupplier(lineId, supplierId, supplierName, sourceType, {
+                manufacturerName: prefillSearch || ''
+            });
             modal.hide();
         });
 
@@ -162,6 +179,22 @@ document.addEventListener('DOMContentLoaded', function() {
             this.remove();
         });
     }
+
+    // QPL manufacturer map button handler
+    document.addEventListener('click', function(e) {
+        const mapBtn = e.target.closest('.map-qpl-manufacturer-btn');
+        if (!mapBtn) return;
+
+        const lineId = mapBtn.dataset.lineId;
+        const manufacturerName = mapBtn.dataset.manufacturerName || '';
+
+        showSupplierSelectModal(lineId, {
+            modalTitle: 'Map QPL Manufacturer',
+            prefillSearch: manufacturerName,
+            sourceType: 'qpl_map',
+            helperText: `Manufacturer: ${manufacturerName}`
+        });
+    });
 
     function displaySuppliers(suppliers) {
         const listContainer = document.getElementById('supplier-list');
@@ -766,11 +799,13 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
         const supplierId = addBtn.dataset.supplierId;
         const supplierName = addBtn.dataset.supplierName;
         const source = addBtn.dataset.source;
-        addSuggestedSupplier(lineId, supplierId, supplierName, source);
+        const manufacturerName = addBtn.dataset.manufacturerName || '';
+        addSuggestedSupplier(lineId, supplierId, supplierName, source, { manufacturerName });
     });
 
     // IMPROVED: Add supplier with live UI update
-    function addSuggestedSupplier(lineId, supplierId, supplierName, source) {
+    function addSuggestedSupplier(lineId, supplierId, supplierName, source, options = {}) {
+        const manufacturerName = options.manufacturerName || '';
         fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/lines/${lineId}/suggested-suppliers/add`, {
             method: 'POST',
             headers: {
@@ -778,7 +813,8 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
             },
             body: JSON.stringify({
                 supplier_id: supplierId,
-                source_type: source
+                source_type: source,
+                manufacturer_name: manufacturerName
             })
         })
         .then(response => response.json())
@@ -821,10 +857,15 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
             wrapper = suggestedCell.querySelector('.suggested-wrapper');
         }
 
-        const list = wrapper.querySelector('.suggested-suppliers-list');
+        let list = wrapper.querySelector('.suggested-suppliers-list');
+        if (!list) {
+            list = document.createElement('div');
+            list.className = 'suggested-suppliers-list';
+            wrapper.prepend(list);
+        }
 
         const badge = document.createElement('span');
-        badge.className = 'badge bg-info me-1 mb-1';
+        badge.className = 'badge bg-info me-1 mb-1 suggested-item';
         badge.innerHTML = `
             ${supplierName}
             <button class="btn-close btn-close-white btn-sm ms-1 remove-supplier-btn"
@@ -854,14 +895,17 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
                 if (data.success) {
                     showToast('Supplier removed', 'success');
                     // Remove from UI live
-                    removeBtn.closest('.badge').remove();
+                    const supplierItem = removeBtn.closest('.badge') || removeBtn.closest('.suggested-item');
+                    if (supplierItem) {
+                        supplierItem.remove();
+                    }
 
                     // Check if that was the last suggested supplier
                     const mainRow = document.querySelector(`tr.main-row[data-line-id="${lineId}"]`);
                     const suggestedCell = mainRow.querySelector('.suggested-suppliers-cell');
-                    const remainingBadges = suggestedCell.querySelectorAll('.badge');
+                    const remainingSuppliers = suggestedCell.querySelectorAll('.remove-supplier-btn');
 
-                    if (remainingBadges.length === 0) {
+                    if (remainingSuppliers.length === 0) {
                         suggestedCell.innerHTML = '<span class="text-muted">-</span>';
                         mainRow.dataset.hasSuggested = '0';
                     }

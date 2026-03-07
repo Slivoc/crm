@@ -689,7 +689,49 @@
 <td class="{% if line.qpl_approval_count %}populated{% endif %}">
     {% if line.qpl_approval_count %}
         <span class="badge bg-primary">{{ line.qpl_approval_count }} approvals</span>
-        {% if line.qpl_manufacturers_display %}
+        {% if line.qpl_manufacturers %}
+            <div class="mt-2">
+                {% for qpl in line.qpl_manufacturers %}
+                <div class="d-flex justify-content-between align-items-start py-1 border-bottom">
+                    <div style="flex:1;">
+                        <small class="fw-semibold">{{ qpl.manufacturer_name }}</small>
+                        {% if qpl.matched_supplier_name %}
+                            <br><small class="text-muted-sm">Mapped: {{ qpl.matched_supplier_name }}</small>
+                            {% if qpl.mapping_source == 'saved_map' %}
+                                <br><small class="text-success">Saved map</small>
+                            {% endif %}
+                        {% else %}
+                            <br><small class="text-muted-sm">Not mapped to supplier</small>
+                        {% endif %}
+                    </div>
+                    <div class="ms-2">
+                        {% if qpl.matched_supplier_id %}
+                            {% if qpl.already_suggested %}
+                            <span class="badge bg-success">Added</span>
+                            {% else %}
+                            <button class="btn-icon btn-add add-supplier-btn"
+                                    data-line-id="{{ line.id }}"
+                                    data-supplier-id="{{ qpl.matched_supplier_id }}"
+                                    data-supplier-name="{{ qpl.matched_supplier_name }}"
+                                    data-manufacturer-name="{{ qpl.manufacturer_name }}"
+                                    data-source="qpl_map"
+                                    title="Add mapped supplier to suggested">
+                                <i class="bi bi-plus"></i>
+                            </button>
+                            {% endif %}
+                        {% else %}
+                        <button class="btn btn-xs btn-outline-primary map-qpl-manufacturer-btn"
+                                data-line-id="{{ line.id }}"
+                                data-manufacturer-name="{{ qpl.manufacturer_name }}"
+                                title="Map manufacturer to supplier and add">
+                            Map
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% elif line.qpl_manufacturers_display %}
             <div class="mt-1">
                 <small class="text-muted-sm">{{ line.qpl_manufacturers_display }}</small>
             </div>
@@ -700,7 +742,7 @@
 </td>
 
                             <!-- Suggested Column -->
-<td class="{% if line.suggested_suppliers %}populated{% endif %}">
+<td class="suggested-suppliers-cell {% if line.suggested_suppliers %}populated{% endif %}">
     {% if line.suggested_suppliers %}
         <div class="suggested-wrapper">
 
