@@ -5928,18 +5928,6 @@ def parts_list_sourcing(list_id):
                             'mapping_source': mapping_source,
                         })
 
-                        if matched_supplier and not already_suggested:
-                            suggested_suppliers.append({
-                                'id': None,
-                                'supplier_id': matched_supplier_id,
-                                'supplier_name': matched_supplier_name,
-                                'contact_name': _safe_row_get(matched_supplier, 'contact_name'),
-                                'contact_email': _safe_row_get(matched_supplier, 'contact_email'),
-                                'source_type': 'qpl_map',
-                                'date_added': None,
-                            })
-                            existing_suggested_supplier_ids.add(int(matched_supplier_id))
-
                 # UPDATED: Get email history WITH quoted prices
                 email_history_rows = _execute_with_cursor(cur, """
                     SELECT 
