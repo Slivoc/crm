@@ -699,49 +699,100 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
     }
 
     function displayILSResults(results, lineId, container) {
+        const parseIlsQty = (value) => {
+            if (value === null || value === undefined) return -1;
+            const cleaned = String(value).replace(/,/g, '').trim();
+            const match = cleaned.match(/-?\d+(\.\d+)?/);
+            if (!match) return -1;
+            const n = Number.parseFloat(match[0]);
+            return Number.isFinite(n) ? n : -1;
+        };
+
         const mappedSuppliers = results.filter(item => item.supplier_id);
         const unmappedSuppliers = results.filter(item => !item.supplier_id);
+        const sortedMapped = [...mappedSuppliers].sort((a, b) => parseIlsQty(b.quantity) - parseIlsQty(a.quantity));
+        const mappedActive = sortedMapped.filter(item => !item.recent_no_bid);
+        const mappedRecentNoBid = sortedMapped.filter(item => item.recent_no_bid);
+
+        const renderStatusBadges = (item) => {
+            let statusHtml = '';
+            if (item.has_chosen_cost) {
+                statusHtml += '<span class="badge bg-success me-1 mb-1">Costed</span>';
+            }
+            if (item.has_quotes) {
+                const quoteCount = item.quote_count || 0;
+                statusHtml += `<span class="badge bg-primary me-1 mb-1">${quoteCount} Quote${quoteCount === 1 ? '' : 's'}</span>`;
+            }
+            if (item.recent_request_date) {
+                statusHtml += `<span class="badge bg-warning text-dark me-1 mb-1">Recent Request · ${item.recent_request_date}</span>`;
+            }
+            if (item.supplier_has_quote) {
+                statusHtml += `<span class="badge bg-info text-dark me-1 mb-1">Supplier Quoted${item.supplier_last_quote_date ? ` · ${item.supplier_last_quote_date}` : ''}</span>`;
+            }
+            if (item.recent_no_bid) {
+                statusHtml += `<span class="badge bg-danger me-1 mb-1">Recent No Bid${item.recent_no_bid_date ? ` · ${item.recent_no_bid_date}` : ''}</span>`;
+            }
+            if (item.sent_to_this_supplier) {
+                statusHtml += '<span class="badge bg-success me-1 mb-1">Sent to This Supplier</span>';
+            } else if (item.has_email_sent) {
+                statusHtml += '<span class="badge bg-secondary me-1 mb-1">Sent to Others</span>';
+            }
+            if (!statusHtml) {
+                statusHtml = '<span class="text-muted">-</span>';
+            }
+            return statusHtml;
+        };
+
+        const renderMappedTable = (rows) => {
+            let tableHtml = '<table class="table table-sm ils-results-table table-hover">';
+            tableHtml += '<thead><tr><th>ILS Company</th><th>Part / Alt</th><th class="text-center">Qty</th><th>Condition</th><th>System Supplier</th><th>Status</th><th>Score</th><th></th></tr></thead>';
+            tableHtml += '<tbody>';
+            rows.forEach(item => {
+                const partNumber = item.part_number || '-';
+                const altNumber = item.alt_part_number || '';
+                const showAlt = altNumber && altNumber !== partNumber;
+                const altBadge = showAlt ? '<span class="badge bg-warning text-dark ms-1">ALT</span>' : '';
+                const altLine = showAlt ? `<br><small class="text-muted">Alt: ${altNumber}</small>` : '';
+                tableHtml += `
+                    <tr>
+                        <td>${item.ils_company_name || '-'}</td>
+                        <td><strong>${partNumber}</strong>${altBadge}${altLine}</td>
+                        <td class="text-center">${item.quantity || '-'}</td>
+                        <td>${item.condition_code || '-'}</td>
+                        <td><span class="badge bg-success">${item.supplier_name}</span></td>
+                        <td>${renderStatusBadges(item)}</td>
+                        <td class="supplier-score" data-supplier-id="${item.supplier_id}">
+                            <span class="text-muted">Loading...</span>
+                        </td>
+                        <td>
+                            <button class="btn btn-xs btn-outline-success add-supplier-from-ils"
+                                    data-line-id="${lineId}"
+                                    data-supplier-id="${item.supplier_id}"
+                                    data-supplier-name="${item.supplier_name}">
+                                <i class="bi bi-plus"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+            tableHtml += '</tbody></table>';
+            return tableHtml;
+        };
 
         let html = '';
 
         if (mappedSuppliers.length === 0 && unmappedSuppliers.length === 0) {
             html = '<div class="alert alert-info">No ILS results found for this part.</div>';
         } else {
-            if (mappedSuppliers.length > 0) {
-                html += '<h6 class="mb-3">Mapped Suppliers</h6>';
-                html += '<table class="table table-sm ils-results-table table-hover">';
-                html += '<thead><tr><th>ILS Company</th><th>Part / Alt</th><th>Qty</th><th>Condition</th><th>System Supplier</th><th>Score</th><th></th></tr></thead>';
-                html += '<tbody>';
+            if (mappedActive.length > 0) {
+                html += '<h6 class="mb-3">Mapped Suppliers (Top Stock First)</h6>';
+                html += renderMappedTable(mappedActive);
+            }
 
-                mappedSuppliers.forEach(item => {
-                    const partNumber = item.part_number || '-';
-                    const altNumber = item.alt_part_number || '';
-                    const showAlt = altNumber && altNumber !== partNumber;
-                    const altBadge = showAlt ? '<span class="badge bg-warning text-dark ms-1">ALT</span>' : '';
-                    const altLine = showAlt ? `<br><small class="text-muted">Alt: ${altNumber}</small>` : '';
-                    html += `
-                        <tr>
-                            <td>${item.ils_company_name || '-'}</td>
-                            <td><strong>${partNumber}</strong>${altBadge}${altLine}</td>
-                            <td>${item.quantity || '-'}</td>
-                            <td>${item.condition_code || '-'}</td>
-                            <td><span class="badge bg-success">${item.supplier_name}</span></td>
-                            <td class="supplier-score" data-supplier-id="${item.supplier_id}">
-                                <span class="text-muted">Loading...</span>
-                            </td>
-                            <td>
-                                <button class="btn btn-xs btn-outline-success add-supplier-from-ils"
-                                        data-line-id="${lineId}"
-                                        data-supplier-id="${item.supplier_id}"
-                                        data-supplier-name="${item.supplier_name}">
-                                    <i class="bi bi-plus"></i>
-                                </button>
-                            </td>
-                        </tr>
-                    `;
-                });
-
-                html += '</tbody></table>';
+            if (mappedRecentNoBid.length > 0) {
+                html += '<h6 class="mt-4 mb-2 text-danger">Recent No Bid (Last 30 Days)</h6>';
+                html += '<div class="text-muted small mb-2">Separated to avoid re-sending by default.</div>';
+                html += renderMappedTable(mappedRecentNoBid);
             }
 
             if (unmappedSuppliers.length > 0) {

@@ -439,7 +439,10 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for part in supplier.parts %}
+                        {% set primary_parts = supplier.parts | rejectattr('recent_no_bid') | list %}
+                        {% set recent_no_bid_parts = supplier.parts | selectattr('recent_no_bid') | list %}
+
+                        {% for part in primary_parts %}
                         <tr class="part-row"
                             data-has-cost="{{ part.has_chosen_cost|lower }}"
                             data-sent-to-this="{{ part.sent_to_this_supplier|lower }}"
@@ -513,6 +516,87 @@
                             </td>
                         </tr>
                         {% endfor %}
+
+                        {% if recent_no_bid_parts %}
+                        <tr>
+                            <td colspan="{% if mode == 'ils' %}7{% else %}6{% endif %}" class="bg-danger bg-opacity-10 text-danger fw-semibold">
+                                Recent No Bid (last 30 days)
+                            </td>
+                        </tr>
+                        {% for part in recent_no_bid_parts %}
+                        <tr class="part-row"
+                            data-has-cost="{{ part.has_chosen_cost|lower }}"
+                            data-sent-to-this="{{ part.sent_to_this_supplier|lower }}"
+                            data-part-number="{{ part.part_number }}">
+                            <td>
+                                <input type="checkbox"
+                                       class="part-checkbox"
+                                       data-supplier-id="{{ supplier.supplier_id }}"
+                                       data-part-number="{{ part.part_number }}"
+                                       data-quantity="{{ part.quantity }}"
+                                       data-ils-quantity="{{ part.ils_quantity }}"
+                                       data-condition="{{ part.condition or '' }}"
+                                       data-line-id="{{ part.line_id or '' }}">
+                            </td>
+                            <td><strong>{{ part.part_number }}</strong></td>
+                            <td class="text-center"><span class="badge bg-primary">{{ part.quantity }}</span></td>
+                            {% if mode == 'ils' %}
+                                <td class="text-center">{{ part.ils_quantity }}</td>
+                                <td><span class="badge bg-info">{{ part.condition or 'N/A' }}</span></td>
+                                <td>
+                                    {% if part.search_date %}
+                                        <span class="date-text">
+                                            {{ part.search_date.split()[0] if ' ' in part.search_date else part.search_date }}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-muted">Unknown</span>
+                                    {% endif %}
+                                </td>
+                            {% else %}
+                                <td>
+                                    <span class="badge badge-sm bg-source">{{ part.get('source_type', 'manual').upper() }}</span>
+                                </td>
+                            {% endif %}
+                            <td class="text-center status-cell">
+                                {% if part.has_chosen_cost %}
+                                    <span class="badge badge-sm bg-costed">âœ“ Costed</span>
+                                {% endif %}
+                                {% if part.has_quotes %}
+                                    <span class="badge badge-sm bg-quoted">{{ part.quote_count }} Quote{{ 's' if part.quote_count != 1 else '' }}</span>
+                                {% endif %}
+                                {% if part.recent_request_date %}
+                                    <span class="badge badge-sm bg-requested request-details-badge"
+                                          style="cursor: pointer;"
+                                          data-supplier-id="{{ supplier.supplier_id }}"
+                                          data-base-part-number="{{ part.base_part_number or part.part_number }}"
+                                          title="Click for details">
+                                        Recent Request Â· {{ part.recent_request_date }}
+                                    </span>
+                                {% endif %}
+                                {% if part.supplier_has_quote %}
+                                    <span class="badge badge-sm bg-supplier-quoted"
+                                          title="Supplier quoted this line{% if part.supplier_last_quote_date %} ({{ part.supplier_last_quote_date }}){% endif %}">
+                                        Supplier Quoted{% if part.supplier_last_quote_date %} Â· {{ part.supplier_last_quote_date }}{% endif %}
+                                    </span>
+                                {% endif %}
+                                {% if part.recent_no_bid %}
+                                    <span class="badge badge-sm bg-no-bid"
+                                          title="Supplier no-bid in last 30 days{% if part.recent_no_bid_date %} ({{ part.recent_no_bid_date }}){% endif %}">
+                                        Recent No Bid{% if part.recent_no_bid_date %} Â· {{ part.recent_no_bid_date }}{% endif %}
+                                    </span>
+                                {% endif %}
+                                {% if part.sent_to_this_supplier %}
+                                    <span class="badge badge-sm bg-sent-this">âœ“ Sent to This Supplier</span>
+                                {% elif part.has_email_sent %}
+                                    <span class="badge badge-sm bg-sent-other">Sent to Others</span>
+                                {% endif %}
+                                {% if not (part.has_quotes or part.has_chosen_cost or part.has_email_sent) %}
+                                    <span class="text-muted">â€”</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% endif %}
                     </tbody>
                 </table>
             </div>

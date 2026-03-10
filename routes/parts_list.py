@@ -3239,11 +3239,38 @@ def email_suppliers():
                 last_no_bid_date = recent_no_bid_lookup.get((supplier_id, base_part_number))
                 part['recent_no_bid'] = bool(last_no_bid_date)
                 part['recent_no_bid_date'] = last_no_bid_date
+                part['ils_quantity_numeric'] = _safe_float(part.get('ils_quantity'))
+
+            if mode == 'ils':
+                supplier_data['parts'].sort(
+                    key=lambda part: (
+                        part.get('ils_quantity_numeric')
+                        if part.get('ils_quantity_numeric') is not None
+                        else -1
+                    ),
+                    reverse=True
+                )
 
     # Convert to list and sort by number of parts
-    suppliers_list = sorted(suppliers_map.values(),
-                            key=lambda x: len(x['parts']),
-                            reverse=True)
+    if mode == 'ils':
+        suppliers_list = sorted(
+            suppliers_map.values(),
+            key=lambda supplier: (
+                sum(
+                    part.get('ils_quantity_numeric')
+                    for part in supplier['parts']
+                    if part.get('ils_quantity_numeric') is not None
+                ),
+                len(supplier['parts'])
+            ),
+            reverse=True
+        )
+    else:
+        suppliers_list = sorted(
+            suppliers_map.values(),
+            key=lambda supplier: len(supplier['parts']),
+            reverse=True
+        )
 
     breadcrumbs = [
         ('Home', url_for('index')),
@@ -6051,6 +6078,7 @@ def get_line_ils_data(list_id, line_id):
             return jsonify({'success': False, 'error': 'Line not found'}), 404
 
         base_part_number = base_row['base_part_number']
+        request_cutoff = datetime.now() - timedelta(days=30)
 
         # Get ILS data - show most recent result per company
         ils_data = db_execute(
@@ -6086,9 +6114,156 @@ def get_line_ils_data(list_id, line_id):
             fetch='all',
         )
 
+        ils_results = [dict(row) for row in ils_data or []]
+        mapped_supplier_ids = sorted({
+            int(row['supplier_id']) for row in ils_results if row.get('supplier_id')
+        })
+
+        if mapped_supplier_ids:
+            placeholders = ','.join(['?'] * len(mapped_supplier_ids))
+            status_rows = db_execute(
+                f"""
+                WITH supplier_ids AS (
+                    SELECT id AS supplier_id
+                    FROM suppliers
+                    WHERE id IN ({placeholders})
+                ),
+                line_stats AS (
+                    SELECT
+                        (pll.chosen_cost IS NOT NULL) AS has_chosen_cost,
+                        (
+                            SELECT COUNT(*)
+                            FROM parts_list_supplier_quote_lines sql
+                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                            WHERE sql.parts_list_line_id = pll.id
+                              AND sql.is_no_bid = FALSE
+                        ) AS quote_count,
+                        (
+                            SELECT COUNT(*)
+                            FROM parts_list_line_supplier_emails se
+                            WHERE se.parts_list_line_id = pll.id
+                        ) AS email_count
+                    FROM parts_list_lines pll
+                    WHERE pll.id = ?
+                ),
+                sent_this AS (
+                    SELECT
+                        se.supplier_id,
+                        COUNT(*) AS sent_to_this_count
+                    FROM parts_list_line_supplier_emails se
+                    WHERE se.parts_list_line_id = ?
+                      AND se.supplier_id IN ({placeholders})
+                    GROUP BY se.supplier_id
+                ),
+                supplier_quotes AS (
+                    SELECT
+                        sq.supplier_id,
+                        COUNT(*) AS supplier_quote_count,
+                        MAX(sql.date_created) AS supplier_last_quote_date
+                    FROM parts_list_supplier_quote_lines sql
+                    JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                    WHERE sql.parts_list_line_id = ?
+                      AND sql.is_no_bid = FALSE
+                      AND sq.supplier_id IN ({placeholders})
+                    GROUP BY sq.supplier_id
+                ),
+                recent_requests AS (
+                    SELECT
+                        se.supplier_id,
+                        MAX(se.date_sent) AS recent_request_date
+                    FROM parts_list_line_supplier_emails se
+                    JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
+                    WHERE pll.base_part_number = ?
+                      AND se.supplier_id IN ({placeholders})
+                      AND se.date_sent >= ?
+                      AND pll.parts_list_id != ?
+                    GROUP BY se.supplier_id
+                ),
+                recent_no_bids AS (
+                    SELECT
+                        sq.supplier_id,
+                        MAX(sql.date_created) AS recent_no_bid_date
+                    FROM parts_list_supplier_quote_lines sql
+                    JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                    JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+                    WHERE pll.base_part_number = ?
+                      AND sql.is_no_bid = TRUE
+                      AND sq.supplier_id IN ({placeholders})
+                      AND sql.date_created >= ?
+                    GROUP BY sq.supplier_id
+                )
+                SELECT
+                    sid.supplier_id,
+                    ls.has_chosen_cost,
+                    ls.quote_count,
+                    ls.email_count,
+                    COALESCE(st.sent_to_this_count, 0) AS sent_to_this_count,
+                    COALESCE(sq.supplier_quote_count, 0) AS supplier_quote_count,
+                    sq.supplier_last_quote_date,
+                    rr.recent_request_date,
+                    nb.recent_no_bid_date
+                FROM supplier_ids sid
+                CROSS JOIN line_stats ls
+                LEFT JOIN sent_this st ON st.supplier_id = sid.supplier_id
+                LEFT JOIN supplier_quotes sq ON sq.supplier_id = sid.supplier_id
+                LEFT JOIN recent_requests rr ON rr.supplier_id = sid.supplier_id
+                LEFT JOIN recent_no_bids nb ON nb.supplier_id = sid.supplier_id
+                """,
+                [
+                    *mapped_supplier_ids,
+                    line_id,
+                    line_id,
+                    *mapped_supplier_ids,
+                    line_id,
+                    *mapped_supplier_ids,
+                    base_part_number,
+                    *mapped_supplier_ids,
+                    request_cutoff,
+                    list_id,
+                    base_part_number,
+                    *mapped_supplier_ids,
+                    request_cutoff,
+                ],
+                fetch='all',
+            ) or []
+
+            status_lookup = {}
+            for row in status_rows:
+                status_lookup[row['supplier_id']] = {
+                    'has_chosen_cost': bool(row['has_chosen_cost']),
+                    'quote_count': int(row['quote_count'] or 0),
+                    'has_quotes': bool(row['quote_count']),
+                    'has_email_sent': bool(row['email_count']),
+                    'sent_to_this_supplier': bool(row['sent_to_this_count']),
+                    'supplier_quote_count': int(row['supplier_quote_count'] or 0),
+                    'supplier_has_quote': bool(row['supplier_quote_count']),
+                    'supplier_last_quote_date': _format_date_display(row['supplier_last_quote_date']),
+                    'recent_request_date': _format_date_display(row['recent_request_date']),
+                    'recent_no_bid': bool(row['recent_no_bid_date']),
+                    'recent_no_bid_date': _format_date_display(row['recent_no_bid_date']),
+                }
+
+            for row in ils_results:
+                supplier_id = row.get('supplier_id')
+                if not supplier_id:
+                    continue
+                row.update(status_lookup.get(int(supplier_id), {
+                    'has_chosen_cost': False,
+                    'quote_count': 0,
+                    'has_quotes': False,
+                    'has_email_sent': False,
+                    'sent_to_this_supplier': False,
+                    'supplier_quote_count': 0,
+                    'supplier_has_quote': False,
+                    'supplier_last_quote_date': None,
+                    'recent_request_date': None,
+                    'recent_no_bid': False,
+                    'recent_no_bid_date': None,
+                }))
+
         return jsonify({
             'success': True,
-            'results': [dict(row) for row in ils_data or []]
+            'results': ils_results
         })
 
     except Exception as e:
