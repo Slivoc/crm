@@ -6,6 +6,29 @@ from integrations.partsbase_client import PartsBaseClient, PartsBaseConfig, Part
 
 partsbase_bp = Blueprint('partsbase', __name__, url_prefix='/partsbase')
 
+def _partsbase_error_hint(message: str) -> str:
+    msg = (message or '').lower()
+    if "schema file wasn't found" in msg:
+        return (
+            "Upload format issue: this endpoint expects a ZIP with a manifest file "
+            "(typically `manifest.xml`) plus a data file."
+        )
+    if "data file wasn't found" in msg:
+        return (
+            "Manifest issue: the manifest file is present but it does not point to "
+            "a valid data file in the same ZIP."
+        )
+    if "there must be only 2 files in archive" in msg:
+        return "ZIP shape issue: include exactly 2 files (manifest + data)."
+    if "please attach zip archive containing two files" in msg:
+        return "Upload transport issue: send multipart form-data with one ZIP file field."
+    if '"code": 14' in msg or 'schema or data file has invalid data' in msg:
+        return (
+            "PartsBase accepted the ZIP but rejected row-level content during processing. "
+            "Use the request ID and ask PartsBase Support for the processing error log."
+        )
+    return ''
+
 
 def _build_client() -> PartsBaseClient:
     config = PartsBaseConfig(
@@ -107,7 +130,11 @@ def partsbase_home():
             flash('Choose an action to run.', 'warning')
 
     except PartsBaseError as exc:
-        flash(f'PartsBase error: {exc}', 'danger')
+        message = str(exc)
+        hint = _partsbase_error_hint(message)
+        flash(f'PartsBase error: {message}', 'danger')
+        if hint:
+            flash(hint, 'warning')
     except ValueError as exc:
         flash(str(exc), 'danger')
     except Exception as exc:

@@ -101,26 +101,63 @@ class PartsBaseClient:
         if not normalized:
             raise ValueError('At least one part number is required.')
 
-        lines = ['PartNumber'] + normalized
-        csv_payload = '\n'.join(lines).encode('utf-8')
-
-        # PartsBase expects a schema descriptor alongside the CSV file inside
-        # the uploaded ZIP. Without this file, the API rejects the upload with
-        # `Schema file wasn't found`.
-        schema_payload = '\n'.join(
-            [
-                '[parts.csv]',
-                'ColNameHeader=True',
-                'Format=CSVDelimited',
-                'MaxScanRows=0',
-                'CharacterSet=65001',
+        # Based on the provided PartsBase sample, inventory uploads must contain
+        # exactly two files in the ZIP: `Manifest.xml` and `Data.dat`.
+        # `Data.dat` is tab-delimited with fields in the manifest order.
+        data_rows = []
+        for index, part in enumerate(normalized, start=1):
+            part_value = part.replace(' ', '')
+            row = [
+                'A',        # ACTION_CODE (Add/Update)
+                part_value, # PARTNUMBER
+                'DESCRIPTION_1',  # DESCRIPTION
+                'Alternate_1',    # ALTERNATEPARTNUMBER
+                'AR',       # CONDITIONCODE
+                '1',        # QUANTITY
+                'EA',       # UOM
+                'Manufacturer_1', # MANUFACTURER
+                '1.0',      # UNITPRICE
+                'TestAir1', # AIRCRAFT_TYPE
+                'TestEN1',  # ENGINE_TYPE
+                f'serialN{index}', # SERIALNUMBER
+                'JAA Form 1', # TRACEABILITY
+                'TraceTo1', # TRACETO
+                '',         # IMAGEURL
+                '',         # DOCUMENTATIONURL
+                '',         # DOCUMENTATIONCAPTION
             ]
-        ).encode('utf-8')
+            data_rows.append('\t'.join(row))
+        data_payload = '\r\n'.join(data_rows).encode('utf-8')
+
+        manifest_payload = '\n'.join(
+            [
+                '<?xml version="1.0" encoding="unicode"?>',
+                '<FIELDS>',
+                '  <FIELD NAME="ACTION_CODE" TYPE="CHAR" LENGTH="1" />',
+                '  <FIELD NAME="PARTNUMBER" TYPE="CHAR" />',
+                '  <FIELD NAME="DESCRIPTION" TYPE="CHAR" />',
+                '  <FIELD NAME="ALTERNATEPARTNUMBER" TYPE="CHAR" />',
+                '  <FIELD NAME="CONDITIONCODE" TYPE="CHAR" />',
+                '  <FIELD NAME="QUANTITY" TYPE="INTEGER" />',
+                '  <FIELD NAME="UOM" TYPE="CHAR" />',
+                '  <FIELD NAME="MANUFACTURER" TYPE="CHAR" />',
+                '  <FIELD NAME="UNITPRICE" TYPE="DECIMAL" />',
+                '  <FIELD NAME="AIRCRAFT_TYPE" TYPE="CHAR" />',
+                '  <FIELD NAME="ENGINE_TYPE" TYPE="CHAR" />',
+                '  <FIELD NAME="SERIALNUMBER" TYPE="CHAR" />',
+                '  <FIELD NAME="TRACEABILITY" TYPE="CHAR" />',
+                '  <FIELD NAME="TRACETO" TYPE="CHAR" />',
+                '  <FIELD NAME="IMAGEURL" TYPE="CHAR" />',
+                '  <FIELD NAME="DOCUMENTATIONURL" TYPE="CHAR" />',
+                '  <FIELD NAME="DOCUMENTATIONCAPTION" TYPE="CHAR" />',
+                '</FIELDS>',
+            ]
+        ).encode('utf-16')
 
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zip_file:
-            zip_file.writestr('parts.csv', csv_payload)
-            zip_file.writestr('schema.ini', schema_payload)
+            zip_file.writestr('Data.dat', data_payload)
+            zip_file.writestr('Manifest.xml', manifest_payload)
         return buffer.getvalue()
 
     @staticmethod
