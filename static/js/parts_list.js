@@ -337,6 +337,22 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
               <i class="bi bi-plus-square"></i>
            </button>`
         : '';
+    const canSuggestAlternative = !isSubLine && !!(part.base_part_number || part.input_part_number);
+    const suggestAlternativeButton = canSuggestAlternative
+        ? `<button class="btn btn-sm icon-action-btn suggest-alt-btn"
+                   data-part-index="${actualIndex}"
+                   title="Suggest alternative for this part">
+              <i class="bi bi-arrow-left-right"></i>
+           </button>`
+        : '';
+    const canEditLinePart = !!(currentListId && part.line_id);
+    const editLinePartButton = canEditLinePart
+        ? `<button class="btn btn-sm icon-action-btn edit-line-part-btn"
+                   data-part-index="${actualIndex}"
+                   title="Change this line's part number">
+              <i class="bi bi-pencil-square"></i>
+           </button>`
+        : '';
 
     let alternativesDisplay = '-';
     if (!isSubLine && part.global_alternatives && part.global_alternatives.length > 0) {
@@ -406,6 +422,8 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
                 </div>
                 <div class="d-flex align-items-center gap-1">
                     ${copyPartNumberButton}
+                    ${suggestAlternativeButton}
+                    ${editLinePartButton}
                     ${duplicateButton}
                 </div>
             </div>
@@ -1062,6 +1080,170 @@ function copyTextToClipboard(text) {
 function preventDefaults(e) {
     e.preventDefault();
     e.stopPropagation();
+}
+
+function suggestAlternativeForLine(partIndex, buttonElement) {
+    const part = window.allResults[partIndex];
+    if (!part) return;
+
+    const primaryBasePart = (part.base_part_number || '').trim();
+    if (!primaryBasePart) {
+        showToast('Primary base part number missing for this line', 'warning');
+        return;
+    }
+
+    const suggestedPart = prompt('Enter the alternative part number to suggest:', '');
+    if (!suggestedPart) return;
+
+    const trimmedPart = suggestedPart.trim();
+    if (!trimmedPart) return;
+
+    const originalHtml = buttonElement ? buttonElement.innerHTML : '';
+    if (buttonElement) {
+        buttonElement.disabled = true;
+        buttonElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
+
+    fetch(`/parts/${encodeURIComponent(primaryBasePart)}/global_alts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alternatives: [trimmedPart] })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            throw new Error(data.message || 'Failed to save suggested alternative');
+        }
+
+        return fetch('/parts_list/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                parts: [{
+                    part_number: trimmedPart,
+                    quantity: part.quantity || 1
+                }]
+            })
+        })
+        .then(response => response.json())
+        .then(analyzeData => {
+            if (!analyzeData.success || !analyzeData.results || analyzeData.results.length === 0) {
+                return {
+                    input_part_number: trimmedPart,
+                    base_part_number: null,
+                    has_stock: false,
+                    total_available_stock: 0,
+                    stock_locations_count: 0
+                };
+            }
+
+            const analyzed = analyzeData.results[0] || {};
+            return {
+                input_part_number: analyzed.input_part_number || trimmedPart,
+                base_part_number: analyzed.base_part_number || null,
+                has_stock: (analyzed.total_available_stock || 0) > 0,
+                total_available_stock: analyzed.total_available_stock || 0,
+                stock_locations_count: analyzed.stock_locations_count || 0
+            };
+        });
+    })
+    .then(altInfo => {
+        const alternatives = Array.isArray(part.global_alternatives) ? [...part.global_alternatives] : [];
+        const normalizedInput = (altInfo.input_part_number || '').toUpperCase();
+        const normalizedBase = (altInfo.base_part_number || '').toUpperCase();
+
+        const exists = alternatives.some(alt => {
+            const altInput = (alt.input_part_number || '').toUpperCase();
+            const altBase = (alt.base_part_number || '').toUpperCase();
+            return (normalizedInput && altInput === normalizedInput) || (normalizedBase && altBase === normalizedBase);
+        });
+
+        if (!exists) {
+            alternatives.push(altInfo);
+            part.global_alternatives = alternatives;
+            displayResults(window.allResults);
+        }
+
+        showToast(`Suggested alternative added: ${trimmedPart}`, 'success');
+    })
+    .catch(error => {
+        console.error('Error suggesting alternative:', error);
+        showToast(error.message || 'Unable to suggest alternative', 'danger');
+    })
+    .finally(() => {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.innerHTML = originalHtml;
+        }
+    });
+}
+
+function updateLinePartNumber(partIndex, buttonElement) {
+    const part = window.allResults[partIndex];
+    if (!part || !currentListId || !part.line_id) {
+        showToast('This line cannot be edited from overview', 'warning');
+        return;
+    }
+
+    const currentPartNumber = (part.input_part_number || '').trim();
+    const nextPartNumber = prompt('Enter new part number for this line:', currentPartNumber);
+    if (!nextPartNumber) return;
+
+    const trimmedPartNumber = nextPartNumber.trim();
+    if (!trimmedPartNumber || trimmedPartNumber === currentPartNumber) return;
+
+    const originalHtml = buttonElement ? buttonElement.innerHTML : '';
+    if (buttonElement) {
+        buttonElement.disabled = true;
+        buttonElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
+
+    fetch(`/parts_list/${currentListId}/lines/${part.line_id}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customer_part_number: trimmedPartNumber })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            throw new Error(data.message || 'Failed to update line');
+        }
+
+        return fetch('/parts_list/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                parts: [{
+                    part_number: trimmedPartNumber,
+                    quantity: part.quantity || 1,
+                    line_id: part.line_id,
+                    line_number: part.line_number
+                }]
+            })
+        });
+    })
+    .then(response => response.json())
+    .then(analyzeData => {
+        if (!analyzeData.success || !analyzeData.results || analyzeData.results.length === 0) {
+            throw new Error('Line updated but part re-analysis failed');
+        }
+
+        const refreshed = analyzeData.results[0];
+        refreshed.line_id = part.line_id;
+        window.allResults[partIndex] = refreshed;
+        displayResults(window.allResults);
+        showToast(`Updated line part number to ${trimmedPartNumber}`, 'success');
+    })
+    .catch(error => {
+        console.error('Error updating line part number:', error);
+        showToast(error.message || 'Unable to update part number', 'danger');
+    })
+    .finally(() => {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.innerHTML = originalHtml;
+        }
+    });
 }
 
 function showPartDetailsModal(part, filterSection = null) {
@@ -2390,6 +2572,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 const encodedPartNumber = copyButton.getAttribute('data-part-number') || '';
                 const partNumber = decodeURIComponent(encodedPartNumber);
                 copyTextToClipboard(partNumber);
+                return;
+            }
+
+            const suggestAltButton = event.target.closest('.suggest-alt-btn');
+            if (suggestAltButton) {
+                const partIndex = parseInt(suggestAltButton.getAttribute('data-part-index'), 10);
+                if (!Number.isNaN(partIndex)) {
+                    suggestAlternativeForLine(partIndex, suggestAltButton);
+                }
+                return;
+            }
+
+            const editLinePartButton = event.target.closest('.edit-line-part-btn');
+            if (editLinePartButton) {
+                const partIndex = parseInt(editLinePartButton.getAttribute('data-part-index'), 10);
+                if (!Number.isNaN(partIndex)) {
+                    updateLinePartNumber(partIndex, editLinePartButton);
+                }
                 return;
             }
 
