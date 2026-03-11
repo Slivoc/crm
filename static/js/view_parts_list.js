@@ -145,9 +145,16 @@ function showPartDetailsModal(part) {
 
     // STOCK DETAILS - PURCHASING
     if (part.stock_movement_count > 0 && part.stock_details && part.stock_details.length > 0) {
-        const stockToShow = part.stock_details.slice(0, 3);
-        const totalCost = part.stock_details.reduce((sum, s) => sum + (parseFloat(s.cost_per_unit) || 0) * s.available_quantity, 0);
-        const avgCost = part.total_available_stock ? totalCost / part.total_available_stock : 0;
+        const stockToShow = [...part.stock_details];
+        const validStockCosts = stockToShow
+            .map(stock => parseFloat(stock.cost_per_unit))
+            .filter(cost => !Number.isNaN(cost) && cost > 0);
+        const uniqueCosts = [...new Set(validStockCosts.map(cost => cost.toFixed(6)))].map(Number).sort((a, b) => a - b);
+        const stockCostSummary = uniqueCosts.length === 0
+            ? 'Cost unavailable'
+            : uniqueCosts.length === 1
+                ? `Unit Cost: ${formatCurrency(uniqueCosts[0])}`
+                : `Unit Cost Range: ${formatCurrency(uniqueCosts[0])} - ${formatCurrency(uniqueCosts[uniqueCosts.length - 1])}`;
 
         detailsHtml += `
             <div class="modal-section purchasing">
@@ -158,9 +165,8 @@ function showPartDetailsModal(part) {
                         <i class="bi bi-check-circle-fill me-1"></i>${part.total_available_stock} available
                     </span>
                     <span class="modal-section-badge" style="background: #0dcaf0; color: white;">
-                        Avg Cost: ${formatCurrency(avgCost)}
+                        ${stockCostSummary}
                     </span>
-                    ${part.stock_details.length > 3 ? `<small style="color: #6c757d; font-weight: normal; margin-left: 0.5rem;">+${part.stock_details.length - 3} more</small>` : ''}
                 </div>
                 <div class="table-responsive">
                     <table class="table table-sm modal-table mb-0">
@@ -892,9 +898,16 @@ function showPartDetailsModal(part) {
 
     // STOCK DETAILS - PURCHASING
     if (part.stock_movement_count > 0 && part.stock_details && part.stock_details.length > 0) {
-        const stockToShow = part.stock_details.slice(0, 3);
-        const totalCost = part.stock_details.reduce((sum, s) => sum + (parseFloat(s.cost_per_unit) || 0) * s.available_quantity, 0);
-        const avgCost = part.total_available_stock ? totalCost / part.total_available_stock : 0;
+        const stockToShow = [...part.stock_details];
+        const validStockCosts = stockToShow
+            .map(stock => parseFloat(stock.cost_per_unit))
+            .filter(cost => !Number.isNaN(cost) && cost > 0);
+        const uniqueCosts = [...new Set(validStockCosts.map(cost => cost.toFixed(6)))].map(Number).sort((a, b) => a - b);
+        const stockCostSummary = uniqueCosts.length === 0
+            ? 'Cost unavailable'
+            : uniqueCosts.length === 1
+                ? `Unit Cost: ${formatCurrency(uniqueCosts[0])}`
+                : `Unit Cost Range: ${formatCurrency(uniqueCosts[0])} - ${formatCurrency(uniqueCosts[uniqueCosts.length - 1])}`;
 
         detailsHtml += `
             <div class="modal-section purchasing">
@@ -905,9 +918,8 @@ function showPartDetailsModal(part) {
                         <i class="bi bi-check-circle-fill me-1"></i>${part.total_available_stock} available
                     </span>
                     <span class="modal-section-badge" style="background: #0dcaf0; color: white;">
-                        Avg Cost: ${formatCurrency(avgCost)}
+                        ${stockCostSummary}
                     </span>
-                    ${part.stock_details.length > 3 ? `<small style="color: #6c757d; font-weight: normal; margin-left: 0.5rem;">+${part.stock_details.length - 3} more</small>` : ''}
                 </div>
                 <div class="table-responsive">
                     <table class="table table-sm modal-table mb-0">
@@ -1495,17 +1507,24 @@ document.addEventListener('DOMContentLoaded', function() {
             latestVqDate = formatDate(latestVq.entry_date);
         }
 
-        let avgStockCost = '-';
+        let stockCostDisplay = '-';
+        let stockCostTitle = '';
         if (part.stock_details && part.stock_details.length > 0) {
-            const validStock = part.stock_details.filter(s => {
-                const cost = parseFloat(s.cost_per_unit);
-                const qty = parseFloat(s.available_quantity);
-                return !isNaN(cost) && cost > 0 && !isNaN(qty) && qty > 0;
-            });
+            const validStock = part.stock_details.map(s => ({
+                cost: parseFloat(s.cost_per_unit),
+                qty: parseFloat(s.available_quantity)
+            })).filter(item => !isNaN(item.cost) && item.cost > 0 && !isNaN(item.qty) && item.qty > 0);
+
             if (validStock.length > 0) {
-                const totalCost = validStock.reduce((sum, s) => sum + (parseFloat(s.cost_per_unit) * parseFloat(s.available_quantity)), 0);
-                const totalQty = validStock.reduce((sum, s) => sum + parseFloat(s.available_quantity), 0);
-                avgStockCost = formatCurrency(totalCost / totalQty);
+                const uniqueCosts = [...new Set(validStock.map(s => s.cost.toFixed(6)))].map(Number).sort((a, b) => a - b);
+                if (uniqueCosts.length === 1) {
+                    stockCostDisplay = formatCurrency(uniqueCosts[0]);
+                } else {
+                    const minCost = uniqueCosts[0];
+                    const maxCost = uniqueCosts[uniqueCosts.length - 1];
+                    stockCostDisplay = `${formatCurrency(minCost)} - ${formatCurrency(maxCost)}`;
+                    stockCostTitle = `Mixed stock lots: ${uniqueCosts.length} prices`;
+                }
             }
         }
 
@@ -1532,8 +1551,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     ${stockIcon}
                     <span>${stockDisplay}</span>
                 </span>
-                <div style="font-weight: 600; color: ${avgStockCost !== '-' ? '#0d6efd' : '#adb5bd'}; font-size: 0.8rem;">
-                    ${avgStockCost}
+                <div style="font-weight: 600; color: ${stockCostDisplay !== '-' ? '#0d6efd' : '#adb5bd'}; font-size: 0.8rem;" title="${stockCostTitle}">
+                    ${stockCostDisplay}
                 </div>
             </div>
         `;
