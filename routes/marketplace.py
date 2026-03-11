@@ -416,6 +416,20 @@ def _read_import_rows(uploaded_file, filename):
     return output_rows
 
 
+def _summarize_import_headers(rows):
+    """Return raw/normalized header diagnostics for troubleshooting imports."""
+    if not rows:
+        return {'raw': [], 'normalized': []}
+
+    first_row = rows[0][1] if len(rows[0]) > 1 else {}
+    raw_headers = [str(header or '').strip() for header in (first_row or {}).keys()]
+    normalized_headers = [_normalize_import_header(header) for header in raw_headers]
+    return {
+        'raw': raw_headers,
+        'normalized': normalized_headers,
+    }
+
+
 def _build_marketplace_updates_from_row(row_data, valid_categories):
     # Airbus export column -> internal field mapping.
     column_map = {
@@ -576,6 +590,8 @@ def import_marketplace_details_file():
         rows = _read_import_rows(file, filename)
         if not rows:
             return jsonify({'success': False, 'error': 'Uploaded file is empty'}), 400
+
+        header_summary = _summarize_import_headers(rows)
         total_rows = len(rows)
         logger.info("Marketplace details import started: filename=%s rows=%s", filename, total_rows)
 
@@ -589,12 +605,17 @@ def import_marketplace_details_file():
         skipped_no_match = 0
         skipped_no_updates = 0
         row_errors = []
+        error_reason_counts = {}
+
+        def _record_error(reason):
+            error_reason_counts[reason] = error_reason_counts.get(reason, 0) + 1
 
         for row_number, row_data in rows:
             processed += 1
             part_ref, field_updates, row_error = _build_marketplace_updates_from_row(row_data, valid_categories)
             if row_error:
                 skipped_no_updates += 1
+                _record_error(row_error)
                 if len(row_errors) < 20:
                     row_errors.append(f"Row {row_number}: {row_error}")
                 continue
@@ -610,6 +631,7 @@ def import_marketplace_details_file():
                 changed += cursor.rowcount
             else:
                 skipped_no_match += 1
+                _record_error("Part not found in CRM")
                 if len(row_errors) < 20:
                     row_errors.append(f"Row {row_number}: Part not found for '{part_ref}'.")
 
@@ -644,6 +666,8 @@ def import_marketplace_details_file():
                 'skipped_no_updates': skipped_no_updates,
             },
             'errors': row_errors,
+            'error_reason_counts': error_reason_counts,
+            'header_diagnostics': header_summary,
         }), 200
     except Exception as e:
         logger.exception("Error importing marketplace details file")

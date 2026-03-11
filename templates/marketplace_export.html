@@ -1906,8 +1906,35 @@ function importAirbusDetailsFile() {
         $('#exportStatus').text(message);
         fileInput.value = '';
 
+        const errorReasonCounts = response.error_reason_counts || {};
+        const headerDiagnostics = response.header_diagnostics || {};
+
         if (response.errors && response.errors.length) {
             console.warn('Marketplace detail import warnings:', response.errors);
+        }
+
+        if (Object.keys(errorReasonCounts).length > 0 || (headerDiagnostics.normalized && headerDiagnostics.normalized.length)) {
+            console.warn('Marketplace detail import diagnostics:', {
+                error_reason_counts: errorReasonCounts,
+                header_diagnostics: headerDiagnostics
+            });
+        }
+
+        if ((summary.processed_rows || 0) > 0 && (summary.updated_rows || 0) === 0) {
+            const topReasons = Object.entries(errorReasonCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(([reason, count]) => `${reason}: ${count}`)
+                .join(' | ');
+            const headersPreview = (headerDiagnostics.raw || []).slice(0, 6).join(', ');
+            const debugMessage = [
+                'No rows were matched/updated.',
+                topReasons ? `Top skip reasons: ${topReasons}.` : '',
+                headersPreview ? `Detected headers: ${headersPreview}.` : '',
+                'Open browser console for full diagnostics.'
+            ].filter(Boolean).join(' ');
+            $('#exportStatus').text(`${message} ${debugMessage}`);
+            alert(debugMessage);
         }
 
         loadParts();
