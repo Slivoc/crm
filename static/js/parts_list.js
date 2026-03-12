@@ -357,6 +357,13 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
               <i class="bi bi-pencil-square"></i>
            </button>`
         : '';
+    const editLineQtyButton = canEditLinePart
+        ? `<button class="btn btn-sm icon-action-btn edit-line-qty-btn"
+                   data-part-index="${actualIndex}"
+                   title="Change this line's quantity">
+              <i class="bi bi-123"></i>
+           </button>`
+        : '';
 
     let alternativesDisplay = '-';
     if (!isSubLine && part.global_alternatives && part.global_alternatives.length > 0) {
@@ -428,6 +435,7 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
                     ${copyPartNumberButton}
                     ${suggestAlternativeButton}
                     ${editLinePartButton}
+                    ${editLineQtyButton}
                     ${duplicateButton}
                 </div>
             </div>
@@ -1241,6 +1249,78 @@ function updateLinePartNumber(partIndex, buttonElement) {
     .catch(error => {
         console.error('Error updating line part number:', error);
         showToast(error.message || 'Unable to update part number', 'danger');
+    })
+    .finally(() => {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.innerHTML = originalHtml;
+        }
+    });
+}
+
+function updateLineQuantity(partIndex, buttonElement) {
+    const part = window.allResults[partIndex];
+    if (!part || !currentListId || !part.line_id) {
+        showToast('This line cannot be edited from overview', 'warning');
+        return;
+    }
+
+    const currentQuantity = parseInt(part.quantity, 10) || 1;
+    const nextQuantityInput = prompt('Enter new quantity for this line:', currentQuantity);
+    if (nextQuantityInput === null) return;
+
+    const nextQuantity = parseInt(nextQuantityInput, 10);
+    if (Number.isNaN(nextQuantity) || nextQuantity < 1) {
+        showToast('Quantity must be a whole number greater than 0', 'warning');
+        return;
+    }
+    if (nextQuantity === currentQuantity) return;
+
+    const originalHtml = buttonElement ? buttonElement.innerHTML : '';
+    if (buttonElement) {
+        buttonElement.disabled = true;
+        buttonElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
+
+    fetch(`/parts_list/${currentListId}/lines/${part.line_id}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quantity: nextQuantity })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            throw new Error(data.message || 'Failed to update line');
+        }
+
+        return fetch('/parts_list/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                parts: [{
+                    part_number: part.input_part_number,
+                    quantity: nextQuantity,
+                    line_id: part.line_id,
+                    line_number: part.line_number
+                }]
+            })
+        });
+    })
+    .then(response => response.json())
+    .then(analyzeData => {
+        if (!analyzeData.success || !analyzeData.results || analyzeData.results.length === 0) {
+            throw new Error('Line updated but quantity re-analysis failed');
+        }
+
+        const refreshed = analyzeData.results[0];
+        refreshed.line_id = part.line_id;
+        window.allResults[partIndex] = refreshed;
+        displayResults(window.allResults);
+        showToast(`Updated line quantity to ${nextQuantity}`, 'success');
+    })
+    .catch(error => {
+        console.error('Error updating line quantity:', error);
+        showToast(error.message || 'Unable to update quantity', 'danger');
     })
     .finally(() => {
         if (buttonElement) {
@@ -2599,6 +2679,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 const partIndex = parseInt(editLinePartButton.getAttribute('data-part-index'), 10);
                 if (!Number.isNaN(partIndex)) {
                     updateLinePartNumber(partIndex, editLinePartButton);
+                }
+                return;
+            }
+
+            const editLineQtyButton = event.target.closest('.edit-line-qty-btn');
+            if (editLineQtyButton) {
+                const partIndex = parseInt(editLineQtyButton.getAttribute('data-part-index'), 10);
+                if (!Number.isNaN(partIndex)) {
+                    updateLineQuantity(partIndex, editLineQtyButton);
                 }
                 return;
             }

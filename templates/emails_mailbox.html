@@ -341,6 +341,34 @@
     </div>
 </div>
 
+<!-- Manual Parts Entry Modal -->
+<div class="modal fade" id="mailboxManualPartsModal" tabindex="-1" aria-labelledby="mailboxManualPartsLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="mailboxManualPartsLabel">
+                    <i class="bi bi-pencil-square me-2"></i>Add Parts Manually
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted mb-2">AI could not find part numbers. Paste parts below, one per line.</p>
+                <div class="small text-muted mb-3">
+                    Examples: <code>MS27039-1-08 x 4</code>, <code>2x AN960-10L</code>, <code>BACB30NN4K5</code>
+                </div>
+                <textarea class="form-control" id="mailboxManualPartsInput" rows="8" placeholder="PartNumber x Qty"></textarea>
+                <div class="alert alert-danger mt-3 d-none" id="mailboxManualPartsFeedback"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" id="mailboxManualPartsOpenEmptyBtn">Open Empty List</button>
+                <button type="button" class="btn btn-primary" id="mailboxManualPartsSaveBtn">
+                    <i class="bi bi-check2-circle me-1"></i>Add Parts & Open List
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 const graphSeed = {{ graph | tojson }};
 const graphStatusEl = document.getElementById('graphStatus');
@@ -424,6 +452,11 @@ const mailboxFolderSelect = document.getElementById('mailboxFolderSelect');
 const mailboxFolderEmail = document.getElementById('mailboxFolderEmail');
 const mailboxFolderSaveBtn = document.getElementById('mailboxFolderSaveBtn');
 const mailboxFolderFeedback = document.getElementById('mailboxFolderFeedback');
+const mailboxManualPartsModalEl = document.getElementById('mailboxManualPartsModal');
+const mailboxManualPartsInput = document.getElementById('mailboxManualPartsInput');
+const mailboxManualPartsFeedback = document.getElementById('mailboxManualPartsFeedback');
+const mailboxManualPartsSaveBtn = document.getElementById('mailboxManualPartsSaveBtn');
+const mailboxManualPartsOpenEmptyBtn = document.getElementById('mailboxManualPartsOpenEmptyBtn');
 
 let messageCache = [];
 let selectedMessage = null;
@@ -447,6 +480,7 @@ let mailboxIsLoading = false;
 let mailboxFolderRules = new Map();
 let mailboxFolderList = null;
 let mailboxFolderListLoading = false;
+let mailboxManualPartsContext = null;
 const MAILBOX_FOLDERS_CACHE_KEY = 'mailboxFoldersCache';
 const MAILBOX_PAGE_SIZE = 25;
 let mailboxLoadImages = localStorage.getItem('mailboxLoadImages');
@@ -2593,14 +2627,18 @@ createPartsListBtn.addEventListener('click', async () => {
         const data = await response.json();
         if (data.success) {
             if (data.parts_count === 0) {
-                showToast('No parts found. Created an empty parts list.', 'warning');
+                showToast('No parts found. Add parts manually or open an empty list.', 'warning');
+                openManualPartsModal({
+                    list_id: data.list_id,
+                    redirect_url: data.redirect_url || `/parts_list/view/${data.list_id}`
+                });
             } else {
                 showToast(`Created parts list #${data.list_id}`, 'success');
+                const redirectUrl = data.redirect_url || `/parts_list/view/${data.list_id}`;
+                setTimeout(() => {
+                    window.location.href = redirectUrl;
+                }, 400);
             }
-            const redirectUrl = data.redirect_url || `/parts_list/view/${data.list_id}`;
-            setTimeout(() => {
-                window.location.href = redirectUrl;
-            }, 400);
         } else {
             showToast(data.message || 'Failed to create parts list', 'error');
         }
@@ -2845,6 +2883,129 @@ setGraphStatus(graphSeed);
 })();
 // Preload folder list in background for faster filing
 loadMailboxFolderList();
+
+function setManualPartsFeedback(message) {
+    if (!mailboxManualPartsFeedback) return;
+    if (!message) {
+        mailboxManualPartsFeedback.classList.add('d-none');
+        mailboxManualPartsFeedback.textContent = '';
+        return;
+    }
+    mailboxManualPartsFeedback.textContent = message;
+    mailboxManualPartsFeedback.classList.remove('d-none');
+}
+
+function parseManualPartsText(rawText) {
+    const lines = [];
+    const sourceLines = String(rawText || '').split(/\r?\n/);
+
+    for (const rawLine of sourceLines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        const lineLower = line.toLowerCase();
+        if (lineLower.includes('part number') || lineLower.includes('quantity')) {
+            continue;
+        }
+
+        let partNumber = '';
+        let quantity = 1;
+
+        const qtyPrefix = line.match(/^(\d+)\s*[xX]\s+(.+)$/);
+        const qtySuffix = line.match(/^(.+?)\s*[xX]\s*(\d+)$/);
+
+        if (qtyPrefix) {
+            quantity = Math.max(parseInt(qtyPrefix[1], 10) || 1, 1);
+            partNumber = qtyPrefix[2].trim();
+        } else if (qtySuffix) {
+            quantity = Math.max(parseInt(qtySuffix[2], 10) || 1, 1);
+            partNumber = qtySuffix[1].trim();
+        } else if (line.includes('\t')) {
+            const cols = line.split('\t').map(c => c.trim()).filter(Boolean);
+            if (cols.length) {
+                partNumber = cols[0];
+                const qtyCol = cols.slice(1).find(c => /^\d+$/.test(c));
+                if (qtyCol) quantity = Math.max(parseInt(qtyCol, 10) || 1, 1);
+            }
+        } else {
+            partNumber = line;
+        }
+
+        if (!partNumber) continue;
+        lines.push({
+            customer_part_number: partNumber,
+            quantity
+        });
+    }
+
+    return lines;
+}
+
+function openManualPartsModal(ctx) {
+    mailboxManualPartsContext = {
+        list_id: ctx.list_id,
+        redirect_url: ctx.redirect_url || `/parts_list/view/${ctx.list_id}`
+    };
+    if (mailboxManualPartsInput) {
+        mailboxManualPartsInput.value = '';
+        setTimeout(() => mailboxManualPartsInput.focus(), 120);
+    }
+    setManualPartsFeedback('');
+    const modal = new bootstrap.Modal(mailboxManualPartsModalEl);
+    modal.show();
+}
+
+async function saveManualPartsAndOpen() {
+    if (!mailboxManualPartsContext?.list_id) return;
+
+    const manualLines = parseManualPartsText(mailboxManualPartsInput?.value || '');
+    if (!manualLines.length) {
+        setManualPartsFeedback('Please enter at least one part number.');
+        return;
+    }
+
+    const original = mailboxManualPartsSaveBtn.innerHTML;
+    mailboxManualPartsSaveBtn.disabled = true;
+    mailboxManualPartsOpenEmptyBtn.disabled = true;
+    mailboxManualPartsSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+    setManualPartsFeedback('');
+
+    try {
+        const response = await fetch(`/parts_list/parts-lists/${mailboxManualPartsContext.list_id}/lines/add`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lines: manualLines })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || 'Unable to add manual parts');
+        }
+
+        const modal = bootstrap.Modal.getInstance(mailboxManualPartsModalEl);
+        if (modal) modal.hide();
+        showToast(`Added ${manualLines.length} manual part${manualLines.length > 1 ? 's' : ''}`, 'success');
+        window.location.href = mailboxManualPartsContext.redirect_url;
+    } catch (error) {
+        setManualPartsFeedback(error.message || 'Unable to add manual parts');
+    } finally {
+        mailboxManualPartsSaveBtn.disabled = false;
+        mailboxManualPartsOpenEmptyBtn.disabled = false;
+        mailboxManualPartsSaveBtn.innerHTML = original;
+    }
+}
+
+mailboxManualPartsSaveBtn?.addEventListener('click', saveManualPartsAndOpen);
+mailboxManualPartsOpenEmptyBtn?.addEventListener('click', () => {
+    if (!mailboxManualPartsContext?.redirect_url) return;
+    const modal = bootstrap.Modal.getInstance(mailboxManualPartsModalEl);
+    if (modal) modal.hide();
+    window.location.href = mailboxManualPartsContext.redirect_url;
+});
+mailboxManualPartsInput?.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        saveManualPartsAndOpen();
+    }
+});
 </script>
 
 <style>

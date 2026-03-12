@@ -1829,6 +1829,16 @@ def _scrape_monroe(product_name, headless=True):
                 logging.warning(f"Monroe: Part number '{product_name}' NOT found in page content")
                 result["debug_info"].append(f"WARNING: Part number NOT found in page content")
 
+            def _has_exact_part_reference(haystack, part_number):
+                """Return True when part_number appears as a standalone part token."""
+                if not haystack or not part_number:
+                    return False
+                # Treat letters, numbers, slash, dot, and dash as part-number characters.
+                # This avoids matching AN5C15 against AN5C15A or AN5C15-A.
+                part_chars = r"A-Z0-9/.-"
+                pattern = rf"(?<![{part_chars}]){re.escape(part_number.upper())}(?![{part_chars}])"
+                return re.search(pattern, haystack.upper()) is not None
+
             # Try multiple selectors to find the product link
             product_link = None
             selectors_to_try = [
@@ -1852,9 +1862,13 @@ def _scrape_monroe(product_name, headless=True):
                     link_text = link.text_content().strip()
                     link_href = link.get_attribute('href') or ''
                     logging.info(f"Monroe: Checking link text: '{link_text}', href: '{link_href}'")
-                    result["debug_info"].append(f"Link: text='{link_text}', href contains part={product_name in link_href}")
+                    text_exact_match = _has_exact_part_reference(link_text, product_name)
+                    href_exact_match = _has_exact_part_reference(link_href, product_name)
+                    result["debug_info"].append(
+                        f"Link: text='{link_text}', text_exact_match={text_exact_match}, href_exact_match={href_exact_match}"
+                    )
 
-                    if product_name.upper() in link_text.upper() or product_name in link_href:
+                    if text_exact_match or href_exact_match:
                         product_link = link
                         logging.info(f"Monroe: MATCH FOUND! Link text: {link_text}")
                         result["debug_info"].append(f"MATCH FOUND with text: {link_text}")

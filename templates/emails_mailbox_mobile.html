@@ -137,6 +137,34 @@
     </div>
 </div>
 
+<!-- Manual Parts Entry Modal -->
+<div class="modal fade" id="manualPartsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title">
+                    <i class="bi bi-pencil-square me-2"></i>Add Parts Manually
+                </h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted mb-2">AI could not find part numbers. Paste one part per line.</p>
+                <div class="small text-muted mb-3">
+                    Examples: <code>MS27039-1-08 x 4</code>, <code>2x AN960-10L</code>, <code>BACB30NN4K5</code>
+                </div>
+                <textarea class="form-control" id="manualPartsInput" rows="8" placeholder="PartNumber x Qty"></textarea>
+                <div class="alert alert-danger mt-3 d-none" id="manualPartsFeedback"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" id="manualPartsOpenEmptyBtn">Open Empty List</button>
+                <button type="button" class="btn btn-primary" id="manualPartsSaveBtn">
+                    <i class="bi bi-check2-circle me-1"></i>Add Parts & Open List
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
 .mobile-mailbox {
     max-width: 100%;
@@ -241,6 +269,7 @@ let mailboxNextToken = null;
 let mailboxIsLoading = false;
 let selectedSupplierData = null;
 let pendingQuoteListId = null;
+let manualPartsContext = null;
 
 const MAILBOX_PAGE_SIZE = 20;
 
@@ -523,13 +552,15 @@ async function createPartsList() {
         const data = await response.json();
 
         if (data.success) {
-            const msg = data.parts_count === 0
-                ? 'Created empty parts list'
-                : `Created parts list #${data.list_id} with ${data.parts_count} parts`;
-            alert(msg);
-
-            // Redirect to the list
-            window.location.href = data.redirect_url || `/parts_list/view/${data.list_id}`;
+            if (data.parts_count === 0) {
+                openManualPartsModal({
+                    list_id: data.list_id,
+                    redirect_url: data.redirect_url || `/parts_list/view/${data.list_id}`
+                });
+            } else {
+                alert(`Created parts list #${data.list_id} with ${data.parts_count} parts`);
+                window.location.href = data.redirect_url || `/parts_list/view/${data.list_id}`;
+            }
         } else {
             alert(data.message || 'Failed to create parts list');
         }
@@ -800,5 +831,134 @@ function escapeHtml(str) {
     div.textContent = str;
     return div.innerHTML;
 }
+
+function setManualPartsFeedback(message) {
+    const feedbackEl = document.getElementById('manualPartsFeedback');
+    if (!feedbackEl) return;
+    if (!message) {
+        feedbackEl.classList.add('d-none');
+        feedbackEl.textContent = '';
+        return;
+    }
+    feedbackEl.textContent = message;
+    feedbackEl.classList.remove('d-none');
+}
+
+function parseManualPartsText(rawText) {
+    const lines = [];
+    const sourceLines = String(rawText || '').split(/\r?\n/);
+
+    for (const rawLine of sourceLines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        const lineLower = line.toLowerCase();
+        if (lineLower.includes('part number') || lineLower.includes('quantity')) {
+            continue;
+        }
+
+        let partNumber = '';
+        let quantity = 1;
+
+        const qtyPrefix = line.match(/^(\d+)\s*[xX]\s+(.+)$/);
+        const qtySuffix = line.match(/^(.+?)\s*[xX]\s*(\d+)$/);
+
+        if (qtyPrefix) {
+            quantity = Math.max(parseInt(qtyPrefix[1], 10) || 1, 1);
+            partNumber = qtyPrefix[2].trim();
+        } else if (qtySuffix) {
+            quantity = Math.max(parseInt(qtySuffix[2], 10) || 1, 1);
+            partNumber = qtySuffix[1].trim();
+        } else if (line.includes('\t')) {
+            const cols = line.split('\t').map(c => c.trim()).filter(Boolean);
+            if (cols.length) {
+                partNumber = cols[0];
+                const qtyCol = cols.slice(1).find(c => /^\d+$/.test(c));
+                if (qtyCol) quantity = Math.max(parseInt(qtyCol, 10) || 1, 1);
+            }
+        } else {
+            partNumber = line;
+        }
+
+        if (!partNumber) continue;
+        lines.push({
+            customer_part_number: partNumber,
+            quantity
+        });
+    }
+
+    return lines;
+}
+
+function openManualPartsModal(ctx) {
+    manualPartsContext = {
+        list_id: ctx.list_id,
+        redirect_url: ctx.redirect_url || `/parts_list/view/${ctx.list_id}`
+    };
+    const inputEl = document.getElementById('manualPartsInput');
+    if (inputEl) {
+        inputEl.value = '';
+        setTimeout(() => inputEl.focus(), 120);
+    }
+    setManualPartsFeedback('');
+    const modal = new bootstrap.Modal(document.getElementById('manualPartsModal'));
+    modal.show();
+}
+
+async function saveManualPartsAndOpen() {
+    if (!manualPartsContext?.list_id) return;
+
+    const inputEl = document.getElementById('manualPartsInput');
+    const saveBtn = document.getElementById('manualPartsSaveBtn');
+    const openEmptyBtn = document.getElementById('manualPartsOpenEmptyBtn');
+    const manualLines = parseManualPartsText(inputEl?.value || '');
+    if (!manualLines.length) {
+        setManualPartsFeedback('Please enter at least one part number.');
+        return;
+    }
+
+    const original = saveBtn.innerHTML;
+    saveBtn.disabled = true;
+    openEmptyBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+    setManualPartsFeedback('');
+
+    try {
+        const response = await fetch(`/parts_list/parts-lists/${manualPartsContext.list_id}/lines/add`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lines: manualLines })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || 'Unable to add manual parts');
+        }
+
+        const modalEl = document.getElementById('manualPartsModal');
+        const modal = bootstrap.Modal.getInstance(modalEl);
+        if (modal) modal.hide();
+        window.location.href = manualPartsContext.redirect_url;
+    } catch (error) {
+        setManualPartsFeedback(error.message || 'Unable to add manual parts');
+    } finally {
+        saveBtn.disabled = false;
+        openEmptyBtn.disabled = false;
+        saveBtn.innerHTML = original;
+    }
+}
+
+document.getElementById('manualPartsSaveBtn')?.addEventListener('click', saveManualPartsAndOpen);
+document.getElementById('manualPartsOpenEmptyBtn')?.addEventListener('click', () => {
+    if (!manualPartsContext?.redirect_url) return;
+    const modalEl = document.getElementById('manualPartsModal');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+    window.location.href = manualPartsContext.redirect_url;
+});
+document.getElementById('manualPartsInput')?.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        saveManualPartsAndOpen();
+    }
+});
 </script>
 {% endblock %}
