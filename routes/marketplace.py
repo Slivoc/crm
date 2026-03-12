@@ -431,11 +431,40 @@ def _summarize_import_headers(rows):
 
 
 def _build_marketplace_updates_from_row(row_data, valid_categories):
+    identifier_headers = {
+        'code',
+        'sku',
+        'productid',
+        'offersku',
+        'productsku',
+        'product',
+        'mpn',
+        'oem',
+        'partnumber',
+        'partno',
+        'partnum',
+        'manufacturerpn',
+        'manufacturerpartnumber',
+        'airbusmaterial',
+    }
+
     # Airbus export column -> internal field mapping.
     column_map = {
         'code': 'part_number',
         'sku': 'part_number',
         'productid': 'part_number',
+        # Mirakl offers export variants
+        'offersku': 'part_number',
+        'productsku': 'part_number',
+        'product': 'part_number',
+        'mpn': 'part_number',
+        'oem': 'part_number',
+        'partnumber': 'part_number',
+        'partno': 'part_number',
+        'partnum': 'part_number',
+        'manufacturerpn': 'part_number',
+        'manufacturerpartnumber': 'part_number',
+        'airbusmaterial': 'part_number',
         'mkpcategory': 'mkp_category',
         'descriptionen': 'mkp_description',
         'name': 'mkp_name',
@@ -453,19 +482,54 @@ def _build_marketplace_updates_from_row(row_data, valid_categories):
     }
 
     extracted = {}
+    identifier_candidates = []
     for raw_header, raw_value in (row_data or {}).items():
         normalized = _normalize_import_header(raw_header)
         mapped_field = column_map.get(normalized)
+        if not mapped_field and normalized in identifier_headers:
+            mapped_field = 'part_number'
         if not mapped_field:
             continue
-        # Prefer first identifier field encountered.
-        if mapped_field in extracted and mapped_field == 'part_number':
+        if mapped_field == 'part_number':
+            identifier_candidates.append((normalized, raw_value))
             continue
         extracted[mapped_field] = raw_value
 
+    # Choose identifier from best-to-worst columns so broad fields (e.g. Product)
+    # do not override specific part references when both are present.
+    identifier_preference = [
+        'code',
+        'sku',
+        'productid',
+        'offersku',
+        'mpn',
+        'oem',
+        'partnumber',
+        'partno',
+        'partnum',
+        'manufacturerpn',
+        'manufacturerpartnumber',
+        'airbusmaterial',
+        'product',
+        'productsku',
+    ]
+    for header_name in identifier_preference:
+        for candidate_header, candidate_value in identifier_candidates:
+            if candidate_header != header_name:
+                continue
+            candidate_text = str(candidate_value or '').strip()
+            if candidate_text:
+                extracted['part_number'] = candidate_text
+                break
+        if extracted.get('part_number'):
+            break
+
     part_ref = str(extracted.get('part_number') or '').strip()
     if not part_ref:
-        return None, None, "Missing part identifier (expected one of: code, sku, product-id)."
+        return None, None, (
+            "Missing part identifier (expected one of: code, sku, product-id, offer sku,"
+            " product, mpn, oem, part number, manufacturer pn, airbus material)."
+        )
 
     updates = {}
     text_fields = (
