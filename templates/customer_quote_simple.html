@@ -250,6 +250,12 @@
     color: #0f5132;
 }
 
+.calc-pill.calc-pill-danger {
+    border-color: #f5c2c7;
+    background: #f8d7da;
+    color: #842029;
+}
+
 /* --- Quote Price Column - PROMINENT STYLING --- */
 .quote-table th.quote-price-header {
     background: linear-gradient(135deg, #198754 0%, #157347 100%);
@@ -743,10 +749,15 @@
         </td>
 
         <td class="quote-price-cell quote-price-separator sticky-right-1">
-            <input type="number" class="form-control form-control-sm editable-field"
-                   data-field="quote_price_gbp"
-                   value="{{ '%.2f'|format(line.quote_price_gbp or 0) }}"
-                   min="0" step="0.01">
+            <div class="value-stack">
+                <input type="number" class="form-control form-control-sm editable-field"
+                       data-field="quote_price_gbp"
+                       value="{{ '%.2f'|format(line.quote_price_gbp or 0) }}"
+                       min="0" step="0.01">
+                <button type="button" class="calc-pill calc-pill-danger reset-line-btn" title="Reset this line quote values to zero">
+                    <i class="bi bi-arrow-counterclockwise"></i>Reset
+                </button>
+            </div>
         </td>
 
         <td class="read-only line-total-quote line-total-quote-cell sticky-right-0">GBP 0.00</td>

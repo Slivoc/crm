@@ -423,6 +423,37 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- 6. EVENT LISTENERS ---
 
     document.getElementById('quoteTableBody').addEventListener('click', async function(e) {
+        const resetBtn = e.target.closest('.reset-line-btn');
+        if (resetBtn) {
+            const row = resetBtn.closest('tr');
+            if (!row || row.dataset.locked === '1') return;
+
+            const cached = rowCache.get(row);
+            if (!cached) return;
+
+            if (cached.elements.quotePriceGbp) {
+                cached.elements.quotePriceGbp.value = '0.00';
+                cached.elements.quotePriceGbp.classList.add('changed-input');
+            }
+            if (cached.elements.marginPercent) {
+                cached.elements.marginPercent.value = '0.0';
+                cached.elements.marginPercent.classList.add('changed-input');
+            }
+            if (cached.elements.deliveryPerLine) {
+                cached.elements.deliveryPerLine.value = '0.00';
+                cached.elements.deliveryPerLine.classList.add('changed-input');
+            }
+            if (cached.elements.isNoBid) {
+                cached.elements.isNoBid.checked = false;
+                cached.elements.isNoBid.classList.add('changed-input');
+            }
+
+            row.dataset.isNoBid = '0';
+            row.dataset.status = 'created';
+            handleRowChange(row, 'created', false);
+            return;
+        }
+
         const supplierBtn = e.target.closest('.use-supplier-pn-btn');
         if (supplierBtn) {
             const row = supplierBtn.closest('tr');
