@@ -400,9 +400,17 @@
                 </div>
                 <div class="col-md-4 text-end">
                     <div class="d-flex flex-column align-items-end gap-2">
+                        <div class="d-flex flex-column align-items-end gap-2 w-100">
+                            <button class="btn btn-lg btn-success w-100" id="exportProductsCsvBtn">
+                                <i class="bi bi-download"></i> Download Full Airbus CSV
+                            </button>
+                            <button class="btn btn-lg btn-outline-success w-100" id="exportOffersCsvBtn">
+                                <i class="bi bi-download"></i> Download Offers CSV
+                            </button>
+                        </div>
                         <select class="form-select form-select-sm" id="miraklPushMode">
-                            <option value="products">Product export (products + offers)</option>
-                            <option value="offers">Offer update only</option>
+                            <option value="products">Push full Airbus template</option>
+                            <option value="offers">Push offer update only</option>
                         </select>
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="skipInvalidMandatoryFields">
@@ -410,9 +418,6 @@
                                 Skip lines missing mandatory fields
                             </label>
                         </div>
-                        <button class="btn btn-lg btn-success" id="exportToCsvBtn">
-                            <i class="bi bi-download"></i> Download CSV
-                        </button>
                         <button class="btn btn-lg btn-primary" id="pushToMarketplaceBtn">
                             <i class="bi bi-cloud-upload"></i> Push to Marketplace
                         </button>
@@ -677,8 +682,12 @@ $(document).ready(function() {
     });
 
     // Export button
-    $('#exportToCsvBtn').click(function() {
-        exportToCsv();
+    $('#exportProductsCsvBtn').click(function() {
+        exportToCsv('products');
+    });
+
+    $('#exportOffersCsvBtn').click(function() {
+        exportToCsv('offers');
     });
 
     $('#pushToMarketplaceBtn').click(function() {
@@ -1554,12 +1563,37 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
     return {
         'sku': partNumber,
         'product-id': partNumber,
-        'product-id-type': 'SHOP_SKU',
+        'product-id-type': 'SKU',
         'price': part.estimated_price ?? '',
         'quantity': quantity,
-        'state': '11',
+        'state': '1',
         'leadtime-to-ship': leadTime,
-        'description': resolveDefaultDescription(part, defaults)
+        'description': resolveDefaultDescription(part, defaults),
+        'internal-description': '',
+        'price-additional-info': '',
+        'min-quantity-alert': '',
+        'available-start-date': '',
+        'available-end-date': '',
+        'logistic-class': '',
+        'favorite-rank': '',
+        'discount-start-date': '',
+        'discount-end-date': '',
+        'discount-price': '',
+        'update-delete': 'update',
+        'allow-quote-requests': 'true',
+        'min-order-quantity': '',
+        'max-order-quantity': '',
+        'package-quantity': '',
+        'commercial-on-collection': 'ON_DEMAND',
+        'plt': '',
+        'plt-unit': '',
+        'shelflife': '',
+        'shelflife-unit': '',
+        'warranty': '',
+        'warranty-unit': '',
+        'up-sell': '',
+        'cross-sell': '',
+        'vendor-reference': ''
     };
 }
 
@@ -1663,7 +1697,7 @@ function splitValidParts(parts, mode, defaults) {
     return { valid, invalid };
 }
 
-function exportToCsv() {
+function exportToCsv(mode) {
     const categorizedParts = allParts.filter(p => p.mkp_category);
 
     if (categorizedParts.length === 0) {
@@ -1673,13 +1707,14 @@ function exportToCsv() {
 
     const skipInvalidMandatory = $('#skipInvalidMandatoryFields').is(':checked');
     const defaults = getMarketplaceDefaults();
+    const exportMode = mode === 'offers' ? 'offers' : 'products';
     let exportParts = categorizedParts;
     if (skipInvalidMandatory) {
-        const split = splitValidParts(categorizedParts, 'products', defaults);
+        const split = splitValidParts(categorizedParts, exportMode, defaults);
         exportParts = split.valid;
         if (split.invalid.length > 0) {
-            $('#exportStatus').text(`Skipping ${split.invalid.length} line(s) missing mandatory product fields.`);
-            console.warn('Skipped invalid product lines:', split.invalid);
+            $('#exportStatus').text(`Skipping ${split.invalid.length} line(s) missing mandatory ${exportMode === 'offers' ? 'offer' : 'product'} fields.`);
+            console.warn('Skipped invalid marketplace lines:', split.invalid);
         }
         if (exportParts.length === 0) {
             alert('All selected lines are missing mandatory fields. Nothing to export.');
@@ -1687,12 +1722,18 @@ function exportToCsv() {
         }
     }
 
-    $('#exportToCsvBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Generating...');
+    const buttonSelector = exportMode === 'offers' ? '#exportOffersCsvBtn' : '#exportProductsCsvBtn';
+    const buttonLabel = exportMode === 'offers'
+        ? '<i class="bi bi-download"></i> Download Offers CSV'
+        : '<i class="bi bi-download"></i> Download Full Airbus CSV';
+
+    $(buttonSelector).prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Generating...');
 
     // Prepare export data with pricing
     const exportData = {
         base_part_numbers: exportParts.map(p => p.base_part_number),
         default_quantity: parseInt($('#defaultQuantity').val(), 10) || 1,
+        export_mode: exportMode,
         skip_invalid_mandatory: skipInvalidMandatory,
         defaults: defaults
     };
@@ -1714,7 +1755,7 @@ function exportToCsv() {
     form.remove();
     
     setTimeout(function() {
-        $('#exportToCsvBtn').prop('disabled', false).html('<i class="bi bi-download"></i> Download CSV');
+        $(buttonSelector).prop('disabled', false).html(buttonLabel);
     }, 2000);
 }
 

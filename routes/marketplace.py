@@ -1584,6 +1584,9 @@ def export_to_marketplace():
         base_part_numbers = export_data.get('base_part_numbers', [])
         default_quantity = int(export_data.get('default_quantity') or 1)
         skip_invalid_mandatory = _coerce_bool(export_data.get('skip_invalid_mandatory'), default=False)
+        export_mode = _coerce_text(export_data.get('export_mode'), default='products')
+        if export_mode not in ('products', 'offers'):
+            export_mode = 'products'
         export_defaults = _normalize_marketplace_export_defaults(export_data.get('defaults'))
 
         if not base_part_numbers:
@@ -1678,26 +1681,86 @@ def export_to_marketplace():
                 'lead_time_days': lead_time_value,
             })
 
-        skipped_invalid = []
-        if skip_invalid_mandatory:
-            parts_data, skipped_invalid = _split_valid_rows(
-                parts_data,
-                _get_product_missing_required_fields,
-                _part_identifier,
-            )
-            if not parts_data:
-                return jsonify({
-                    'error': 'All selected lines are missing mandatory fields.',
-                    'skipped_invalid_count': len(skipped_invalid),
-                    'skipped_invalid_preview': skipped_invalid[:20],
-                }), 400
+        if export_mode == 'offers':
+            csv_rows = []
+            for part in parts_data:
+                part_number = _part_identifier(part)
+                description = _coerce_text(part.get('mkp_description') or part.get('description'), default=part_number)
+                csv_rows.append({
+                    'sku': part_number,
+                    'product-id': part_number,
+                    'product-id-type': 'SKU',
+                    'description': description,
+                    'internal-description': '',
+                    'price': part.get('price'),
+                    'price-additional-info': '',
+                    'quantity': part.get('quantity'),
+                    'min-quantity-alert': '',
+                    'state': '1',
+                    'available-start-date': '',
+                    'available-end-date': '',
+                    'logistic-class': '',
+                    'favorite-rank': '',
+                    'discount-start-date': '',
+                    'discount-end-date': '',
+                    'discount-price': '',
+                    'update-delete': 'update',
+                    'allow-quote-requests': 'true',
+                    'leadtime-to-ship': part.get('lead_time_days'),
+                    'min-order-quantity': '',
+                    'max-order-quantity': '',
+                    'package-quantity': '',
+                    'commercial-on-collection': 'ON_DEMAND',
+                    'plt': '',
+                    'plt-unit': '',
+                    'shelflife': '',
+                    'shelflife-unit': '',
+                    'warranty': '',
+                    'warranty-unit': '',
+                    'up-sell': '',
+                    'cross-sell': '',
+                    'vendor-reference': '',
+                })
 
-        # Generate CSV file
-        csv_file = export_parts_to_airbus_marketplace_csv(parts_data)
+            skipped_invalid = []
+            if skip_invalid_mandatory:
+                csv_rows, skipped_invalid = _split_valid_rows(
+                    csv_rows,
+                    _get_offer_missing_required_fields,
+                    lambda row: str(row.get('sku') or '').strip(),
+                )
+                if not csv_rows:
+                    return jsonify({
+                        'error': 'All selected lines are missing mandatory offer fields.',
+                        'skipped_invalid_count': len(skipped_invalid),
+                        'skipped_invalid_preview': skipped_invalid[:20],
+                    }), 400
+
+            csv_bytes = build_offers_csv(csv_rows)
+            csv_file = io.BytesIO(csv_bytes)
+            csv_file.seek(0)
+            filename_prefix = "AH_Marketplace_Offers"
+        else:
+            skipped_invalid = []
+            if skip_invalid_mandatory:
+                parts_data, skipped_invalid = _split_valid_rows(
+                    parts_data,
+                    _get_product_missing_required_fields,
+                    _part_identifier,
+                )
+                if not parts_data:
+                    return jsonify({
+                        'error': 'All selected lines are missing mandatory fields.',
+                        'skipped_invalid_count': len(skipped_invalid),
+                        'skipped_invalid_preview': skipped_invalid[:20],
+                    }), 400
+
+            csv_file = export_parts_to_airbus_marketplace_csv(parts_data)
+            filename_prefix = "AH_Marketplace_Upload"
 
         # Generate filename with timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"AH_Marketplace_Upload_{timestamp}.csv"
+        filename = f"{filename_prefix}_{timestamp}.csv"
 
         return send_file(
             csv_file,

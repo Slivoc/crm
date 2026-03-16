@@ -3,6 +3,62 @@ import io
 from typing import Any, Dict, Iterable, List
 
 
+OFFER_IMPORT_FIELDS = (
+    'sku',
+    'product-id',
+    'product-id-type',
+    'description',
+    'internal-description',
+    'price',
+    'price-additional-info',
+    'quantity',
+    'min-quantity-alert',
+    'state',
+    'available-start-date',
+    'available-end-date',
+    'logistic-class',
+    'favorite-rank',
+    'discount-start-date',
+    'discount-end-date',
+    'discount-price',
+    'update-delete',
+    'allow-quote-requests',
+    'leadtime-to-ship',
+    'min-order-quantity',
+    'max-order-quantity',
+    'package-quantity',
+    'price[channel=0100]',
+    'discount-start-date[channel=0100]',
+    'discount-end-date[channel=0100]',
+    'discount-price[channel=0100]',
+    'price[channel=1000]',
+    'discount-start-date[channel=1000]',
+    'discount-end-date[channel=1000]',
+    'discount-price[channel=1000]',
+    'price[channel=2000]',
+    'discount-start-date[channel=2000]',
+    'discount-end-date[channel=2000]',
+    'discount-price[channel=2000]',
+    'price[channel=5000]',
+    'discount-start-date[channel=5000]',
+    'discount-end-date[channel=5000]',
+    'discount-price[channel=5000]',
+    'price[channel=7000]',
+    'discount-start-date[channel=7000]',
+    'discount-end-date[channel=7000]',
+    'discount-price[channel=7000]',
+    'commercial-on-collection',
+    'plt',
+    'plt-unit',
+    'shelflife',
+    'shelflife-unit',
+    'warranty',
+    'warranty-unit',
+    'up-sell',
+    'cross-sell',
+    'vendor-reference',
+)
+
 REQUIRED_FIELDS = (
     'sku',
     'product-id',
@@ -12,10 +68,7 @@ REQUIRED_FIELDS = (
     'state',
 )
 
-DEFAULT_FIELDS = REQUIRED_FIELDS + (
-    'leadtime-to-ship',
-    'description',
-)
+DEFAULT_FIELDS = OFFER_IMPORT_FIELDS
 
 
 def _format_decimal(value: Any) -> str:
@@ -39,6 +92,7 @@ def build_offers_csv(
     offers: Iterable[Dict[str, Any]],
     *,
     fieldnames: Iterable[str] = DEFAULT_FIELDS,
+    delimiter: str = ';',
 ) -> bytes:
     rows = list(offers)
     if not rows:
@@ -60,11 +114,19 @@ def build_offers_csv(
         raise ValueError(f"Missing required offer fields: {preview}{suffix}")
 
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=list(fieldnames), extrasaction='ignore')
+    resolved_fieldnames = list(fieldnames)
+    writer = csv.DictWriter(
+        output,
+        fieldnames=resolved_fieldnames,
+        extrasaction='ignore',
+        delimiter=delimiter,
+        lineterminator='\n',
+    )
     writer.writeheader()
 
     for row in rows:
-        payload = dict(row)
+        payload = {field: '' for field in resolved_fieldnames}
+        payload.update(dict(row))
         if 'price' in payload:
             payload['price'] = _format_decimal(payload.get('price'))
         if 'quantity' in payload:
