@@ -329,6 +329,14 @@
                     <small class="text-muted d-block mt-2">Updates marketplace detail fields only (for example dangerous/eccn/category). Price and quantity are ignored.</small>
                 </div>
                 <div class="col-md-6">
+                    <label class="form-label fw-bold">Import Airbus Stock/Price Baseline</label>
+                    <input type="file" class="form-control form-control-sm mb-2" id="airbusStockPriceFile" accept=".csv,.xlsx">
+                    <button class="btn btn-sm btn-outline-secondary" id="importAirbusStockPriceBtn">
+                        <i class="bi bi-box-arrow-in-up"></i> Import Airbus Stock/Price File
+                    </button>
+                    <small class="text-muted d-block mt-2">Step 1 of 2 workflow: import the latest Airbus export, then export/push with overridden stock and price values from that file.</small>
+                </div>
+                <div class="col-md-6">
                     <label class="form-label fw-bold">Push CSV to Marketplace</label>
                     <input type="file" class="form-control form-control-sm mb-2" id="miraklCsvFile" accept=".csv">
                     <select class="form-select form-select-sm mb-2" id="miraklCsvType">
@@ -661,6 +669,7 @@ let allParts = [];
 let categories = [];
 let currentEditingPartNumber = null;
 let loadStatusTimer = null;
+let importedStockPriceOverrides = {};
 
 $(document).ready(function() {
     applySavedMarketplaceDefaults();
@@ -704,6 +713,10 @@ $(document).ready(function() {
 
     $('#importAirbusDetailsBtn').click(function() {
         importAirbusDetailsFile();
+    });
+
+    $('#importAirbusStockPriceBtn').click(function() {
+        importAirbusStockPriceFile();
     });
 
     $('#saveMarketplaceDefaultsBtn').click(function() {
@@ -797,6 +810,7 @@ function loadParts() {
 
             if (response.success && response.parts && response.parts.length > 0) {
                 allParts = response.parts;
+                applyImportedStockPriceOverrides();
                 storeExportUncategorizedParts(response.parts, filters);
                 updateSummaryStats();
                 renderUncategorizedParts();
@@ -984,16 +998,55 @@ function renderUncategorizedParts() {
 }
 
 function getPortalPrice(part) {
+    const override = importedStockPriceOverrides[part.base_part_number];
+    if (override && override.price !== null && override.price !== undefined) {
+        const overridePrice = parseFloat(override.price);
+        if (Number.isFinite(overridePrice)) {
+            return overridePrice;
+        }
+    }
     const value = parseFloat(part.estimated_price);
     return Number.isFinite(value) ? value : null;
 }
 
 function getExportQuantity(part) {
+    const override = importedStockPriceOverrides[part.base_part_number];
+    if (override && override.quantity !== null && override.quantity !== undefined) {
+        const overrideQty = parseInt(override.quantity, 10);
+        if (Number.isFinite(overrideQty) && overrideQty > 0) {
+            return overrideQty;
+        }
+    }
     const defaultQty = parseInt($('#defaultQuantity').val(), 10) || 1;
     if (part.in_stock && part.stock_qty && part.stock_qty > 0) {
         return part.stock_qty;
     }
     return defaultQty;
+}
+
+function applyImportedStockPriceOverrides() {
+    if (!allParts || allParts.length === 0) {
+        return;
+    }
+
+    allParts.forEach(function(part) {
+        const override = importedStockPriceOverrides[part.base_part_number];
+        if (!override) {
+            return;
+        }
+
+        if (override.price !== null && override.price !== undefined && override.price !== '') {
+            part.estimated_price = override.price;
+        }
+
+        if (override.quantity !== null && override.quantity !== undefined && override.quantity !== '') {
+            const qty = parseInt(override.quantity, 10);
+            if (Number.isFinite(qty) && qty >= 0) {
+                part.stock_qty = qty;
+                part.in_stock = qty > 0;
+            }
+        }
+    });
 }
 
 function formatStockDisplay(part) {
@@ -1986,6 +2039,79 @@ function importAirbusDetailsFile() {
     }).always(function() {
         window.clearInterval(progressTimer);
         $('#importAirbusDetailsBtn').prop('disabled', false).html('<i class="bi bi-file-earmark-arrow-up"></i> Import Airbus Detail File');
+    });
+}
+
+function importAirbusStockPriceFile() {
+    const fileInput = document.getElementById('airbusStockPriceFile');
+    const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+
+    if (!file) {
+        alert('Choose an Airbus export file first.');
+        return;
+    }
+
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith('.csv') && !lowerName.endsWith('.xlsx')) {
+        alert('Only .csv and .xlsx files are supported.');
+        return;
+    }
+
+    if (!confirm(`Import stock/price baseline from ${file.name}? This will override stock and price values in this page for export/push.`)) {
+        return;
+    }
+
+    $('#importAirbusStockPriceBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Importing...');
+    $('#exportStatus').text('Importing Airbus stock/price file...');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    $.ajax({
+        url: '/marketplace/import-stock-price-file',
+        method: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false
+    }).done(function(response) {
+        if (!response.success) {
+            const error = response.error || 'Import failed.';
+            $('#exportStatus').text(error);
+            alert('Import failed: ' + error);
+            return;
+        }
+
+        const overrides = Array.isArray(response.overrides) ? response.overrides : [];
+        importedStockPriceOverrides = {};
+        overrides.forEach(function(item) {
+            if (!item || !item.base_part_number) {
+                return;
+            }
+            importedStockPriceOverrides[item.base_part_number] = {
+                price: item.price,
+                quantity: item.quantity
+            };
+        });
+
+        applyImportedStockPriceOverrides();
+        updateSummaryStats();
+        renderUncategorizedParts();
+
+        const summary = response.summary || {};
+        const message = `Stock/price import complete. Processed ${summary.processed_rows || 0} row(s), matched ${summary.matched_rows || 0}, invalid ${summary.skipped_invalid || 0}, no match ${summary.skipped_no_match || 0}.`;
+        $('#exportStatus').text(message);
+
+        if (response.errors && response.errors.length) {
+            console.warn('Marketplace stock/price import warnings:', response.errors);
+        }
+
+        fileInput.value = '';
+    }).fail(function(xhr) {
+        const error = (xhr.responseJSON && xhr.responseJSON.error) || xhr.statusText || 'Unknown error';
+        $('#exportStatus').text(error);
+        alert('Import failed: ' + error);
+    }).always(function() {
+        $('#importAirbusStockPriceBtn').prop('disabled', false).html('<i class="bi bi-box-arrow-in-up"></i> Import Airbus Stock/Price File');
     });
 }
 </script>
