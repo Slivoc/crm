@@ -580,6 +580,81 @@ def _build_marketplace_updates_from_row(row_data, valid_categories):
     return part_ref, updates, None
 
 
+def _build_stock_price_overrides_from_row(row_data):
+    identifier_headers = {
+        'code', 'sku', 'productid', 'offersku', 'productsku', 'product', 'mpn', 'oem',
+        'partnumber', 'partno', 'partnum', 'manufacturerpn', 'manufacturerpartnumber',
+        'airbusmaterial',
+    }
+    price_headers = {
+        'price', 'offerprice', 'unitprice', 'priceamount', 'publicprice',
+    }
+    quantity_headers = {
+        'quantity', 'qty', 'stock', 'stockquantity', 'availablequantity', 'availableqty',
+    }
+
+    identifier_candidates = []
+    raw_price = None
+    raw_quantity = None
+
+    for raw_header, raw_value in (row_data or {}).items():
+        normalized = _normalize_import_header(raw_header)
+        if normalized in identifier_headers:
+            identifier_candidates.append((normalized, raw_value))
+        elif normalized in price_headers and raw_price is None:
+            raw_price = raw_value
+        elif normalized in quantity_headers and raw_quantity is None:
+            raw_quantity = raw_value
+
+    identifier_preference = [
+        'code', 'sku', 'productid', 'offersku', 'mpn', 'oem', 'partnumber', 'partno',
+        'partnum', 'manufacturerpn', 'manufacturerpartnumber', 'airbusmaterial',
+        'product', 'productsku',
+    ]
+    part_ref = ''
+    for header_name in identifier_preference:
+        for candidate_header, candidate_value in identifier_candidates:
+            if candidate_header != header_name:
+                continue
+            candidate_text = str(candidate_value or '').strip()
+            if candidate_text:
+                part_ref = candidate_text
+                break
+        if part_ref:
+            break
+
+    if not part_ref:
+        return None, None, "Missing part identifier."
+
+    parsed_price = None
+    if raw_price not in (None, ''):
+        price_value = _coerce_price(raw_price)
+        if price_value == '':
+            return part_ref, None, f"Invalid price value: {raw_price}"
+        if price_value < 0:
+            return part_ref, None, f"Price cannot be negative: {raw_price}"
+        parsed_price = price_value
+
+    parsed_quantity = None
+    if raw_quantity not in (None, ''):
+        quantity_text = str(raw_quantity).strip()
+        try:
+            quantity_value = int(round(float(quantity_text.replace(',', '.'))))
+        except ValueError:
+            return part_ref, None, f"Invalid quantity value: {raw_quantity}"
+        if quantity_value < 0:
+            return part_ref, None, f"Quantity cannot be negative: {raw_quantity}"
+        parsed_quantity = quantity_value
+
+    if parsed_price is None and parsed_quantity is None:
+        return part_ref, None, "No price or quantity columns found in row."
+
+    return part_ref, {
+        'price': parsed_price,
+        'quantity': parsed_quantity,
+    }, None
+
+
 def _normalize_prefixes(prefixes):
     cleaned = []
     for prefix in prefixes or []:
@@ -737,6 +812,110 @@ def import_marketplace_details_file():
         logger.exception("Error importing marketplace details file")
         if db:
             db.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@marketplace_bp.route('/import-stock-price-file', methods=['POST'])
+def import_marketplace_stock_price_file():
+    """
+    Parse Airbus marketplace export CSV/XLSX and build stock/price overrides.
+    This endpoint does not write to DB; it returns matched overrides for export/push.
+    """
+    try:
+        file = request.files.get('file')
+        if not file or not file.filename:
+            return jsonify({'success': False, 'error': 'CSV/XLSX file is required'}), 400
+
+        filename = file.filename
+        extension = os.path.splitext(filename.lower())[1]
+        if extension not in ('.csv', '.xlsx'):
+            return jsonify({'success': False, 'error': 'Only .csv and .xlsx files are supported'}), 400
+
+        rows = _read_import_rows(file, filename)
+        if not rows:
+            return jsonify({'success': False, 'error': 'Uploaded file is empty'}), 400
+
+        db = get_db()
+        cursor = db.cursor()
+
+        processed = 0
+        skipped_invalid = 0
+        skipped_no_match = 0
+        row_errors = []
+        parsed_rows = []
+        references = set()
+
+        for row_number, row_data in rows:
+            processed += 1
+            part_ref, override_data, row_error = _build_stock_price_overrides_from_row(row_data)
+            if row_error:
+                skipped_invalid += 1
+                if len(row_errors) < 20:
+                    row_errors.append(f"Row {row_number}: {row_error}")
+                continue
+            ref_key = part_ref.strip().upper()
+            references.add(ref_key)
+            parsed_rows.append((row_number, part_ref.strip(), ref_key, override_data))
+
+        if not references:
+            return jsonify({
+                'success': False,
+                'error': 'No valid part rows found in file.',
+                'errors': row_errors,
+            }), 400
+
+        placeholders = ','.join(['?'] * len(references))
+        params = list(references) + list(references)
+        cursor.execute(
+            f"""
+            SELECT base_part_number, part_number
+            FROM part_numbers
+            WHERE UPPER(base_part_number) IN ({placeholders})
+               OR UPPER(part_number) IN ({placeholders})
+            """,
+            params,
+        )
+        matches = cursor.fetchall()
+
+        ref_lookup = {}
+        for row in matches:
+            base_part_number = row['base_part_number']
+            part_number = row['part_number']
+            if base_part_number:
+                ref_lookup[str(base_part_number).strip().upper()] = (base_part_number, part_number)
+            if part_number:
+                ref_lookup[str(part_number).strip().upper()] = (base_part_number, part_number)
+
+        matched_overrides = {}
+        for row_number, part_ref, ref_key, override_data in parsed_rows:
+            matched = ref_lookup.get(ref_key)
+            if not matched:
+                skipped_no_match += 1
+                if len(row_errors) < 20:
+                    row_errors.append(f"Row {row_number}: Part not found for '{part_ref}'.")
+                continue
+            base_part_number, part_number = matched
+            matched_overrides[str(base_part_number)] = {
+                'base_part_number': base_part_number,
+                'part_number': part_number or base_part_number,
+                'price': override_data.get('price'),
+                'quantity': override_data.get('quantity'),
+            }
+
+        return jsonify({
+            'success': True,
+            'message': 'Stock/price baseline imported.',
+            'summary': {
+                'processed_rows': processed,
+                'matched_rows': len(matched_overrides),
+                'skipped_invalid': skipped_invalid,
+                'skipped_no_match': skipped_no_match,
+            },
+            'overrides': list(matched_overrides.values()),
+            'errors': row_errors,
+        }), 200
+    except Exception as e:
+        logger.exception("Error importing marketplace stock/price file")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
