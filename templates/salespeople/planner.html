@@ -578,7 +578,10 @@ function renderPlanner(data) {
                     <i class="bi bi-bullseye"></i>
                 </button>
             </div>
-            ${customer.associated_count > 1 ? '<small class="text-muted"><i class="bi bi-diagram-2"></i> Grouped</small>' : ''}
+            <div class="d-flex flex-column gap-1 mt-1">
+                ${customer.associated_count > 1 ? '<small class="text-muted"><i class="bi bi-diagram-2"></i> Grouped</small>' : ''}
+                ${renderConversionMetric(customer)}
+            </div>
         </td>
         <td>
             <div class="chart-container" title="Click to enlarge">
@@ -648,6 +651,23 @@ function renderPlanner(data) {
         return `<span class="calc-badge recovery">${customer.calc_method}</span>`;
     }
 
+    function renderConversionMetric(customer) {
+        const quoteValue = Number(customer.recent_quotes_30d || 0);
+        const orderValue = Number(customer.recent_orders_30d || 0);
+
+        if (quoteValue <= 0) {
+            return '<small class="text-muted"><i class="bi bi-percent me-1"></i>30d conversion: —</small>';
+        }
+
+        const conversion = Number(customer.conversion_pct_30d || 0);
+        const conversionClass = conversion >= 100 ? 'text-success' : conversion >= 50 ? 'text-primary' : 'text-muted';
+        return `
+            <small class="${conversionClass}" title="30-day sales ${formatCurrency(orderValue)} vs quoted ${formatCurrency(quoteValue)}">
+                <i class="bi bi-percent me-1"></i>30d conversion: ${formatPercent(conversion)}
+            </small>
+        `;
+    }
+
     // UPDATED: Now accepts customerName and adds click listener
     function initSparkline(canvasId, labels, dataPoints, color, customerName) {
         const canvas = document.getElementById(canvasId);
@@ -711,7 +731,10 @@ function addManualCustomer() {
         calc_method: 'Manual Target', // Visual label
         is_locked: true,
         associated_count: 1,
-        first_order_date: null
+        first_order_date: null,
+        recent_orders_30d: 0,
+        recent_quotes_30d: 0,
+        conversion_pct_30d: null
     };
 
     // 2. Add to UI (The existing logic)
@@ -926,6 +949,10 @@ function addManualCustomer() {
 
     function formatCurrency(val) {
         return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', maximumFractionDigits: 0 }).format(val);
+    }
+
+    function formatPercent(val) {
+        return `${Number(val || 0).toFixed(1)}%`;
     }
 
     function saveMonthlyGoal() {
