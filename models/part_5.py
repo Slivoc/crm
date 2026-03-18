@@ -493,9 +493,12 @@ def add_global_alternative(base_a, base_b):
         with db_cursor(commit=True) as cur:
             # Case 1: Neither in a group → create a new group
             if not group_a and not group_b:
-                cur.execute("INSERT INTO part_alt_groups (description) VALUES (?)",
-                            (f"{base_a} / {base_b} family",))
-                new_group_id = cur.lastrowid
+                cur.execute(
+                    "INSERT INTO part_alt_groups (description) VALUES (?) RETURNING id",
+                    (f"{base_a} / {base_b} family",)
+                )
+                inserted_group = cur.fetchone()
+                new_group_id = inserted_group["id"] if inserted_group else None
 
                 cur.execute(
                     "INSERT INTO part_alt_group_members (group_id, base_part_number) VALUES (?, ?)",
