@@ -5,6 +5,7 @@ import logging
 import os
 from datetime import datetime
 import csv
+import re
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 import io
@@ -95,7 +96,21 @@ def _airbus_bool(value):
     return 'TRUE' if bool(value) else 'FALSE'
 
 
-def _build_airbus_row(part):
+def _normalize_header(header):
+    return re.sub(r'[^a-z0-9]+', '', str(header or '').strip().lower())
+
+
+def _get_baseline_header_map(baseline_row):
+    header_map = {}
+    for raw_header, raw_value in (baseline_row or {}).items():
+        header = str(raw_header or '').strip()
+        if not header:
+            continue
+        header_map[_normalize_header(header)] = raw_value
+    return header_map
+
+
+def _build_generated_airbus_payload(part):
     part_number = part.get('part_number', '')
     mkp_category = part.get('mkp_category', '')
     description = part.get('description', '')
@@ -128,83 +143,99 @@ def _build_airbus_row(part):
     else:
         mkp_easaf1 = _airbus_bool(part.get('mkp_easaf1'))
 
-    return [
-        mkp_category,  # mkpCategory
-        manufacturer,  # manufacturerBrand
-        part_number,  # code
-        mkp_description,  # description [en]
-        "",  # ean
-        mkp_name,  # name
-        "",  # alternativePartRefList
-        "",  # description [fr]
-        "",  # description [de]
-        "",  # description [es]
-        "",  # description [pt]
-        "",  # productSummary [fr]
-        mkp_product_summary,  # productSummary [en]
-        "",  # productSummary [de]
-        "",  # productSummary [es]
-        "",  # productSummary [pt]
-        "",  # productPresentation [fr]
-        mkp_product_presentation,  # productPresentation [en]
-        "",  # productPresentation [de]
-        "",  # productPresentation [es]
-        "",  # productPresentation [pt]
-        "",  # natoCode
-        mkp_product_unit,  # productUnit
-        mkp_package_content,  # packageContent
-        mkp_package_content_unit,  # packageContentUnit
-        mkp_third_level,  # thirdLevel
-        mkp_dangerous,  # dangerous
-        "",  # cm_code
-        "",  # MSDS
-        "",  # TDS
-        "",  # OEM
-        "",  # color
-        "",  # size_usi
-        "",  # weight_usi
-        "",  # size_us
-        "",  # weight_us
-        "",  # image2
-        "",  # image3
-        "",  # image4
-        mkp_eccn,  # eccn
-        mkp_serialized,  # serialized
-        mkp_log_card,  # logCard
-        mkp_easaf1,  # easaf1
-        part_number,  # sku
-        part_number,  # product-id
-        "MPN",  # product-id-type
-        mkp_description,  # description
-        mkp_description,  # internal-description
-        price if price else "",  # price
-        "",  # price-additional-info
-        quantity if quantity else "",  # quantity
-        "",  # min-quantity-alert
-        condition,  # state
-        "",  # available-start-date
-        "",  # available-end-date
-        "",  # logistic-class
-        "",  # favorite-rank
-        "",  # discount-price
-        "",  # discount-start-date
-        "",  # discount-end-date
-        "true",  # allow-quote-requests
-        lead_time_days if lead_time_days else "",  # leadtime-to-ship
-        "",  # min-order-quantity
-        "",  # package-quantity
-        "",  # update-delete
-        "ON_COLLECTION",  # commercial-on-collection
-        14,  # plt
-        "DAY",  # plt-unit
-        "",  # shelflife
-        "",  # shelflife-unit
-        "",  # warranty
-        "",  # warranty-unit
-        "",  # up-sell
-        "",  # cross-sell
-        "",  # standards
-    ]
+    return {
+        "mkpCategory": mkp_category,
+        "manufacturerBrand": manufacturer,
+        "code": part_number,
+        "description [en]": mkp_description,
+        "ean": "",
+        "name": mkp_name,
+        "alternativePartRefList": "",
+        "description [fr]": "",
+        "description [de]": "",
+        "description [es]": "",
+        "description [pt]": "",
+        "productSummary [fr]": "",
+        "productSummary [en]": mkp_product_summary,
+        "productSummary [de]": "",
+        "productSummary [es]": "",
+        "productSummary [pt]": "",
+        "productPresentation [fr]": "",
+        "productPresentation [en]": mkp_product_presentation,
+        "productPresentation [de]": "",
+        "productPresentation [es]": "",
+        "productPresentation [pt]": "",
+        "natoCode": "",
+        "productUnit": mkp_product_unit,
+        "packageContent": mkp_package_content,
+        "packageContentUnit": mkp_package_content_unit,
+        "thirdLevel": mkp_third_level,
+        "dangerous": mkp_dangerous,
+        "cm_code": "",
+        "MSDS": "",
+        "TDS": "",
+        "OEM": "",
+        "color": "",
+        "size_usi": "",
+        "weight_usi": "",
+        "size_us": "",
+        "weight_us": "",
+        "image2": "",
+        "image3": "",
+        "image4": "",
+        "eccn": mkp_eccn,
+        "serialized": mkp_serialized,
+        "logCard": mkp_log_card,
+        "easaf1": mkp_easaf1,
+        "sku": part_number,
+        "product-id": part_number,
+        "product-id-type": "MPN",
+        "description": mkp_description,
+        "internal-description": mkp_description,
+        "price": price if price else "",
+        "price-additional-info": "",
+        "quantity": quantity if quantity else "",
+        "min-quantity-alert": "",
+        "state": condition,
+        "available-start-date": "",
+        "available-end-date": "",
+        "logistic-class": "",
+        "favorite-rank": "",
+        "discount-price": "",
+        "discount-start-date": "",
+        "discount-end-date": "",
+        "allow-quote-requests": "true",
+        "leadtime-to-ship": lead_time_days if lead_time_days else "",
+        "min-order-quantity": "",
+        "package-quantity": "",
+        "update-delete": "",
+        "commercial-on-collection": "ON_COLLECTION",
+        "plt": 14,
+        "plt-unit": "DAY",
+        "shelflife": "",
+        "shelflife-unit": "",
+        "warranty": "",
+        "warranty-unit": "",
+        "up-sell": "",
+        "cross-sell": "",
+        "standards": "",
+    }
+
+
+def _build_airbus_row(part):
+    generated_payload = _build_generated_airbus_payload(part)
+    payload = dict(generated_payload)
+    baseline_headers = _get_baseline_header_map(part.get('baseline_row'))
+
+    for header in AIRBUS_MARKETPLACE_HEADERS:
+        normalized = _normalize_header(header)
+        if normalized in baseline_headers:
+            payload[header] = baseline_headers[normalized]
+
+    payload["price"] = generated_payload["price"]
+    payload["quantity"] = generated_payload["quantity"]
+
+    return [payload.get(header, '') for header in AIRBUS_MARKETPLACE_HEADERS]
 
 
 def export_parts_to_airbus_marketplace(parts_data):

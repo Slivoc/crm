@@ -22,7 +22,7 @@ from airbus_marketplace_export import export_parts_to_airbus_marketplace_csv
 from models import get_db
 from routes.portal_api import _analyze_quote_internal, get_portal_setting
 from integrations.mirakl.client import MiraklClient, MiraklError
-from integrations.mirakl.services.offers import build_offers_csv
+from integrations.mirakl.services.offers import build_offers_csv, OFFER_IMPORT_FIELDS
 from openpyxl import load_workbook
 from openai import OpenAI
 
@@ -580,31 +580,18 @@ def _build_marketplace_updates_from_row(row_data, valid_categories):
     return part_ref, updates, None
 
 
-def _build_stock_price_overrides_from_row(row_data):
+def _build_marketplace_baseline_from_row(row_data):
     identifier_headers = {
         'code', 'sku', 'productid', 'offersku', 'productsku', 'product', 'mpn', 'oem',
         'partnumber', 'partno', 'partnum', 'manufacturerpn', 'manufacturerpartnumber',
         'airbusmaterial',
     }
-    price_headers = {
-        'price', 'offerprice', 'unitprice', 'priceamount', 'publicprice',
-    }
-    quantity_headers = {
-        'quantity', 'qty', 'stock', 'stockquantity', 'availablequantity', 'availableqty',
-    }
 
     identifier_candidates = []
-    raw_price = None
-    raw_quantity = None
-
     for raw_header, raw_value in (row_data or {}).items():
         normalized = _normalize_import_header(raw_header)
         if normalized in identifier_headers:
             identifier_candidates.append((normalized, raw_value))
-        elif normalized in price_headers and raw_price is None:
-            raw_price = raw_value
-        elif normalized in quantity_headers and raw_quantity is None:
-            raw_quantity = raw_value
 
     identifier_preference = [
         'code', 'sku', 'productid', 'offersku', 'mpn', 'oem', 'partnumber', 'partno',
@@ -626,33 +613,37 @@ def _build_stock_price_overrides_from_row(row_data):
     if not part_ref:
         return None, None, "Missing part identifier."
 
-    parsed_price = None
-    if raw_price not in (None, ''):
-        price_value = _coerce_price(raw_price)
-        if price_value == '':
-            return part_ref, None, f"Invalid price value: {raw_price}"
-        if price_value < 0:
-            return part_ref, None, f"Price cannot be negative: {raw_price}"
-        parsed_price = price_value
+    baseline_row = {}
+    for raw_header, raw_value in (row_data or {}).items():
+        header = str(raw_header or '').strip()
+        if not header:
+            continue
+        baseline_row[header] = raw_value
 
-    parsed_quantity = None
-    if raw_quantity not in (None, ''):
-        quantity_text = str(raw_quantity).strip()
-        try:
-            quantity_value = int(round(float(quantity_text.replace(',', '.'))))
-        except ValueError:
-            return part_ref, None, f"Invalid quantity value: {raw_quantity}"
-        if quantity_value < 0:
-            return part_ref, None, f"Quantity cannot be negative: {raw_quantity}"
-        parsed_quantity = quantity_value
+    return part_ref, baseline_row, None
 
-    if parsed_price is None and parsed_quantity is None:
-        return part_ref, None, "No price or quantity columns found in row."
 
-    return part_ref, {
-        'price': parsed_price,
-        'quantity': parsed_quantity,
-    }, None
+def _get_import_row_value(row_data, target_header):
+    target_normalized = _normalize_import_header(target_header)
+    for raw_header, raw_value in (row_data or {}).items():
+        if _normalize_import_header(raw_header) == target_normalized:
+            return True, raw_value
+    return False, None
+
+
+def _build_offer_row_from_payload(offer):
+    payload = {field: offer.get(field, '') for field in OFFER_IMPORT_FIELDS}
+    baseline_row = offer.get('baseline_row') or {}
+
+    for field in OFFER_IMPORT_FIELDS:
+        found, value = _get_import_row_value(baseline_row, field)
+        if found:
+            payload[field] = value
+
+    payload['price'] = offer.get('price', payload.get('price', ''))
+    payload['quantity'] = offer.get('quantity', payload.get('quantity', ''))
+
+    return payload
 
 
 def _normalize_prefixes(prefixes):
@@ -818,8 +809,9 @@ def import_marketplace_details_file():
 @marketplace_bp.route('/import-stock-price-file', methods=['POST'])
 def import_marketplace_stock_price_file():
     """
-    Parse Airbus marketplace export CSV/XLSX and build stock/price overrides.
-    This endpoint does not write to DB; it returns matched overrides for export/push.
+    Parse Airbus marketplace export CSV/XLSX and retain Airbus rows as an export baseline.
+    This endpoint does not write to DB; it returns matched baseline rows for export/push,
+    while CRM price and quantity remain authoritative.
     """
     try:
         file = request.files.get('file')
@@ -847,7 +839,7 @@ def import_marketplace_stock_price_file():
 
         for row_number, row_data in rows:
             processed += 1
-            part_ref, override_data, row_error = _build_stock_price_overrides_from_row(row_data)
+            part_ref, baseline_row, row_error = _build_marketplace_baseline_from_row(row_data)
             if row_error:
                 skipped_invalid += 1
                 if len(row_errors) < 20:
@@ -855,7 +847,7 @@ def import_marketplace_stock_price_file():
                 continue
             ref_key = part_ref.strip().upper()
             references.add(ref_key)
-            parsed_rows.append((row_number, part_ref.strip(), ref_key, override_data))
+            parsed_rows.append((row_number, part_ref.strip(), ref_key, baseline_row))
 
         if not references:
             return jsonify({
@@ -886,8 +878,8 @@ def import_marketplace_stock_price_file():
             if part_number:
                 ref_lookup[str(part_number).strip().upper()] = (base_part_number, part_number)
 
-        matched_overrides = {}
-        for row_number, part_ref, ref_key, override_data in parsed_rows:
+        matched_baselines = {}
+        for row_number, part_ref, ref_key, baseline_row in parsed_rows:
             matched = ref_lookup.get(ref_key)
             if not matched:
                 skipped_no_match += 1
@@ -895,23 +887,22 @@ def import_marketplace_stock_price_file():
                     row_errors.append(f"Row {row_number}: Part not found for '{part_ref}'.")
                 continue
             base_part_number, part_number = matched
-            matched_overrides[str(base_part_number)] = {
+            matched_baselines[str(base_part_number)] = {
                 'base_part_number': base_part_number,
                 'part_number': part_number or base_part_number,
-                'price': override_data.get('price'),
-                'quantity': override_data.get('quantity'),
+                'baseline_row': baseline_row,
             }
 
         return jsonify({
             'success': True,
-            'message': 'Stock/price baseline imported.',
+            'message': 'Airbus baseline imported. Export/push will keep uploaded Airbus fields and replace price/quantity from CRM.',
             'summary': {
                 'processed_rows': processed,
-                'matched_rows': len(matched_overrides),
+                'matched_rows': len(matched_baselines),
                 'skipped_invalid': skipped_invalid,
                 'skipped_no_match': skipped_no_match,
             },
-            'overrides': list(matched_overrides.values()),
+            'baselines': list(matched_baselines.values()),
             'errors': row_errors,
         }), 200
     except Exception as e:
@@ -1476,17 +1467,27 @@ def get_parts_for_export():
         category_filter = data.get('category_filter', 'all')
         pricing_only = data.get('pricing_only', False)
         part_number_search = data.get('part_number_search', '').strip()
+        source_mode = _coerce_text(data.get('source_mode'), default='filters')
+        if source_mode not in ('filters', 'baseline'):
+            source_mode = 'filters'
+        selected_base_part_numbers = [
+            str(value).strip()
+            for value in (data.get('selected_base_part_numbers') or [])
+            if str(value).strip()
+        ]
         max_results = _coerce_int(data.get('max_results'), default=0)
         if max_results < 0:
             max_results = 0
 
         logger.info(
-            "Marketplace export parts request: stock_filter=%s category_filter=%s "
-            "pricing_only=%s part_number_search=%s max_results=%s",
+            "Marketplace export parts request: source_mode=%s stock_filter=%s category_filter=%s "
+            "pricing_only=%s part_number_search=%s selected_count=%s max_results=%s",
+            source_mode,
             stock_filter,
             category_filter,
             pricing_only,
             part_number_search or "<none>",
+            len(selected_base_part_numbers),
             max_results or "<none>",
         )
 
@@ -1518,6 +1519,11 @@ def get_parts_for_export():
         """
 
         params = []
+
+        if selected_base_part_numbers:
+            placeholders = ','.join('?' * len(selected_base_part_numbers))
+            query += f" AND pn.base_part_number IN ({placeholders})"
+            params.extend(selected_base_part_numbers)
 
         # Apply category filter
         if category_filter == 'categorized_only':
@@ -1767,6 +1773,7 @@ def export_to_marketplace():
         if export_mode not in ('products', 'offers'):
             export_mode = 'products'
         export_defaults = _normalize_marketplace_export_defaults(export_data.get('defaults'))
+        baseline_rows = export_data.get('baseline_rows') or {}
 
         if not base_part_numbers:
             return jsonify({'error': 'No parts selected for export'}), 400
@@ -1834,6 +1841,11 @@ def export_to_marketplace():
             resolved_description = _coerce_text(row['mkp_description'], default='')
             if not resolved_description and export_defaults['description_mode'] == 'part_number':
                 resolved_description = part_number or ''
+            baseline_row = (
+                baseline_rows.get(row['base_part_number'])
+                or baseline_rows.get(part_number)
+                or None
+            )
 
             parts_data.append({
                 'base_part_number': row['base_part_number'],
@@ -1858,6 +1870,7 @@ def export_to_marketplace():
                 'price': _coerce_price(price),
                 'condition': 'New',
                 'lead_time_days': lead_time_value,
+                'baseline_row': baseline_row,
             })
 
         if export_mode == 'offers':
@@ -1865,7 +1878,7 @@ def export_to_marketplace():
             for part in parts_data:
                 part_number = _part_identifier(part)
                 description = _coerce_text(part.get('mkp_description') or part.get('description'), default=part_number)
-                csv_rows.append({
+                csv_rows.append(_build_offer_row_from_payload({
                     'sku': part_number,
                     'product-id': part_number,
                     'product-id-type': 'SKU',
@@ -1899,7 +1912,8 @@ def export_to_marketplace():
                     'up-sell': '',
                     'cross-sell': '',
                     'vendor-reference': '',
-                })
+                    'baseline_row': part.get('baseline_row'),
+                }))
 
             skipped_invalid = []
             if skip_invalid_mandatory:
@@ -2118,6 +2132,7 @@ def mirakl_import_offers():
         return jsonify({'success': False, 'error': 'offers array is required'}), 400
 
     skipped_invalid = []
+    offers = [_build_offer_row_from_payload(offer) for offer in offers]
     if skip_invalid_mandatory:
         offers, skipped_invalid = _split_valid_rows(
             offers,

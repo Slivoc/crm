@@ -4,6 +4,45 @@
 
 {% block extra_css %}
 <style>
+    .source-choice-card {
+        border: 1px solid #d7dde5;
+        border-radius: 12px;
+        padding: 18px;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        height: 100%;
+    }
+    .source-choice-card.active {
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.12);
+    }
+    .source-choice-card h6 {
+        margin-bottom: 8px;
+    }
+    .source-choice-card p {
+        margin-bottom: 12px;
+        color: #6c757d;
+    }
+    .source-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.8rem;
+        border-radius: 999px;
+        padding: 4px 10px;
+        background: #e9ecef;
+        color: #495057;
+    }
+    .source-chip.active {
+        background: #cfe2ff;
+        color: #084298;
+    }
+    .source-summary {
+        border: 1px dashed #cbd3da;
+        border-radius: 10px;
+        padding: 12px 14px;
+        background: #fff;
+        min-height: 72px;
+    }
     .filter-section {
         background-color: #f8f9fa;
         border-radius: 8px;
@@ -67,7 +106,7 @@
             <h2>
                 <i class="bi bi-box-seam"></i> Airbus Marketplace Export
             </h2>
-            <p class="text-muted">Select parts and configure export settings for Airbus Marketplace (Keycopter)</p>
+            <p class="text-muted">Choose a parts source, then export current CRM stock and pricing into the Airbus Marketplace format.</p>
         </div>
         <div class="col-auto align-self-center">
             <a class="btn btn-outline-secondary" href="/marketplace/categorization-tool">
@@ -84,7 +123,7 @@
         <div class="col-md-2">
             <div class="stats-card">
                 <div class="stat-value" id="statTotalParts">0</div>
-                <div class="stat-label">Total Parts Matching Filters</div>
+                <div class="stat-label">Parts In Current Working Set</div>
             </div>
         </div>
         <div class="col-md-2">
@@ -119,9 +158,60 @@
         </div>
     </div>
 
+    <div class="filter-section">
+        <h5><i class="bi bi-diagram-3"></i> Parts Source</h5>
+        <p class="text-muted mb-3">Choose how to build the working set for this export.</p>
+
+        <div class="row g-3 align-items-stretch">
+            <div class="col-lg-6">
+                <div class="source-choice-card active" id="filterSourceCard">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6><i class="bi bi-funnel"></i> Create a list of parts</h6>
+                            <p>Use CRM filters to build the export set from scratch.</p>
+                        </div>
+                        <span class="source-chip active" id="filterSourceChip">Active</span>
+                    </div>
+                    <button class="btn btn-primary" id="useFilterSourceBtn">
+                        <i class="bi bi-search"></i> Use Filter Selection
+                    </button>
+                    <div class="source-summary mt-3">
+                        <div class="fw-bold mb-1">Best for</div>
+                        <div class="text-muted small">New exports, broad stock reviews, or when you want CRM filters to decide the list.</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="source-choice-card" id="baselineSourceCard">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6><i class="bi bi-file-earmark-arrow-up"></i> Work from an existing Airbus list</h6>
+                            <p>Upload the latest Airbus export and use that file as the working set.</p>
+                        </div>
+                        <span class="source-chip" id="baselineSourceChip">Inactive</span>
+                    </div>
+                    <input type="file" class="form-control form-control-sm mb-2" id="airbusStockPriceFile" accept=".csv,.xlsx">
+                    <div class="d-flex gap-2 flex-wrap">
+                        <button class="btn btn-outline-primary" id="importAirbusStockPriceBtn">
+                            <i class="bi bi-box-arrow-in-up"></i> Import Airbus Export File
+                        </button>
+                        <button class="btn btn-outline-secondary" id="useBaselineSourceBtn" disabled>
+                            <i class="bi bi-list-check"></i> Use Uploaded List
+                        </button>
+                    </div>
+                    <div class="source-summary mt-3" id="baselineSourceSummary">
+                        <div class="fw-bold mb-1">No Airbus list loaded</div>
+                        <div class="text-muted small">Import a recent Airbus export to preserve accepted Airbus fields, then overwrite only price and quantity from CRM.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Filter Section -->
     <div class="filter-section">
         <h5><i class="bi bi-funnel"></i> Part Selection Filters</h5>
+        <p class="text-muted mb-3" id="filterSectionHelp">Use these filters to build the working set from CRM.</p>
 
         <div class="row">
             <!-- Stock Filter -->
@@ -329,14 +419,6 @@
                     <small class="text-muted d-block mt-2">Updates marketplace detail fields only (for example dangerous/eccn/category). Price and quantity are ignored.</small>
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label fw-bold">Import Airbus Stock/Price Baseline</label>
-                    <input type="file" class="form-control form-control-sm mb-2" id="airbusStockPriceFile" accept=".csv,.xlsx">
-                    <button class="btn btn-sm btn-outline-secondary" id="importAirbusStockPriceBtn">
-                        <i class="bi bi-box-arrow-in-up"></i> Import Airbus Stock/Price File
-                    </button>
-                    <small class="text-muted d-block mt-2">Step 1 of 2 workflow: import the latest Airbus export, then export/push with overridden stock and price values from that file.</small>
-                </div>
-                <div class="col-md-6">
                     <label class="form-label fw-bold">Push CSV to Marketplace</label>
                     <input type="file" class="form-control form-control-sm mb-2" id="miraklCsvFile" accept=".csv">
                     <select class="form-select form-select-sm mb-2" id="miraklCsvType">
@@ -400,7 +482,7 @@
                 <div class="col-md-8">
                     <h5 class="mb-2">Ready to Export</h5>
                     <p class="mb-0 text-muted">
-                        <span id="readyCount">0</span> parts with categories will be exported.
+                        <span id="readyCount">0</span> parts in the current working set have categories and will be exported.
                         <span id="uncatWarning" class="text-warning" style="display: none;">
                             (<span id="uncatCount">0</span> parts missing categories will be skipped)
                         </span>
@@ -669,14 +751,31 @@ let allParts = [];
 let categories = [];
 let currentEditingPartNumber = null;
 let loadStatusTimer = null;
-let importedStockPriceOverrides = {};
+let importedAirbusBaselineRows = {};
+let partSourceMode = 'filters';
 
 $(document).ready(function() {
     applySavedMarketplaceDefaults();
     loadCategories();
+    setPartSourceMode('filters');
+    renderBaselineSourceSummary();
 
     // Apply filters
     $('#applyFiltersBtn').click(function() {
+        loadParts();
+    });
+
+    $('#useFilterSourceBtn').click(function() {
+        setPartSourceMode('filters');
+        loadParts();
+    });
+
+    $('#useBaselineSourceBtn').click(function() {
+        if (!hasImportedBaselineRows()) {
+            alert('Import an Airbus export file first.');
+            return;
+        }
+        setPartSourceMode('baseline');
         loadParts();
     });
 
@@ -688,6 +787,7 @@ $(document).ready(function() {
         $('#partNumberSearch').val('');
         $('#defaultQuantity').val(1);
         applySavedMarketplaceDefaults();
+        setPartSourceMode('filters');
     });
 
     // Export button
@@ -771,6 +871,12 @@ function loadCategories() {
 
 function loadParts() {
     const startTime = Date.now();
+    const baselinePartNumbers = Object.keys(importedAirbusBaselineRows || {});
+
+    if (partSourceMode === 'baseline' && baselinePartNumbers.length === 0) {
+        alert('Import an Airbus export file first.');
+        return;
+    }
 
     $('#loadingSpinner').show();
     $('#statsRow').hide();
@@ -789,11 +895,13 @@ function loadParts() {
     }, 4000);
 
     const filters = {
+        source_mode: partSourceMode,
         stock_filter: $('input[name="stockFilter"]:checked').val(),
         category_filter: $('input[name="categoryFilter"]:checked').val(),
         pricing_only: $('#pricingOnly').prop('checked'),
         part_number_search: $('#partNumberSearch').val().trim(),
-        max_results: $('#maxResults').val().trim()
+        max_results: $('#maxResults').val().trim(),
+        selected_base_part_numbers: partSourceMode === 'baseline' ? baselinePartNumbers : []
     };
 
     $.ajax({
@@ -810,17 +918,21 @@ function loadParts() {
 
             if (response.success && response.parts && response.parts.length > 0) {
                 allParts = response.parts;
-                applyImportedStockPriceOverrides();
                 storeExportUncategorizedParts(response.parts, filters);
                 updateSummaryStats();
                 renderUncategorizedParts();
                 $('#statsRow').show();
                 $('#exportCard').show();
-                setLoadStatus(`Loaded ${response.parts.length} parts in ${elapsedSeconds}s.`, 'text-success');
+                const sourceLabel = partSourceMode === 'baseline' ? 'uploaded Airbus list' : 'CRM filters';
+                setLoadStatus(`Loaded ${response.parts.length} parts from ${sourceLabel} in ${elapsedSeconds}s.`, 'text-success');
             } else {
                 $('#noPartsMessage').show();
                 allParts = [];
-                setLoadStatus(`No parts found (${elapsedSeconds}s).`, 'text-muted');
+                if (partSourceMode === 'baseline') {
+                    setLoadStatus(`No CRM parts found for the uploaded Airbus list (${elapsedSeconds}s).`, 'text-muted');
+                } else {
+                    setLoadStatus(`No parts found (${elapsedSeconds}s).`, 'text-muted');
+                }
             }
         },
         error: function(xhr, status, error) {
@@ -918,6 +1030,48 @@ function setApplyFiltersBusy(isBusy) {
     }
 }
 
+function hasImportedBaselineRows() {
+    return Object.keys(importedAirbusBaselineRows || {}).length > 0;
+}
+
+function setPartSourceMode(mode) {
+    partSourceMode = mode === 'baseline' ? 'baseline' : 'filters';
+    const isBaseline = partSourceMode === 'baseline';
+
+    $('#filterSourceCard').toggleClass('active', !isBaseline);
+    $('#baselineSourceCard').toggleClass('active', isBaseline);
+    $('#filterSourceChip').toggleClass('active', !isBaseline).text(!isBaseline ? 'Active' : 'Available');
+    $('#baselineSourceChip').toggleClass('active', isBaseline).text(isBaseline ? 'Active' : 'Inactive');
+    $('#filterSectionHelp').text(
+        isBaseline
+            ? 'These filters now refine the uploaded Airbus list instead of building a list from scratch.'
+            : 'Use these filters to build the working set from CRM.'
+    );
+}
+
+function renderBaselineSourceSummary(summary) {
+    const count = Object.keys(importedAirbusBaselineRows || {}).length;
+    if (!count) {
+        $('#baselineSourceSummary').html(`
+            <div class="fw-bold mb-1">No Airbus list loaded</div>
+            <div class="text-muted small">Import a recent Airbus export to preserve accepted Airbus fields, then overwrite only price and quantity from CRM.</div>
+        `);
+        $('#useBaselineSourceBtn').prop('disabled', true);
+        return;
+    }
+
+    const matched = summary && summary.matched_rows !== undefined ? summary.matched_rows : count;
+    const processed = summary && summary.processed_rows !== undefined ? summary.processed_rows : count;
+    const invalid = summary && summary.skipped_invalid !== undefined ? summary.skipped_invalid : 0;
+    const noMatch = summary && summary.skipped_no_match !== undefined ? summary.skipped_no_match : 0;
+
+    $('#baselineSourceSummary').html(`
+        <div class="fw-bold mb-1">Airbus list ready</div>
+        <div class="text-muted small">Processed ${processed} row(s). Matched ${matched} CRM part(s), invalid ${invalid}, no match ${noMatch}. Use this list as the working set for export.</div>
+    `);
+    $('#useBaselineSourceBtn').prop('disabled', false);
+}
+
 function updateSummaryStats() {
     const categorized = allParts.filter(p => p.mkp_category).length;
     const uncategorized = allParts.length - categorized;
@@ -998,25 +1152,11 @@ function renderUncategorizedParts() {
 }
 
 function getPortalPrice(part) {
-    const override = importedStockPriceOverrides[part.base_part_number];
-    if (override && override.price !== null && override.price !== undefined) {
-        const overridePrice = parseFloat(override.price);
-        if (Number.isFinite(overridePrice)) {
-            return overridePrice;
-        }
-    }
     const value = parseFloat(part.estimated_price);
     return Number.isFinite(value) ? value : null;
 }
 
 function getExportQuantity(part) {
-    const override = importedStockPriceOverrides[part.base_part_number];
-    if (override && override.quantity !== null && override.quantity !== undefined) {
-        const overrideQty = parseInt(override.quantity, 10);
-        if (Number.isFinite(overrideQty) && overrideQty > 0) {
-            return overrideQty;
-        }
-    }
     const defaultQty = parseInt($('#defaultQuantity').val(), 10) || 1;
     if (part.in_stock && part.stock_qty && part.stock_qty > 0) {
         return part.stock_qty;
@@ -1024,29 +1164,12 @@ function getExportQuantity(part) {
     return defaultQty;
 }
 
-function applyImportedStockPriceOverrides() {
-    if (!allParts || allParts.length === 0) {
-        return;
+function getImportedAirbusBaselineRow(part) {
+    if (!part || !part.base_part_number) {
+        return null;
     }
-
-    allParts.forEach(function(part) {
-        const override = importedStockPriceOverrides[part.base_part_number];
-        if (!override) {
-            return;
-        }
-
-        if (override.price !== null && override.price !== undefined && override.price !== '') {
-            part.estimated_price = override.price;
-        }
-
-        if (override.quantity !== null && override.quantity !== undefined && override.quantity !== '') {
-            const qty = parseInt(override.quantity, 10);
-            if (Number.isFinite(qty) && qty >= 0) {
-                part.stock_qty = qty;
-                part.in_stock = qty > 0;
-            }
-        }
-    });
+    const entry = importedAirbusBaselineRows[part.base_part_number];
+    return entry && entry.baseline_row ? entry.baseline_row : null;
 }
 
 function formatStockDisplay(part) {
@@ -1573,6 +1696,7 @@ function buildProductPayload(part, defaultQuantity, defaults) {
     const quantity = part.in_stock && Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
     const leadTime = part.estimated_lead_days ?? 7;
     const description = resolveDefaultDescription(part, defaults);
+    const baselineRow = getImportedAirbusBaselineRow(part);
 
     return {
         part_number: partNumber,
@@ -1603,7 +1727,8 @@ function buildProductPayload(part, defaultQuantity, defaults) {
         quantity: quantity,
         price: part.estimated_price ?? '',
         condition: 'New',
-        lead_time_days: leadTime
+        lead_time_days: leadTime,
+        baseline_row: baselineRow
     };
 }
 
@@ -1612,6 +1737,7 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
     const stockQty = parseInt(part.stock_qty, 10);
     const quantity = part.in_stock && Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
     const leadTime = part.estimated_lead_days ?? 7;
+    const baselineRow = getImportedAirbusBaselineRow(part);
 
     return {
         'sku': partNumber,
@@ -1646,7 +1772,8 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
         'warranty-unit': '',
         'up-sell': '',
         'cross-sell': '',
-        'vendor-reference': ''
+        'vendor-reference': '',
+        'baseline_row': baselineRow
     };
 }
 
@@ -1750,6 +1877,82 @@ function splitValidParts(parts, mode, defaults) {
     return { valid, invalid };
 }
 
+function formatInvalidLinesPreview(invalidRows, limit = 5) {
+    if (!invalidRows || !invalidRows.length) {
+        return '';
+    }
+    return invalidRows
+        .slice(0, limit)
+        .map(item => `${item.id || 'Unknown'} (${(item.missing_fields || []).join(', ')})`)
+        .join('; ');
+}
+
+function resolveExportParts(parts, mode, defaults, actionLabel) {
+    const split = splitValidParts(parts, mode, defaults);
+    const skipInvalidMandatory = $('#skipInvalidMandatoryFields').is(':checked');
+
+    if (!split.invalid.length) {
+        return {
+            proceed: true,
+            parts: split.valid,
+            skipped: []
+        };
+    }
+
+    const modeLabel = mode === 'offers' ? 'offer' : 'product';
+    const preview = formatInvalidLinesPreview(split.invalid);
+
+    if (skipInvalidMandatory) {
+        $('#exportStatus').text(`Skipping ${split.invalid.length} line(s) missing mandatory ${modeLabel} fields. ${preview}`);
+        console.warn('Skipped invalid marketplace lines:', split.invalid);
+        if (!split.valid.length) {
+            alert('All selected lines are missing mandatory fields. Nothing to export.');
+            return {
+                proceed: false,
+                parts: [],
+                skipped: split.invalid
+            };
+        }
+        return {
+            proceed: true,
+            parts: split.valid,
+            skipped: split.invalid
+        };
+    }
+
+    const confirmed = confirm(
+        `${split.invalid.length} line(s) are missing mandatory ${modeLabel} fields and ${actionLabel} will fail.\n\n` +
+        `Examples: ${preview || 'See console for details.'}\n\n` +
+        `Press OK to skip those lines and continue, or Cancel to review them first.`
+    );
+    if (!confirmed) {
+        $('#exportStatus').text(`Blocked by ${split.invalid.length} line(s) missing mandatory ${modeLabel} fields. ${preview}`);
+        console.warn('Invalid marketplace lines:', split.invalid);
+        return {
+            proceed: false,
+            parts: [],
+            skipped: split.invalid
+        };
+    }
+
+    $('#skipInvalidMandatoryFields').prop('checked', true);
+    $('#exportStatus').text(`Skipping ${split.invalid.length} line(s) missing mandatory ${modeLabel} fields. ${preview}`);
+    console.warn('Skipped invalid marketplace lines:', split.invalid);
+    if (!split.valid.length) {
+        alert('All selected lines are missing mandatory fields. Nothing to export.');
+        return {
+            proceed: false,
+            parts: [],
+            skipped: split.invalid
+        };
+    }
+    return {
+        proceed: true,
+        parts: split.valid,
+        skipped: split.invalid
+    };
+}
+
 function exportToCsv(mode) {
     const categorizedParts = allParts.filter(p => p.mkp_category);
 
@@ -1758,22 +1961,19 @@ function exportToCsv(mode) {
         return;
     }
 
-    const skipInvalidMandatory = $('#skipInvalidMandatoryFields').is(':checked');
     const defaults = getMarketplaceDefaults();
     const exportMode = mode === 'offers' ? 'offers' : 'products';
-    let exportParts = categorizedParts;
-    if (skipInvalidMandatory) {
-        const split = splitValidParts(categorizedParts, exportMode, defaults);
-        exportParts = split.valid;
-        if (split.invalid.length > 0) {
-            $('#exportStatus').text(`Skipping ${split.invalid.length} line(s) missing mandatory ${exportMode === 'offers' ? 'offer' : 'product'} fields.`);
-            console.warn('Skipped invalid marketplace lines:', split.invalid);
-        }
-        if (exportParts.length === 0) {
-            alert('All selected lines are missing mandatory fields. Nothing to export.');
-            return;
-        }
+    const resolved = resolveExportParts(
+        categorizedParts,
+        exportMode,
+        defaults,
+        exportMode === 'offers' ? 'offer export' : 'product export'
+    );
+    if (!resolved.proceed) {
+        return;
     }
+    const skipInvalidMandatory = $('#skipInvalidMandatoryFields').is(':checked');
+    const exportParts = resolved.parts;
 
     const buttonSelector = exportMode === 'offers' ? '#exportOffersCsvBtn' : '#exportProductsCsvBtn';
     const buttonLabel = exportMode === 'offers'
@@ -1788,7 +1988,14 @@ function exportToCsv(mode) {
         default_quantity: parseInt($('#defaultQuantity').val(), 10) || 1,
         export_mode: exportMode,
         skip_invalid_mandatory: skipInvalidMandatory,
-        defaults: defaults
+        defaults: defaults,
+        baseline_rows: exportParts.reduce((acc, part) => {
+            const baselineRow = getImportedAirbusBaselineRow(part);
+            if (baselineRow) {
+                acc[part.base_part_number] = baselineRow;
+            }
+            return acc;
+        }, {})
     };
     
     // Create a form and submit it to trigger download
@@ -1830,24 +2037,19 @@ function pushOffersToMarketplace() {
 
     const pushMode = $('#miraklPushMode').val() || 'products';
     const isOfferUpdate = pushMode === 'offers';
-    const skipInvalidMandatory = $('#skipInvalidMandatoryFields').is(':checked');
     const defaults = getMarketplaceDefaults();
-    let partsToPush = categorizedParts;
-    let skippedInvalid = [];
-    if (skipInvalidMandatory) {
-        const split = splitValidParts(categorizedParts, pushMode, defaults);
-        partsToPush = split.valid;
-        skippedInvalid = split.invalid;
-        if (skippedInvalid.length > 0) {
-            $('#exportStatus').text(`Skipping ${skippedInvalid.length} line(s) missing mandatory ${isOfferUpdate ? 'offer' : 'product'} fields.`);
-            console.warn('Skipped invalid marketplace lines:', skippedInvalid);
-        }
-    }
-
-    if (partsToPush.length === 0) {
-        alert('All selected lines are missing mandatory fields. Nothing to push.');
+    const resolved = resolveExportParts(
+        categorizedParts,
+        pushMode,
+        defaults,
+        isOfferUpdate ? 'offer push' : 'product push'
+    );
+    if (!resolved.proceed) {
         return;
     }
+    const skipInvalidMandatory = $('#skipInvalidMandatoryFields').is(':checked');
+    const partsToPush = resolved.parts;
+    const skippedInvalid = resolved.skipped || [];
 
     const confirmText = isOfferUpdate
         ? `Push offer update for ${partsToPush.length} parts to Airbus Marketplace now?`
@@ -2057,12 +2259,12 @@ function importAirbusStockPriceFile() {
         return;
     }
 
-    if (!confirm(`Import stock/price baseline from ${file.name}? This will override stock and price values in this page for export/push.`)) {
+    if (!confirm(`Import Airbus baseline from ${file.name}? The uploaded Airbus fields will be preserved, and export/push will replace only price and quantity with current CRM values.`)) {
         return;
     }
 
     $('#importAirbusStockPriceBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Importing...');
-    $('#exportStatus').text('Importing Airbus stock/price file...');
+    $('#exportStatus').text('Importing Airbus export baseline...');
 
     const formData = new FormData();
     formData.append('file', file);
@@ -2081,28 +2283,27 @@ function importAirbusStockPriceFile() {
             return;
         }
 
-        const overrides = Array.isArray(response.overrides) ? response.overrides : [];
-        importedStockPriceOverrides = {};
-        overrides.forEach(function(item) {
+        const baselines = Array.isArray(response.baselines) ? response.baselines : [];
+        importedAirbusBaselineRows = {};
+        baselines.forEach(function(item) {
             if (!item || !item.base_part_number) {
                 return;
             }
-            importedStockPriceOverrides[item.base_part_number] = {
-                price: item.price,
-                quantity: item.quantity
-            };
+            importedAirbusBaselineRows[item.base_part_number] = item;
         });
 
-        applyImportedStockPriceOverrides();
+        renderBaselineSourceSummary(response.summary || {});
+        setPartSourceMode('baseline');
         updateSummaryStats();
         renderUncategorizedParts();
+        loadParts();
 
         const summary = response.summary || {};
-        const message = `Stock/price import complete. Processed ${summary.processed_rows || 0} row(s), matched ${summary.matched_rows || 0}, invalid ${summary.skipped_invalid || 0}, no match ${summary.skipped_no_match || 0}.`;
+        const message = `Airbus baseline import complete. Processed ${summary.processed_rows || 0} row(s), matched ${summary.matched_rows || 0}, invalid ${summary.skipped_invalid || 0}, no match ${summary.skipped_no_match || 0}.`;
         $('#exportStatus').text(message);
 
         if (response.errors && response.errors.length) {
-            console.warn('Marketplace stock/price import warnings:', response.errors);
+            console.warn('Marketplace Airbus baseline import warnings:', response.errors);
         }
 
         fileInput.value = '';
@@ -2111,7 +2312,7 @@ function importAirbusStockPriceFile() {
         $('#exportStatus').text(error);
         alert('Import failed: ' + error);
     }).always(function() {
-        $('#importAirbusStockPriceBtn').prop('disabled', false).html('<i class="bi bi-box-arrow-in-up"></i> Import Airbus Stock/Price File');
+        $('#importAirbusStockPriceBtn').prop('disabled', false).html('<i class="bi bi-box-arrow-in-up"></i> Import Airbus Export File');
     });
 }
 </script>
