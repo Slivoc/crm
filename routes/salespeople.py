@@ -6138,6 +6138,8 @@ def get_planner_data(salesperson_id):
                 continue
 
         relevant_customer_ids = consolidated_ids | saved_target_ids
+        recent_orders_30d_map = {}
+        recent_quotes_30d_map = {}
         first_order_map = {}
         if relevant_customer_ids:
             placeholders = ','.join(['?' for _ in relevant_customer_ids])
@@ -6148,6 +6150,54 @@ def get_planner_data(salesperson_id):
                 GROUP BY customer_id
             """
             first_order_rows = db_execute(first_order_query, list(relevant_customer_ids), fetch='all') or []
+
+            recent_orders_query = f"""
+                SELECT
+                    customer_id,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN total_value IS NULL OR total_value::text = '' THEN 0
+                            ELSE CAST(total_value AS REAL)
+                        END
+                    ), 0) AS recent_order_value
+                FROM sales_orders
+                WHERE customer_id IN ({placeholders})
+                  AND date_entered >= CURRENT_DATE - INTERVAL '30 days'
+                  AND date_entered <= CURRENT_DATE
+                GROUP BY customer_id
+            """
+            recent_order_rows = db_execute(recent_orders_query, list(relevant_customer_ids), fetch='all') or []
+            recent_orders_30d_map = {
+                row['customer_id']: float(row['recent_order_value'] or 0)
+                for row in recent_order_rows
+            }
+
+            recent_quotes_query = f"""
+                SELECT
+                    pl.customer_id,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN cql.quoted_status = 'quoted'
+                                 AND COALESCE(cql.is_no_bid, 0) = 0
+                                 AND COALESCE(cql.quote_price_gbp, 0) > 0
+                            THEN COALESCE(cql.quote_price_gbp, 0) * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                            ELSE 0
+                        END
+                    ), 0) AS recent_quote_value
+                FROM parts_lists pl
+                JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+                JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                WHERE pl.customer_id IN ({placeholders})
+                  AND cql.quoted_on IS NOT NULL
+                  AND cql.quoted_on::date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND cql.quoted_on::date <= CURRENT_DATE
+                GROUP BY pl.customer_id
+            """
+            recent_quote_rows = db_execute(recent_quotes_query, list(relevant_customer_ids), fetch='all') or []
+            recent_quotes_30d_map = {
+                row['customer_id']: float(row['recent_quote_value'] or 0)
+                for row in recent_quote_rows
+            }
         else:
             first_order_rows = []
 
@@ -6238,6 +6288,12 @@ def get_planner_data(salesperson_id):
             actual_sales = sales_map.get(target_month_str, 0)
             total_actuals_sum += actual_sales
 
+            recent_orders_30d = sum(recent_orders_30d_map.get(sub_id, 0) for sub_id in all_ids)
+            recent_quotes_30d = sum(recent_quotes_30d_map.get(sub_id, 0) for sub_id in all_ids)
+            conversion_pct_30d = None
+            if recent_quotes_30d > 0:
+                conversion_pct_30d = round((recent_orders_30d / recent_quotes_30d) * 100, 1)
+
             chart_data = []
             recent_total = 0
             previous_active_total = 0
@@ -6310,7 +6366,10 @@ def get_planner_data(salesperson_id):
                 'response': saved_data.get('response') or '',
                 'calc_method': calc_method,
                 'is_locked': is_locked,
-                'associated_count': len(all_ids)
+                'associated_count': len(all_ids),
+                'recent_orders_30d': recent_orders_30d,
+                'recent_quotes_30d': recent_quotes_30d,
+                'conversion_pct_30d': conversion_pct_30d
             }
 
             # Categorize
@@ -6366,7 +6425,13 @@ def get_planner_data(salesperson_id):
                     'response': s_data.get('response') or '',
                     'calc_method': 'Manual Target',
                     'is_locked': True,
-                    'associated_count': 1
+                    'associated_count': 1,
+                    'recent_orders_30d': recent_orders_30d_map.get(miss_int, 0) if miss_int is not None else 0,
+                    'recent_quotes_30d': recent_quotes_30d_map.get(miss_int, 0) if miss_int is not None else 0,
+                    'conversion_pct_30d': (
+                        round((recent_orders_30d_map.get(miss_int, 0) / recent_quotes_30d_map.get(miss_int, 0)) * 100, 1)
+                        if miss_int is not None and recent_quotes_30d_map.get(miss_int, 0) > 0 else None
+                    )
                 }
 
                 opportunities.append(orph_obj)
