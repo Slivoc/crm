@@ -55,6 +55,92 @@ def _last_inserted_id(cur, key='id'):
     return getattr(cur, 'lastrowid', None)
 
 
+def _normalize_base_part_numbers(part_numbers):
+    normalized = []
+    seen = set()
+
+    for raw_part in part_numbers or []:
+        cleaned = create_base_part_number((raw_part or '').strip())
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            normalized.append(cleaned)
+
+    return normalized
+
+
+def _fetch_alt_group_members(cur, group_id):
+    _execute_with_cursor(
+        cur,
+        '''
+        SELECT base_part_number
+        FROM part_alt_group_members
+        WHERE group_id = ?
+        ORDER BY base_part_number
+        ''',
+        (group_id,),
+    )
+    return [row['base_part_number'] for row in cur.fetchall()]
+
+
+def _cleanup_alt_group_if_needed(cur, group_id):
+    members = _fetch_alt_group_members(cur, group_id)
+
+    if len(members) >= 2:
+        return members
+
+    _execute_with_cursor(
+        cur,
+        'DELETE FROM part_alt_group_members WHERE group_id = ?',
+        (group_id,),
+    )
+    _execute_with_cursor(
+        cur,
+        'DELETE FROM part_alt_groups WHERE id = ?',
+        (group_id,),
+    )
+    return []
+
+
+def _get_alt_groups(search_query=''):
+    search_query = (search_query or '').strip()
+    like_term = f'%{search_query.lower()}%'
+
+    query = '''
+        WITH matched_groups AS (
+            SELECT DISTINCT g.id
+            FROM part_alt_groups g
+            JOIN part_alt_group_members m ON m.group_id = g.id
+            WHERE ? = ''
+               OR LOWER(COALESCE(g.description, '')) LIKE ?
+               OR LOWER(m.base_part_number) LIKE ?
+        )
+        SELECT
+            g.id AS group_id,
+            COALESCE(g.description, '') AS description,
+            COUNT(m.base_part_number) AS member_count,
+            STRING_AGG(m.base_part_number, '||' ORDER BY m.base_part_number) AS members_serialized
+        FROM matched_groups mg
+        JOIN part_alt_groups g ON g.id = mg.id
+        JOIN part_alt_group_members m ON m.group_id = g.id
+        GROUP BY g.id, g.description
+        ORDER BY COUNT(m.base_part_number) DESC, g.id DESC
+    '''
+
+    rows = db_execute(query, (search_query, like_term, like_term), fetch='all') or []
+
+    groups = []
+    for row in rows:
+        members = [member for member in (row.get('members_serialized') or '').split('||') if member]
+        groups.append({
+            'group_id': row['group_id'],
+            'description': row.get('description') or '',
+            'member_count': row.get('member_count', 0),
+            'members': members,
+        })
+
+    return groups
+
+
 class Part:
     def __init__(self, row_dict):
         self.__dict__.update(row_dict)
@@ -965,27 +1051,19 @@ def create_alt_group():
             return jsonify(success=False, message="No part numbers provided"), 400
 
         # Normalize part numbers
-        base_part_numbers = [create_base_part_number(pn.strip()) for pn in part_numbers if pn.strip()]
+        base_part_numbers = _normalize_base_part_numbers(part_numbers)
 
         if not base_part_numbers:
             return jsonify(success=False, message="No valid part numbers provided"), 400
 
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_parts = []
-        for bp in base_part_numbers:
-            if bp not in seen:
-                seen.add(bp)
-                unique_parts.append(bp)
-
-        if len(unique_parts) < 2:
+        if len(base_part_numbers) < 2:
             return jsonify(success=False, message="Need at least two different parts to create a group"), 400
 
         # Use add_global_alternative to handle all the logic
         # Start by linking the first part to all others
-        primary = unique_parts[0]
+        primary = base_part_numbers[0]
 
-        for alt in unique_parts[1:]:
+        for alt in base_part_numbers[1:]:
             add_global_alternative(primary, alt)
 
         # Get the complete group to return
@@ -1015,32 +1093,140 @@ def create_alt_group():
 @parts_bp.route('/alt_groups', methods=['GET'])
 def alt_groups():
     """Page for managing alternative part groups"""
-    logging.info("=" * 50)
-    logging.info("ALT_GROUPS ROUTE CALLED")
-    logging.info(f"Request method: {request.method}")
-    logging.info(f"Request path: {request.path}")
-    logging.info(f"Request full path: {request.full_path}")
-    logging.info(f"Request URL: {request.url}")
-    logging.info(f"Blueprint name: {request.blueprint}")
-
     try:
+        search_query = request.args.get('q', '').strip()
+        groups = _get_alt_groups(search_query)
         breadcrumbs = [
             ('Home', url_for('index')),
             ('Parts', url_for('parts.parts')),
             ('Alternative Groups', None)
         ]
-        logging.info(f"Breadcrumbs created: {breadcrumbs}")
-
-        logging.info("About to render template: alt_groups.html")
-        result = render_template('alt_groups.html', breadcrumbs=breadcrumbs)
-        logging.info("Template rendered successfully")
-        logging.info("=" * 50)
-        return result
+        return render_template(
+            'alt_groups.html',
+            breadcrumbs=breadcrumbs,
+            groups=groups,
+            search_query=search_query,
+        )
 
     except Exception as e:
         logging.error(f"ERROR in alt_groups route: {e}")
         logging.error(f"Exception type: {type(e)}")
         import traceback
         logging.error(f"Traceback: {traceback.format_exc()}")
-        logging.info("=" * 50)
-        raise
+        flash('Unable to load alternative groups.', 'danger')
+        return redirect(url_for('parts.parts'))
+
+
+@parts_bp.route('/alt_groups/<int:group_id>/remove', methods=['POST'])
+def remove_alt_group_members(group_id):
+    selected_parts = _normalize_base_part_numbers(request.form.getlist('selected_part_numbers'))
+    search_query = request.form.get('q', '').strip()
+
+    if not selected_parts:
+        flash('Select at least one part to remove from the group.', 'warning')
+        return redirect(url_for('parts.alt_groups', q=search_query))
+
+    try:
+        with db_cursor(commit=True) as cur:
+            current_members = _fetch_alt_group_members(cur, group_id)
+            current_member_set = set(current_members)
+            removable_parts = [part for part in selected_parts if part in current_member_set]
+
+            if not removable_parts:
+                flash('None of the selected parts are still in that group.', 'warning')
+                return redirect(url_for('parts.alt_groups', q=search_query))
+
+            placeholders = ', '.join(['?'] * len(removable_parts))
+            _execute_with_cursor(
+                cur,
+                f'''
+                DELETE FROM part_alt_group_members
+                WHERE group_id = ?
+                  AND base_part_number IN ({placeholders})
+                ''',
+                [group_id, *removable_parts],
+            )
+            remaining_members = _cleanup_alt_group_if_needed(cur, group_id)
+
+        if remaining_members:
+            flash(
+                f"Removed {len(removable_parts)} part(s) from group {group_id}. "
+                f"{len(remaining_members)} part(s) remain grouped.",
+                'success',
+            )
+        else:
+            flash(
+                f"Removed {len(removable_parts)} part(s). Group {group_id} was dissolved because fewer than two parts remained.",
+                'success',
+            )
+    except Exception as e:
+        logging.error(f'Error removing members from alt group {group_id}: {e}')
+        flash(f'Could not remove the selected parts: {e}', 'danger')
+
+    return redirect(url_for('parts.alt_groups', q=search_query))
+
+
+@parts_bp.route('/alt_groups/<int:group_id>/split', methods=['POST'])
+def split_alt_group(group_id):
+    selected_parts = _normalize_base_part_numbers(request.form.getlist('selected_part_numbers'))
+    search_query = request.form.get('q', '').strip()
+
+    if len(selected_parts) < 2:
+        flash('Select at least two parts to create a new group.', 'warning')
+        return redirect(url_for('parts.alt_groups', q=search_query))
+
+    try:
+        with db_cursor(commit=True) as cur:
+            current_members = _fetch_alt_group_members(cur, group_id)
+            current_member_set = set(current_members)
+            split_members = [part for part in selected_parts if part in current_member_set]
+
+            if len(split_members) < 2:
+                flash('At least two selected parts must belong to the same current group.', 'warning')
+                return redirect(url_for('parts.alt_groups', q=search_query))
+
+            if len(split_members) == len(current_members):
+                flash('Select only part of the group when splitting. Creating a new group for every member would not change anything.', 'warning')
+                return redirect(url_for('parts.alt_groups', q=search_query))
+
+            description = f"Split from group {group_id}: {' / '.join(split_members[:3])}"
+            insert_query = _with_returning_clause(
+                'INSERT INTO part_alt_groups (description) VALUES (?)',
+                returning='id',
+            )
+            _execute_with_cursor(cur, insert_query, (description,))
+            new_group_id = _last_inserted_id(cur)
+
+            for part_number in split_members:
+                _execute_with_cursor(
+                    cur,
+                    '''
+                    INSERT INTO part_alt_group_members (group_id, base_part_number)
+                    VALUES (?, ?)
+                    ON CONFLICT DO NOTHING
+                    ''',
+                    (new_group_id, part_number),
+                )
+
+            placeholders = ', '.join(['?'] * len(split_members))
+            _execute_with_cursor(
+                cur,
+                f'''
+                DELETE FROM part_alt_group_members
+                WHERE group_id = ?
+                  AND base_part_number IN ({placeholders})
+                ''',
+                [group_id, *split_members],
+            )
+
+            _cleanup_alt_group_if_needed(cur, group_id)
+
+        flash(
+            f"Created new group {new_group_id} with {len(split_members)} selected part(s) from group {group_id}.",
+            'success',
+        )
+    except Exception as e:
+        logging.error(f'Error splitting alt group {group_id}: {e}')
+        flash(f'Could not split the selected parts into a new group: {e}', 'danger')
+
+    return redirect(url_for('parts.alt_groups', q=search_query))
