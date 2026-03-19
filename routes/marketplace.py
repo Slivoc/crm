@@ -1748,24 +1748,18 @@ def get_parts_for_export():
 @marketplace_bp.route('/export', methods=['POST'])
 def export_to_marketplace():
     """
-    Export selected parts to Airbus Marketplace format with pricing
+    Export selected parts to Airbus Marketplace format with pricing.
 
-    POST body (as form data from JS):
-    {
-        "export_data": {
-            "base_part_numbers": ["ABC", "XYZ"],
-            "default_quantity": 1
-        }
-    }
+    Accepts either JSON request bodies or legacy form posts containing an
+    ``export_data`` field so large exports do not hit form parser limits.
     """
     try:
-        # Get export_data from form (sent by JS)
-        import json
-        export_data_str = request.form.get('export_data')
-        if not export_data_str:
-            return jsonify({'error': 'No export data provided'}), 400
-
-        export_data = json.loads(export_data_str)
+        export_data = request.get_json(silent=True)
+        if export_data is None:
+            export_data_str = request.form.get('export_data')
+            if not export_data_str:
+                return jsonify({'error': 'No export data provided'}), 400
+            export_data = json.loads(export_data_str)
         base_part_numbers = export_data.get('base_part_numbers', [])
         default_quantity = int(export_data.get('default_quantity') or 1)
         skip_invalid_mandatory = _coerce_bool(export_data.get('skip_invalid_mandatory'), default=False)
