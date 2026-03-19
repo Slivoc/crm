@@ -1581,8 +1581,7 @@ function escapeCsvValue(value) {
     return strValue;
 }
 
-function downloadCsv(csvContent, filename) {
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+function downloadBlob(blob, filename) {
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
@@ -1591,6 +1590,29 @@ function downloadCsv(csvContent, filename) {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+}
+
+function downloadCsv(csvContent, filename) {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    downloadBlob(blob, filename);
+}
+
+function getFilenameFromDisposition(disposition, fallbackName) {
+    if (!disposition) {
+        return fallbackName;
+    }
+
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match && utf8Match[1]) {
+        return decodeURIComponent(utf8Match[1]);
+    }
+
+    const basicMatch = disposition.match(/filename="?([^";]+)"?/i);
+    if (basicMatch && basicMatch[1]) {
+        return basicMatch[1];
+    }
+
+    return fallbackName;
 }
 
 function coercePositiveNumber(value) {
@@ -1953,7 +1975,7 @@ function resolveExportParts(parts, mode, defaults, actionLabel) {
     };
 }
 
-function exportToCsv(mode) {
+async function exportToCsv(mode) {
     const categorizedParts = allParts.filter(p => p.mkp_category);
 
     if (categorizedParts.length === 0) {
@@ -1979,10 +2001,12 @@ function exportToCsv(mode) {
     const buttonLabel = exportMode === 'offers'
         ? '<i class="bi bi-download"></i> Download Offers CSV'
         : '<i class="bi bi-download"></i> Download Full Airbus CSV';
+    const fallbackFilename = exportMode === 'offers'
+        ? 'AH_Marketplace_Offers.csv'
+        : 'AH_Marketplace_Upload.csv';
 
     $(buttonSelector).prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Generating...');
 
-    // Prepare export data with pricing
     const exportData = {
         base_part_numbers: exportParts.map(p => p.base_part_number),
         default_quantity: parseInt($('#defaultQuantity').val(), 10) || 1,
@@ -1997,26 +2021,44 @@ function exportToCsv(mode) {
             return acc;
         }, {})
     };
-    
-    // Create a form and submit it to trigger download
-    const form = $('<form>', {
-        method: 'POST',
-        action: '/marketplace/export'
-    });
-    
-    $('<input>').attr({
-        type: 'hidden',
-        name: 'export_data',
-        value: JSON.stringify(exportData)
-    }).appendTo(form);
-    
-    $('body').append(form);
-    form.submit();
-    form.remove();
-    
-    setTimeout(function() {
+
+    try {
+        const response = await fetch('/marketplace/export', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'text/csv, application/json'
+            },
+            body: JSON.stringify(exportData)
+        });
+
+        if (!response.ok) {
+            let errorMessage = `Export failed (${response.status})`;
+            const errorText = await response.text();
+            if (errorText) {
+                try {
+                    const errorPayload = JSON.parse(errorText);
+                    errorMessage = errorPayload.error || errorMessage;
+                } catch (parseError) {
+                    errorMessage = errorText;
+                }
+            }
+            throw new Error(errorMessage);
+        }
+
+        const blob = await response.blob();
+        const filename = getFilenameFromDisposition(
+            response.headers.get('Content-Disposition'),
+            fallbackFilename
+        );
+        downloadBlob(blob, filename);
+    } catch (error) {
+        const message = error && error.message ? error.message : 'Unknown export error';
+        $('#exportStatus').text(message);
+        alert('Marketplace export failed: ' + message);
+    } finally {
         $(buttonSelector).prop('disabled', false).html(buttonLabel);
-    }, 2000);
+    }
 }
 
 function updatePushActionUi() {
