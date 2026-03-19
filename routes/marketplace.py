@@ -167,6 +167,10 @@ def _coerce_optional_text(value):
     return text if text else None
 
 
+def _normalize_part_reference(value):
+    return re.sub(r'[^A-Z0-9]+', '', str(value or '').strip().upper())
+
+
 def _normalize_marketplace_export_defaults(raw_defaults):
     payload = raw_defaults or {}
     description_mode = _coerce_text(payload.get('description_mode'), default='part_number')
@@ -233,6 +237,11 @@ def _part_identifier(record):
     return str(record.get('part_number') or record.get('base_part_number') or '').strip()
 
 
+def _is_on_demand_without_price(record):
+    commercial_mode = _coerce_text(record.get('commercial-on-collection'), default='').upper()
+    return commercial_mode == 'ON_DEMAND' and _coerce_positive_number(record.get('price')) is None
+
+
 def _get_offer_missing_required_fields(offer):
     missing = []
     if _is_blank(offer.get('sku')):
@@ -241,7 +250,7 @@ def _get_offer_missing_required_fields(offer):
         missing.append('product-id')
     if _is_blank(offer.get('product-id-type')):
         missing.append('product-id-type')
-    if _coerce_positive_number(offer.get('price')) is None:
+    if not _is_on_demand_without_price(offer) and _coerce_positive_number(offer.get('price')) is None:
         missing.append('price')
     if _coerce_positive_number(offer.get('quantity')) is None:
         missing.append('quantity')
@@ -256,7 +265,7 @@ def _get_product_missing_required_fields(part):
         missing.extend(['code', 'sku', 'product-id'])
     if _is_blank(part.get('mkp_category')):
         missing.append('mkpCategory')
-    if _coerce_positive_number(part.get('price')) is None:
+    if not _is_on_demand_without_price(part) and _coerce_positive_number(part.get('price')) is None:
         missing.append('price')
     if _coerce_positive_number(part.get('quantity')) is None:
         missing.append('quantity')
@@ -593,10 +602,12 @@ def _build_marketplace_baseline_from_row(row_data):
         if normalized in identifier_headers:
             identifier_candidates.append((normalized, raw_value))
 
+    # Prefer seller-controlled identifiers first. In Airbus/Mirakl exports `code`
+    # can be operator-side and not reliably match CRM part numbers.
     identifier_preference = [
-        'code', 'sku', 'productid', 'offersku', 'mpn', 'oem', 'partnumber', 'partno',
-        'partnum', 'manufacturerpn', 'manufacturerpartnumber', 'airbusmaterial',
-        'product', 'productsku',
+        'sku', 'productid', 'offersku', 'productsku', 'product', 'mpn', 'oem',
+        'partnumber', 'partno', 'partnum', 'manufacturerpn', 'manufacturerpartnumber',
+        'airbusmaterial', 'code',
     ]
     part_ref = ''
     for header_name in identifier_preference:
@@ -642,6 +653,19 @@ def _build_offer_row_from_payload(offer):
 
     payload['price'] = offer.get('price', payload.get('price', ''))
     payload['quantity'] = offer.get('quantity', payload.get('quantity', ''))
+    payload['commercial-on-collection'] = offer.get(
+        'commercial-on-collection',
+        payload.get('commercial-on-collection', '')
+    )
+
+    if _is_on_demand_without_price(payload):
+        payload['price'] = ''
+        payload['price-additional-info'] = ''
+        payload['discount-price'] = ''
+        for field in OFFER_IMPORT_FIELDS:
+            lowered = field.lower()
+            if lowered.startswith('price[') or lowered.startswith('discount-price['):
+                payload[field] = ''
 
     return payload
 
@@ -751,9 +775,23 @@ def import_marketplace_details_file():
                 continue
 
             set_clause = ", ".join(f"{field} = ?" for field in field_updates.keys())
-            params = list(field_updates.values()) + [part_ref, part_ref]
+            part_ref_upper = part_ref.strip().upper()
+            normalized_part_ref = _normalize_part_reference(part_ref)
+            params = list(field_updates.values()) + [
+                part_ref_upper,
+                part_ref_upper,
+                normalized_part_ref,
+                normalized_part_ref,
+            ]
             cursor.execute(
-                f"UPDATE part_numbers SET {set_clause} WHERE base_part_number = ? OR part_number = ?",
+                f"""
+                UPDATE part_numbers
+                SET {set_clause}
+                WHERE UPPER(base_part_number) = ?
+                   OR UPPER(part_number) = ?
+                   OR REGEXP_REPLACE(UPPER(COALESCE(base_part_number, '')), '[^A-Z0-9]+', '', 'g') = ?
+                   OR REGEXP_REPLACE(UPPER(COALESCE(part_number, '')), '[^A-Z0-9]+', '', 'g') = ?
+                """,
                 params
             )
             if cursor.rowcount > 0:
@@ -835,7 +873,8 @@ def import_marketplace_stock_price_file():
         skipped_no_match = 0
         row_errors = []
         parsed_rows = []
-        references = set()
+        exact_references = set()
+        normalized_references = set()
 
         for row_number, row_data in rows:
             processed += 1
@@ -846,41 +885,72 @@ def import_marketplace_stock_price_file():
                     row_errors.append(f"Row {row_number}: {row_error}")
                 continue
             ref_key = part_ref.strip().upper()
-            references.add(ref_key)
-            parsed_rows.append((row_number, part_ref.strip(), ref_key, baseline_row))
+            normalized_ref = _normalize_part_reference(part_ref)
+            exact_references.add(ref_key)
+            if normalized_ref:
+                normalized_references.add(normalized_ref)
+            parsed_rows.append((row_number, part_ref.strip(), ref_key, normalized_ref, baseline_row))
 
-        if not references:
+        if not exact_references and not normalized_references:
             return jsonify({
                 'success': False,
                 'error': 'No valid part rows found in file.',
                 'errors': row_errors,
             }), 400
 
-        placeholders = ','.join(['?'] * len(references))
-        params = list(references) + list(references)
+        exact_placeholders = ','.join(['?'] * len(exact_references)) if exact_references else ''
+        normalized_placeholders = ','.join(['?'] * len(normalized_references)) if normalized_references else ''
+        where_clauses = []
+        params = []
+
+        if exact_references:
+            where_clauses.append(f"UPPER(base_part_number) IN ({exact_placeholders})")
+            params.extend(exact_references)
+            where_clauses.append(f"UPPER(part_number) IN ({exact_placeholders})")
+            params.extend(exact_references)
+
+        if normalized_references:
+            where_clauses.append(
+                f"REGEXP_REPLACE(UPPER(COALESCE(base_part_number, '')), '[^A-Z0-9]+', '', 'g') IN ({normalized_placeholders})"
+            )
+            params.extend(normalized_references)
+            where_clauses.append(
+                f"REGEXP_REPLACE(UPPER(COALESCE(part_number, '')), '[^A-Z0-9]+', '', 'g') IN ({normalized_placeholders})"
+            )
+            params.extend(normalized_references)
+
         cursor.execute(
             f"""
             SELECT base_part_number, part_number
             FROM part_numbers
-            WHERE UPPER(base_part_number) IN ({placeholders})
-               OR UPPER(part_number) IN ({placeholders})
+            WHERE {' OR '.join(where_clauses)}
             """,
             params,
         )
         matches = cursor.fetchall()
 
-        ref_lookup = {}
+        exact_lookup = {}
+        normalized_lookup = {}
         for row in matches:
             base_part_number = row['base_part_number']
             part_number = row['part_number']
+            matched_value = (base_part_number, part_number)
             if base_part_number:
-                ref_lookup[str(base_part_number).strip().upper()] = (base_part_number, part_number)
+                exact_lookup.setdefault(str(base_part_number).strip().upper(), matched_value)
+                normalized_base = _normalize_part_reference(base_part_number)
+                if normalized_base:
+                    normalized_lookup.setdefault(normalized_base, matched_value)
             if part_number:
-                ref_lookup[str(part_number).strip().upper()] = (base_part_number, part_number)
+                exact_lookup.setdefault(str(part_number).strip().upper(), matched_value)
+                normalized_part = _normalize_part_reference(part_number)
+                if normalized_part:
+                    normalized_lookup.setdefault(normalized_part, matched_value)
 
         matched_baselines = {}
-        for row_number, part_ref, ref_key, baseline_row in parsed_rows:
-            matched = ref_lookup.get(ref_key)
+        for row_number, part_ref, ref_key, normalized_ref, baseline_row in parsed_rows:
+            matched = exact_lookup.get(ref_key)
+            if not matched and normalized_ref:
+                matched = normalized_lookup.get(normalized_ref)
             if not matched:
                 skipped_no_match += 1
                 if len(row_errors) < 20:

@@ -1719,6 +1719,8 @@ function buildProductPayload(part, defaultQuantity, defaults) {
     const leadTime = part.estimated_lead_days ?? 7;
     const description = resolveDefaultDescription(part, defaults);
     const baselineRow = getImportedAirbusBaselineRow(part);
+    const price = part.estimated_price ?? '';
+    const isOnDemandWithoutPrice = coercePositiveNumber(price) === null;
 
     return {
         part_number: partNumber,
@@ -1747,9 +1749,10 @@ function buildProductPayload(part, defaultQuantity, defaults) {
         description: description,
         manufacturer: '',
         quantity: quantity,
-        price: part.estimated_price ?? '',
+        price: price,
         condition: 'New',
         lead_time_days: leadTime,
+        'commercial-on-collection': isOnDemandWithoutPrice ? 'ON_DEMAND' : 'ON_COLLECTION',
         baseline_row: baselineRow
     };
 }
@@ -1760,12 +1763,14 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
     const quantity = part.in_stock && Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
     const leadTime = part.estimated_lead_days ?? 7;
     const baselineRow = getImportedAirbusBaselineRow(part);
+    const price = part.estimated_price ?? '';
+    const isOnDemandWithoutPrice = coercePositiveNumber(price) === null;
 
     return {
         'sku': partNumber,
         'product-id': partNumber,
         'product-id-type': 'SKU',
-        'price': part.estimated_price ?? '',
+        'price': price,
         'quantity': quantity,
         'state': '1',
         'leadtime-to-ship': leadTime,
@@ -1805,6 +1810,7 @@ function validateMandatoryForProductPayload(payload) {
     const quantity = coercePositiveNumber(payload.quantity);
     const price = coercePositiveNumber(payload.price);
     const description = (payload.mkp_description || payload.description || '').trim();
+    const isOnDemandWithoutPrice = (payload['commercial-on-collection'] || '').trim().toUpperCase() === 'ON_DEMAND' && price === null;
 
     if (!partNumber) {
         missing.push('code');
@@ -1832,7 +1838,7 @@ function validateMandatoryForProductPayload(payload) {
     if (!(payload.mkp_third_level || '').trim()) {
         missing.push('thirdLevel');
     }
-    if (price === null) {
+    if (!isOnDemandWithoutPrice && price === null) {
         missing.push('price');
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -1859,12 +1865,13 @@ function validateMandatoryForOfferPayload(offer) {
     const partNumber = (offer['sku'] || '').trim();
     const quantity = coercePositiveNumber(offer['quantity']);
     const price = coercePositiveNumber(offer['price']);
+    const isOnDemandWithoutPrice = (offer['commercial-on-collection'] || '').trim().toUpperCase() === 'ON_DEMAND' && price === null;
 
     if (!partNumber) {
         missing.push('sku');
         missing.push('product-id');
     }
-    if (price === null) {
+    if (!isOnDemandWithoutPrice && price === null) {
         missing.push('price');
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {

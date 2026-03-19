@@ -142,6 +142,15 @@ def _build_generated_airbus_payload(part):
         mkp_easaf1 = easaf1_true_value if part.get('mkp_easaf1') else easaf1_false_value
     else:
         mkp_easaf1 = _airbus_bool(part.get('mkp_easaf1'))
+    has_price = False
+    if isinstance(price, (int, float)):
+        has_price = float(price) > 0
+    elif isinstance(price, str):
+        try:
+            has_price = float(price.strip().replace(',', '.')) > 0 if price.strip() else False
+        except ValueError:
+            has_price = False
+    commercial_mode = part.get('commercial-on-collection') or ('ON_COLLECTION' if has_price else 'ON_DEMAND')
 
     return {
         "mkpCategory": mkp_category,
@@ -209,7 +218,7 @@ def _build_generated_airbus_payload(part):
         "min-order-quantity": "",
         "package-quantity": "",
         "update-delete": "",
-        "commercial-on-collection": "ON_COLLECTION",
+        "commercial-on-collection": commercial_mode,
         "plt": 14,
         "plt-unit": "DAY",
         "shelflife": "",
@@ -234,6 +243,11 @@ def _build_airbus_row(part):
 
     payload["price"] = generated_payload["price"]
     payload["quantity"] = generated_payload["quantity"]
+    payload["commercial-on-collection"] = generated_payload["commercial-on-collection"]
+
+    if not payload["price"]:
+        payload["price-additional-info"] = ""
+        payload["discount-price"] = ""
 
     return [payload.get(header, '') for header in AIRBUS_MARKETPLACE_HEADERS]
 
