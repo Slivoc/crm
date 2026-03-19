@@ -1299,6 +1299,43 @@ def _run_monroe_check_background(list_id, line_ids, user_id=None, auto_create_of
         logging.exception(f"Monroe auto-check failed: {e}")
 
 
+def _monroe_inventory_meets_moq(result):
+    """Return True when Monroe inventory is sufficient for the MOQ, if both are known."""
+    inventory = result.get('inventory')
+    moq = result.get('minimum_order')
+
+    if inventory is None or moq is None:
+        return True
+
+    try:
+        return int(inventory) >= int(moq)
+    except (TypeError, ValueError):
+        return True
+
+
+def _filter_monroe_offer_results(results, context_label):
+    """Skip Monroe results that cannot satisfy their MOQ with available inventory."""
+    valid_results = []
+    skipped_results = []
+
+    for result in results:
+        if _monroe_inventory_meets_moq(result):
+            valid_results.append(result)
+            continue
+
+        skipped_results.append(result)
+        logging.info(
+            "Monroe %s: Skipping line %s (%s) because inventory %s is below MOQ %s",
+            context_label,
+            result.get('line_number') or result.get('parts_list_line_id'),
+            result.get('searched_part_number') or result.get('base_part_number'),
+            result.get('inventory'),
+            result.get('minimum_order'),
+        )
+
+    return valid_results, skipped_results
+
+
 def _auto_create_monroe_offer(cur, list_id, result_ids, user_id):
     """
     Automatically create a supplier quote/offer from Monroe results.
@@ -1328,6 +1365,26 @@ def _auto_create_monroe_offer(cur, list_id, result_ids, user_id):
             cur.execute("INSERT INTO currencies (currency_code, exchange_rate_to_eur) VALUES ('USD', 1.0)")
             usd_currency_id = cur.lastrowid
 
+    # Get Monroe results
+    placeholders = ",".join("?" for _ in result_ids)
+    cur.execute(f"""
+        SELECT msr.*, pll.line_number, pll.quantity as requested_quantity
+        FROM monroe_search_results msr
+        JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
+        WHERE msr.id IN ({placeholders})
+          AND msr.unit_price IS NOT NULL
+    """, result_ids)
+    results = [dict(row) for row in cur.fetchall()]
+    valid_results, skipped_results = _filter_monroe_offer_results(results, "auto-offer")
+
+    if not valid_results:
+        logging.info(
+            "Monroe auto-offer: No quote created for list %s because %s result(s) were below MOQ availability",
+            list_id,
+            len(skipped_results),
+        )
+        return
+
     # Create supplier quote header
     if _using_postgres():
         cur.execute("""
@@ -1348,20 +1405,9 @@ def _auto_create_monroe_offer(cur, list_id, result_ids, user_id):
               'Auto-imported from Monroe Aerospace website', user_id))
         quote_id = cur.lastrowid
 
-    # Get Monroe results
-    placeholders = ",".join("?" for _ in result_ids)
-    cur.execute(f"""
-        SELECT msr.*, pll.line_number, pll.quantity as requested_quantity
-        FROM monroe_search_results msr
-        JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
-        WHERE msr.id IN ({placeholders})
-          AND msr.unit_price IS NOT NULL
-    """, result_ids)
-    results = [dict(row) for row in cur.fetchall()]
-
     # Create quote lines
     lines_created = 0
-    for result in results:
+    for result in valid_results:
         requested_qty = result.get('requested_quantity') or 1
         moq = result.get('minimum_order') or 1
         quantity_quoted = max(requested_qty, moq)
@@ -1390,7 +1436,10 @@ def _auto_create_monroe_offer(cur, list_id, result_ids, user_id):
         ))
         lines_created += 1
 
-    logging.info(f"Auto-created Monroe quote {quote_id} with {lines_created} lines")
+    logging.info(
+        f"Auto-created Monroe quote {quote_id} with {lines_created} lines"
+        + (f" ({len(skipped_results)} line(s) skipped for MOQ)" if skipped_results else "")
+    )
     return quote_id
 
 
@@ -2393,6 +2442,25 @@ def monroe_load_as_offer(list_id):
         # Get user ID from session
         user_id = session.get('user_id', 1)
 
+        # Get Monroe results
+        placeholders = ",".join("?" for _ in result_ids)
+        cur.execute(f"""
+            SELECT msr.*, pll.line_number, pll.quantity as requested_quantity
+            FROM monroe_search_results msr
+            JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
+            WHERE msr.id IN ({placeholders})
+              AND msr.unit_price IS NOT NULL
+        """, result_ids)
+        results = [dict(row) for row in cur.fetchall()]
+        valid_results, skipped_results = _filter_monroe_offer_results(results, "manual-offer")
+
+        if not valid_results:
+            conn.close()
+            return jsonify(
+                success=False,
+                message="No supplier offer was created because every selected Monroe result has available quantity below its MOQ."
+            ), 400
+
         # Create supplier quote header
         if _using_postgres():
             cur.execute("""
@@ -2413,20 +2481,9 @@ def monroe_load_as_offer(list_id):
                   'Auto-imported from Monroe Aerospace website', user_id))
             quote_id = cur.lastrowid
 
-        # Get Monroe results
-        placeholders = ",".join("?" for _ in result_ids)
-        cur.execute(f"""
-            SELECT msr.*, pll.line_number, pll.quantity as requested_quantity
-            FROM monroe_search_results msr
-            JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
-            WHERE msr.id IN ({placeholders})
-              AND msr.unit_price IS NOT NULL
-        """, result_ids)
-        results = [dict(row) for row in cur.fetchall()]
-
         # Create quote lines
         lines_created = 0
-        for result in results:
+        for result in valid_results:
             requested_qty = result.get('requested_quantity') or 1
             moq = result.get('minimum_order') or 1
             quantity_quoted = max(requested_qty, moq)
@@ -2461,7 +2518,9 @@ def monroe_load_as_offer(list_id):
             success=True,
             quote_id=quote_id,
             lines_created=lines_created,
+            skipped_below_moq=len(skipped_results),
             message=f"Created supplier quote with {lines_created} lines"
+                    + (f" ({len(skipped_results)} skipped below MOQ)" if skipped_results else "")
         )
 
     except Exception as e:
