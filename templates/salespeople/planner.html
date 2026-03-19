@@ -509,6 +509,8 @@ function renderPlanner(data) {
                 initSparkline(`chart-${customer.id}`, chart_labels, customer.chart_data, '#dc3545', customer.name);
             });
         }
+
+        initializePlannerTooltips();
     }
 
     // New helper for the summary card progress bar
@@ -653,7 +655,9 @@ function renderPlanner(data) {
 
     function renderConversionMetric(customer) {
         const quoteValue = Number(customer.recent_quotes_30d || 0);
+        const quoteCount = Number(customer.recent_quotes_count_30d || 0);
         const orderValue = Number(customer.recent_orders_30d || 0);
+        const orderCount = Number(customer.recent_orders_count_30d || 0);
 
         if (quoteValue <= 0) {
             return '<small class="text-muted"><i class="bi bi-percent me-1"></i>30d conversion: —</small>';
@@ -661,11 +665,33 @@ function renderPlanner(data) {
 
         const conversion = Number(customer.conversion_pct_30d || 0);
         const conversionClass = conversion >= 100 ? 'text-success' : conversion >= 50 ? 'text-primary' : 'text-muted';
+        const tooltipHtml = [
+            "<div class='text-start'>",
+            '<div><strong>30-day conversion</strong></div>',
+            `<div>Orders: ${orderCount} for ${formatCurrency(orderValue)}</div>`,
+            `<div>Quoted lines: ${quoteCount} for ${formatCurrency(quoteValue)}</div>`,
+            `<div>Formula: ${formatCurrency(orderValue)} / ${formatCurrency(quoteValue)} = ${formatPercent(conversion)}</div>`,
+            '</div>'
+        ].join('');
         return `
-            <small class="${conversionClass}" title="30-day sales ${formatCurrency(orderValue)} vs quoted ${formatCurrency(quoteValue)}">
+            <small class="${conversionClass}"
+                   data-bs-toggle="tooltip"
+                   data-bs-html="true"
+                   data-bs-placement="top"
+                   title="${tooltipHtml}">
                 <i class="bi bi-percent me-1"></i>30d conversion: ${formatPercent(conversion)}
             </small>
         `;
+    }
+
+    function initializePlannerTooltips() {
+        document.querySelectorAll('#plannerContent [data-bs-toggle="tooltip"]').forEach(element => {
+            const existingTooltip = bootstrap.Tooltip.getInstance(element);
+            if (existingTooltip) {
+                existingTooltip.dispose();
+            }
+            new bootstrap.Tooltip(element);
+        });
     }
 
     // UPDATED: Now accepts customerName and adds click listener
@@ -733,7 +759,9 @@ function addManualCustomer() {
         associated_count: 1,
         first_order_date: null,
         recent_orders_30d: 0,
+        recent_orders_count_30d: 0,
         recent_quotes_30d: 0,
+        recent_quotes_count_30d: 0,
         conversion_pct_30d: null
     };
 
@@ -752,6 +780,7 @@ function addManualCustomer() {
 
     // Initialize Sparkline
     initSparkline(`chart-${newCustomer.id}`, chart_labels, newCustomer.chart_data, '#198754', newCustomer.name);
+    initializePlannerTooltips();
 
     // 3. Remove from dropdown
     select.remove(select.selectedIndex);

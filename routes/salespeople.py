@@ -6154,6 +6154,7 @@ def get_planner_data(salesperson_id):
             recent_orders_query = f"""
                 SELECT
                     customer_id,
+                    COUNT(*) AS recent_order_count,
                     COALESCE(SUM(
                         CASE
                             WHEN total_value IS NULL OR total_value::text = '' THEN 0
@@ -6168,13 +6169,17 @@ def get_planner_data(salesperson_id):
             """
             recent_order_rows = db_execute(recent_orders_query, list(relevant_customer_ids), fetch='all') or []
             recent_orders_30d_map = {
-                row['customer_id']: float(row['recent_order_value'] or 0)
+                row['customer_id']: {
+                    'value': float(row['recent_order_value'] or 0),
+                    'count': int(row['recent_order_count'] or 0)
+                }
                 for row in recent_order_rows
             }
 
             recent_quotes_query = f"""
                 SELECT
                     pl.customer_id,
+                    COUNT(DISTINCT cql.id) AS recent_quote_count,
                     COALESCE(SUM(
                         CASE
                             WHEN cql.quoted_status = 'quoted'
@@ -6195,7 +6200,10 @@ def get_planner_data(salesperson_id):
             """
             recent_quote_rows = db_execute(recent_quotes_query, list(relevant_customer_ids), fetch='all') or []
             recent_quotes_30d_map = {
-                row['customer_id']: float(row['recent_quote_value'] or 0)
+                row['customer_id']: {
+                    'value': float(row['recent_quote_value'] or 0),
+                    'count': int(row['recent_quote_count'] or 0)
+                }
                 for row in recent_quote_rows
             }
         else:
@@ -6288,8 +6296,10 @@ def get_planner_data(salesperson_id):
             actual_sales = sales_map.get(target_month_str, 0)
             total_actuals_sum += actual_sales
 
-            recent_orders_30d = sum(recent_orders_30d_map.get(sub_id, 0) for sub_id in all_ids)
-            recent_quotes_30d = sum(recent_quotes_30d_map.get(sub_id, 0) for sub_id in all_ids)
+            recent_orders_30d = sum((recent_orders_30d_map.get(sub_id) or {}).get('value', 0) for sub_id in all_ids)
+            recent_orders_count_30d = sum((recent_orders_30d_map.get(sub_id) or {}).get('count', 0) for sub_id in all_ids)
+            recent_quotes_30d = sum((recent_quotes_30d_map.get(sub_id) or {}).get('value', 0) for sub_id in all_ids)
+            recent_quotes_count_30d = sum((recent_quotes_30d_map.get(sub_id) or {}).get('count', 0) for sub_id in all_ids)
             conversion_pct_30d = None
             if recent_quotes_30d > 0:
                 conversion_pct_30d = round((recent_orders_30d / recent_quotes_30d) * 100, 1)
@@ -6368,7 +6378,9 @@ def get_planner_data(salesperson_id):
                 'is_locked': is_locked,
                 'associated_count': len(all_ids),
                 'recent_orders_30d': recent_orders_30d,
+                'recent_orders_count_30d': recent_orders_count_30d,
                 'recent_quotes_30d': recent_quotes_30d,
+                'recent_quotes_count_30d': recent_quotes_count_30d,
                 'conversion_pct_30d': conversion_pct_30d
             }
 
@@ -6426,11 +6438,13 @@ def get_planner_data(salesperson_id):
                     'calc_method': 'Manual Target',
                     'is_locked': True,
                     'associated_count': 1,
-                    'recent_orders_30d': recent_orders_30d_map.get(miss_int, 0) if miss_int is not None else 0,
-                    'recent_quotes_30d': recent_quotes_30d_map.get(miss_int, 0) if miss_int is not None else 0,
+                    'recent_orders_30d': ((recent_orders_30d_map.get(miss_int) or {}).get('value', 0) if miss_int is not None else 0),
+                    'recent_orders_count_30d': ((recent_orders_30d_map.get(miss_int) or {}).get('count', 0) if miss_int is not None else 0),
+                    'recent_quotes_30d': ((recent_quotes_30d_map.get(miss_int) or {}).get('value', 0) if miss_int is not None else 0),
+                    'recent_quotes_count_30d': ((recent_quotes_30d_map.get(miss_int) or {}).get('count', 0) if miss_int is not None else 0),
                     'conversion_pct_30d': (
-                        round((recent_orders_30d_map.get(miss_int, 0) / recent_quotes_30d_map.get(miss_int, 0)) * 100, 1)
-                        if miss_int is not None and recent_quotes_30d_map.get(miss_int, 0) > 0 else None
+                        round((((recent_orders_30d_map.get(miss_int) or {}).get('value', 0)) / ((recent_quotes_30d_map.get(miss_int) or {}).get('value', 0))) * 100, 1)
+                        if miss_int is not None and ((recent_quotes_30d_map.get(miss_int) or {}).get('value', 0) > 0) else None
                     )
                 }
 
