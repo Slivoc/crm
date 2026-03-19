@@ -1160,7 +1160,7 @@ CREATE TABLE public.customer_quote_lines (
     lead_days integer,
     standard_condition text,
     standard_certs text,
-    CONSTRAINT customer_quote_lines_quoted_status_check CHECK ((quoted_status = ANY (ARRAY['created'::text, 'quoted'::text, 'no_bid'::text])))
+    CONSTRAINT customer_quote_lines_quoted_status_check CHECK ((quoted_status = ANY (ARRAY['created'::text, 'in_progress'::text, 'quoted'::text, 'no_bid'::text])))
 );
 
 

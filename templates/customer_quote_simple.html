@@ -134,7 +134,16 @@
     background-color: inherit;
 }
 
-/* 3. Below Minimum State: Only change color */
+/* 3. In Progress State: Only change color */
+.quote-table tr.in-progress-row {
+    background-color: #e7f1ff !important;
+    border-left-color: #0d6efd;
+}
+.quote-table tr.in-progress-row td {
+    background-color: inherit;
+}
+
+/* 4. Below Minimum State: Only change color */
 .quote-table tr.below-minimum {
     background-color: #ffebee !important;
     border-left-color: #d32f2f;
@@ -143,7 +152,7 @@
     background-color: inherit;
 }
 
-/* 4. No Bid State: Only change color */
+/* 5. No Bid State: Only change color */
 .quote-table tr.no-bid-row {
     background-color: #fff3cd !important;
     color: #856404;
@@ -190,6 +199,12 @@
     border-color: #b6dfc5;
     color: #0f5132;
     background: #d1e7dd;
+}
+
+.status-btn.status-in-progress {
+    border-color: #b6d4fe;
+    color: #084298;
+    background: #e7f1ff;
 }
 
 .status-btn.status-no-bid {
@@ -474,6 +489,10 @@
             <div class="value" id="createdLinesCount">{{ lines_created }}</div>
         </div>
         <div class="summary-item-compact">
+            <label>In Progress</label>
+            <div class="value" id="inProgressLinesCount">{{ lines_in_progress }}</div>
+        </div>
+        <div class="summary-item-compact">
             <label>Quoted Lines</label>
             <div class="value" id="quotedLinesCount">{{ lines_quoted }}</div>
         </div>
@@ -595,6 +614,7 @@
     <tr data-line-id="{{ line.id }}"
         class="quote-row
                {% if line.quoted_status == 'no_bid' or line.is_no_bid %}no-bid-row
+               {% elif line.quoted_status == 'in_progress' %}in-progress-row
                {% elif line.quoted_status == 'quoted' %}quoted-row
                {% endif %}
                {% if line.quote_price_gbp and (line.quote_price_gbp * (line.chosen_qty or line.quantity)) < 25 and not line.is_no_bid %}below-minimum{% endif %}"
@@ -639,6 +659,8 @@
                 <button class="status-btn status-pill" data-field="quoted_status">
                     {% if line.quoted_status == 'quoted' %}
                     <i class="bi bi-check-circle me-1"></i>Quoted
+                    {% elif line.quoted_status == 'in_progress' %}
+                    <i class="bi bi-hourglass-split me-1"></i>In Progress
                     {% elif line.quoted_status == 'no_bid' %}
                     <i class="bi bi-x-circle me-1"></i>No Bid
                     {% else %}

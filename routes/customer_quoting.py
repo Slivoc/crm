@@ -395,7 +395,8 @@ def customer_quote(list_id):
         # Calculate stats - now using quoted_status
         total_lines = len(lines_with_bom)
         lines_with_cost = sum(1 for l in lines_with_bom if l['chosen_cost'] is not None)
-        lines_created = sum(1 for l in lines_with_bom if l.get('quoted_status') == 'created')
+        lines_created = sum(1 for l in lines_with_bom if (l.get('quoted_status') or 'created') == 'created')
+        lines_in_progress = sum(1 for l in lines_with_bom if l.get('quoted_status') == 'in_progress')
         lines_quoted = sum(1 for l in lines_with_bom if l.get('quoted_status') == 'quoted')
         lines_no_bid = sum(1 for l in lines_with_bom if l.get('quoted_status') == 'no_bid')
 
@@ -433,6 +434,7 @@ def customer_quote(list_id):
                                total_lines=total_lines,
                                lines_with_cost=lines_with_cost,
                                lines_created=lines_created,
+                               lines_in_progress=lines_in_progress,
                                lines_quoted=lines_quoted,
                                lines_no_bid=lines_no_bid,
                                breadcrumbs=breadcrumbs)
@@ -1223,7 +1225,8 @@ def quote_summary(list_id):
         summary = db_execute("""
             SELECT 
                 COUNT(*) as total_lines,
-                COUNT(CASE WHEN cql.quoted_status = 'created' THEN 1 END) as created_lines,
+                COUNT(CASE WHEN COALESCE(cql.quoted_status, 'created') = 'created' THEN 1 END) as created_lines,
+                COUNT(CASE WHEN cql.quoted_status = 'in_progress' THEN 1 END) as in_progress_lines,
                 COUNT(CASE WHEN cql.quoted_status = 'quoted' THEN 1 END) as quoted_lines,
                 COUNT(CASE WHEN cql.quoted_status = 'no_bid' THEN 1 END) as no_bid_lines,
                 COALESCE(SUM(CASE WHEN COALESCE(cql.quoted_status, 'created') != 'no_bid' 
@@ -1262,7 +1265,7 @@ def mark_as_quoted(list_id):
                 FROM parts_list_lines pll
                 JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
                 WHERE pll.parts_list_id = ?
-                  AND cql.quoted_status = 'created'
+                  AND cql.quoted_status IN ('created', 'in_progress')
                   AND cql.quote_price_gbp > 0
                   AND cql.margin_percent > 0
                   AND (cql.is_no_bid IS NULL OR cql.is_no_bid = 0)
@@ -1289,7 +1292,7 @@ def mark_as_quoted(list_id):
                     FROM parts_list_lines pll
                     WHERE pll.parts_list_id = ?
                 )
-                AND quoted_status = 'created'
+                AND quoted_status IN ('created', 'in_progress')
                 AND quote_price_gbp > 0
                 AND margin_percent > 0
                 AND (is_no_bid IS NULL OR is_no_bid = 0)
@@ -1687,7 +1690,7 @@ def minimum_line_value_review(list_id):
                 LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
                 WHERE pll.parts_list_id = ?
                   AND cql.quote_price_gbp > 0
-                  AND (cql.quoted_status IS NULL OR cql.quoted_status = 'created')
+                  AND COALESCE(cql.quoted_status, 'created') IN ('created', 'in_progress')
                   AND cql.is_no_bid = FALSE
                   AND (cql.quote_price_gbp * COALESCE(pll.chosen_qty, pll.quantity)) < ?
                 ORDER BY pll.line_number ASC
@@ -2075,7 +2078,8 @@ def customer_quote_simple(list_id):
 
         total_lines = len(lines_with_bom)
         lines_with_cost = sum(1 for l in lines_with_bom if l['chosen_cost'] is not None)
-        lines_created = sum(1 for l in lines_with_bom if l.get('quoted_status') == 'created')
+        lines_created = sum(1 for l in lines_with_bom if (l.get('quoted_status') or 'created') == 'created')
+        lines_in_progress = sum(1 for l in lines_with_bom if l.get('quoted_status') == 'in_progress')
         lines_quoted = sum(1 for l in lines_with_bom if l.get('quoted_status') == 'quoted')
         lines_no_bid = sum(1 for l in lines_with_bom if l.get('quoted_status') == 'no_bid')
 
@@ -2116,6 +2120,7 @@ def customer_quote_simple(list_id):
                                total_lines=total_lines,
                                lines_with_cost=lines_with_cost,
                                lines_created=lines_created,
+                               lines_in_progress=lines_in_progress,
                                lines_quoted=lines_quoted,
                                lines_no_bid=lines_no_bid,
                                breadcrumbs=breadcrumbs)
