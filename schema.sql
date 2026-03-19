@@ -688,7 +688,7 @@ CREATE TABLE customer_quote_lines (
 
     DATE_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP, delivery_per_unit NUMERIC DEFAULT 0, delivery_per_line NUMERIC DEFAULT 0, quoted_status TEXT DEFAULT 'created' 
 
-CHECK(quoted_status IN ('created', 'quoted', 'no_bid')), lead_days INTEGER DEFAULT NULL, standard_condition TEXT, standard_certs TEXT,
+CHECK(quoted_status IN ('created', 'in_progress', 'quoted', 'no_bid')), lead_days INTEGER DEFAULT NULL, standard_condition TEXT, standard_certs TEXT,
 
     
 

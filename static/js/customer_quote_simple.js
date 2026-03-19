@@ -111,6 +111,7 @@ document.addEventListener('DOMContentLoaded', function() {
         totalCost: 0,
         totalQuote: 0,
         createdCount: 0,
+        inProgressCount: 0,
         quotedCount: 0,
         noBidCount: 0,
         belowMinCount: 0
@@ -123,6 +124,7 @@ document.addEventListener('DOMContentLoaded', function() {
         totalMargin: document.getElementById('totalMargin'),
         avgMargin: document.getElementById('avgMargin'),
         createdLinesCount: document.getElementById('createdLinesCount'),
+        inProgressLinesCount: document.getElementById('inProgressLinesCount'),
         quotedLinesCount: document.getElementById('quotedLinesCount'),
         noBidLinesCount: document.getElementById('noBidLinesCount'),
         minValBadge: document.getElementById('below-minimum-count'),
@@ -260,6 +262,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (fins.isBelowMin) globalState.belowMinCount++;
 
             if (isNoBid || status === 'no_bid') globalState.noBidCount++;
+            else if (status === 'in_progress') globalState.inProgressCount++;
             else if (status === 'quoted') globalState.quotedCount++;
             else globalState.createdCount++;
 
@@ -285,7 +288,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (elements.lineTotalQuote) elements.lineTotalQuote.textContent = 'N/A';
             if (elements.deliveryPerUnit) elements.deliveryPerUnit.textContent = 'N/A';
             row.classList.add('no-bid-row');
-            row.classList.remove('quoted-row', 'below-minimum');
+            row.classList.remove('quoted-row', 'in-progress-row', 'below-minimum');
         } else {
                         const displayCurrencyId = getDisplayCurrencyId();
             const costDisplay = convertFromGbp(fins.cost, displayCurrencyId);
@@ -297,8 +300,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (elements.deliveryPerUnit) elements.deliveryPerUnit.textContent = formatCurrency(deliveryDisplay, displayCurrencyId);
 
             row.classList.remove('no-bid-row');
+            row.classList.remove('in-progress-row');
             if (status === 'quoted') row.classList.add('quoted-row');
             else row.classList.remove('quoted-row');
+            if (status === 'in_progress') row.classList.add('in-progress-row');
 
             if (fins.isBelowMin) row.classList.add('below-minimum');
             else row.classList.remove('below-minimum');
@@ -311,6 +316,9 @@ document.addEventListener('DOMContentLoaded', function() {
         if (status === 'quoted') {
             btn.classList.add('status-quoted');
             btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Quoted';
+        } else if (status === 'in_progress') {
+            btn.classList.add('status-in-progress');
+            btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>In Progress';
         } else if (status === 'no_bid' || isNoBid) {
             btn.classList.add('status-no-bid');
             btn.innerHTML = '<i class="bi bi-x-circle me-1"></i>No Bid';
@@ -345,9 +353,10 @@ document.addEventListener('DOMContentLoaded', function() {
         summaryElements.totalMargin.textContent = formatCurrency(marginDisplay, displayCurrencyId);
         summaryElements.avgMargin.textContent = marginPct.toFixed(1) + '%';
 
-        summaryElements.createdLinesCount.textContent = globalState.createdCount;
-        summaryElements.quotedLinesCount.textContent = globalState.quotedCount;
-        summaryElements.noBidLinesCount.textContent = globalState.noBidCount;
+        if (summaryElements.createdLinesCount) summaryElements.createdLinesCount.textContent = globalState.createdCount;
+        if (summaryElements.inProgressLinesCount) summaryElements.inProgressLinesCount.textContent = globalState.inProgressCount;
+        if (summaryElements.quotedLinesCount) summaryElements.quotedLinesCount.textContent = globalState.quotedCount;
+        if (summaryElements.noBidLinesCount) summaryElements.noBidLinesCount.textContent = globalState.noBidCount;
 
         summaryElements.minValBadge.textContent = globalState.belowMinCount;
         if (globalState.belowMinCount > 0) {
@@ -395,11 +404,13 @@ document.addEventListener('DOMContentLoaded', function() {
         if (status !== cached.lastStatus) {
             // Decrement old
             if (cached.lastIsNoBid || cached.lastStatus === 'no_bid') globalState.noBidCount--;
+            else if (cached.lastStatus === 'in_progress') globalState.inProgressCount--;
             else if (cached.lastStatus === 'quoted') globalState.quotedCount--;
             else globalState.createdCount--;
 
             // Increment new
             if (isNoBid || status === 'no_bid') globalState.noBidCount++;
+            else if (status === 'in_progress') globalState.inProgressCount++;
             else if (status === 'quoted') globalState.quotedCount++;
             else globalState.createdCount++;
         }
@@ -588,7 +599,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const isCurrentlyNoBid = row.dataset.isNoBid == '1';
 
         // Calculate next status logic
-        const statuses = ['created', 'quoted', 'no_bid'];
+        const statuses = ['created', 'in_progress', 'quoted', 'no_bid'];
         let currentIndex = statuses.indexOf(currentStatus);
 
         const nextStatus = statuses[(currentIndex + 1) % statuses.length];
@@ -949,14 +960,14 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!cached) return;
             const { lineData, elements, lastIsNoBid } = cached;
 
+            const status = row.dataset.status || cached.lastStatus || 'created';
             const quotePrice = parseFloat(elements.quotePriceGbp.value) || 0;
 
             const quotePriceDisplay = convertFromGbp(quotePrice, displayCurrencyId);
 
             // --- FILTER LOGIC ---
-            // Hide row ONLY IF it is NOT "No Bid" AND Price is 0.
-            // (This keeps "No Bid" lines visible, but hides unquoted lines)
-            if (!lastIsNoBid && quotePrice <= 0) return;
+            // Keep No Bid and In Progress lines visible even without pricing.
+            if (!lastIsNoBid && status !== 'in_progress' && quotePrice <= 0) return;
 
             // --- VISUAL LOGIC ---
             const effectiveQty = parseFloat(elements.chosenQty.value) || lineData.quantity;
@@ -974,6 +985,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 unitPriceDisplay = 'NO BID';
                 lineTotalDisplay = '-';
                 rowStyle += 'background-color:#fff3cd; color:#856404; font-style:italic;';
+            } else if (status === 'in_progress') {
+                unitPriceDisplay = 'IN PROGRESS';
+                lineTotalDisplay = '-';
+                rowStyle += 'background-color:#e7f1ff; color:#0c63e4; font-style:italic;';
             }
 
             // Highlights
@@ -998,7 +1013,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (selectedCols.unit_price) html += `<td align="right" style="${rowStyle}">${unitPriceDisplay}</td>`;
             if (selectedCols.line_total) html += `<td align="right" style="${rowStyle}">${lineTotalDisplay}</td>`;
             if (selectedCols.lead_days) html += `<td align="left" style="${rowStyle}">${elements.leadDays.value || ''}</td>`;
-            if (selectedCols.quoted_on) html += `<td align="left" style="${rowStyle}">${formatQuotedOn(lineData.quoted_on)}</td>`;
+            if (selectedCols.quoted_on) html += `<td align="left" style="${rowStyle}">${status === 'in_progress' ? 'In Progress' : formatQuotedOn(lineData.quoted_on)}</td>`;
             const manufacturerVal = (elements.manufacturer && elements.manufacturer.value.trim()) || lineData.manufacturer || '';
 
             if (selectedCols.manufacturer) html += `<td align="left" style="${rowStyle}">${manufacturerVal}</td>`;
@@ -1127,8 +1142,8 @@ document.addEventListener('DOMContentLoaded', function() {
         // 3. Get current state
         const currentStatus = row.dataset.status || 'created';
 
-        // 4. Calculate next status (Cycle: Created -> Quoted -> No Bid)
-        const statuses = ['created', 'quoted', 'no_bid'];
+        // 4. Calculate next status (Cycle: Created -> In Progress -> Quoted -> No Bid)
+        const statuses = ['created', 'in_progress', 'quoted', 'no_bid'];
         let currentIndex = statuses.indexOf(currentStatus);
         const nextStatus = statuses[(currentIndex + 1) % statuses.length];
         const nextIsNoBid = nextStatus === 'no_bid';
@@ -1482,7 +1497,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     const currentStatus = row.dataset.status || cached.lastStatus || 'created';
                     const isNoBid = row.dataset.isNoBid === '1';
 
-                    if (currentStatus === 'created' && !isNoBid && price > 0 && margin > 0) {
+                    if ((currentStatus === 'created' || currentStatus === 'in_progress') && !isNoBid && price > 0 && margin > 0) {
                         row.dataset.status = 'quoted';
                         row.dataset.isNoBid = '0';
                         cached.lineData.quoted_on = quotedOnValue;
