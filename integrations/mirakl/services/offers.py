@@ -88,6 +88,27 @@ def _is_blank(value: Any) -> bool:
     return False
 
 
+def _coerce_positive_number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            number = float(text.replace(',', '.'))
+        except ValueError:
+            return None
+    return number if number > 0 else None
+
+
+def _is_on_demand_without_price(row: Dict[str, Any]) -> bool:
+    commercial_mode = str(row.get('commercial-on-collection') or '').strip().upper()
+    return commercial_mode == 'ON_DEMAND' and _coerce_positive_number(row.get('price')) is None
+
+
 def build_offers_csv(
     offers: Iterable[Dict[str, Any]],
     *,
@@ -102,6 +123,8 @@ def build_offers_csv(
     for idx, row in enumerate(rows, start=1):
         row_missing = []
         for field in REQUIRED_FIELDS:
+            if field == 'price' and _is_on_demand_without_price(row):
+                continue
             if field not in row or _is_blank(row.get(field)):
                 row_missing.append(field)
         if row_missing:
