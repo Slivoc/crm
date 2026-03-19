@@ -62,7 +62,7 @@
                     <div>
                         <h4 class="mb-1">Manage existing groups</h4>
                         <p class="text-muted mb-0 small">
-                            Search by group description or member part number, then select members to remove or split out.
+                            Search for a member part number to load matching groups, then select members to remove or split out.
                         </p>
                     </div>
                     <form method="get" action="{{ url_for('parts.alt_groups') }}" class="d-flex flex-wrap gap-2">
@@ -72,7 +72,8 @@
                             style="min-width: 260px;"
                             name="q"
                             value="{{ search_query }}"
-                            placeholder="Search groups or part numbers"
+                            placeholder="Search by part number"
+                            required
                         >
                         <button type="submit" class="btn btn-outline-primary">
                             <i class="bi bi-search me-2"></i>Search
@@ -157,12 +158,18 @@
                             <div class="mb-3 text-muted">
                                 <i class="bi bi-inboxes fs-1"></i>
                             </div>
-                            <h5 class="mb-2">No groups found</h5>
+                            <h5 class="mb-2">
+                                {% if search_query %}
+                                    No groups found
+                                {% else %}
+                                    Search for a part number
+                                {% endif %}
+                            </h5>
                             <p class="text-muted mb-0">
                                 {% if search_query %}
                                     No groups matched “{{ search_query }}”.
                                 {% else %}
-                                    There are no alternative groups yet.
+                                    Enter a part number above to find the matching alternative group(s).
                                 {% endif %}
                             </p>
                         </div>
