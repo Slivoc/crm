@@ -103,6 +103,9 @@ def _cleanup_alt_group_if_needed(cur, group_id):
 
 def _get_alt_groups(search_query=''):
     search_query = (search_query or '').strip()
+    if not search_query:
+        return []
+
     like_term = f'%{search_query.lower()}%'
 
     query = '''
@@ -110,9 +113,7 @@ def _get_alt_groups(search_query=''):
             SELECT DISTINCT g.id
             FROM part_alt_groups g
             JOIN part_alt_group_members m ON m.group_id = g.id
-            WHERE ? = ''
-               OR LOWER(COALESCE(g.description, '')) LIKE ?
-               OR LOWER(m.base_part_number) LIKE ?
+            WHERE LOWER(m.base_part_number) LIKE ?
         )
         SELECT
             g.id AS group_id,
@@ -126,7 +127,7 @@ def _get_alt_groups(search_query=''):
         ORDER BY COUNT(m.base_part_number) DESC, g.id DESC
     '''
 
-    rows = db_execute(query, (search_query, like_term, like_term), fetch='all') or []
+    rows = db_execute(query, (like_term,), fetch='all') or []
 
     groups = []
     for row in rows:
@@ -1095,7 +1096,7 @@ def alt_groups():
     """Page for managing alternative part groups"""
     try:
         search_query = request.args.get('q', '').strip()
-        groups = _get_alt_groups(search_query)
+        groups = _get_alt_groups(search_query) if search_query else []
         breadcrumbs = [
             ('Home', url_for('index')),
             ('Parts', url_for('parts.parts')),
