@@ -1253,6 +1253,10 @@ function displayQPLInfo(approvals) {
         badge.style.cssText = 'background: #e8f5e9; color: #2e7d32; font-weight: 500; font-size: 0.85rem; padding: 0.45rem 0.7rem;';
 
         let text = approval.manufacturer_name;
+        if (approval.approval_list_type) {
+            const typeLabel = approval.approval_list_type === 'airbus_fixed_wing' ? 'Fixed Wing' : approval.approval_list_type === 'airbus_rotary' ? 'Rotary' : approval.approval_list_type;
+            text += ` · ${typeLabel}`;
+        }
         if (approval.cage_code) {
             text += ` (${approval.cage_code})`;
         }

@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+
+{% block title %}Manufacturer QPL Approvals{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4 manufacturer-approvals-page">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+        <div>
+            <h2 class="mb-1">Manufacturer QPL Approvals</h2>
+            <p class="text-muted mb-0">Manage Airbus rotary and fixed wing approval datasets, with overwrite imports for monthly workbook drops.</p>
+        </div>
+        <a href="{{ url_for('parts.parts') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-box-arrow-up-right me-1"></i>Back to Parts
+        </a>
+    </div>
+
+    <div class="row g-3 mb-4">
+        {% for summary in summaries %}
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100 border-0 summary-card summary-{{ summary.key }}">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start gap-3">
+                        <div>
+                            <div class="text-uppercase small fw-semibold text-muted mb-2">{{ summary.label }}</div>
+                            <div class="display-6 fw-bold mb-1">{{ '{:,}'.format(summary.active_rows or 0) }}</div>
+                            <div class="text-muted">Active approval rows in the live dataset.</div>
+                        </div>
+                        <span class="badge rounded-pill text-bg-light border">{{ summary.key|replace('_', ' ') }}</span>
+                    </div>
+                    <hr>
+                    {% if summary.latest_import_id %}
+                    <div class="small text-muted">
+                        <div><strong>Latest import:</strong> #{{ summary.latest_import_id }}{% if summary.latest_imported_at %} on {{ summary.latest_imported_at }}{% endif %}</div>
+                        <div><strong>Imported by:</strong> {{ summary.latest_imported_by or 'Unknown' }}</div>
+                        <div><strong>Files:</strong> {{ summary.source_file_count or 1 }} workbook(s)</div>
+                        <div><strong>Source:</strong> {{ summary.source_file or 'N/A' }}</div>
+                        <div><strong>Rows in import:</strong> {{ '{:,}'.format(summary.latest_row_count or 0) }}</div>
+                    </div>
+                    {% else %}
+                    <div class="small text-muted">No imports have been loaded for this list yet.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="row g-4 align-items-start">
+        <div class="col-xl-4">
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-white py-3">
+                    <h5 class="mb-1">Upload Airbus Approval Workbooks</h5>
+                    <div class="text-muted small">Built for large monthly drops. Upload one or more workbooks and overwrite the selected Airbus list in one pass.</div>
+                </div>
+                <div class="card-body">
+                    <form method="post" action="{{ url_for('manufacturer_approvals.import_manufacturer_approvals') }}" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="approval_list_type" class="form-label">Approval list</label>
+                            <select id="approval_list_type" name="approval_list_type" class="form-select" required>
+                                {% for key, label in list_types.items() %}
+                                <option value="{{ key }}" {% if search.filters.approval_list_type == key %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Use <strong>Fixed Wing</strong> for the monthly Airbus release and <strong>Rotary</strong> for helicopter approvals.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="files" class="form-label">Workbook files</label>
+                            <input id="files" name="files" type="file" class="form-control" accept="{{ allowed_extensions|join(',') }}" multiple required>
+                            <div class="form-text">Supported formats: {{ allowed_extensions|join(', ') }}. Select both fixed-wing workbooks together so the import runs as one overwrite.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="batch_size" class="form-label">Insert batch size</label>
+                            <input id="batch_size" name="batch_size" type="number" class="form-control" min="250" max="10000" step="250" value="5000">
+                            <div class="form-text">Larger batches reduce round trips for 60–100 MB Excel files.</div>
+                        </div>
+
+                        <div class="alert alert-warning small" role="alert">
+                            <i class="bi bi-exclamation-triangle me-1"></i>
+                            Imports overwrite the current dataset for the selected Airbus list type, removing rows that are not present in the new upload.
+                        </div>
+
+                        <input type="hidden" name="overwrite_existing" value="1">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-cloud-upload me-1"></i>Import and Replace List
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="mb-1">Recent Imports</h5>
+                        <div class="text-muted small">Most recent approval loads across Airbus list types.</div>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    {% if imports %}
+                    <div class="list-group list-group-flush">
+                        {% for imp in imports %}
+                        <div class="list-group-item py-3">
+                            <div class="d-flex justify-content-between align-items-start gap-2">
+                                <div>
+                                    <div class="fw-semibold">{{ list_types.get(imp.approval_list_type, imp.approval_list_type) }}</div>
+                                    <div class="small text-muted">Import #{{ imp.id }} · {{ imp.imported_at }}</div>
+                                </div>
+                                <span class="badge {% if imp.overwrite_existing %}text-bg-primary{% else %}text-bg-secondary{% endif %}">
+                                    {{ 'Overwrite' if imp.overwrite_existing else 'Append' }}
+                                </span>
+                            </div>
+                            <div class="small mt-2 text-muted">
+                                <div><strong>Files:</strong> {{ imp.source_file_count or 1 }}</div>
+                                <div><strong>Source:</strong> {{ imp.source_file or 'N/A' }}</div>
+                                <div><strong>Rows:</strong> {{ '{:,}'.format(imp.row_count or 0) }}</div>
+                                <div><strong>By:</strong> {{ imp.imported_by or 'Unknown' }}</div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="p-4 text-muted">No import history available yet.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-8">
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-white py-3">
+                    <h5 class="mb-1">Search Live Approval Rows</h5>
+                    <div class="text-muted small">Server-side filtering and pagination so large Airbus datasets stay manageable.</div>
+                </div>
+                <div class="card-body">
+                    <form method="get" action="{{ url_for('manufacturer_approvals.manufacturer_approvals_dashboard') }}" class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Global search</label>
+                            <input type="text" class="form-control" name="q" value="{{ search.filters.q }}" placeholder="Manufacturer, MPN, Airbus material, CAGE...">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Approval list</label>
+                            <select class="form-select" name="approval_list_type">
+                                {% for key, label in list_types.items() %}
+                                <option value="{{ key }}" {% if search.filters.approval_list_type == key %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Rows per page</label>
+                            <select class="form-select" name="per_page">
+                                {% for option in [25, 50, 100, 250] %}
+                                <option value="{{ option }}" {% if search.per_page == option %}selected{% endif %}>{{ option }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Manufacturer name</label>
+                            <input type="text" class="form-control" name="manufacturer_name" value="{{ search.filters.manufacturer_name }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Manufacturer part number</label>
+                            <input type="text" class="form-control" name="manufacturer_part_number" value="{{ search.filters.manufacturer_part_number }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Airbus material</label>
+                            <input type="text" class="form-control" name="airbus_material" value="{{ search.filters.airbus_material }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">CAGE</label>
+                            <input type="text" class="form-control" name="cage_code" value="{{ search.filters.cage_code }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Approval status</label>
+                            <input type="text" class="form-control" name="approval_status" value="{{ search.filters.approval_status }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Data type</label>
+                            <input type="text" class="form-control" name="data_type" value="{{ search.filters.data_type }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Standard</label>
+                            <input type="text" class="form-control" name="standard" value="{{ search.filters.standard }}">
+                        </div>
+                        <div class="col-12 d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-search me-1"></i>Search
+                            </button>
+                            <a href="{{ url_for('manufacturer_approvals.manufacturer_approvals_dashboard') }}" class="btn btn-outline-secondary">Reset</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <div>
+                        <h5 class="mb-1">Results</h5>
+                        <div class="text-muted small">{{ '{:,}'.format(search.total or 0) }} row(s) found in {{ list_types.get(search.filters.approval_list_type, search.filters.approval_list_type) }}.</div>
+                    </div>
+                    <div class="small text-muted">Page {{ search.page }} of {{ search.total_pages or 1 }}</div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0 results-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Manufacturer</th>
+                                <th>MPN</th>
+                                <th>Airbus Material</th>
+                                <th>CAGE</th>
+                                <th>Location</th>
+                                <th>Status</th>
+                                <th>Standard</th>
+                                <th>Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if search.results %}
+                                {% for row in search.results %}
+                                <tr>
+                                    <td>
+                                        <div class="fw-semibold">{{ row.manufacturer_name }}</div>
+                                        <div class="small text-muted">{{ row.country or '—' }}</div>
+                                    </td>
+                                    <td class="text-break">{{ row.manufacturer_part_number or '—' }}</td>
+                                    <td class="text-break">{{ row.airbus_material or '—' }}</td>
+                                    <td>{{ row.cage_code or '—' }}</td>
+                                    <td>{{ row.location or '—' }}</td>
+                                    <td>{{ row.approval_status or '—' }}</td>
+                                    <td>{{ row.standard or '—' }}</td>
+                                    <td>{{ row.updated_at or '—' }}</td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="8" class="text-center text-muted py-5">No approvals matched the current filters.</td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+                {% if search.total_pages and search.total_pages > 1 %}
+                <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+                    <div class="small text-muted">
+                        Showing rows {{ ((search.page - 1) * search.per_page) + 1 if search.total else 0 }}-
+                        {{ [search.page * search.per_page, search.total]|min }} of {{ search.total }}.
+                    </div>
+                    <div class="btn-group">
+                        <a class="btn btn-outline-secondary {% if search.page <= 1 %}disabled{% endif %}" href="{{ url_for('manufacturer_approvals.manufacturer_approvals_dashboard', **page_params, page=search.page - 1) if search.page > 1 else '#' }}">Previous</a>
+                        <a class="btn btn-outline-secondary {% if search.page >= search.total_pages %}disabled{% endif %}" href="{{ url_for('manufacturer_approvals.manufacturer_approvals_dashboard', **page_params, page=search.page + 1) if search.page < search.total_pages else '#' }}">Next</a>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .manufacturer-approvals-page .summary-card {
+        background: linear-gradient(180deg, #ffffff 0%, #fafbff 100%);
+    }
+
+    .manufacturer-approvals-page .summary-airbus_fixed_wing {
+        border-left: 4px solid #0d6efd !important;
+    }
+
+    .manufacturer-approvals-page .summary-airbus_rotary {
+        border-left: 4px solid #198754 !important;
+    }
+
+    .manufacturer-approvals-page .results-table td,
+    .manufacturer-approvals-page .results-table th {
+        white-space: nowrap;
+    }
+
+    .manufacturer-approvals-page .results-table .text-break {
+        white-space: normal;
+        word-break: break-word;
+        min-width: 150px;
+    }
+</style>
+{% endblock %}
