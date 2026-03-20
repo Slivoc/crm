@@ -796,6 +796,11 @@
                                     <div class="d-flex justify-content-between align-items-start">
                                         <div class="manufacturer-name">
                                             <i class="bi bi-building me-1"></i>{{ approval.manufacturer_name }}
+                                            {% if approval.approval_list_type %}
+                                            <span class="badge bg-light text-dark border ms-2">
+                                                {{ 'Fixed Wing' if approval.approval_list_type == 'airbus_fixed_wing' else 'Rotary' if approval.approval_list_type == 'airbus_rotary' else approval.approval_list_type }}
+                                            </span>
+                                            {% endif %}
                                         </div>
                                         <span class="status-badge {% if approval.approval_status == 'Approved' %}approved{% elif approval.approval_status == 'Pending' %}pending{% else %}new{% endif %}">
                                             {{ approval.approval_status or 'Unknown' }}

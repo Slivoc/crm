@@ -1197,6 +1197,7 @@ def get_manufacturer_approvals_by_part_number(base_part_number):
             location,
             country,
             approval_status,
+            approval_list_type,
             standard,
             airbus_material,
             manufacturer_part_number,

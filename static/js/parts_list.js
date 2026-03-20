@@ -641,7 +641,7 @@ function showQplDetailsModal(partIndex) {
             if (!data.success) {
                 bodyEl.innerHTML = `
                     <tr>
-                        <td colspan="3" class="text-center text-danger">${escapeHtml(data.message || 'Error loading QPL data.')}</td>
+                        <td colspan="4" class="text-center text-danger">${escapeHtml(data.message || 'Error loading QPL data.')}</td>
                     </tr>
                 `;
                 return;
@@ -650,7 +650,7 @@ function showQplDetailsModal(partIndex) {
             if (!data.results || data.results.length === 0) {
                 bodyEl.innerHTML = `
                     <tr>
-                        <td colspan="3" class="text-center text-muted">No QPL approvals found.</td>
+                        <td colspan="4" class="text-center text-muted">No QPL approvals found.</td>
                     </tr>
                 `;
                 return;
@@ -661,6 +661,7 @@ function showQplDetailsModal(partIndex) {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td>${escapeHtml(row.manufacturer_name || '-')}</td>
+                    <td>${escapeHtml(row.approval_list_type ? row.approval_list_type.replace(/_/g, ' ') : '-')}</td>
                     <td>${escapeHtml(row.cage_code || '-')}</td>
                     <td>${escapeHtml(row.location || '-')}</td>
                 `;
@@ -671,7 +672,7 @@ function showQplDetailsModal(partIndex) {
             console.error('Error loading QPL data:', error);
             bodyEl.innerHTML = `
                 <tr>
-                    <td colspan="3" class="text-center text-danger">Error loading QPL data.</td>
+                    <td colspan="4" class="text-center text-danger">Error loading QPL data.</td>
                 </tr>
             `;
         });

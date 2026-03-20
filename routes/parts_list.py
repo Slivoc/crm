@@ -3122,10 +3122,10 @@ def get_qpl_matches():
 
         rows = db_execute(
             """
-            SELECT manufacturer_name, cage_code, location
+            SELECT manufacturer_name, cage_code, location, approval_list_type
             FROM manufacturer_approvals
             WHERE airbus_material_base = ? OR manufacturer_part_number_base = ?
-            ORDER BY manufacturer_name, cage_code, location
+            ORDER BY manufacturer_name, approval_list_type, cage_code, location
             """,
             (base_part_number, base_part_number),
             fetch='all',
@@ -6684,10 +6684,11 @@ def get_line_quotes(list_id, line_id):
                     SELECT DISTINCT
                         manufacturer_name,
                         cage_code,
-                        approval_status
+                        approval_status,
+                        approval_list_type
                     FROM manufacturer_approvals
                     WHERE airbus_material_base = ? OR manufacturer_part_number_base = ?
-                    ORDER BY manufacturer_name
+                    ORDER BY manufacturer_name, approval_list_type
                     LIMIT 20
                     """,
                     (line['base_part_number'], line['base_part_number']),
