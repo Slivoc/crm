@@ -130,14 +130,41 @@
         </div>
         <div class="card-body">
             <!-- Filter Options -->
-            <div class="mb-3">
-                <label class="form-label">Filter by Supplier:</label>
-                <div class="btn-group" role="group">
-                    <input type="radio" class="btn-check" name="supplierFilter" id="filterAll" value="all" checked>
-                    <label class="btn btn-outline-primary btn-sm" for="filterAll">All</label>
+            <div class="row g-3 align-items-end mb-3">
+                <div class="col-md-4">
+                    <label class="form-label">Filter by Supplier:</label>
+                    <div class="btn-group" role="group">
+                        <input type="radio" class="btn-check" name="supplierFilter" id="filterAll" value="all" checked>
+                        <label class="btn btn-outline-primary btn-sm" for="filterAll">All</label>
 
-                    <input type="radio" class="btn-check" name="supplierFilter" id="filterMonroe" value="monroe">
-                    <label class="btn btn-outline-warning btn-sm" for="filterMonroe">Monroe</label>
+                        <input type="radio" class="btn-check" name="supplierFilter" id="filterMonroe" value="monroe">
+                        <label class="btn btn-outline-warning btn-sm" for="filterMonroe">Monroe</label>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label for="partsListFilter" class="form-label">Filter by Parts List:</label>
+                    <select id="partsListFilter" class="form-select form-select-sm">
+                        <option value="">All recent parts lists</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <div class="d-flex flex-wrap gap-2 justify-content-md-end">
+                        <button class="btn btn-outline-secondary btn-sm" id="selectAllSuccessfulBtn" type="button">
+                            <i class="fas fa-check-square"></i> Select Successful
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" id="clearSelectedBtn" type="button">
+                            <i class="fas fa-square"></i> Clear
+                        </button>
+                        <button class="btn btn-success btn-sm" id="createOfferFromSelectedBtn" type="button" disabled>
+                            <i class="fas fa-file-signature"></i> Create Supplier Offer
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <div id="scrapeSelectionSummary" class="text-muted small">
+                    No successful scrape results selected.
                 </div>
             </div>
 
@@ -252,6 +279,8 @@
 
 <script>
 let statusPollInterval = null;
+let currentScrapeQueueResults = [];
+let selectedScrapeResultIds = new Set();
 
 document.addEventListener('DOMContentLoaded', function() {
     // Load initial scrape queue and status
@@ -265,10 +294,21 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('input[name="supplierFilter"]').forEach(radio => {
         radio.addEventListener('change', function() {
             const supplier = this.value === 'all' ? 'monroe' : this.value;
+            selectedScrapeResultIds.clear();
             loadScrapeQueue(supplier);
             loadScrapeStatus(supplier);
         });
     });
+
+    document.getElementById('partsListFilter').addEventListener('change', function() {
+        selectedScrapeResultIds.clear();
+        refreshScrapeQueue();
+    });
+
+    document.getElementById('selectAllSuccessfulBtn').addEventListener('click', selectAllSuccessfulResults);
+    document.getElementById('clearSelectedBtn').addEventListener('click', clearSelectedResults);
+    document.getElementById('createOfferFromSelectedBtn').addEventListener('click', createSupplierOfferFromSelected);
+    updateBulkActionState();
 });
 
 // Poll for scraping status updates
@@ -488,6 +528,12 @@ document.getElementById('saveProponentSettings').addEventListener('click', async
 // Load Scrape Queue
 async function loadScrapeQueue(supplier) {
     const container = document.getElementById('scrapeQueueContainer');
+    const partsListFilter = document.getElementById('partsListFilter').value;
+    const query = new URLSearchParams();
+    if (partsListFilter) {
+        query.set('parts_list_id', partsListFilter);
+    }
+
     container.innerHTML = `
         <div class="text-center py-4">
             <div class="spinner-border text-primary" role="status">
@@ -498,25 +544,45 @@ async function loadScrapeQueue(supplier) {
     `;
 
     try {
-        const resp = await fetch('/supplier-portal/api/scrape-queue/' + supplier);
+        const endpoint = '/supplier-portal/api/scrape-queue/' + supplier + (query.toString() ? `?${query.toString()}` : '');
+        const resp = await fetch(endpoint);
         const data = await resp.json();
 
         if (data.success) {
+            syncPartsListFilterOptions(data.parts_lists || []);
+            currentScrapeQueueResults = data.results || [];
+            syncSelectedResultsWithCurrentResults();
+
             if (data.results.length === 0) {
                 container.innerHTML = `
                     <div class="alert alert-info">
                         <i class="fas fa-info-circle"></i> No recent scrapes found in the last 7 days.
                     </div>
                 `;
+                updateBulkActionState();
                 return;
             }
 
             // Build table
             let html = `
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="text-muted small">
+                        Showing ${data.results.length} recent result${data.results.length === 1 ? '' : 's'}${partsListFilter ? ' for the selected parts list' : ''}.
+                    </div>
+                </div>
                 <div class="table-responsive">
                     <table class="table table-sm table-hover">
                         <thead class="table-light">
                             <tr>
+                                <th style="width: 38px;">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="selectAllVisibleResults"
+                                        title="Select all successful visible results"
+                                        ${getSelectableResultCount() === 0 ? 'disabled' : ''}
+                                    >
+                                </th>
                                 <th>Date</th>
                                 <th>Parts List</th>
                                 <th>Line</th>
@@ -532,8 +598,8 @@ async function loadScrapeQueue(supplier) {
                         <tbody>
             `;
 
-            data.results.forEach((result, idx) => {
-                const hasPrice = result.unit_price !== null;
+            data.results.forEach((result) => {
+                const hasPrice = result.unit_price !== null && result.unit_price !== '';
                 const statusBadge = hasPrice
                     ? '<span class="badge bg-success">Success</span>'
                     : result.error_message
@@ -545,16 +611,27 @@ async function loadScrapeQueue(supplier) {
 
                 html += `
                     <tr>
+                        <td>
+                            ${hasPrice ? `
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input scrape-result-checkbox"
+                                    value="${result.id}"
+                                    ${selectedScrapeResultIds.has(result.id) ? 'checked' : ''}
+                                    title="Select this successful result for supplier offer creation"
+                                >
+                            ` : ''}
+                        </td>
                         <td>${new Date(result.search_date).toLocaleString()}</td>
                         <td>
                             ${result.parts_list_name ?
-                                '<a href="/parts-list-ai/analyze/' + result.parts_list_id + '">' + result.parts_list_name + '</a>'
+                                '<a href="/parts-list-ai/analyze/' + result.parts_list_id + '">' + escapeHtml(result.parts_list_name) + '</a>'
                                 : '-'}
                         </td>
                         <td>${result.line_number || '-'}</td>
-                        <td><strong>${result.searched_part_number || result.base_part_number}</strong></td>
+                        <td><strong>${escapeHtml(result.searched_part_number || result.base_part_number || '-')}</strong></td>
                         <td>${result.requested_quantity || '-'}</td>
-                        <td>${hasPrice ? '$' + parseFloat(result.unit_price).toFixed(2) : '-'}</td>
+                        <td>${hasPrice ? formatCurrency(result.unit_price) : '-'}</td>
                         <td>${result.inventory || '-'}</td>
                         <td>${result.minimum_order || '-'}</td>
                         <td>${statusBadge}</td>
@@ -566,7 +643,7 @@ async function loadScrapeQueue(supplier) {
                     </tr>
                     ${hasDebug ? `
                     <tr id="${debugId}" style="display: none;">
-                        <td colspan="10" class="bg-light">
+                        <td colspan="11" class="bg-light">
                             <div class="p-3">
                                 <h6>Debug Information</h6>
                                 <pre class="mb-0" style="font-size: 0.85rem; max-height: 400px; overflow-y: auto;">${formatDebugInfo(result.debug_info)}</pre>
@@ -585,8 +662,13 @@ async function loadScrapeQueue(supplier) {
             `;
 
             container.innerHTML = html;
+            bindScrapeSelectionControls();
+            updateBulkActionState();
         }
     } catch (error) {
+        currentScrapeQueueResults = [];
+        selectedScrapeResultIds.clear();
+        updateBulkActionState();
         container.innerHTML = `
             <div class="alert alert-danger">
                 <i class="fas fa-exclamation-triangle"></i> Error loading scrape queue: ${error}
@@ -600,6 +682,137 @@ function refreshScrapeQueue() {
     const selectedFilter = document.querySelector('input[name="supplierFilter"]:checked').value;
     const supplier = selectedFilter === 'all' ? 'monroe' : selectedFilter;
     loadScrapeQueue(supplier);
+}
+
+function syncPartsListFilterOptions(partsLists) {
+    const select = document.getElementById('partsListFilter');
+    const previousValue = select.value;
+    const options = ['<option value="">All recent parts lists</option>'];
+
+    partsLists.forEach(partsList => {
+        if (!partsList.parts_list_id) {
+            return;
+        }
+        options.push(
+            `<option value="${partsList.parts_list_id}">${escapeHtml(partsList.parts_list_name || `Parts List #${partsList.parts_list_id}`)}</option>`
+        );
+    });
+
+    select.innerHTML = options.join('');
+    if ([...select.options].some(option => option.value === previousValue)) {
+        select.value = previousValue;
+    }
+}
+
+function syncSelectedResultsWithCurrentResults() {
+    const visibleResultIds = new Set(currentScrapeQueueResults.map(result => result.id));
+    selectedScrapeResultIds = new Set([...selectedScrapeResultIds].filter(resultId => visibleResultIds.has(resultId)));
+}
+
+function bindScrapeSelectionControls() {
+    document.querySelectorAll('.scrape-result-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            const resultId = parseInt(this.value, 10);
+            if (this.checked) {
+                selectedScrapeResultIds.add(resultId);
+            } else {
+                selectedScrapeResultIds.delete(resultId);
+            }
+            syncHeaderCheckboxState();
+            updateBulkActionState();
+        });
+    });
+
+    const selectAllVisible = document.getElementById('selectAllVisibleResults');
+    if (selectAllVisible) {
+        selectAllVisible.addEventListener('change', function() {
+            const shouldSelect = this.checked;
+            document.querySelectorAll('.scrape-result-checkbox').forEach(checkbox => {
+                checkbox.checked = shouldSelect;
+                const resultId = parseInt(checkbox.value, 10);
+                if (shouldSelect) {
+                    selectedScrapeResultIds.add(resultId);
+                } else {
+                    selectedScrapeResultIds.delete(resultId);
+                }
+            });
+            updateBulkActionState();
+        });
+        syncHeaderCheckboxState();
+    }
+}
+
+function getSelectableResults() {
+    return currentScrapeQueueResults.filter(result => result.unit_price !== null && result.unit_price !== '');
+}
+
+function getSelectableResultCount() {
+    return getSelectableResults().length;
+}
+
+function syncHeaderCheckboxState() {
+    const selectAllVisible = document.getElementById('selectAllVisibleResults');
+    if (!selectAllVisible) {
+        return;
+    }
+    const checkboxes = [...document.querySelectorAll('.scrape-result-checkbox')];
+    const selectedCount = checkboxes.filter(checkbox => checkbox.checked).length;
+    selectAllVisible.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+    selectAllVisible.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+}
+
+function selectAllSuccessfulResults() {
+    document.querySelectorAll('.scrape-result-checkbox').forEach(checkbox => {
+        checkbox.checked = true;
+        selectedScrapeResultIds.add(parseInt(checkbox.value, 10));
+    });
+    syncHeaderCheckboxState();
+    updateBulkActionState();
+}
+
+function clearSelectedResults() {
+    selectedScrapeResultIds.clear();
+    document.querySelectorAll('.scrape-result-checkbox').forEach(checkbox => {
+        checkbox.checked = false;
+    });
+    syncHeaderCheckboxState();
+    updateBulkActionState();
+}
+
+async function createSupplierOfferFromSelected() {
+    const resultIds = [...selectedScrapeResultIds];
+    if (!resultIds.length) {
+        showAlert('Select at least one successful scrape result first.', 'warning');
+        return;
+    }
+
+    const button = document.getElementById('createOfferFromSelectedBtn');
+    const originalHtml = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
+
+    try {
+        const resp = await fetch('/supplier-portal/api/create-offers-from-results/monroe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ result_ids: resultIds })
+        });
+        const data = await resp.json();
+
+        if (data.success) {
+            clearSelectedResults();
+            showAlert(data.message, 'success');
+            refreshScrapeQueue();
+            return;
+        }
+
+        showAlert(data.message || 'Failed to create supplier offer from selected results.', 'danger');
+    } catch (error) {
+        showAlert('Error creating supplier offer: ' + error, 'danger');
+    } finally {
+        button.innerHTML = originalHtml;
+        updateBulkActionState();
+    }
 }
 
 // Cancel active scrape
@@ -676,6 +889,23 @@ function toggleDebug(debugId) {
     }
 }
 
+function formatCurrency(value) {
+    const numericValue = parseFloat(value);
+    if (Number.isNaN(numericValue)) {
+        return '-';
+    }
+    return '$' + numericValue.toFixed(2);
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // Format debug info
 function formatDebugInfo(debugInfoJson) {
     try {
@@ -687,6 +917,32 @@ function formatDebugInfo(debugInfoJson) {
     } catch (e) {
         return debugInfoJson || 'No debug info available';
     }
+}
+
+function updateBulkActionState() {
+    const selectedCount = selectedScrapeResultIds.size;
+    const selectableCount = getSelectableResultCount();
+    const createButton = document.getElementById('createOfferFromSelectedBtn');
+    const selectAllButton = document.getElementById('selectAllSuccessfulBtn');
+    const clearButton = document.getElementById('clearSelectedBtn');
+    const summary = document.getElementById('scrapeSelectionSummary');
+    const partsListFilter = document.getElementById('partsListFilter');
+    const partsListLabel = partsListFilter.options[partsListFilter.selectedIndex]
+        ? partsListFilter.options[partsListFilter.selectedIndex].text
+        : '';
+
+    createButton.disabled = selectedCount === 0;
+    selectAllButton.disabled = selectableCount === 0;
+    clearButton.disabled = selectedCount === 0;
+
+    if (selectedCount === 0) {
+        summary.textContent = selectableCount > 0
+            ? `No successful scrape results selected${partsListFilter.value ? ` for ${partsListLabel}` : ''}.`
+            : 'No successful scrape results are available in the current view.';
+        return;
+    }
+
+    summary.textContent = `Selected ${selectedCount} successful scrape result${selectedCount === 1 ? '' : 's'}${partsListFilter.value ? ` from ${partsListLabel}` : ''} for supplier offer creation.`;
 }
 
 // Helper function to show alerts
