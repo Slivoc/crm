@@ -3,6 +3,7 @@ from flask_login import current_user, login_required
 from models import get_db_connection
 import logging
 import os
+from collections import defaultdict
 
 supplier_portal_bp = Blueprint('supplier_portal', __name__, url_prefix='/supplier-portal')
 
@@ -236,11 +237,34 @@ def get_scrape_queue(supplier_key):
         conn = get_db_connection()
         cur = conn.cursor()
 
+        parts_list_id = request.args.get('parts_list_id', type=int)
+
         # Get recent searches (last 7 days)
         if _using_postgres():
             date_filter = "msr.search_date > CURRENT_TIMESTAMP - INTERVAL '7 days'"
         else:
             date_filter = "msr.search_date > datetime('now', '-7 days')"
+
+        params = []
+        where_clauses = [date_filter]
+        if parts_list_id:
+            where_clauses.append("msr.parts_list_id = ?")
+            params.append(parts_list_id)
+
+        where_sql = " AND ".join(where_clauses)
+        result_limit = 1000 if parts_list_id else 100
+
+        cur.execute(f"""
+            SELECT DISTINCT
+                msr.parts_list_id,
+                pl.name as parts_list_name
+            FROM monroe_search_results msr
+            LEFT JOIN parts_lists pl ON pl.id = msr.parts_list_id
+            WHERE {date_filter}
+              AND msr.parts_list_id IS NOT NULL
+            ORDER BY pl.name
+        """)
+        parts_lists = [dict(row) for row in cur.fetchall()]
 
         # Check if debug_info column exists by querying table schema
         has_debug = False
@@ -283,10 +307,10 @@ def get_scrape_queue(supplier_key):
                 FROM monroe_search_results msr
                 LEFT JOIN parts_lists pl ON pl.id = msr.parts_list_id
                 LEFT JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
-                WHERE {date_filter}
+                WHERE {where_sql}
                 ORDER BY msr.search_date DESC
-                LIMIT 100
-            """)
+                LIMIT {result_limit}
+            """, params)
         else:
             cur.execute(f"""
                 SELECT
@@ -308,15 +332,15 @@ def get_scrape_queue(supplier_key):
                 FROM monroe_search_results msr
                 LEFT JOIN parts_lists pl ON pl.id = msr.parts_list_id
                 LEFT JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
-                WHERE {date_filter}
+                WHERE {where_sql}
                 ORDER BY msr.search_date DESC
-                LIMIT 100
-            """)
+                LIMIT {result_limit}
+            """, params)
 
         results = [dict(row) for row in cur.fetchall()]
         conn.close()
 
-        return jsonify(success=True, results=results)
+        return jsonify(success=True, results=results, parts_lists=parts_lists)
 
     except Exception as e:
         logging.exception(e)
@@ -525,6 +549,121 @@ def scrape_by_parts_list_id(supplier_key):
             parts_list_name=parts_list['name'],
             line_count=len(lines),
             status_id=status_id
+        )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@supplier_portal_bp.route('/api/create-offers-from-results/<supplier_key>', methods=['POST'])
+@login_required
+def create_offers_from_results(supplier_key):
+    """Create supplier offers from selected recent scrape results."""
+    if supplier_key not in ['monroe']:
+        return jsonify(success=False, message="Unknown supplier"), 400
+
+    try:
+        data = request.get_json() or {}
+        result_ids = data.get('result_ids', [])
+
+        if not isinstance(result_ids, list) or not result_ids:
+            return jsonify(success=False, message="No scrape results were selected"), 400
+
+        cleaned_result_ids = []
+        for result_id in result_ids:
+            try:
+                cleaned_result_ids.append(int(result_id))
+            except (TypeError, ValueError):
+                continue
+
+        cleaned_result_ids = list(dict.fromkeys(cleaned_result_ids))
+        if not cleaned_result_ids:
+            return jsonify(success=False, message="No valid scrape result IDs were provided"), 400
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        rows = []
+        batch_size = 500
+        for idx in range(0, len(cleaned_result_ids), batch_size):
+            batch_ids = cleaned_result_ids[idx:idx + batch_size]
+            placeholders = ",".join("?" for _ in batch_ids)
+            cur.execute(f"""
+                SELECT id, parts_list_id, unit_price
+                FROM monroe_search_results
+                WHERE id IN ({placeholders})
+            """, batch_ids)
+            rows.extend(dict(row) for row in cur.fetchall())
+
+        if not rows:
+            conn.close()
+            return jsonify(success=False, message="Selected scrape results were not found"), 404
+
+        grouped_result_ids = defaultdict(list)
+        skipped_without_price = 0
+        skipped_without_list = 0
+
+        for row in rows:
+            if row.get('unit_price') is None:
+                skipped_without_price += 1
+                continue
+            if not row.get('parts_list_id'):
+                skipped_without_list += 1
+                continue
+            grouped_result_ids[row['parts_list_id']].append(row['id'])
+
+        if not grouped_result_ids:
+            conn.close()
+            return jsonify(
+                success=False,
+                message="None of the selected results were successful Monroe matches tied to a parts list."
+            ), 400
+
+        from routes.parts_list_ai import _auto_create_monroe_offer
+
+        user_id = current_user.id if getattr(current_user, 'is_authenticated', False) else session.get('user_id', 1)
+
+        created_quotes = []
+        skipped_parts_lists = []
+
+        for parts_list_id, list_result_ids in grouped_result_ids.items():
+            quote_id = _auto_create_monroe_offer(cur, parts_list_id, list_result_ids, user_id)
+            if quote_id:
+                created_quotes.append({
+                    'parts_list_id': parts_list_id,
+                    'quote_id': quote_id,
+                    'result_count': len(list_result_ids),
+                })
+            else:
+                skipped_parts_lists.append(parts_list_id)
+
+        if not created_quotes:
+            conn.rollback()
+            conn.close()
+            return jsonify(
+                success=False,
+                message="No supplier offers were created. The selected results may all be below MOQ or otherwise invalid."
+            ), 400
+
+        conn.commit()
+        conn.close()
+
+        message = f"Created {len(created_quotes)} supplier offer(s) from {sum(item['result_count'] for item in created_quotes)} selected result(s)."
+        if skipped_without_price:
+            message += f" Skipped {skipped_without_price} result(s) without pricing."
+        if skipped_without_list:
+            message += f" Skipped {skipped_without_list} result(s) not linked to a parts list."
+        if skipped_parts_lists:
+            message += f" {len(skipped_parts_lists)} parts list(s) did not produce an offer."
+
+        return jsonify(
+            success=True,
+            message=message,
+            created_quotes=created_quotes,
+            skipped_parts_lists=skipped_parts_lists,
+            skipped_without_price=skipped_without_price,
+            skipped_without_list=skipped_without_list,
         )
 
     except Exception as e:

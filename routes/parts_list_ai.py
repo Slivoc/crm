@@ -1336,6 +1336,35 @@ def _filter_monroe_offer_results(results, context_label):
     return valid_results, skipped_results
 
 
+def _get_monroe_offer_results(cur, result_ids):
+    """Fetch Monroe results for offer creation in manageable batches."""
+    cleaned_ids = []
+    for result_id in result_ids or []:
+        try:
+            cleaned_ids.append(int(result_id))
+        except (TypeError, ValueError):
+            continue
+
+    if not cleaned_ids:
+        return []
+
+    results = []
+    batch_size = 500
+    for idx in range(0, len(cleaned_ids), batch_size):
+        batch_ids = cleaned_ids[idx:idx + batch_size]
+        placeholders = ",".join("?" for _ in batch_ids)
+        cur.execute(f"""
+            SELECT msr.*, pll.line_number, pll.quantity as requested_quantity
+            FROM monroe_search_results msr
+            JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
+            WHERE msr.id IN ({placeholders})
+              AND msr.unit_price IS NOT NULL
+        """, batch_ids)
+        results.extend(dict(row) for row in cur.fetchall())
+
+    return results
+
+
 def _auto_create_monroe_offer(cur, list_id, result_ids, user_id):
     """
     Automatically create a supplier quote/offer from Monroe results.
@@ -1366,15 +1395,7 @@ def _auto_create_monroe_offer(cur, list_id, result_ids, user_id):
             usd_currency_id = cur.lastrowid
 
     # Get Monroe results
-    placeholders = ",".join("?" for _ in result_ids)
-    cur.execute(f"""
-        SELECT msr.*, pll.line_number, pll.quantity as requested_quantity
-        FROM monroe_search_results msr
-        JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
-        WHERE msr.id IN ({placeholders})
-          AND msr.unit_price IS NOT NULL
-    """, result_ids)
-    results = [dict(row) for row in cur.fetchall()]
+    results = _get_monroe_offer_results(cur, result_ids)
     valid_results, skipped_results = _filter_monroe_offer_results(results, "auto-offer")
 
     if not valid_results:
@@ -2443,15 +2464,7 @@ def monroe_load_as_offer(list_id):
         user_id = session.get('user_id', 1)
 
         # Get Monroe results
-        placeholders = ",".join("?" for _ in result_ids)
-        cur.execute(f"""
-            SELECT msr.*, pll.line_number, pll.quantity as requested_quantity
-            FROM monroe_search_results msr
-            JOIN parts_list_lines pll ON pll.id = msr.parts_list_line_id
-            WHERE msr.id IN ({placeholders})
-              AND msr.unit_price IS NOT NULL
-        """, result_ids)
-        results = [dict(row) for row in cur.fetchall()]
+        results = _get_monroe_offer_results(cur, result_ids)
         valid_results, skipped_results = _filter_monroe_offer_results(results, "manual-offer")
 
         if not valid_results:
