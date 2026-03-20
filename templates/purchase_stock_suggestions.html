@@ -240,9 +240,12 @@
         </div>
         <div class="card-body">
             <p class="text-muted mb-3">
-                Manually scan all parts list supplier quotes for unusually cheap buy opportunities, using other supplier quotes, sales orders, and customer quote history as justification.
+                Manually scan recent parts list supplier quotes for unusually cheap buy opportunities, using sales orders and customer quote history as justification.
             </p>
             <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                <label for="speculative-lookback-months" class="form-label mb-0 small text-muted">Look back</label>
+                <input type="number" class="form-control form-control-sm" id="speculative-lookback-months" value="2" min="1" max="24" style="width: 6rem;">
+                <span class="text-muted small">months</span>
                 <button type="button" class="btn btn-primary" id="run-speculative-report-btn">
                     <span class="default-label"><i class="bi bi-play-circle me-1"></i>Run Report</span>
                     <span class="running-label d-none"><span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Running report...</span>
@@ -279,17 +282,18 @@
                 </div>
                 <div class="col-md-3">
                     <div class="border rounded p-3 h-100">
-                        <div class="text-muted small">Buy History Matches</div>
-                        <div class="fs-4 fw-semibold" id="spec-purchase-matches">0</div>
+                        <div class="text-muted small">Sales Order Matches</div>
+                        <div class="fs-4 fw-semibold" id="spec-sell-matches">0</div>
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="border rounded p-3 h-100">
-                        <div class="text-muted small">Sell Price Matches</div>
-                        <div class="fs-4 fw-semibold" id="spec-sell-matches">0</div>
+                        <div class="text-muted small">Customer Quote Matches</div>
+                        <div class="fs-4 fw-semibold" id="spec-customer-quote-matches">0</div>
                     </div>
                 </div>
             </div>
+            <div class="text-muted small mb-3" id="spec-report-window"></div>
 
             <div class="table-responsive">
                 <table class="table table-hover table-striped" id="speculative-report-table">
@@ -303,13 +307,12 @@
                             <th>Stock</th>
                             <th>365d Sales Qty</th>
                             <th>Avg Sell</th>
-                            <th>Avg Other Buy</th>
                             <th>Justification</th>
                         </tr>
                     </thead>
                     <tbody id="speculative-report-body">
                         <tr>
-                            <td colspan="10" class="text-center text-muted">Run the report to load results.</td>
+                            <td colspan="9" class="text-center text-muted">Run the report to load results.</td>
                         </tr>
                     </tbody>
                 </table>
@@ -875,6 +878,7 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const speculativeReportBtn = document.getElementById('run-speculative-report-btn');
+    const speculativeLookbackMonths = document.getElementById('speculative-lookback-months');
     const speculativeReportStatus = document.getElementById('speculative-report-status');
     const speculativeReportResults = document.getElementById('speculative-report-results');
     const speculativeReportBody = document.getElementById('speculative-report-body');
@@ -928,18 +932,19 @@ document.addEventListener('DOMContentLoaded', function() {
     function renderSpeculativeReport(data) {
         document.getElementById('spec-total-candidates').textContent = data.summary.total_candidates || 0;
         document.getElementById('spec-distinct-parts').textContent = data.summary.distinct_parts || 0;
-        document.getElementById('spec-purchase-matches').textContent = data.summary.purchase_history_matches || 0;
-        document.getElementById('spec-sell-matches').textContent =
-            (data.summary.sales_order_matches || 0) + (data.summary.customer_quote_matches || 0);
+        document.getElementById('spec-sell-matches').textContent = data.summary.sales_order_matches || 0;
+        document.getElementById('spec-customer-quote-matches').textContent = data.summary.customer_quote_matches || 0;
         document.getElementById('speculative-report-generated-at').textContent =
             `Generated ${escapeHtml(data.generated_at || '')} UTC`;
+        document.getElementById('spec-report-window').textContent =
+            `Grouped by part number. Showing the best quote seen since ${formatDate(data.thresholds.lookback_cutoff)} (${data.thresholds.lookback_months} month${Number(data.thresholds.lookback_months) === 1 ? '' : 's'}).`;
 
         if ($.fn.DataTable.isDataTable('#speculative-report-table')) {
             $('#speculative-report-table').DataTable().destroy();
         }
 
         if (!data.opportunities || data.opportunities.length === 0) {
-            speculativeReportBody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">No speculative opportunities met the thresholds.</td></tr>';
+            speculativeReportBody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">No speculative opportunities met the thresholds.</td></tr>';
             speculativeReportResults.style.display = 'block';
             return;
         }
@@ -971,10 +976,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 <td>
                     <div>${formatMoney(item.avg_sale_price)}</div>
                     <div><small class="text-muted">${formatNumber(item.sales_order_count, 0)} lines</small></div>
-                </td>
-                <td>
-                    <div>${formatMoney(item.avg_purchase_price)}</div>
-                    <div><small class="text-muted">${formatNumber(item.other_purchase_quote_count, 0)} other quotes</small></div>
                 </td>
                 <td>${renderSpeculativeReasons(item.reasons)}</td>
             </tr>
@@ -1008,14 +1009,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (speculativeReportBtn) {
         speculativeReportBtn.addEventListener('click', function() {
-            setSpeculativeReportRunning(true, 'Running speculative buy report. This may take a while...', 'alert-info');
+            const lookbackMonths = Math.max(1, Math.min(24, Number.parseInt(speculativeLookbackMonths.value, 10) || 2));
+            speculativeLookbackMonths.value = lookbackMonths;
+            setSpeculativeReportRunning(true, `Running speculative buy report for the last ${lookbackMonths} month${lookbackMonths === 1 ? '' : 's'}...`, 'alert-info');
 
             fetch('/purchase-suggestions/api/speculative-buy-report', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({})
+                body: JSON.stringify({
+                    lookback_months: lookbackMonths
+                })
             })
                 .then(response => response.json().then(data => ({ ok: response.ok, data })))
                 .then(({ ok, data }) => {

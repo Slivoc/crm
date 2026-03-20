@@ -93,8 +93,23 @@ def _get_recent_date_filter(column_name, days):
     return f"{column_name} >= date('now', '-{int(days)} days')"
 
 
-def _load_speculative_buy_report(cursor):
+def _parse_iso_date(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return datetime.strptime(str(value)[:10], '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+
+def _load_speculative_buy_report(cursor, lookback_months=2):
     recent_sales_filter = _get_recent_date_filter('so.date_entered', 365)
+    lookback_months = max(1, min(int(lookback_months or 2), 24))
+    lookback_cutoff = datetime.utcnow().date() - timedelta(days=lookback_months * 30)
 
     quote_rows = _execute_with_cursor(
         cursor,
@@ -236,9 +251,8 @@ def _load_speculative_buy_report(cursor):
         for row in stock_rows
     }
 
-    opportunities = []
+    best_opportunity_by_part = {}
     reason_counts = {
-        'purchase_history': 0,
         'sales_orders': 0,
         'customer_quotes': 0,
     }
@@ -246,6 +260,9 @@ def _load_speculative_buy_report(cursor):
     for quote in normalized_quotes:
         current_price = quote.get('unit_price_gbp')
         if current_price is None or current_price <= 0:
+            continue
+        quote_date = _parse_iso_date(quote.get('quote_date'))
+        if quote_date is None or quote_date < lookback_cutoff:
             continue
 
         base_part_number = quote['base_part_number']
@@ -264,33 +281,6 @@ def _load_speculative_buy_report(cursor):
 
         reasons = []
         opportunity_score = 0.0
-
-        if avg_purchase_price and purchase_quote_count >= 3:
-            savings_pct = ((avg_purchase_price - current_price) / avg_purchase_price) * 100
-            if savings_pct >= 20:
-                reasons.append({
-                    'source': 'purchase_history',
-                    'label': 'Purchase history',
-                    'detail': (
-                        f"{savings_pct:.1f}% below other supplier quotes: "
-                        f"GBP {current_price:.2f} vs GBP {avg_purchase_price:.2f} average "
-                        f"across {purchase_quote_count} other quotes"
-                    ),
-                })
-                opportunity_score += savings_pct * 1.5
-
-        if best_purchase_price and purchase_quote_count >= 3:
-            best_savings_pct = ((best_purchase_price - current_price) / best_purchase_price) * 100
-            if best_savings_pct >= 10 and not any(r['source'] == 'purchase_history' for r in reasons):
-                reasons.append({
-                    'source': 'purchase_history',
-                    'label': 'Purchase history',
-                    'detail': (
-                        f"{best_savings_pct:.1f}% below the previous best supplier quote: "
-                        f"GBP {current_price:.2f} vs GBP {best_purchase_price:.2f}"
-                    ),
-                })
-                opportunity_score += best_savings_pct * 1.2
 
         avg_sale_price = sales_stats.get('avg_sale_price')
         sales_order_count = sales_stats.get('sales_order_count', 0)
@@ -338,10 +328,7 @@ def _load_speculative_buy_report(cursor):
         opportunity_score += demand_score
         opportunity_score -= stock_penalty
 
-        for reason in reasons:
-            reason_counts[reason['source']] += 1
-
-        opportunities.append({
+        candidate = {
             'quote_line_id': quote['quote_line_id'],
             'supplier_quote_id': quote['supplier_quote_id'],
             'parts_list_id': quote.get('parts_list_id'),
@@ -380,7 +367,35 @@ def _load_speculative_buy_report(cursor):
             'reason_count': len(reasons),
             'reasons': reasons,
             'opportunity_score': round(max(opportunity_score, 0), 1),
-        })
+        }
+
+        existing = best_opportunity_by_part.get(base_part_number)
+        if existing is None:
+            best_opportunity_by_part[base_part_number] = candidate
+            continue
+
+        candidate_quote_date = _parse_iso_date(candidate.get('quote_date'))
+        existing_quote_date = _parse_iso_date(existing.get('quote_date'))
+        candidate_key = (
+            candidate.get('opportunity_score', 0),
+            candidate.get('reason_count', 0),
+            candidate.get('recent_sales_qty', 0),
+            candidate_quote_date or date.min,
+        )
+        existing_key = (
+            existing.get('opportunity_score', 0),
+            existing.get('reason_count', 0),
+            existing.get('recent_sales_qty', 0),
+            existing_quote_date or date.min,
+        )
+        if candidate_key > existing_key:
+            best_opportunity_by_part[base_part_number] = candidate
+
+    opportunities = list(best_opportunity_by_part.values())
+
+    for opportunity in opportunities:
+        for reason in opportunity['reasons']:
+            reason_counts[reason['source']] += 1
 
     opportunities.sort(
         key=lambda item: (
@@ -398,15 +413,13 @@ def _load_speculative_buy_report(cursor):
         'summary': {
             'total_candidates': len(opportunities),
             'distinct_parts': len({item['base_part_number'] for item in opportunities}),
-            'purchase_history_matches': reason_counts['purchase_history'],
             'sales_order_matches': reason_counts['sales_orders'],
             'customer_quote_matches': reason_counts['customer_quotes'],
         },
         'thresholds': {
-            'purchase_discount_pct': 20,
-            'purchase_best_discount_pct': 10,
+            'lookback_months': lookback_months,
+            'lookback_cutoff': lookback_cutoff.strftime('%Y-%m-%d'),
             'sell_discount_pct': 35,
-            'minimum_purchase_history_quotes': 3,
             'minimum_sales_or_customer_quotes': 3,
         }
     }
@@ -644,8 +657,10 @@ def purchase_suggestions():
 def speculative_buy_report():
     """Manual report for supplier quotes that look unusually attractive for stock buys."""
     try:
+        payload = request.get_json(silent=True) or {}
+        lookback_months = payload.get('lookback_months', 2)
         with db_cursor() as cursor:
-            report = _load_speculative_buy_report(cursor)
+            report = _load_speculative_buy_report(cursor, lookback_months=lookback_months)
         return jsonify({
             'success': True,
             **report,
