@@ -78,6 +78,340 @@ def convert_vq_price_to_gbp(price, currency_code):
         return price  # Return original price if conversion fails
 
 
+def _safe_float(value):
+    try:
+        if value is None or value == '':
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_recent_date_filter(column_name, days):
+    if _using_postgres():
+        return f"{column_name} >= CURRENT_DATE - INTERVAL '{int(days)} days'"
+    return f"{column_name} >= date('now', '-{int(days)} days')"
+
+
+def _load_speculative_buy_report(cursor):
+    recent_sales_filter = _get_recent_date_filter('so.date_entered', 365)
+
+    quote_rows = _execute_with_cursor(
+        cursor,
+        '''
+        SELECT
+            psql.id AS quote_line_id,
+            psq.id AS supplier_quote_id,
+            pll.base_part_number,
+            COALESCE(pn.part_number, pll.base_part_number) AS part_number,
+            pn.system_part_number,
+            psql.quoted_part_number,
+            psql.manufacturer,
+            psql.quantity_quoted,
+            psql.unit_price,
+            psql.lead_time_days,
+            psql.condition_code,
+            psq.quote_reference,
+            psq.quote_date,
+            psq.parts_list_id,
+            pl.name AS parts_list_name,
+            s.id AS supplier_id,
+            s.name AS supplier_name,
+            c.name AS customer_name,
+            curr.currency_code,
+            curr.symbol AS currency_symbol
+        FROM parts_list_supplier_quote_lines psql
+        JOIN parts_list_supplier_quotes psq ON psq.id = psql.supplier_quote_id
+        JOIN parts_list_lines pll ON pll.id = psql.parts_list_line_id
+        LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
+        LEFT JOIN parts_lists pl ON pl.id = psq.parts_list_id
+        LEFT JOIN customers c ON c.id = pl.customer_id
+        LEFT JOIN suppliers s ON s.id = psq.supplier_id
+        LEFT JOIN currencies curr ON curr.id = psq.currency_id
+        WHERE COALESCE(psql.is_no_bid, FALSE) = FALSE
+          AND psql.unit_price IS NOT NULL
+          AND psql.unit_price > 0
+          AND pll.base_part_number IS NOT NULL
+          AND TRIM(pll.base_part_number) <> ''
+        ORDER BY psq.quote_date DESC, psql.id DESC
+        ''',
+        fetch='all'
+    ) or []
+
+    sales_rows = _execute_with_cursor(
+        cursor,
+        f'''
+        SELECT
+            sol.base_part_number,
+            COUNT(*) AS sales_order_count,
+            COALESCE(SUM(sol.quantity), 0) AS total_sales_qty,
+            MAX(so.date_entered) AS last_sale_date,
+            AVG(CASE WHEN sol.price > 0 THEN sol.price END) AS avg_sale_price,
+            MAX(CASE WHEN sol.price > 0 THEN sol.price END) AS max_sale_price,
+            SUM(CASE WHEN {recent_sales_filter} THEN COALESCE(sol.quantity, 0) ELSE 0 END) AS recent_sales_qty,
+            SUM(CASE WHEN {recent_sales_filter} THEN 1 ELSE 0 END) AS recent_sales_orders
+        FROM sales_order_lines sol
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE sol.base_part_number IS NOT NULL
+          AND TRIM(sol.base_part_number) <> ''
+        GROUP BY sol.base_part_number
+        ''',
+        fetch='all'
+    ) or []
+
+    customer_quote_rows = _execute_with_cursor(
+        cursor,
+        '''
+        SELECT
+            pll.base_part_number,
+            COUNT(*) AS customer_quote_count,
+            AVG(cql.quote_price_gbp) AS avg_customer_quote_price,
+            MAX(cql.quote_price_gbp) AS max_customer_quote_price,
+            MAX(cql.date_created) AS last_customer_quote_date
+        FROM customer_quote_lines cql
+        JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+        WHERE cql.quote_price_gbp IS NOT NULL
+          AND cql.quote_price_gbp > 0
+          AND COALESCE(cql.is_no_bid, 0) = 0
+          AND pll.base_part_number IS NOT NULL
+          AND TRIM(pll.base_part_number) <> ''
+        GROUP BY pll.base_part_number
+        ''',
+        fetch='all'
+    ) or []
+
+    stock_rows = _execute_with_cursor(
+        cursor,
+        '''
+        SELECT
+            base_part_number,
+            COALESCE(SUM(available_quantity), 0) AS stock_quantity
+        FROM stock_movements
+        WHERE movement_type = 'IN'
+          AND available_quantity > 0
+          AND base_part_number IS NOT NULL
+          AND TRIM(base_part_number) <> ''
+        GROUP BY base_part_number
+        ''',
+        fetch='all'
+    ) or []
+
+    quotes_by_part = {}
+    normalized_quotes = []
+
+    for row in quote_rows:
+        quote = dict(row)
+        raw_price = _safe_float(quote.get('unit_price'))
+        currency_code = quote.get('currency_code') or 'GBP'
+        price_gbp = convert_vq_price_to_gbp(raw_price, currency_code) if raw_price is not None else None
+        quote['unit_price'] = raw_price
+        quote['unit_price_gbp'] = _safe_float(price_gbp)
+        quote['quote_date'] = _stringify_date(quote.get('quote_date'))
+        normalized_quotes.append(quote)
+        quotes_by_part.setdefault(quote['base_part_number'], []).append(quote)
+
+    sales_map = {}
+    for row in sales_rows:
+        sales_map[row['base_part_number']] = {
+            'sales_order_count': int(row['sales_order_count'] or 0),
+            'total_sales_qty': _safe_float(row['total_sales_qty']) or 0.0,
+            'last_sale_date': _stringify_date(row.get('last_sale_date')),
+            'avg_sale_price': _safe_float(row.get('avg_sale_price')),
+            'max_sale_price': _safe_float(row.get('max_sale_price')),
+            'recent_sales_qty': _safe_float(row.get('recent_sales_qty')) or 0.0,
+            'recent_sales_orders': int(row['recent_sales_orders'] or 0),
+        }
+
+    customer_quote_map = {}
+    for row in customer_quote_rows:
+        customer_quote_map[row['base_part_number']] = {
+            'customer_quote_count': int(row['customer_quote_count'] or 0),
+            'avg_customer_quote_price': _safe_float(row.get('avg_customer_quote_price')),
+            'max_customer_quote_price': _safe_float(row.get('max_customer_quote_price')),
+            'last_customer_quote_date': _stringify_date(row.get('last_customer_quote_date')),
+        }
+
+    stock_map = {
+        row['base_part_number']: _safe_float(row.get('stock_quantity')) or 0.0
+        for row in stock_rows
+    }
+
+    opportunities = []
+    reason_counts = {
+        'purchase_history': 0,
+        'sales_orders': 0,
+        'customer_quotes': 0,
+    }
+
+    for quote in normalized_quotes:
+        current_price = quote.get('unit_price_gbp')
+        if current_price is None or current_price <= 0:
+            continue
+
+        base_part_number = quote['base_part_number']
+        part_quotes = quotes_by_part.get(base_part_number, [])
+        other_prices = [
+            q['unit_price_gbp']
+            for q in part_quotes
+            if q['quote_line_id'] != quote['quote_line_id'] and q.get('unit_price_gbp')
+        ]
+
+        purchase_quote_count = len(other_prices)
+        avg_purchase_price = sum(other_prices) / purchase_quote_count if purchase_quote_count else None
+        best_purchase_price = min(other_prices) if other_prices else None
+        sales_stats = sales_map.get(base_part_number, {})
+        customer_quote_stats = customer_quote_map.get(base_part_number, {})
+
+        reasons = []
+        opportunity_score = 0.0
+
+        if avg_purchase_price and purchase_quote_count >= 3:
+            savings_pct = ((avg_purchase_price - current_price) / avg_purchase_price) * 100
+            if savings_pct >= 20:
+                reasons.append({
+                    'source': 'purchase_history',
+                    'label': 'Purchase history',
+                    'detail': (
+                        f"{savings_pct:.1f}% below other supplier quotes: "
+                        f"GBP {current_price:.2f} vs GBP {avg_purchase_price:.2f} average "
+                        f"across {purchase_quote_count} other quotes"
+                    ),
+                })
+                opportunity_score += savings_pct * 1.5
+
+        if best_purchase_price and purchase_quote_count >= 3:
+            best_savings_pct = ((best_purchase_price - current_price) / best_purchase_price) * 100
+            if best_savings_pct >= 10 and not any(r['source'] == 'purchase_history' for r in reasons):
+                reasons.append({
+                    'source': 'purchase_history',
+                    'label': 'Purchase history',
+                    'detail': (
+                        f"{best_savings_pct:.1f}% below the previous best supplier quote: "
+                        f"GBP {current_price:.2f} vs GBP {best_purchase_price:.2f}"
+                    ),
+                })
+                opportunity_score += best_savings_pct * 1.2
+
+        avg_sale_price = sales_stats.get('avg_sale_price')
+        sales_order_count = sales_stats.get('sales_order_count', 0)
+        if avg_sale_price and sales_order_count >= 3:
+            discount_to_sale_pct = ((avg_sale_price - current_price) / avg_sale_price) * 100
+            if discount_to_sale_pct >= 35:
+                reasons.append({
+                    'source': 'sales_orders',
+                    'label': 'Sales orders',
+                    'detail': (
+                        f"{discount_to_sale_pct:.1f}% under average sell price: "
+                        f"GBP {current_price:.2f} buy vs GBP {avg_sale_price:.2f} average "
+                        f"across {sales_order_count} sales order lines"
+                    ),
+                })
+                opportunity_score += discount_to_sale_pct * 1.1
+
+        avg_customer_quote_price = customer_quote_stats.get('avg_customer_quote_price')
+        customer_quote_count = customer_quote_stats.get('customer_quote_count', 0)
+        if avg_customer_quote_price and customer_quote_count >= 3:
+            discount_to_customer_quote_pct = (
+                (avg_customer_quote_price - current_price) / avg_customer_quote_price
+            ) * 100
+            if discount_to_customer_quote_pct >= 35:
+                reasons.append({
+                    'source': 'customer_quotes',
+                    'label': 'Customer quotes',
+                    'detail': (
+                        f"{discount_to_customer_quote_pct:.1f}% under quoted sell price: "
+                        f"GBP {current_price:.2f} buy vs GBP {avg_customer_quote_price:.2f} "
+                        f"average across {customer_quote_count} customer quotes"
+                    ),
+                })
+                opportunity_score += discount_to_customer_quote_pct
+
+        if not reasons:
+            continue
+
+        recent_sales_qty = sales_stats.get('recent_sales_qty', 0.0)
+        recent_sales_orders = sales_stats.get('recent_sales_orders', 0)
+        stock_quantity = stock_map.get(base_part_number, 0.0)
+
+        demand_score = min(25.0, (recent_sales_qty * 2.0) + (recent_sales_orders * 1.5) + (customer_quote_count * 0.5))
+        stock_penalty = min(15.0, stock_quantity * 0.5)
+        opportunity_score += demand_score
+        opportunity_score -= stock_penalty
+
+        for reason in reasons:
+            reason_counts[reason['source']] += 1
+
+        opportunities.append({
+            'quote_line_id': quote['quote_line_id'],
+            'supplier_quote_id': quote['supplier_quote_id'],
+            'parts_list_id': quote.get('parts_list_id'),
+            'parts_list_name': quote.get('parts_list_name'),
+            'customer_name': quote.get('customer_name'),
+            'base_part_number': base_part_number,
+            'part_number': quote.get('part_number') or base_part_number,
+            'system_part_number': quote.get('system_part_number'),
+            'quoted_part_number': quote.get('quoted_part_number'),
+            'manufacturer': quote.get('manufacturer'),
+            'supplier_id': quote.get('supplier_id'),
+            'supplier_name': quote.get('supplier_name'),
+            'quote_reference': quote.get('quote_reference'),
+            'quote_date': quote.get('quote_date'),
+            'quantity_quoted': quote.get('quantity_quoted'),
+            'lead_time_days': quote.get('lead_time_days'),
+            'condition_code': quote.get('condition_code'),
+            'currency_code': quote.get('currency_code') or 'GBP',
+            'currency_symbol': quote.get('currency_symbol') or '£',
+            'unit_price_original': current_price if (quote.get('currency_code') or 'GBP') == 'GBP' else quote.get('unit_price'),
+            'unit_price_gbp': current_price,
+            'stock_quantity': stock_quantity,
+            'sales_order_count': sales_order_count,
+            'total_sales_qty': sales_stats.get('total_sales_qty', 0.0),
+            'recent_sales_qty': recent_sales_qty,
+            'recent_sales_orders': recent_sales_orders,
+            'last_sale_date': sales_stats.get('last_sale_date'),
+            'avg_sale_price': avg_sale_price,
+            'max_sale_price': sales_stats.get('max_sale_price'),
+            'customer_quote_count': customer_quote_count,
+            'avg_customer_quote_price': avg_customer_quote_price,
+            'max_customer_quote_price': customer_quote_stats.get('max_customer_quote_price'),
+            'other_purchase_quote_count': purchase_quote_count,
+            'avg_purchase_price': avg_purchase_price,
+            'best_purchase_price': best_purchase_price,
+            'reason_count': len(reasons),
+            'reasons': reasons,
+            'opportunity_score': round(max(opportunity_score, 0), 1),
+        })
+
+    opportunities.sort(
+        key=lambda item: (
+            item.get('opportunity_score', 0),
+            item.get('recent_sales_qty', 0),
+            item.get('reason_count', 0),
+            item.get('quote_date') or '',
+        ),
+        reverse=True,
+    )
+
+    return {
+        'generated_at': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+        'opportunities': opportunities,
+        'summary': {
+            'total_candidates': len(opportunities),
+            'distinct_parts': len({item['base_part_number'] for item in opportunities}),
+            'purchase_history_matches': reason_counts['purchase_history'],
+            'sales_order_matches': reason_counts['sales_orders'],
+            'customer_quote_matches': reason_counts['customer_quotes'],
+        },
+        'thresholds': {
+            'purchase_discount_pct': 20,
+            'purchase_best_discount_pct': 10,
+            'sell_discount_pct': 35,
+            'minimum_purchase_history_quotes': 3,
+            'minimum_sales_or_customer_quotes': 3,
+        }
+    }
+
+
 @purchase_suggestions_bp.route('/upload-stock', methods=['POST'])
 def upload_stock():
     """Store uploaded stock data temporarily in session"""
@@ -304,6 +638,26 @@ def purchase_suggestions():
                                sort_column='purchase_priority_score',
                                sort_direction='desc',
                                error=str(e))
+
+
+@purchase_suggestions_bp.route('/api/speculative-buy-report', methods=['POST'])
+def speculative_buy_report():
+    """Manual report for supplier quotes that look unusually attractive for stock buys."""
+    try:
+        with db_cursor() as cursor:
+            report = _load_speculative_buy_report(cursor)
+        return jsonify({
+            'success': True,
+            **report,
+        })
+    except Exception as e:
+        print(f"Error running speculative buy report: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e),
+        }), 500
 
 
 def _load_part_view(cursor, sort_column, sort_direction, time_period_days, buffer_months, min_sales_threshold):
