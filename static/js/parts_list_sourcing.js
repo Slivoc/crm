@@ -297,6 +297,27 @@ document.addEventListener('DOMContentLoaded', function() {
         (window.LINE_DATA || []).map(line => [String(line.id), line])
     );
 
+    async function confirmHighCostSelection(lineId, payload) {
+        try {
+            const response = await fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/lines/${lineId}/cost-anomaly-check`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                return true;
+            }
+            if (!data.warning) {
+                return true;
+            }
+            return confirm(data.message || 'This selected cost looks unusually high. Use it anyway?');
+        } catch (error) {
+            console.warn('Cost anomaly check failed:', error);
+            return true;
+        }
+    }
+
     function showBulkSupplierSelectModal(lineIds) {
         const modalHTML = `
             <div class="modal fade" id="bulkSupplierSelectModal" tabindex="-1" aria-hidden="true">
@@ -491,7 +512,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Use cost buttons
-    document.addEventListener('click', function(e) {
+    document.addEventListener('click', async function(e) {
         const costBtn = e.target.closest('.use-vq-cost-btn, .use-po-cost-btn, .use-stock-cost-btn, .use-excess-cost-btn');
         if (!costBtn) return;
 
@@ -515,18 +536,28 @@ document.addEventListener('DOMContentLoaded', function() {
             else if (costBtn.classList.contains('use-excess-cost-btn')) source = 'excess';
         }
 
+        const payload = {
+            cost: parseFloat(cost),
+            chosen_qty: qty ? parseInt(qty) : null,
+            supplier_id: supplierId ? parseInt(supplierId) : null,
+            currency_id: currencyId && currencyId !== 'None' ? parseInt(currencyId) : null,
+            currency_code: currencyCode || null,
+            lead_days: leadDays ? parseInt(leadDays) : null,
+            source_type: source
+        };
+
+        if (payload.supplier_id) {
+            const shouldContinue = await confirmHighCostSelection(lineId, payload);
+            if (!shouldContinue) {
+                showToast('Cost selection cancelled', 'info');
+                return;
+            }
+        }
+
         fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/lines/${lineId}/use-cost`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                cost: parseFloat(cost),
-                chosen_qty: qty ? parseInt(qty) : null,
-                supplier_id: supplierId ? parseInt(supplierId) : null,
-                currency_id: currencyId && currencyId !== 'None' ? parseInt(currencyId) : null,
-                currency_code: currencyCode || null,
-                lead_days: leadDays ? parseInt(leadDays) : null,
-                source_type: source
-            })
+            body: JSON.stringify(payload)
         })
         .then(r => r.json())
         .then(data => {

@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, request, jsonify, url_for, redirect, session, flash, abort
-from models import create_base_part_number, get_global_alternatives, insert_update
+from models import create_base_part_number, get_global_alternatives, insert_update, convert_currency
 from db import execute as db_execute, db_cursor
 import logging
 import openai
@@ -80,6 +80,147 @@ def _ensure_part_number(base_part_number, part_number):
         (base_part_number, part_value),
         commit=True,
     )
+
+
+def _to_float(value):
+    try:
+        if value is None or value == '':
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _convert_amount_to_gbp(amount, currency_code):
+    numeric_amount = _to_float(amount)
+    if numeric_amount is None:
+        return None
+
+    code = (currency_code or 'GBP').upper()
+    if code == 'GBP':
+        return numeric_amount
+
+    decimal_amount = Decimal(str(numeric_amount))
+    converted = convert_currency(decimal_amount, code, 'GBP')
+    return float(converted) if converted is not None else None
+
+
+def _build_cost_anomaly_warning(cur, list_id, line_id, selected_cost, currency_id=None, currency_code=None):
+    line = _execute_with_cursor(cur, """
+        SELECT pll.base_part_number,
+               pll.customer_part_number,
+               pn.part_number,
+               pn.system_part_number
+        FROM parts_list_lines pll
+        LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
+        WHERE pll.id = ? AND pll.parts_list_id = ?
+    """, (line_id, list_id)).fetchone()
+
+    if not line or not _safe_row_get(line, 'base_part_number'):
+        return {
+            'warning': False,
+            'reasons': [],
+        }
+
+    resolved_currency_code = (currency_code or '').upper()
+    if not resolved_currency_code and currency_id:
+        currency_row = _execute_with_cursor(cur, """
+            SELECT currency_code
+            FROM currencies
+            WHERE id = ?
+        """, (currency_id,)).fetchone()
+        resolved_currency_code = (_safe_row_get(currency_row, 'currency_code') or 'GBP').upper()
+
+    cost_gbp = _convert_amount_to_gbp(selected_cost, resolved_currency_code or 'GBP')
+    if cost_gbp is None or cost_gbp <= 0:
+        return {
+            'warning': False,
+            'reasons': [],
+        }
+
+    sales_stats = _execute_with_cursor(cur, """
+        SELECT
+            COUNT(*) AS sales_order_count,
+            AVG(CASE WHEN sol.price > 0 THEN sol.price END) AS avg_sale_price,
+            MAX(CASE WHEN sol.price > 0 THEN sol.price END) AS max_sale_price
+        FROM sales_order_lines sol
+        WHERE sol.base_part_number = ?
+    """, (_safe_row_get(line, 'base_part_number'),)).fetchone()
+
+    customer_quote_stats = _execute_with_cursor(cur, """
+        SELECT
+            COUNT(*) AS customer_quote_count,
+            AVG(cql.quote_price_gbp) AS avg_customer_quote_price,
+            MAX(cql.quote_price_gbp) AS max_customer_quote_price
+        FROM customer_quote_lines cql
+        JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+        WHERE pll.base_part_number = ?
+          AND cql.quote_price_gbp IS NOT NULL
+          AND cql.quote_price_gbp > 0
+          AND COALESCE(cql.is_no_bid, 0) = 0
+    """, (_safe_row_get(line, 'base_part_number'),)).fetchone()
+
+    reasons = []
+    severity = 'info'
+
+    sales_order_count = int(_safe_row_get(sales_stats, 'sales_order_count', 0) or 0)
+    avg_sale_price = _to_float(_safe_row_get(sales_stats, 'avg_sale_price'))
+    if sales_order_count >= 3 and avg_sale_price and cost_gbp >= avg_sale_price * 0.8:
+        pct_of_sell = (cost_gbp / avg_sale_price) * 100
+        severity = 'warning' if cost_gbp < avg_sale_price else 'danger'
+        reasons.append({
+            'source': 'sales_orders',
+            'detail': (
+                f"Cost is {pct_of_sell:.0f}% of average sales price: "
+                f"GBP {cost_gbp:.2f} cost vs GBP {avg_sale_price:.2f} average sell "
+                f"across {sales_order_count} sales lines"
+            )
+        })
+
+    customer_quote_count = int(_safe_row_get(customer_quote_stats, 'customer_quote_count', 0) or 0)
+    avg_customer_quote_price = _to_float(_safe_row_get(customer_quote_stats, 'avg_customer_quote_price'))
+    if customer_quote_count >= 3 and avg_customer_quote_price and cost_gbp >= avg_customer_quote_price * 0.8:
+        pct_of_quote = (cost_gbp / avg_customer_quote_price) * 100
+        severity = 'warning' if severity != 'danger' and cost_gbp < avg_customer_quote_price else 'danger'
+        reasons.append({
+            'source': 'customer_quotes',
+            'detail': (
+                f"Cost is {pct_of_quote:.0f}% of average customer quote price: "
+                f"GBP {cost_gbp:.2f} cost vs GBP {avg_customer_quote_price:.2f} average quoted sell "
+                f"across {customer_quote_count} customer quotes"
+            )
+        })
+
+    part_label = (
+        _safe_row_get(line, 'part_number')
+        or _safe_row_get(line, 'system_part_number')
+        or _safe_row_get(line, 'customer_part_number')
+        or _safe_row_get(line, 'base_part_number')
+    )
+
+    if not reasons:
+        return {
+            'warning': False,
+            'reasons': [],
+            'cost_gbp': cost_gbp,
+            'part_number': part_label,
+            'severity': severity,
+        }
+
+    headline = (
+        f"{part_label}: selected cost looks high against sell history.\n\n"
+        + "\n".join(f"- {reason['detail']}" for reason in reasons)
+        + "\n\nUse this supplier offer anyway?"
+    )
+
+    return {
+        'warning': True,
+        'reasons': reasons,
+        'cost_gbp': cost_gbp,
+        'part_number': part_label,
+        'severity': severity,
+        'message': headline,
+    }
 
 
 def _normalize_company_name_for_match(name):
@@ -8088,6 +8229,34 @@ def use_cost(list_id, line_id):
 
     except Exception as e:
         logging.exception(f"Error in use_cost: {e}")
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/lines/<int:line_id>/cost-anomaly-check', methods=['POST'])
+def cost_anomaly_check(list_id, line_id):
+    """Check whether a selected cost looks abnormally high versus historical sell prices."""
+    try:
+        data = request.get_json(force=True)
+        cost = data.get('cost')
+        currency_id = data.get('currency_id')
+        currency_code = data.get('currency_code')
+
+        if cost is None:
+            return jsonify(success=False, message='cost is required'), 400
+
+        with db_cursor() as cur:
+            result = _build_cost_anomaly_warning(
+                cur,
+                list_id,
+                line_id,
+                selected_cost=cost,
+                currency_id=currency_id,
+                currency_code=currency_code,
+            )
+
+        return jsonify(success=True, **result)
+    except Exception as e:
+        logging.exception(f"Error in cost_anomaly_check: {e}")
         return jsonify(success=False, message=str(e)), 500
 
 

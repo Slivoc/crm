@@ -522,7 +522,28 @@ function offerCoversRequiredQty(offer, requiredQty, piecesPerPound, convertFromL
     return true;
 }
 
-function saveLineCost(lineId) {
+async function confirmHighCostSelection(lineId, payload) {
+    try {
+        const response = await fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/lines/${lineId}/cost-anomaly-check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            return true;
+        }
+        if (!data.warning) {
+            return true;
+        }
+        return confirm(data.message || 'This selected cost looks unusually high. Use it anyway?');
+    } catch (error) {
+        console.warn('Cost anomaly check failed:', error);
+        return true;
+    }
+}
+
+async function saveLineCost(lineId) {
     const row = document.querySelector(`tr[data-line-id="${lineId}"]`);
     if (!row) return;
 
@@ -561,6 +582,14 @@ function saveLineCost(lineId) {
     };
     if (sourceType !== null) costData.source_type = sourceType;
     if (sourceReference) costData.source_reference = sourceReference;
+
+    if (supplier_id && cost) {
+        const shouldContinue = await confirmHighCostSelection(lineId, costData);
+        if (!shouldContinue) {
+            showToast('Cost save cancelled', 'info');
+            return;
+        }
+    }
 
     fetch(`/parts_list/parts-lists/${listId}/lines/${lineId}/use-cost`, {
         method: 'POST',

@@ -72,7 +72,9 @@ def convert_vq_price_to_gbp(price, currency_code):
         return price
 
     try:
-        return convert_currency(price, currency_code, 'GBP')
+        decimal_price = price if isinstance(price, Decimal) else Decimal(str(price))
+        converted = convert_currency(decimal_price, currency_code, 'GBP')
+        return float(converted) if converted is not None else converted
     except Exception as e:
         print(f"Warning: Could not convert {price} {currency_code} to GBP: {e}")
         return price  # Return original price if conversion fails
