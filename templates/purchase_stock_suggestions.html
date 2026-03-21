@@ -882,6 +882,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const speculativeReportStatus = document.getElementById('speculative-report-status');
     const speculativeReportResults = document.getElementById('speculative-report-results');
     const speculativeReportBody = document.getElementById('speculative-report-body');
+    let speculativeReportOpportunities = [];
 
     function escapeHtml(value) {
         return String(value ?? '')
@@ -929,7 +930,160 @@ document.addEventListener('DOMContentLoaded', function() {
         `).join('');
     }
 
+    function getSpeculativeReasonText(reasons) {
+        if (!Array.isArray(reasons) || reasons.length === 0) {
+            return '';
+        }
+
+        return reasons
+            .map(reason => [reason.label, reason.detail].filter(Boolean).join(': '))
+            .join(' | ');
+    }
+
+    function buildSpeculativeReportExportRows(opportunities) {
+        return (Array.isArray(opportunities) ? opportunities : []).map(item => ({
+            score: formatNumber(item.opportunity_score, 0),
+            part_number: item.part_number || item.base_part_number || '',
+            system_part_number: item.system_part_number || item.base_part_number || '',
+            supplier: item.supplier_name || '',
+            customer_or_list: item.customer_name || item.parts_list_name || '',
+            quote_reference: item.quote_reference || 'Quote',
+            quote_date: formatDate(item.quote_date),
+            buy_price_gbp: formatMoney(item.unit_price_gbp),
+            buy_price_currency: item.currency_code || 'GBP',
+            buy_price_original: formatNumber(item.unit_price_original, 2),
+            stock_quantity: formatNumber(item.stock_quantity, 0),
+            sales_qty_365d: formatNumber(item.recent_sales_qty, 0),
+            sales_orders_365d: formatNumber(item.recent_sales_orders, 0),
+            avg_sell_price: formatMoney(item.avg_sale_price),
+            sales_order_lines: formatNumber(item.sales_order_count, 0),
+            justification: getSpeculativeReasonText(item.reasons),
+        }));
+    }
+
+    function downloadBlob(content, mimeType, filename) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    function exportSpeculativeReportCsv() {
+        const rows = buildSpeculativeReportExportRows(speculativeReportOpportunities);
+        const headers = [
+            'Score',
+            'Part Number',
+            'System Part Number',
+            'Supplier',
+            'Customer / List',
+            'Quote Reference',
+            'Quote Date',
+            'Buy Price GBP',
+            'Buy Price Currency',
+            'Buy Price Original',
+            'Stock',
+            '365d Sales Qty',
+            '365d Sales Orders',
+            'Avg Sell',
+            'Sales Order Lines',
+            'Justification'
+        ];
+
+        const escapeCsvValue = (value) => {
+            const text = String(value ?? '');
+            return `"${text.replace(/"/g, '""')}"`;
+        };
+
+        const body = rows.map(row => ([
+            row.score,
+            row.part_number,
+            row.system_part_number,
+            row.supplier,
+            row.customer_or_list,
+            row.quote_reference,
+            row.quote_date,
+            row.buy_price_gbp,
+            row.buy_price_currency,
+            row.buy_price_original,
+            row.stock_quantity,
+            row.sales_qty_365d,
+            row.sales_orders_365d,
+            row.avg_sell_price,
+            row.sales_order_lines,
+            row.justification
+        ]).map(escapeCsvValue).join(','));
+
+        const content = ['﻿' + headers.join(','), ...body].join('\r\n');
+        downloadBlob(content, 'text/csv;charset=utf-8;', 'Speculative_Buy_Report.csv');
+    }
+
+    function exportSpeculativeReportExcel() {
+        const rows = buildSpeculativeReportExportRows(speculativeReportOpportunities);
+        const headers = [
+            'Score',
+            'Part Number',
+            'System Part Number',
+            'Supplier',
+            'Customer / List',
+            'Quote Reference',
+            'Quote Date',
+            'Buy Price GBP',
+            'Buy Price Currency',
+            'Buy Price Original',
+            'Stock',
+            '365d Sales Qty',
+            '365d Sales Orders',
+            'Avg Sell',
+            'Sales Order Lines',
+            'Justification'
+        ];
+        const fields = [
+            'score',
+            'part_number',
+            'system_part_number',
+            'supplier',
+            'customer_or_list',
+            'quote_reference',
+            'quote_date',
+            'buy_price_gbp',
+            'buy_price_currency',
+            'buy_price_original',
+            'stock_quantity',
+            'sales_qty_365d',
+            'sales_orders_365d',
+            'avg_sell_price',
+            'sales_order_lines',
+            'justification'
+        ];
+
+        const headerHtml = headers.map(header => `<th>${escapeHtml(header)}</th>`).join('');
+        const rowHtml = rows.map(row => `
+            <tr>${fields.map(field => `<td>${escapeHtml(row[field])}</td>`).join('')}</tr>
+        `).join('');
+        const html = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+                <head>
+                    <meta charset="utf-8">
+                </head>
+                <body>
+                    <table>
+                        <thead><tr>${headerHtml}</tr></thead>
+                        <tbody>${rowHtml}</tbody>
+                    </table>
+                </body>
+            </html>
+        `;
+
+        downloadBlob('\ufeff' + html, 'application/vnd.ms-excel;charset=utf-8;', 'Speculative_Buy_Report.xls');
+    }
+
     function renderSpeculativeReport(data) {
+        speculativeReportOpportunities = Array.isArray(data.opportunities) ? data.opportunities : [];
         document.getElementById('spec-total-candidates').textContent = data.summary.total_candidates || 0;
         document.getElementById('spec-distinct-parts').textContent = data.summary.distinct_parts || 0;
         document.getElementById('spec-sell-matches').textContent = data.summary.sales_order_matches || 0;
@@ -992,16 +1146,18 @@ document.addEventListener('DOMContentLoaded', function() {
             dom: 'Bfrtip',
             buttons: [
                 {
-                    extend: 'excel',
                     text: '<i class="bi bi-file-earmark-excel"></i> Excel',
                     className: 'btn btn-success btn-sm',
-                    title: 'Speculative_Buy_Report'
+                    action: function() {
+                        exportSpeculativeReportExcel();
+                    }
                 },
                 {
-                    extend: 'csv',
                     text: '<i class="bi bi-file-earmark-text"></i> CSV',
                     className: 'btn btn-info btn-sm',
-                    title: 'Speculative_Buy_Report'
+                    action: function() {
+                        exportSpeculativeReportCsv();
+                    }
                 }
             ]
         });
