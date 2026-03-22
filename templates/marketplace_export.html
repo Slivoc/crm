@@ -508,6 +508,12 @@
                                 Skip lines missing mandatory fields
                             </label>
                         </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="excludeExistingMarketplaceProductIds">
+                            <label class="form-check-label small text-muted" for="excludeExistingMarketplaceProductIds">
+                                For product export, skip parts that already have a marketplace product ID
+                            </label>
+                        </div>
                         <button class="btn btn-lg btn-primary" id="pushToMarketplaceBtn">
                             <i class="bi bi-cloud-upload"></i> Push to Marketplace
                         </button>
@@ -1978,15 +1984,59 @@ function formatInvalidLinesPreview(invalidRows, limit = 5) {
         .join('; ');
 }
 
+function filterExistingMarketplaceProducts(parts, mode) {
+    if (mode !== 'products' || !$('#excludeExistingMarketplaceProductIds').is(':checked')) {
+        return {
+            parts: parts,
+            skippedExisting: []
+        };
+    }
+
+    const skippedExisting = [];
+    const filteredParts = parts.filter(part => {
+        const marketplaceProductId = String((part && part.mkp_offer_product_id) || '').trim();
+        if (!marketplaceProductId) {
+            return true;
+        }
+        skippedExisting.push({
+            base_part_number: part.base_part_number,
+            part_number: part.part_number || part.base_part_number,
+            marketplace_product_id: marketplaceProductId
+        });
+        return false;
+    });
+
+    return {
+        parts: filteredParts,
+        skippedExisting: skippedExisting
+    };
+}
+
 function resolveExportParts(parts, mode, defaults, actionLabel) {
-    const split = splitValidParts(parts, mode, defaults);
+    const productIdFilter = filterExistingMarketplaceProducts(parts, mode);
+    if (!productIdFilter.parts.length) {
+        const skippedExistingCount = (productIdFilter.skippedExisting || []).length;
+        if (mode === 'products' && skippedExistingCount > 0) {
+            $('#exportStatus').text(`Skipped ${skippedExistingCount} part(s) because they already have a marketplace product ID. Nothing left to export.`);
+            alert('All selected product lines already have a marketplace product ID. Nothing to export.');
+        }
+        return {
+            proceed: false,
+            parts: [],
+            skipped: [],
+            skippedExisting: productIdFilter.skippedExisting
+        };
+    }
+
+    const split = splitValidParts(productIdFilter.parts, mode, defaults);
     const skipInvalidMandatory = $('#skipInvalidMandatoryFields').is(':checked');
 
     if (!split.invalid.length) {
         return {
             proceed: true,
             parts: split.valid,
-            skipped: []
+            skipped: [],
+            skippedExisting: productIdFilter.skippedExisting
         };
     }
 
@@ -2001,13 +2051,15 @@ function resolveExportParts(parts, mode, defaults, actionLabel) {
             return {
                 proceed: false,
                 parts: [],
-                skipped: split.invalid
+                skipped: split.invalid,
+                skippedExisting: productIdFilter.skippedExisting
             };
         }
         return {
             proceed: true,
             parts: split.valid,
-            skipped: split.invalid
+            skipped: split.invalid,
+            skippedExisting: productIdFilter.skippedExisting
         };
     }
 
@@ -2022,7 +2074,8 @@ function resolveExportParts(parts, mode, defaults, actionLabel) {
         return {
             proceed: false,
             parts: [],
-            skipped: split.invalid
+            skipped: split.invalid,
+            skippedExisting: productIdFilter.skippedExisting
         };
     }
 
@@ -2034,13 +2087,15 @@ function resolveExportParts(parts, mode, defaults, actionLabel) {
         return {
             proceed: false,
             parts: [],
-            skipped: split.invalid
+            skipped: split.invalid,
+            skippedExisting: productIdFilter.skippedExisting
         };
     }
     return {
         proceed: true,
         parts: split.valid,
-        skipped: split.invalid
+        skipped: split.invalid,
+        skippedExisting: productIdFilter.skippedExisting
     };
 }
 
@@ -2065,6 +2120,7 @@ async function exportToCsv(mode) {
     }
     const skipInvalidMandatory = $('#skipInvalidMandatoryFields').is(':checked');
     const exportParts = resolved.parts;
+    const skippedExisting = resolved.skippedExisting || [];
 
     const buttonSelector = exportMode === 'offers' ? '#exportOffersCsvBtn' : '#exportProductsCsvBtn';
     const buttonLabel = exportMode === 'offers'
@@ -2121,6 +2177,9 @@ async function exportToCsv(mode) {
             fallbackFilename
         );
         downloadBlob(blob, filename);
+        if (skippedExisting.length > 0) {
+            $('#exportStatus').text(`Export complete. Skipped ${skippedExisting.length} part(s) that already have a marketplace product ID.`);
+        }
     } catch (error) {
         const message = error && error.message ? error.message : 'Unknown export error';
         $('#exportStatus').text(message);
@@ -2161,10 +2220,11 @@ function pushOffersToMarketplace() {
     const skipInvalidMandatory = $('#skipInvalidMandatoryFields').is(':checked');
     const partsToPush = resolved.parts;
     const skippedInvalid = resolved.skipped || [];
+    const skippedExisting = resolved.skippedExisting || [];
 
     const confirmText = isOfferUpdate
         ? `Push offer update for ${partsToPush.length} parts to Airbus Marketplace now?`
-        : `Push ${partsToPush.length} products to Airbus Marketplace now?`;
+        : `Push ${partsToPush.length} products to Airbus Marketplace now?${skippedExisting.length ? ` (${skippedExisting.length} part(s) with an existing marketplace product ID will be skipped)` : ''}`;
 
     if (!confirm(confirmText)) {
         return;
@@ -2196,7 +2256,10 @@ function pushOffersToMarketplace() {
             const modeLabel = isOfferUpdate ? 'Offer update' : 'Product export';
             const skipped = response.skipped_invalid_count || skippedInvalid.length || 0;
             const skippedText = skipped > 0 ? ` Skipped ${skipped} invalid line(s).` : '';
-            $('#exportStatus').text(`${modeLabel} started. Import ID: ${importId}.${skippedText}`);
+            const skippedExistingText = !isOfferUpdate && skippedExisting.length > 0
+                ? ` Skipped ${skippedExisting.length} part(s) with existing marketplace product IDs.`
+                : '';
+            $('#exportStatus').text(`${modeLabel} started. Import ID: ${importId}.${skippedText}${skippedExistingText}`);
         } else {
             $('#exportStatus').text(response.error || 'Mirakl import failed.');
             alert('Mirakl import failed: ' + (response.error || 'Unknown error'));
