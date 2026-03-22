@@ -186,7 +186,7 @@
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <div>
                             <h6><i class="bi bi-file-earmark-arrow-up"></i> Work from an existing Airbus list</h6>
-                            <p>Upload the latest Airbus export and use that file as the working set.</p>
+                            <p>Upload the latest Airbus products export or offers export and use that file as the working set.</p>
                         </div>
                         <span class="source-chip" id="baselineSourceChip">Inactive</span>
                     </div>
@@ -201,7 +201,7 @@
                     </div>
                     <div class="source-summary mt-3" id="baselineSourceSummary">
                         <div class="fw-bold mb-1">No Airbus list loaded</div>
-                        <div class="text-muted small">Import a recent Airbus export to preserve accepted Airbus fields, then overwrite only price and quantity from CRM.</div>
+                        <div class="text-muted small">Import a recent Airbus product export or offers export to preserve accepted Airbus fields, then overwrite only price and quantity from CRM.</div>
                     </div>
                 </div>
             </div>
@@ -752,6 +752,7 @@ let categories = [];
 let currentEditingPartNumber = null;
 let loadStatusTimer = null;
 let importedAirbusBaselineRows = {};
+let importedAirbusBaselineTemplateKind = null;
 let partSourceMode = 'filters';
 
 $(document).ready(function() {
@@ -1052,9 +1053,10 @@ function setPartSourceMode(mode) {
 function renderBaselineSourceSummary(summary) {
     const count = Object.keys(importedAirbusBaselineRows || {}).length;
     if (!count) {
+        importedAirbusBaselineTemplateKind = null;
         $('#baselineSourceSummary').html(`
             <div class="fw-bold mb-1">No Airbus list loaded</div>
-            <div class="text-muted small">Import a recent Airbus export to preserve accepted Airbus fields, then overwrite only price and quantity from CRM.</div>
+            <div class="text-muted small">Import a recent Airbus product export or offers export to preserve accepted Airbus fields, then overwrite only price and quantity from CRM.</div>
         `);
         $('#useBaselineSourceBtn').prop('disabled', true);
         return;
@@ -1064,10 +1066,22 @@ function renderBaselineSourceSummary(summary) {
     const processed = summary && summary.processed_rows !== undefined ? summary.processed_rows : count;
     const invalid = summary && summary.skipped_invalid !== undefined ? summary.skipped_invalid : 0;
     const noMatch = summary && summary.skipped_no_match !== undefined ? summary.skipped_no_match : 0;
+    const templateKind = summary && summary.template_kind ? summary.template_kind : importedAirbusBaselineTemplateKind;
+    const storedOfferIds = summary && summary.stored_offer_product_ids_count !== undefined
+        ? summary.stored_offer_product_ids_count
+        : 0;
+    const title = templateKind === 'offers'
+        ? 'Offers list ready'
+        : templateKind === 'products'
+            ? 'Product list ready'
+            : 'Airbus list ready';
+    const detailText = templateKind === 'offers'
+        ? `Processed ${processed} row(s). Matched ${matched} CRM part(s), invalid ${invalid}, no match ${noMatch}. Stored ${storedOfferIds} marketplace product ID(s) for future offer updates.`
+        : `Processed ${processed} row(s). Matched ${matched} CRM part(s), invalid ${invalid}, no match ${noMatch}. Use this list as the working set for export.`;
 
     $('#baselineSourceSummary').html(`
-        <div class="fw-bold mb-1">Airbus list ready</div>
-        <div class="text-muted small">Processed ${processed} row(s). Matched ${matched} CRM part(s), invalid ${invalid}, no match ${noMatch}. Use this list as the working set for export.</div>
+        <div class="fw-bold mb-1">${title}</div>
+        <div class="text-muted small">${detailText}</div>
     `);
     $('#useBaselineSourceBtn').prop('disabled', false);
 }
@@ -1170,6 +1184,44 @@ function getImportedAirbusBaselineRow(part) {
     }
     const entry = importedAirbusBaselineRows[part.base_part_number];
     return entry && entry.baseline_row ? entry.baseline_row : null;
+}
+
+function normalizeMarketplaceImportHeader(header) {
+    return String(header || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function getBaselineRowValue(baselineRow, targetHeader) {
+    const normalizedTarget = normalizeMarketplaceImportHeader(targetHeader);
+    const row = baselineRow || {};
+    const keys = Object.keys(row);
+    for (let idx = 0; idx < keys.length; idx += 1) {
+        const key = keys[idx];
+        if (normalizeMarketplaceImportHeader(key) === normalizedTarget) {
+            return row[key];
+        }
+    }
+    return null;
+}
+
+function resolveOfferProductId(part, baselineRow) {
+    const baselineValue = String(getBaselineRowValue(baselineRow, 'product-id') || '').trim();
+    if (baselineValue) {
+        return baselineValue;
+    }
+    const storedValue = String((part && part.mkp_offer_product_id) || '').trim();
+    if (storedValue) {
+        return storedValue;
+    }
+    return String((part && (part.part_number || part.base_part_number)) || '').trim();
+}
+
+function resolveOfferProductIdType(part, baselineRow) {
+    const baselineValue = String(getBaselineRowValue(baselineRow, 'product-id-type') || '').trim();
+    if (baselineValue) {
+        return baselineValue;
+    }
+    const storedValue = String((part && part.mkp_offer_product_id_type) || '').trim();
+    return storedValue || 'SKU';
 }
 
 function formatStockDisplay(part) {
@@ -1765,11 +1817,13 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
     const baselineRow = getImportedAirbusBaselineRow(part);
     const price = part.estimated_price ?? '';
     const isOnDemandWithoutPrice = coercePositiveNumber(price) === null;
+    const productId = resolveOfferProductId(part, baselineRow);
+    const productIdType = resolveOfferProductIdType(part, baselineRow);
 
     return {
         'sku': partNumber,
-        'product-id': partNumber,
-        'product-id-type': 'SKU',
+        'product-id': productId,
+        'product-id-type': productIdType,
         'price': price,
         'quantity': quantity,
         'state': '1',
@@ -2334,6 +2388,7 @@ function importAirbusStockPriceFile() {
 
         const baselines = Array.isArray(response.baselines) ? response.baselines : [];
         importedAirbusBaselineRows = {};
+        importedAirbusBaselineTemplateKind = response.template_kind || null;
         baselines.forEach(function(item) {
             if (!item || !item.base_part_number) {
                 return;
@@ -2341,14 +2396,27 @@ function importAirbusStockPriceFile() {
             importedAirbusBaselineRows[item.base_part_number] = item;
         });
 
-        renderBaselineSourceSummary(response.summary || {});
+        renderBaselineSourceSummary({
+            ...(response.summary || {}),
+            template_kind: response.template_kind,
+            stored_offer_product_ids_count: response.stored_offer_product_ids_count || 0
+        });
         setPartSourceMode('baseline');
+        if (response.template_kind === 'offers') {
+            $('#miraklPushMode').val('offers');
+            updatePushActionUi();
+        }
         updateSummaryStats();
         renderUncategorizedParts();
         loadParts();
 
         const summary = response.summary || {};
-        const message = `Airbus baseline import complete. Processed ${summary.processed_rows || 0} row(s), matched ${summary.matched_rows || 0}, invalid ${summary.skipped_invalid || 0}, no match ${summary.skipped_no_match || 0}.`;
+        const importLabel = response.template_kind === 'offers' ? 'Airbus offers baseline' : 'Airbus baseline';
+        const storedIds = response.stored_offer_product_ids_count || 0;
+        const storedText = response.template_kind === 'offers'
+            ? ` Stored ${storedIds} marketplace product ID(s) for future offer updates.`
+            : '';
+        const message = `${importLabel} import complete. Processed ${summary.processed_rows || 0} row(s), matched ${summary.matched_rows || 0}, invalid ${summary.skipped_invalid || 0}, no match ${summary.skipped_no_match || 0}.${storedText}`;
         $('#exportStatus').text(message);
 
         if (response.errors && response.errors.length) {

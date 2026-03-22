@@ -439,6 +439,37 @@ def _summarize_import_headers(rows):
     }
 
 
+def _detect_marketplace_import_template_kind(header_summary):
+    normalized_headers = set((header_summary or {}).get('normalized') or [])
+    if not normalized_headers:
+        return 'unknown'
+
+    product_headers = {
+        'mkpcategory',
+        'descriptionen',
+        'productsummaryen',
+        'productpresentationen',
+        'productunit',
+        'packagecontent',
+        'packagecontentunit',
+        'thirdlevel',
+    }
+    offer_headers = {
+        'productid',
+        'productidtype',
+        'updatedelete',
+        'allowquoterequests',
+        'leadtimetoship',
+        'vendorreference',
+    }
+
+    if normalized_headers.intersection(product_headers):
+        return 'products'
+    if normalized_headers.intersection(offer_headers):
+        return 'offers'
+    return 'unknown'
+
+
 def _build_marketplace_updates_from_row(row_data, valid_categories):
     identifier_headers = {
         'code',
@@ -640,6 +671,23 @@ def _get_import_row_value(row_data, target_header):
         if _normalize_import_header(raw_header) == target_normalized:
             return True, raw_value
     return False, None
+
+
+def _extract_offer_product_identity(row_data):
+    found_product_id, product_id = _get_import_row_value(row_data, 'product-id')
+    if not found_product_id:
+        return None
+
+    product_id_text = _coerce_optional_text(product_id)
+    if not product_id_text:
+        return None
+
+    _, product_id_type = _get_import_row_value(row_data, 'product-id-type')
+    product_id_type_text = _coerce_optional_text(product_id_type) or 'SKU'
+    return {
+        'product_id': product_id_text,
+        'product_id_type': product_id_type_text,
+    }
 
 
 def _build_offer_row_from_payload(offer):
@@ -865,6 +913,8 @@ def import_marketplace_stock_price_file():
         if not rows:
             return jsonify({'success': False, 'error': 'Uploaded file is empty'}), 400
 
+        header_summary = _summarize_import_headers(rows)
+        template_kind = _detect_marketplace_import_template_kind(header_summary)
         db = get_db()
         cursor = db.cursor()
 
@@ -875,6 +925,7 @@ def import_marketplace_stock_price_file():
         parsed_rows = []
         exact_references = set()
         normalized_references = set()
+        offer_identity_updates = {}
 
         for row_number, row_data in rows:
             processed += 1
@@ -962,16 +1013,51 @@ def import_marketplace_stock_price_file():
                 'part_number': part_number or base_part_number,
                 'baseline_row': baseline_row,
             }
+            if template_kind == 'offers':
+                offer_identity = _extract_offer_product_identity(baseline_row)
+                if offer_identity:
+                    offer_identity_updates[str(base_part_number)] = offer_identity
+
+        stored_offer_product_ids_count = 0
+        if template_kind == 'offers' and offer_identity_updates:
+            cursor.executemany(
+                """
+                UPDATE part_numbers
+                SET mkp_offer_product_id = ?, mkp_offer_product_id_type = ?
+                WHERE base_part_number = ?
+                """,
+                [
+                    (
+                        identity['product_id'],
+                        identity['product_id_type'],
+                        base_part_number,
+                    )
+                    for base_part_number, identity in offer_identity_updates.items()
+                ],
+            )
+            db.commit()
+            stored_offer_product_ids_count = len(offer_identity_updates)
+
+        template_label = {
+            'offers': 'offer baseline',
+            'products': 'product baseline',
+        }.get(template_kind, 'Airbus baseline')
 
         return jsonify({
             'success': True,
-            'message': 'Airbus baseline imported. Export/push will keep uploaded Airbus fields and replace price/quantity from CRM.',
+            'message': (
+                f'Airbus {template_label} imported. '
+                'Export/push will keep uploaded Airbus fields and replace price/quantity from CRM.'
+            ),
             'summary': {
                 'processed_rows': processed,
                 'matched_rows': len(matched_baselines),
                 'skipped_invalid': skipped_invalid,
                 'skipped_no_match': skipped_no_match,
             },
+            'header_diagnostics': header_summary,
+            'template_kind': template_kind,
+            'stored_offer_product_ids_count': stored_offer_product_ids_count,
             'baselines': list(matched_baselines.values()),
             'errors': row_errors,
         }), 200
@@ -1583,7 +1669,9 @@ def get_parts_for_export():
                 pn.mkp_eccn,
                 pn.mkp_serialized,
                 pn.mkp_log_card,
-                pn.mkp_easaf1
+                pn.mkp_easaf1,
+                pn.mkp_offer_product_id,
+                pn.mkp_offer_product_id_type
             FROM part_numbers pn
             WHERE 1=1
         """
@@ -1790,6 +1878,8 @@ def get_parts_for_export():
                 'mkp_serialized': row['mkp_serialized'],
                 'mkp_log_card': row['mkp_log_card'],
                 'mkp_easaf1': row['mkp_easaf1'],
+                'mkp_offer_product_id': row['mkp_offer_product_id'],
+                'mkp_offer_product_id_type': row['mkp_offer_product_id_type'],
                 'description': '',
                 'manufacturer': '',
                 'estimated_price': estimated_price,
@@ -1863,7 +1953,9 @@ def export_to_marketplace():
                 pn.mkp_eccn,
                 pn.mkp_serialized,
                 pn.mkp_log_card,
-                pn.mkp_easaf1
+                pn.mkp_easaf1,
+                pn.mkp_offer_product_id,
+                pn.mkp_offer_product_id_type
             FROM part_numbers pn
             WHERE pn.base_part_number IN ({placeholders})
         """
@@ -1928,6 +2020,8 @@ def export_to_marketplace():
                 'mkp_serialized': _coerce_bool(row['mkp_serialized'], default=export_defaults['mkp_serialized']),
                 'mkp_log_card': _coerce_bool(row['mkp_log_card'], default=export_defaults['mkp_log_card']),
                 'mkp_easaf1': _coerce_bool(row['mkp_easaf1'], default=export_defaults['mkp_easaf1']),
+                'mkp_offer_product_id': _coerce_text(row['mkp_offer_product_id'], default=''),
+                'mkp_offer_product_id_type': _coerce_text(row['mkp_offer_product_id_type'], default='SKU'),
                 'description': resolved_description,
                 'manufacturer': '',
                 'quantity': quantity,
@@ -1942,10 +2036,12 @@ def export_to_marketplace():
             for part in parts_data:
                 part_number = _part_identifier(part)
                 description = _coerce_text(part.get('mkp_description') or part.get('description'), default=part_number)
+                offer_product_id = _coerce_text(part.get('mkp_offer_product_id'), default=part_number)
+                offer_product_id_type = _coerce_text(part.get('mkp_offer_product_id_type'), default='SKU')
                 csv_rows.append(_build_offer_row_from_payload({
                     'sku': part_number,
-                    'product-id': part_number,
-                    'product-id-type': 'SKU',
+                    'product-id': offer_product_id,
+                    'product-id-type': offer_product_id_type,
                     'description': description,
                     'internal-description': '',
                     'price': part.get('price'),
