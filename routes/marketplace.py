@@ -140,6 +140,20 @@ def _coerce_price(value):
         return ''
 
 
+def _coerce_numeric_number(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text.replace(',', '.'))
+    except ValueError:
+        return None
+
+
 def _coerce_bool(value, *, default=False):
     if value is None:
         return default
@@ -250,7 +264,7 @@ def _get_offer_missing_required_fields(offer):
         missing.append('product-id')
     if _is_blank(offer.get('product-id-type')):
         missing.append('product-id-type')
-    if _coerce_positive_number(offer.get('price')) is None:
+    if _coerce_numeric_number(offer.get('price')) is None:
         missing.append('price')
     if _coerce_positive_number(offer.get('quantity')) is None:
         missing.append('quantity')
@@ -265,7 +279,7 @@ def _get_product_missing_required_fields(part):
         missing.extend(['code', 'sku', 'product-id'])
     if _is_blank(part.get('mkp_category')):
         missing.append('mkpCategory')
-    if _coerce_positive_number(part.get('price')) is None:
+    if _coerce_numeric_number(part.get('price')) is None:
         missing.append('price')
     if _coerce_positive_number(part.get('quantity')) is None:
         missing.append('quantity')
@@ -1311,6 +1325,99 @@ def categorization_tool_uncategorized_search():
     return jsonify({'success': True, 'parts': parts}), 200
 
 
+@marketplace_bp.route('/categorization-tool/uncategorized-ranked', methods=['GET'])
+def categorization_tool_uncategorized_ranked():
+    source = (request.args.get('source') or 'stock_qty').strip().lower()
+    limit = request.args.get('limit', 100)
+    try:
+        limit = max(1, min(int(limit), 500))
+    except (TypeError, ValueError):
+        limit = 100
+
+    supported_sources = {
+        'stock_qty': {
+            'title': 'uncategorized parts ranked by stock quantity',
+            'filter_sql': 'COALESCE(stock.stock_quantity, 0) > 0',
+            'order_sql': 'COALESCE(stock.stock_quantity, 0) DESC, COALESCE(stock.stock_value, 0) DESC, pn.part_number ASC',
+        },
+        'stock_value': {
+            'title': 'uncategorized parts ranked by stock value',
+            'filter_sql': 'COALESCE(stock.stock_value, 0) > 0',
+            'order_sql': 'COALESCE(stock.stock_value, 0) DESC, COALESCE(stock.stock_quantity, 0) DESC, pn.part_number ASC',
+        },
+        'sales_frequency': {
+            'title': 'uncategorized parts ranked by sales frequency',
+            'filter_sql': 'COALESCE(sales.sales_order_count, 0) > 0',
+            'order_sql': 'COALESCE(sales.sales_order_count, 0) DESC, COALESCE(sales.quantity_sold, 0) DESC, pn.part_number ASC',
+        },
+    }
+    config = supported_sources.get(source)
+    if not config:
+        return jsonify({'success': False, 'error': f'Unsupported source: {source}'}), 400
+
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute(
+        f"""
+        WITH stock AS (
+            SELECT
+                sm.base_part_number,
+                COALESCE(SUM(sm.available_quantity), 0) AS stock_quantity,
+                COALESCE(SUM(sm.available_quantity * COALESCE(sm.cost_per_unit, 0)), 0) AS stock_value
+            FROM stock_movements sm
+            WHERE sm.movement_type = 'IN'
+              AND sm.available_quantity > 0
+            GROUP BY sm.base_part_number
+        ),
+        sales AS (
+            SELECT
+                sol.base_part_number,
+                COUNT(*) AS sales_order_count,
+                COALESCE(SUM(sol.quantity), 0) AS quantity_sold,
+                MAX(so.date_entered) AS last_sale_date
+            FROM sales_order_lines sol
+            JOIN sales_orders so ON so.id = sol.sales_order_id
+            GROUP BY sol.base_part_number
+        )
+        SELECT
+            pn.base_part_number,
+            COALESCE(pn.part_number, pn.base_part_number) AS part_number,
+            COALESCE(stock.stock_quantity, 0) AS stock_quantity,
+            COALESCE(stock.stock_value, 0) AS stock_value,
+            COALESCE(sales.sales_order_count, 0) AS sales_order_count,
+            COALESCE(sales.quantity_sold, 0) AS quantity_sold,
+            sales.last_sale_date
+        FROM part_numbers pn
+        LEFT JOIN stock ON stock.base_part_number = pn.base_part_number
+        LEFT JOIN sales ON sales.base_part_number = pn.base_part_number
+        WHERE (pn.mkp_category IS NULL OR pn.mkp_category = '')
+          AND {config['filter_sql']}
+        ORDER BY {config['order_sql']}
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    rows = cursor.fetchall() or []
+    parts = [
+        {
+            'base_part_number': row['base_part_number'],
+            'part_number': row['part_number'] or row['base_part_number'],
+            'stock_quantity': float(row['stock_quantity'] or 0),
+            'stock_value': float(row['stock_value'] or 0),
+            'sales_order_count': int(row['sales_order_count'] or 0),
+            'quantity_sold': float(row['quantity_sold'] or 0),
+            'last_sale_date': row['last_sale_date'].isoformat() if row['last_sale_date'] else None,
+        }
+        for row in rows
+    ]
+    return jsonify({
+        'success': True,
+        'source': source,
+        'title': config['title'],
+        'parts': parts,
+    }), 200
+
+
 @marketplace_bp.route('/categorization-tool/prefix-preview', methods=['POST'])
 def categorization_tool_prefix_preview():
     data = request.get_json() or {}
@@ -2025,7 +2132,7 @@ def export_to_marketplace():
                 'description': resolved_description,
                 'manufacturer': '',
                 'quantity': quantity,
-                'price': _coerce_price(price),
+                'price': _coerce_price(price) if price is not None else 0.0,
                 'condition': 'New',
                 'lead_time_days': lead_time_value,
                 'baseline_row': baseline_row,

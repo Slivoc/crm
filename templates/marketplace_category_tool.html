@@ -7,7 +7,7 @@
     <div class="row mb-4">
         <div class="col">
             <h2><i class="bi bi-tags"></i> Marketplace Categorization Tool</h2>
-            <p class="text-muted">Work through uncategorized export parts and apply categories one-by-one.</p>
+            <p class="text-muted">Work through uncategorized CRM parts and apply categories one-by-one.</p>
         </div>
     </div>
 
@@ -17,12 +17,31 @@
         </div>
         <div class="card-body">
             <div class="row mb-3">
-                <div class="col-md-6">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Order uncategorized parts by</label>
+                    <select class="form-select" id="uncategorizedSourceMode">
+                        <option value="alphabetical">Alphabetical</option>
+                        <option value="stock_qty">Top by stock quantity</option>
+                        <option value="stock_value">Top by stock value</option>
+                        <option value="sales_frequency">Top by sales frequency</option>
+                    </select>
+                    <div class="small text-muted mt-1">Always uses uncategorized parts from CRM. Change the ordering to focus on the most important parts first.</div>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label fw-bold">Limit</label>
+                    <select class="form-select" id="uncategorizedSourceLimit">
+                        <option value="50">50</option>
+                        <option value="100" selected>100</option>
+                        <option value="200">200</option>
+                        <option value="500">500</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Filter</label>
                     <input type="text" class="form-control" id="uncategorizedFilter" placeholder="Type to filter (e.g. 2123, CR)">
                     <div class="small text-muted mt-1" id="uncategorizedSource"></div>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Mass categorize filtered</label>
                     <div class="input-group">
                         <select class="form-select" id="massCategorySelect">
@@ -40,6 +59,7 @@
                     <thead>
                         <tr>
                             <th>Part Number</th>
+                            <th>Signals</th>
                             <th>Suggested Category</th>
                             <th>Reasoning</th>
                             <th>Actions</th>
@@ -60,10 +80,15 @@ let uncategorizedParts = [];
 let filteredParts = [];
 let searchTimer = null;
 let selectedCategoryMap = {};
+let currentSourceMode = 'alphabetical';
 
 $(document).ready(function() {
     loadCategories();
     loadUncategorizedParts();
+
+    $('#uncategorizedSourceMode, #uncategorizedSourceLimit').on('change', function() {
+        loadUncategorizedParts();
+    });
 
     $('#uncategorizedFilter').on('input', function() {
         scheduleUncategorizedFilter($(this).val());
@@ -95,40 +120,52 @@ function loadCategories() {
 }
 
 function loadUncategorizedParts() {
-    const exportPayload = getExportUncategorizedParts();
-    if (!exportPayload) {
-        $('#uncategorizedSource').html('Run the <a href="/marketplace/export-page">export page</a> to load uncategorized parts.');
-        renderUncategorizedParts([]);
+    currentSourceMode = $('#uncategorizedSourceMode').val() || 'alphabetical';
+    const limit = parseInt($('#uncategorizedSourceLimit').val(), 10) || 100;
+
+    if (currentSourceMode === 'alphabetical') {
+        $('#uncategorizedSource').text('Loading uncategorized CRM parts...');
+        $.get('/marketplace/categorization-tool/uncategorized', {
+            limit: limit
+        }).done(function(response) {
+            if (!response.success) {
+                $('#uncategorizedSource').text(response.error || 'Failed to load uncategorized parts.');
+                renderUncategorizedParts([]);
+                return;
+            }
+            const parts = Array.isArray(response.parts) ? response.parts : [];
+            renderUncategorizedParts(parts);
+            $('#uncategorizedSource').text(`Using ${parts.length} uncategorized CRM parts in alphabetical order.`);
+        }).fail(function(xhr) {
+            const error = (xhr.responseJSON && xhr.responseJSON.error) || xhr.statusText || 'Unknown error';
+            $('#uncategorizedSource').text(error);
+            renderUncategorizedParts([]);
+        });
         return;
     }
-    renderUncategorizedParts(exportPayload.uncategorized || []);
-    updateUncategorizedSource(exportPayload);
-}
 
-function getExportUncategorizedParts() {
-    try {
-        const raw = localStorage.getItem('marketplaceExportUncategorizedParts');
-        if (!raw) {
-            return null;
-        }
-        const payload = JSON.parse(raw);
-        if (!payload || !Array.isArray(payload.uncategorized) || payload.uncategorized.length === 0) {
-            return null;
-        }
-        return payload;
-    } catch (error) {
-        return null;
-    }
-}
-
-function updateUncategorizedSource(payload) {
-    if (payload && payload.stored_at) {
-        const timestamp = new Date(payload.stored_at);
-        const count = payload.uncategorized ? payload.uncategorized.length : 0;
-        $('#uncategorizedSource').text(`Using ${count} uncategorized parts from last export (${timestamp.toLocaleString()}).`);
+    if (currentSourceMode !== 'alphabetical') {
+        $('#uncategorizedSource').text('Loading ranked uncategorized parts...');
+        $.get('/marketplace/categorization-tool/uncategorized-ranked', {
+            source: currentSourceMode,
+            limit: limit
+        }).done(function(response) {
+            if (!response.success) {
+                $('#uncategorizedSource').text(response.error || 'Failed to load ranked parts.');
+                renderUncategorizedParts([]);
+                return;
+            }
+            const parts = Array.isArray(response.parts) ? response.parts : [];
+            renderUncategorizedParts(parts);
+            const sourceTitle = response.title || 'ranked uncategorized parts';
+            $('#uncategorizedSource').text(`Using ${parts.length} ${sourceTitle}.`);
+        }).fail(function(xhr) {
+            const error = (xhr.responseJSON && xhr.responseJSON.error) || xhr.statusText || 'Unknown error';
+            $('#uncategorizedSource').text(error);
+            renderUncategorizedParts([]);
+        });
         return;
     }
-    $('#uncategorizedSource').text('No export results loaded yet.');
 }
 
 function renderUncategorizedParts(parts) {
@@ -158,7 +195,7 @@ function renderUncategorizedTable() {
     const $tbody = $('#uncategorizedTableBody');
     $tbody.empty();
     if (!filteredParts.length) {
-        $tbody.append('<tr><td colspan="4" class="text-center text-muted">No matches</td></tr>');
+        $tbody.append('<tr><td colspan="5" class="text-center text-muted">No matches</td></tr>');
         return;
     }
     filteredParts.forEach(part => {
@@ -166,9 +203,11 @@ function renderUncategorizedTable() {
         const options = categories.length
             ? categories.map(cat => `<option value="${cat}">${cat.replace('Marketplace Categories/Hardware and Electrical/', '')}</option>`).join('')
             : '<option value="">Loading categories...</option>';
+        const metrics = formatPartSignals(part);
         const row = `
             <tr data-base-part-number="${part.base_part_number}">
                 <td>${label}</td>
+                <td class="small text-muted">${metrics}</td>
                 <td>
                     <select class="form-select form-select-sm category-select">
                         <option value="">Select category...</option>
@@ -271,9 +310,25 @@ function renderUncategorizedTable() {
     });
 }
 
+function formatPartSignals(part) {
+    const bits = [];
+    if (Number(part.stock_quantity || 0) > 0) {
+        bits.push(`Stock ${Number(part.stock_quantity).toLocaleString('en-GB')}`);
+    }
+    if (Number(part.stock_value || 0) > 0) {
+        bits.push(`Value £${Number(part.stock_value).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+    }
+    if (Number(part.sales_order_count || 0) > 0) {
+        bits.push(`Sales ${Number(part.sales_order_count).toLocaleString('en-GB')}`);
+    }
+    if (Number(part.quantity_sold || 0) > 0) {
+        bits.push(`Qty sold ${Number(part.quantity_sold).toLocaleString('en-GB')}`);
+    }
+    return bits.length ? bits.join(' | ') : 'No stock/sales signal';
+}
+
 function removePartFromList(basePartNumber) {
     uncategorizedParts = uncategorizedParts.filter(part => part.base_part_number !== basePartNumber);
-    removeFromExportCache([basePartNumber]);
     applyUncategorizedFilter($('#uncategorizedFilter').val());
 }
 
@@ -311,7 +366,6 @@ function applyMassCategory() {
         success: function(response) {
             if (response.success) {
                 uncategorizedParts = uncategorizedParts.filter(part => !basePartNumbers.includes(part.base_part_number));
-                removeFromExportCache(basePartNumbers);
                 basePartNumbers.forEach(partNumber => delete selectedCategoryMap[partNumber]);
                 applyUncategorizedFilter($('#uncategorizedFilter').val());
                 $('#massCategoryHint').text(`Updated ${response.updated_count} parts.`);
@@ -326,26 +380,6 @@ function applyMassCategory() {
             $('#massCategorizeBtn').prop('disabled', false).html('<i class="bi bi-check-circle"></i> Apply');
         }
     });
-}
-
-function removeFromExportCache(basePartNumbers) {
-    try {
-        const raw = localStorage.getItem('marketplaceExportUncategorizedParts');
-        if (!raw) {
-            return;
-        }
-        const payload = JSON.parse(raw);
-        if (!payload || !Array.isArray(payload.uncategorized)) {
-            return;
-        }
-        const removeSet = new Set(basePartNumbers);
-        payload.uncategorized = payload.uncategorized.filter(
-            part => !removeSet.has(part.base_part_number)
-        );
-        localStorage.setItem('marketplaceExportUncategorizedParts', JSON.stringify(payload));
-    } catch (error) {
-        console.warn('Failed to update export cache', error);
-    }
 }
 </script>
 {% endblock %}

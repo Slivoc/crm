@@ -1678,6 +1678,14 @@ function coercePositiveNumber(value) {
     return parsed;
 }
 
+function coerceNumber(value) {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+    const parsed = parseFloat(String(value).replace(',', '.'));
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
 function coerceBool(value, defaultValue = false) {
     if (value === null || value === undefined) {
         return defaultValue;
@@ -1771,8 +1779,9 @@ function buildProductPayload(part, defaultQuantity, defaults) {
     const leadTime = part.estimated_lead_days ?? 7;
     const description = resolveDefaultDescription(part, defaults);
     const baselineRow = getImportedAirbusBaselineRow(part);
-    const price = part.estimated_price ?? '';
-    const isOnDemandWithoutPrice = coercePositiveNumber(price) === null;
+    const rawPrice = part.estimated_price ?? '';
+    const price = coerceNumber(rawPrice) === null ? '0.00' : rawPrice;
+    const isOnDemandWithoutPrice = coerceNumber(rawPrice) === null;
 
     return {
         part_number: partNumber,
@@ -1815,8 +1824,9 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
     const quantity = part.in_stock && Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
     const leadTime = part.estimated_lead_days ?? 7;
     const baselineRow = getImportedAirbusBaselineRow(part);
-    const price = part.estimated_price ?? '';
-    const isOnDemandWithoutPrice = coercePositiveNumber(price) === null;
+    const rawPrice = part.estimated_price ?? '';
+    const price = coerceNumber(rawPrice) === null ? '0.00' : rawPrice;
+    const isOnDemandWithoutPrice = coerceNumber(rawPrice) === null;
     const productId = resolveOfferProductId(part, baselineRow);
     const productIdType = resolveOfferProductIdType(part, baselineRow);
 
@@ -1862,7 +1872,7 @@ function validateMandatoryForProductPayload(payload) {
     const missing = [];
     const partNumber = (payload.part_number || '').trim();
     const quantity = coercePositiveNumber(payload.quantity);
-    const price = coercePositiveNumber(payload.price);
+    const price = coerceNumber(payload.price);
     const description = (payload.mkp_description || payload.description || '').trim();
 
     if (!partNumber) {
@@ -1917,7 +1927,7 @@ function validateMandatoryForOfferPayload(offer) {
     const missing = [];
     const partNumber = (offer['sku'] || '').trim();
     const quantity = coercePositiveNumber(offer['quantity']);
-    const price = coercePositiveNumber(offer['price']);
+    const price = coerceNumber(offer['price']);
 
     if (!partNumber) {
         missing.push('sku');
