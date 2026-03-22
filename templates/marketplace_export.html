@@ -503,7 +503,7 @@
                             <option value="offers">Push offer update only</option>
                         </select>
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="skipInvalidMandatoryFields">
+                            <input class="form-check-input" type="checkbox" id="skipInvalidMandatoryFields" checked>
                             <label class="form-check-label small text-muted" for="skipInvalidMandatoryFields">
                                 Skip lines missing mandatory fields
                             </label>
@@ -1864,7 +1864,6 @@ function validateMandatoryForProductPayload(payload) {
     const quantity = coercePositiveNumber(payload.quantity);
     const price = coercePositiveNumber(payload.price);
     const description = (payload.mkp_description || payload.description || '').trim();
-    const isOnDemandWithoutPrice = (payload['commercial-on-collection'] || '').trim().toUpperCase() === 'ON_DEMAND' && price === null;
 
     if (!partNumber) {
         missing.push('code');
@@ -1892,7 +1891,7 @@ function validateMandatoryForProductPayload(payload) {
     if (!(payload.mkp_third_level || '').trim()) {
         missing.push('thirdLevel');
     }
-    if (!isOnDemandWithoutPrice && price === null) {
+    if (price === null) {
         missing.push('price');
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -1919,13 +1918,12 @@ function validateMandatoryForOfferPayload(offer) {
     const partNumber = (offer['sku'] || '').trim();
     const quantity = coercePositiveNumber(offer['quantity']);
     const price = coercePositiveNumber(offer['price']);
-    const isOnDemandWithoutPrice = (offer['commercial-on-collection'] || '').trim().toUpperCase() === 'ON_DEMAND' && price === null;
 
     if (!partNumber) {
         missing.push('sku');
         missing.push('product-id');
     }
-    if (!isOnDemandWithoutPrice && price === null) {
+    if (price === null) {
         missing.push('price');
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {

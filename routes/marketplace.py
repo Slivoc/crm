@@ -250,7 +250,7 @@ def _get_offer_missing_required_fields(offer):
         missing.append('product-id')
     if _is_blank(offer.get('product-id-type')):
         missing.append('product-id-type')
-    if not _is_on_demand_without_price(offer) and _coerce_positive_number(offer.get('price')) is None:
+    if _coerce_positive_number(offer.get('price')) is None:
         missing.append('price')
     if _coerce_positive_number(offer.get('quantity')) is None:
         missing.append('quantity')
@@ -265,7 +265,7 @@ def _get_product_missing_required_fields(part):
         missing.extend(['code', 'sku', 'product-id'])
     if _is_blank(part.get('mkp_category')):
         missing.append('mkpCategory')
-    if not _is_on_demand_without_price(part) and _coerce_positive_number(part.get('price')) is None:
+    if _coerce_positive_number(part.get('price')) is None:
         missing.append('price')
     if _coerce_positive_number(part.get('quantity')) is None:
         missing.append('quantity')
