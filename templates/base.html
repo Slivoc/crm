@@ -522,6 +522,33 @@
     transform: scale(0.95);
 }
 
+.contact-quick-action-btn.call-list-action.is-on-call-list {
+    background: #198754;
+    border-color: #198754;
+    color: #fff;
+}
+
+.contact-quick-action-btn.call-list-action.is-on-call-list:hover {
+    background: #157347;
+    border-color: #146c43;
+    color: #fff;
+}
+
+.contact-quick-action-btn.call-list-action.is-disabled {
+    background: #f8f9fa;
+    color: #adb5bd;
+    border-color: #dee2e6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.contact-quick-action-btn.call-list-action.is-disabled:hover {
+    background: #f8f9fa;
+    color: #adb5bd;
+    border-color: #dee2e6;
+    transform: none;
+}
+
 /* Enhanced project section styling - ADD THIS TO EXISTING STYLES */
 
 /* Larger, more readable text for project items */
@@ -723,7 +750,7 @@ input:-webkit-autofill {
     {% block head %}{% endblock %}
 </head>
 
-<body>
+<body data-default-salesperson-id="{{ current_user.get_salesperson_id() if current_user.is_authenticated else '' }}">
     <!-- Main Layout: Sidebar and Main Content -->
     <div class="d-flex">
         <!-- Sidebar -->
@@ -1121,7 +1148,7 @@ input:-webkit-autofill {
 
 <!-- Contact Search -->
 <div class="position-relative">
-    <input type="text" class="form-control" name="contact_search" placeholder="quick search contact" style="width: 250px;">
+    <input type="text" class="form-control" name="contact_search" placeholder="quick search contact" style="width: 250px;" data-default-salesperson-id="{{ current_user.get_salesperson_id() if current_user.is_authenticated else '' }}">
     <div id="contact-results-container" class="position-absolute mt-1" style="z-index: 1000;">
         <div id="contact-results">
             <!-- Contact search results will be dynamically inserted here -->
