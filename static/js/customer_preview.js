@@ -86,6 +86,11 @@ class CustomerPreviewModal {
             searchApolloBtn.addEventListener('click', () => this.openApolloSearchModal());
         }
 
+        const saveStatusBtn = document.getElementById('previewCustomerStatusSave');
+        if (saveStatusBtn) {
+            saveStatusBtn.addEventListener('click', () => this.saveCustomerStatus());
+        }
+
         const apolloSearchInput = document.getElementById('apolloSearchInput');
         if (apolloSearchInput) {
             apolloSearchInput.addEventListener('input', this.debounce(() => this.searchApollo(), 500));
@@ -163,13 +168,14 @@ class CustomerPreviewModal {
     }
 
     updateModalContent(data) {
-        const { customer, contacts, tags, apollo_match, recent_emails } = data;
+        const { customer, contacts, tags, apollo_match, recent_emails, status_options, can_edit_status } = data;
 
         console.log("Customer object:", customer);
         console.log("Customer name:", customer.name);
 
         document.getElementById('previewCustomerName').textContent = customer.name;
         document.getElementById('previewCustomerCountry').textContent = customer.country || '';
+        this.updateStatusControls(customer, status_options || [], can_edit_status);
 
         if (contacts?.items) {
             this.updateContacts(contacts.items);
@@ -193,6 +199,79 @@ class CustomerPreviewModal {
         }
 
         this.hideLoading();
+    }
+
+    updateStatusControls(customer, statusOptions, canEditStatus) {
+        const statusSelect = document.getElementById('previewCustomerStatus');
+        const saveStatusBtn = document.getElementById('previewCustomerStatusSave');
+        const feedback = document.getElementById('previewCustomerStatusFeedback');
+
+        if (!statusSelect || !saveStatusBtn || !feedback) {
+            return;
+        }
+
+        statusSelect.innerHTML = `
+            <option value="">No status</option>
+            ${statusOptions.map(status => `
+                <option value="${status.id}" ${String(status.id) === String(customer.status_id ?? '') ? 'selected' : ''}>
+                    ${status.status}
+                </option>
+            `).join('')}
+        `;
+
+        statusSelect.disabled = !canEditStatus;
+        saveStatusBtn.disabled = !canEditStatus;
+        feedback.className = 'text-muted d-block mt-1';
+        feedback.textContent = canEditStatus
+            ? (customer.status_name || 'No status selected')
+            : `Current status: ${customer.status_name || 'No status selected'}`;
+    }
+
+    async saveCustomerStatus() {
+        const statusSelect = document.getElementById('previewCustomerStatus');
+        const saveStatusBtn = document.getElementById('previewCustomerStatusSave');
+        const feedback = document.getElementById('previewCustomerStatusFeedback');
+
+        if (!this.currentCustomerId || !statusSelect || !saveStatusBtn || !feedback) {
+            return;
+        }
+
+        const originalLabel = saveStatusBtn.textContent;
+        saveStatusBtn.disabled = true;
+        saveStatusBtn.textContent = 'Saving...';
+        feedback.className = 'text-muted d-block mt-1';
+        feedback.textContent = 'Saving status...';
+
+        try {
+            const response = await fetch(`/customers/${this.currentCustomerId}/status`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify({
+                    status_id: statusSelect.value || null
+                })
+            });
+
+            const result = await response.json();
+            if (!response.ok || !result.success) {
+                throw new Error(result.error || 'Failed to update status');
+            }
+
+            feedback.className = 'text-success d-block mt-1';
+            feedback.textContent = `Saved: ${result.status?.name || 'No status selected'}`;
+
+            const toast = new bootstrap.Toast(createToast('Customer status updated.'));
+            toast.show();
+        } catch (error) {
+            console.error('Error updating customer status:', error);
+            feedback.className = 'text-danger d-block mt-1';
+            feedback.textContent = error.message || 'Failed to update status';
+        } finally {
+            saveStatusBtn.disabled = statusSelect.disabled;
+            saveStatusBtn.textContent = originalLabel;
+        }
     }
 
     updateContacts(contacts) {

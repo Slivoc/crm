@@ -61,6 +61,23 @@ def _reviewed_flag(value: bool):
     return value if _using_postgres() else int(value)
 
 
+def _get_customer_permission_flags(customer_data):
+    customer_salesperson_id = customer_data.get('salesperson_id')
+    user_salesperson_id = current_user.get_salesperson_id()
+
+    can_edit = (
+        current_user.is_administrator() or
+        current_user.can(Permission.EDIT_CUSTOMERS) or
+        (user_salesperson_id and user_salesperson_id == customer_salesperson_id)
+    )
+    can_view = (
+        can_edit or
+        current_user.can(Permission.VIEW_CUSTOMERS) or
+        (user_salesperson_id and user_salesperson_id == customer_salesperson_id)
+    )
+    return can_view, can_edit
+
+
 def _call_list_has_snoozed_until():
     try:
         with db_cursor() as cur:
@@ -223,22 +240,7 @@ def edit_customer(customer_id):
         else:
             customer_dict['salesperson_name'] = 'Unassigned'
 
-    # Check if user has permission to edit this customer
-    customer_salesperson_id = customer_dict.get('salesperson_id')
-    user_salesperson_id = current_user.get_salesperson_id()
-
-    # Only allow edit if:
-    # 1. User is an admin, or
-    # 2. User has EDIT_CUSTOMERS permission, or
-    # 3. User is the assigned salesperson for this customer
-    can_edit = (current_user.is_administrator() or
-                current_user.can(Permission.EDIT_CUSTOMERS) or
-                (user_salesperson_id and user_salesperson_id == customer_salesperson_id))
-
-    # For viewing, check similar conditions but include VIEW_CUSTOMERS permission
-    can_view = (can_edit or
-                current_user.can(Permission.VIEW_CUSTOMERS) or
-                (user_salesperson_id and user_salesperson_id == customer_salesperson_id))
+    can_view, can_edit = _get_customer_permission_flags(customer_dict)
 
     if not can_view:
         abort(403)  # Forbidden
@@ -299,6 +301,19 @@ def edit_customer(customer_id):
             watch = request.form.get('watch') == 'on'
             country = request.form.get('country', '').upper()  # Store as uppercase ISO code
             system_code = request.form.get('system_code', '').strip()  # Added system_code
+            status_id_raw = request.form.get('status_id')
+            try:
+                status_id = int(status_id_raw) if status_id_raw and status_id_raw.strip() else None
+            except (ValueError, TypeError):
+                status_id = None
+            if status_id is not None:
+                valid_status = db_execute(
+                    'SELECT 1 FROM customer_status WHERE id = ?',
+                    (status_id,),
+                    fetch='one',
+                )
+                if not valid_status:
+                    raise ValueError('Invalid customer status selected')
             currency_raw = request.form.get('currency_id')
             try:
                 currency_id = int(currency_raw) if currency_raw and currency_raw.strip() else None
@@ -332,6 +347,11 @@ def edit_customer(customer_id):
             # You'll need to update the update_customer function to include system_code
             update_customer(customer_id, name, primary_contact_id, salesperson_id,
                             payment_terms, incoterms, watch, website, notes, country, system_code, currency_id)
+            db_execute(
+                'UPDATE customers SET status_id = ? WHERE id = ?',
+                (status_id, customer_id),
+                commit=True,
+            )
 
             # Fix the indentation issue below - this code should be inside the try block
             # but before the return statement
@@ -404,6 +424,7 @@ def edit_customer(customer_id):
     # Load countries for the template
     countries = load_countries()
     currencies = get_currencies()
+    customer_statuses = get_customer_statuses()
 
     development_plan = get_customer_development_plan(customer_id)
 
@@ -425,10 +446,60 @@ def edit_customer(customer_id):
                            sales_orders=sales_orders,
                            countries=countries,  # Add countries to template context
                            currencies=currencies,
+                           customer_statuses=customer_statuses,
                            page=page,
                            per_page=per_page,
                            breadcrumbs=breadcrumbs,
                            can_edit=can_edit)
+
+
+@customers_bp.route('/<int:customer_id>/status', methods=['POST'])
+@login_required
+def update_customer_status(customer_id):
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        return jsonify({'success': False, 'error': 'Customer not found'}), 404
+
+    customer_dict = dict(customer) if hasattr(customer, 'keys') else customer
+    _, can_edit = _get_customer_permission_flags(customer_dict)
+    if not can_edit:
+        return jsonify({'success': False, 'error': 'Permission denied'}), 403
+
+    payload = request.get_json(silent=True) or request.form
+    status_id_raw = payload.get('status_id')
+
+    if status_id_raw in (None, ''):
+        status_id = None
+    else:
+        try:
+            status_id = int(status_id_raw)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid status ID'}), 400
+
+    status_name = ''
+    if status_id is not None:
+        status_row = db_execute(
+            'SELECT id, status FROM customer_status WHERE id = ?',
+            (status_id,),
+            fetch='one',
+        )
+        if not status_row:
+            return jsonify({'success': False, 'error': 'Status not found'}), 400
+        status_name = status_row['status']
+
+    db_execute(
+        'UPDATE customers SET status_id = ? WHERE id = ?',
+        (status_id, customer_id),
+        commit=True,
+    )
+
+    return jsonify({
+        'success': True,
+        'status': {
+            'id': status_id,
+            'name': status_name,
+        }
+    })
 
 def get_customer_notes(customer_id):
     result = db_execute('SELECT notes FROM customers WHERE id = ?', (customer_id,), fetch='one')

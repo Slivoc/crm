@@ -7,7 +7,7 @@ import requests
 import extract_msg
 from datetime import datetime
 from db import db_cursor, execute as db_execute
-from models import delete_customer_tag, get_contacts_by_customer, insert_customer_tag, filter_tags_by_search, get_all_tags, update_customer_apollo_id, get_tags_by_customer_id, get_email_logs, get_customer_tags, get_customer_apollo_id, get_excess_stock_list_by_id, get_supplier_by_email, save_email_log, get_email_signature_by_id, get_template_by_id, get_contact_by_id, get_customer_by_id, get_call_list_contact_ids
+from models import Permission, delete_customer_tag, get_contacts_by_customer, get_customer_statuses, insert_customer_tag, filter_tags_by_search, get_all_tags, update_customer_apollo_id, get_tags_by_customer_id, get_email_logs, get_customer_tags, get_customer_apollo_id, get_excess_stock_list_by_id, get_supplier_by_email, save_email_log, get_email_signature_by_id, get_template_by_id, get_contact_by_id, get_customer_by_id, get_call_list_contact_ids
 from routes.emails import (
     allowed_file,
     build_email_from_template,
@@ -787,6 +787,16 @@ def get_customer_preview(customer_id: int):
             print("Customer not found")
             return jsonify({'error': 'Customer not found'}), 404
 
+        customer_salesperson_id = customer['salesperson_id'] if 'salesperson_id' in customer.keys() else None
+        user_salesperson_id = current_user.get_salesperson_id() if getattr(current_user, 'is_authenticated', False) else None
+        can_edit_status = bool(
+            getattr(current_user, 'is_authenticated', False) and (
+                current_user.is_administrator() or
+                current_user.can(Permission.EDIT_CUSTOMERS) or
+                (user_salesperson_id and user_salesperson_id == customer_salesperson_id)
+            )
+        )
+
         # Initialize variables with defaults
         contacts = []
         tags = []
@@ -826,8 +836,12 @@ def get_customer_preview(customer_id: int):
                     'id': customer['id'],
                     'name': customer['name'],
                     'country': customer['country'] if 'country' in customer.keys() else '',
-                    'apollo_id': apollo_id if apollo_id else None
+                    'apollo_id': apollo_id if apollo_id else None,
+                    'status_id': customer['status_id'] if 'status_id' in customer.keys() else None,
+                    'status_name': customer['customer_status'] if 'customer_status' in customer.keys() else ''
                 },
+                'status_options': get_customer_statuses(),
+                'can_edit_status': can_edit_status,
                 'contacts': {
                     'items': contacts,
                     'page': page,

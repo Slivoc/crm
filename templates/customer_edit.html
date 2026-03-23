@@ -135,6 +135,19 @@
                    </select>
                  </div>
 
+                 <div class="mb-3">
+                   <label for="status_id" class="form-label">Customer Status:</label>
+                   <select id="status_id" name="status_id" class="form-select" {{ 'disabled' if not can_edit }}>
+                     <option value="">No status</option>
+                     {% for status in customer_statuses %}
+                     <option value="{{ status.id }}" {% if status.id == customer.get('status_id') %}selected{% endif %}>
+                       {{ status.status }}
+                     </option>
+                     {% endfor %}
+                   </select>
+                   <small class="form-text text-muted">Update the pipeline/customer status directly from this page.</small>
+                 </div>
+
                 <div class="mb-3">
                   <label for="website" class="form-label">Website:</label>
                   <input type="text" id="website" name="website" class="form-control"

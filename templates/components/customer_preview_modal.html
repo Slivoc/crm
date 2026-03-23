@@ -25,6 +25,18 @@
                             <div class="col-md-6">
                                 <p class="mb-1"><strong>Name:</strong> <span id="previewCustomerName"></span></p>
                                 <p class="mb-1"><strong>Country:</strong> <span id="previewCustomerCountry"></span></p>
+                                <div class="mb-2">
+                                    <label for="previewCustomerStatus" class="form-label mb-1"><strong>Status:</strong></label>
+                                    <div class="d-flex gap-2 align-items-center">
+                                        <select id="previewCustomerStatus" class="form-select form-select-sm">
+                                            <option value="">No status</option>
+                                        </select>
+                                        <button type="button" class="btn btn-sm btn-primary" id="previewCustomerStatusSave">
+                                            Save
+                                        </button>
+                                    </div>
+                                    <small id="previewCustomerStatusFeedback" class="text-muted d-block mt-1"></small>
+                                </div>
                                 <p class="mb-1">
                                     <strong>Apollo Match:</strong>
                                     <span id="apolloMatchStatus" class="badge rounded-pill"></span>
