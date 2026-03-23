@@ -3756,20 +3756,65 @@ def search_customers_for_deepdive(search_term, country=None, tag_id=None, limit=
 
 
 def add_customer_link_to_deepdive(deepdive_id, customer_id, linked_text):
-    """Add a text-to-customer link for a deepdive"""
+    """Add a text-to-customer link for a deepdive and ensure the customer is curated."""
+    db = get_db_connection()
     try:
-        db_execute(
+        cursor = db.cursor()
+        existing_link = cursor.execute(
             """
-            INSERT INTO deepdive_customer_links 
-            (deepdive_id, customer_id, linked_text) 
+            SELECT id
+            FROM deepdive_customer_links
+            WHERE deepdive_id = ? AND customer_id = ? AND linked_text = ?
+            """,
+            (deepdive_id, customer_id, linked_text),
+        ).fetchone()
+        if existing_link:
+            return False, 'This customer is already linked to that text'
+
+        cursor.execute(
+            """
+            INSERT INTO deepdive_customer_links
+            (deepdive_id, customer_id, linked_text)
             VALUES (?, ?, ?)
             """,
             (deepdive_id, customer_id, linked_text),
-            commit=True,
         )
+
+        existing_curated = cursor.execute(
+            """
+            SELECT id
+            FROM deepdive_curated_customers
+            WHERE deepdive_id = ? AND customer_id = ?
+            """,
+            (deepdive_id, customer_id),
+        ).fetchone()
+
+        if not existing_curated:
+            next_order_row = cursor.execute(
+                """
+                SELECT COALESCE(MAX(order_index), 0) + 1 AS next_order
+                FROM deepdive_curated_customers
+                WHERE deepdive_id = ?
+                """,
+                (deepdive_id,),
+            ).fetchone()
+            next_order = next_order_row['next_order'] if next_order_row else 1
+
+            cursor.execute(
+                """
+                INSERT INTO deepdive_curated_customers (deepdive_id, customer_id, notes, order_index)
+                VALUES (?, ?, ?, ?)
+                """,
+                (deepdive_id, customer_id, None, next_order),
+            )
+
+        db.commit()
         return True, None
     except Exception as e:
+        db.rollback()
         return False, str(e)
+    finally:
+        db.close()
 
 
 def get_customer_links_for_deepdive(deepdive_id):
