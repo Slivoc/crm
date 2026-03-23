@@ -704,6 +704,32 @@ def _extract_offer_product_identity(row_data):
     }
 
 
+def _normalize_offer_product_id_type(product_id_type, product_id, part_number):
+    normalized_type = _coerce_text(product_id_type, default='').strip()
+    if not normalized_type:
+        return 'mpnTitle'
+
+    normalized_product_id = _coerce_text(product_id, default='').strip()
+    normalized_part_number = _coerce_text(part_number, default='').strip()
+    if normalized_type.lower() == 'sku' and normalized_part_number and normalized_product_id == normalized_part_number:
+        return 'mpnTitle'
+
+    return normalized_type
+
+
+_MARKETPLACE_MANUFACTURER_JOIN = """
+    LEFT JOIN (
+        SELECT
+            pm.base_part_number,
+            MIN(TRIM(m.name)) AS manufacturer_name
+        FROM part_manufacturers pm
+        JOIN manufacturers m ON m.id = pm.manufacturer_id
+        WHERE TRIM(COALESCE(m.name, '')) <> ''
+        GROUP BY pm.base_part_number
+    ) marketplace_mfg ON marketplace_mfg.base_part_number = pn.base_part_number
+"""
+
+
 def _build_offer_row_from_payload(offer):
     payload = {field: offer.get(field, '') for field in OFFER_IMPORT_FIELDS}
     baseline_row = offer.get('baseline_row') or {}
@@ -1763,6 +1789,7 @@ def get_parts_for_export():
             SELECT
                 pn.base_part_number,
                 pn.part_number,
+                marketplace_mfg.manufacturer_name,
                 pn.mkp_category,
                 pn.mkp_description,
                 pn.mkp_name,
@@ -1780,6 +1807,7 @@ def get_parts_for_export():
                 pn.mkp_offer_product_id,
                 pn.mkp_offer_product_id_type
             FROM part_numbers pn
+            """ + _MARKETPLACE_MANUFACTURER_JOIN + """
             WHERE 1=1
         """
 
@@ -1988,7 +2016,7 @@ def get_parts_for_export():
                 'mkp_offer_product_id': row['mkp_offer_product_id'],
                 'mkp_offer_product_id_type': row['mkp_offer_product_id_type'],
                 'description': '',
-                'manufacturer': '',
+                'manufacturer': _coerce_text(row['manufacturer_name'], default=''),
                 'estimated_price': estimated_price,
                 'price_source': estimate.get('price_source') if estimate else None,
                 'estimated_lead_days': estimate.get('estimated_lead_days') if estimate else None,
@@ -2047,6 +2075,7 @@ def export_to_marketplace():
             SELECT
                 pn.base_part_number,
                 pn.part_number,
+                marketplace_mfg.manufacturer_name,
                 pn.mkp_category,
                 pn.mkp_description,
                 pn.mkp_name,
@@ -2064,6 +2093,7 @@ def export_to_marketplace():
                 pn.mkp_offer_product_id,
                 pn.mkp_offer_product_id_type
             FROM part_numbers pn
+            {_MARKETPLACE_MANUFACTURER_JOIN}
             WHERE pn.base_part_number IN ({placeholders})
         """
 
@@ -2130,7 +2160,7 @@ def export_to_marketplace():
                 'mkp_offer_product_id': _coerce_text(row['mkp_offer_product_id'], default=''),
                 'mkp_offer_product_id_type': _coerce_text(row['mkp_offer_product_id_type'], default='SKU'),
                 'description': resolved_description,
-                'manufacturer': '',
+                'manufacturer': _coerce_text(row['manufacturer_name'], default=''),
                 'quantity': quantity,
                 'price': _coerce_price(price) if price is not None else 0.0,
                 'condition': 'New',
@@ -2144,7 +2174,11 @@ def export_to_marketplace():
                 part_number = _part_identifier(part)
                 description = _coerce_text(part.get('mkp_description') or part.get('description'), default=part_number)
                 offer_product_id = _coerce_text(part.get('mkp_offer_product_id'), default=part_number)
-                offer_product_id_type = _coerce_text(part.get('mkp_offer_product_id_type'), default='SKU')
+                offer_product_id_type = _normalize_offer_product_id_type(
+                    part.get('mkp_offer_product_id_type'),
+                    offer_product_id,
+                    part_number,
+                )
                 csv_rows.append(_build_offer_row_from_payload({
                     'sku': part_number,
                     'product-id': offer_product_id,

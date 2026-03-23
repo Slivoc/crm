@@ -198,7 +198,7 @@ def _build_generated_airbus_payload(part):
         "easaf1": mkp_easaf1,
         "sku": part_number,
         "product-id": part_number,
-        "product-id-type": "MPN",
+        "product-id-type": "mpnTitle",
         "description": mkp_description,
         "internal-description": mkp_description,
         "price": price if price else "",
