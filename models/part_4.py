@@ -1404,6 +1404,7 @@ def get_customer_by_id(customer_id):
     SELECT 
         c.id, 
         c.name, 
+        c.status_id,
         c.payment_terms, 
         c.incoterms,
         c.salesperson_id,
