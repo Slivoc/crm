@@ -1,5 +1,112 @@
 // Contact Search functionality with quick action buttons
 $(document).ready(function() {
+    function getActiveSalespersonId() {
+        const hiddenSalespersonInput = document.getElementById('salesPersonId');
+        if (hiddenSalespersonInput && hiddenSalespersonInput.value) {
+            return hiddenSalespersonInput.value;
+        }
+
+        const searchInput = document.querySelector('input[name="contact_search"]');
+        if (searchInput && searchInput.dataset.defaultSalespersonId) {
+            return searchInput.dataset.defaultSalespersonId;
+        }
+
+        const bodySalespersonId = document.body?.dataset?.defaultSalespersonId;
+        if (bodySalespersonId) {
+            return bodySalespersonId;
+        }
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const querySalespersonId = urlParams.get('salesperson_id');
+        if (querySalespersonId) {
+            return querySalespersonId;
+        }
+
+        return window.location.pathname.match(/\/salespeople\/(\d+)/)?.[1] || '';
+    }
+
+    function escapeHtml(value) {
+        return $('<div>').text(value || '').html();
+    }
+
+    function showContactSearchToast(message, type = 'primary') {
+        const container = document.getElementById('notification-toast-container');
+        if (!container) {
+            return;
+        }
+
+        const toast = document.createElement('div');
+        toast.className = 'toast align-items-center border-0 show mb-2';
+        toast.setAttribute('role', 'alert');
+        toast.setAttribute('aria-live', 'assertive');
+        toast.setAttribute('aria-atomic', 'true');
+
+        const colorClassMap = {
+            success: 'text-bg-success',
+            danger: 'text-bg-danger',
+            warning: 'text-bg-warning',
+            info: 'text-bg-info',
+            primary: 'text-bg-primary'
+        };
+
+        toast.classList.add(colorClassMap[type] || colorClassMap.primary);
+        toast.innerHTML = `
+            <div class="d-flex">
+                <div class="toast-body">${escapeHtml(message)}</div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        `;
+
+        container.appendChild(toast);
+        const bsToast = new bootstrap.Toast(toast, { delay: 3500 });
+        toast.addEventListener('hidden.bs.toast', () => toast.remove());
+        bsToast.show();
+    }
+
+    function updateCallListButton(button, isOnCallList, title) {
+        const icon = button.querySelector('i');
+        if (!icon) {
+            return;
+        }
+
+        button.classList.toggle('is-on-call-list', Boolean(isOnCallList));
+        button.classList.toggle('add-to-call-list-btn', !isOnCallList);
+        button.classList.toggle('remove-from-call-list-btn', Boolean(isOnCallList));
+        icon.className = isOnCallList ? 'bi bi-check-circle-fill' : 'bi bi-list-check';
+        button.title = title;
+        button.setAttribute('aria-label', title);
+    }
+
+    function renderCallListButton(contact, salespersonId) {
+        const hasSalesperson = Boolean(salespersonId);
+        const isOnCallList = Boolean(contact.is_on_call_list);
+        const title = !hasSalesperson
+            ? 'Select a salesperson to use the call list'
+            : (isOnCallList ? 'Remove from call list' : 'Add to call list');
+
+        const classes = [
+            'contact-quick-action-btn',
+            'call-list-action',
+            hasSalesperson ? '' : 'is-disabled',
+            isOnCallList ? 'is-on-call-list remove-from-call-list-btn' : 'add-to-call-list-btn'
+        ].filter(Boolean).join(' ');
+
+        const icon = isOnCallList ? 'bi-check-circle-fill' : 'bi-list-check';
+        const disabledAttr = hasSalesperson ? '' : 'disabled';
+
+        return `
+            <button class="${classes}"
+                    data-action="call-list"
+                    data-contact-id="${contact.id}"
+                    data-contact-name="${escapeHtml(contact.full_name)}"
+                    title="${escapeHtml(title)}"
+                    aria-label="${escapeHtml(title)}"
+                    ${disabledAttr}>
+                <i class="bi ${icon}"></i>
+            </button>
+        `;
+    }
+
     let debounceTimer = null;
     let activeRequest = null;
     let requestSeq = 0;
@@ -20,10 +127,14 @@ $(document).ready(function() {
                 }
 
                 const mySeq = ++requestSeq;
+                const salespersonId = getActiveSalespersonId();
                 activeRequest = $.ajax({
                     url: "/customers/search_contact",
                     type: 'GET',
-                    data: { query: query },
+                    data: {
+                        query: query,
+                        salesperson_id: salespersonId || undefined
+                    },
                     success: function(data) {
                         if (mySeq !== requestSeq) {
                             return;
@@ -36,31 +147,31 @@ $(document).ready(function() {
                                 var contactHtml = `
                                 <div class="contact-search-item" data-contact-id="${contact.id}">
                                     <div class="contact-info">
-                                        <div class="contact-name">${contact.full_name}</div>
+                                        <div class="contact-name">${escapeHtml(contact.full_name)}</div>
                                         ${contact.email ? `
                                             <div class="contact-detail">
                                                 <i class="bi bi-envelope"></i>
-                                                <span>${contact.email}</span>
+                                                <span>${escapeHtml(contact.email)}</span>
                                             </div>
                                         ` : ''}
                                         ${contact.phone ? `
                                             <div class="contact-detail">
                                                 <i class="bi bi-telephone"></i>
-                                                <span>${contact.phone}</span>
+                                                <span>${escapeHtml(contact.phone)}</span>
                                             </div>
                                         ` : ''}
                                         ${contact.job_title ? `
                                             <div class="contact-detail">
                                                 <i class="bi bi-briefcase"></i>
-                                                <span>${contact.job_title}</span>
+                                                <span>${escapeHtml(contact.job_title)}</span>
                                             </div>
                                         ` : ''}
                                         <div class="contact-customer">
-                                            <i class="bi bi-building me-1"></i>${contact.customer_name || 'No Customer'}
+                                            <i class="bi bi-building me-1"></i>${escapeHtml(contact.customer_name || 'No Customer')}
                                         </div>
                                         ${contact.status_name ? `
                                             <div class="contact-status" style="background-color: ${contact.status_color || '#6c757d'}">
-                                                ${contact.status_name}
+                                                ${escapeHtml(contact.status_name)}
                                             </div>
                                         ` : ''}
                                     </div>
@@ -71,6 +182,7 @@ $(document).ready(function() {
                                         <button class="contact-quick-action-btn" data-action="email" title="Log Email">
                                             <i class="bi bi-envelope"></i>
                                         </button>
+                                        ${renderCallListButton(contact, salespersonId)}
                                     </div>
                                 </div>
                             `;
@@ -88,10 +200,7 @@ $(document).ready(function() {
                                     e.preventDefault();
                                     e.stopPropagation();
 
-                                    // Get current salesperson ID from URL or session
-                                    const urlParams = new URLSearchParams(window.location.search);
-                                    const salespersonId = urlParams.get('salesperson_id') ||
-                                                         window.location.pathname.match(/\/salespeople\/(\d+)/)?.[1];
+                                    const salespersonId = getActiveSalespersonId();
 
                                     UniversalContactPreview.open(contact, {
                                         salesperson_id: salespersonId
@@ -103,17 +212,13 @@ $(document).ready(function() {
                                 });
 
                                 // Click on quick action buttons
-                                $item.find('.contact-quick-action-btn').on('click', function(e) {
+                                $item.find('.contact-quick-action-btn').not('.call-list-action').on('click', function(e) {
                                     e.preventDefault();
                                     e.stopPropagation();
 
                                     const action = $(this).data('action');
                                     const communicationType = action === 'phone' ? 'Phone' : 'Email';
-
-                                    // Get current salesperson ID
-                                    const urlParams = new URLSearchParams(window.location.search);
-                                    const salespersonId = urlParams.get('salesperson_id') ||
-                                                         window.location.pathname.match(/\/salespeople\/(\d+)/)?.[1];
+                                    const salespersonId = getActiveSalespersonId();
 
                                     UniversalContactPreview.open(contact, {
                                         salesperson_id: salespersonId,
@@ -147,6 +252,75 @@ $(document).ready(function() {
                 resultDropdown.empty();
             }
         }, 150);
+    });
+
+    $(document).on('click', '.contact-quick-action-btn.call-list-action', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const button = e.currentTarget;
+        if (button.disabled || button.classList.contains('is-disabled')) {
+            showContactSearchToast('Select a salesperson before using the call list.', 'warning');
+            return;
+        }
+
+        const salespersonId = getActiveSalespersonId();
+        if (!salespersonId) {
+            showContactSearchToast('Select a salesperson before using the call list.', 'warning');
+            return;
+        }
+
+        const contactId = button.getAttribute('data-contact-id');
+        const contactName = button.getAttribute('data-contact-name') || 'Contact';
+        const isRemoving = button.classList.contains('remove-from-call-list-btn');
+        const icon = button.querySelector('i');
+        const previousIconClass = icon ? icon.className : '';
+
+        if (icon) {
+            icon.className = 'bi bi-hourglass-split';
+        }
+        button.disabled = true;
+
+        fetch(`/salespeople/${salespersonId}/${isRemoving ? 'remove-from-call-list' : 'add-to-call-list'}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify(isRemoving ? {
+                contact_id: contactId
+            } : {
+                contact_id: contactId,
+                notes: '',
+                priority: 0
+            })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    throw new Error(data.error || 'Unable to update call list');
+                }
+
+                updateCallListButton(
+                    button,
+                    !isRemoving,
+                    isRemoving ? 'Add to call list' : 'Remove from call list'
+                );
+                showContactSearchToast(
+                    `${contactName} ${isRemoving ? 'removed from' : 'added to'} call list`,
+                    'success'
+                );
+            })
+            .catch(error => {
+                console.error('Error updating call list:', error);
+                if (icon) {
+                    icon.className = previousIconClass;
+                }
+                showContactSearchToast(error.message || 'An error occurred while updating the call list.', 'danger');
+            })
+            .finally(() => {
+                button.disabled = false;
+            });
     });
 
     // Clear contact search results when clicking outside

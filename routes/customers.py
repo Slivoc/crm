@@ -6281,6 +6281,8 @@ def contact_search():
     op = 'ILIKE' if _using_postgres() else 'LIKE'
     full_name_expr = "concat_ws(' ', c.name, c.second_name)" if _using_postgres() else "(c.name || ' ' || COALESCE(c.second_name, ''))"
 
+    salesperson_id = request.args.get('salesperson_id', type=int) or current_user.get_salesperson_id()
+
     # Case-insensitive search (SQLite LIKE is case-insensitive for ASCII; Postgres LIKE is case-sensitive)
     with db_cursor() as cur:
         contacts = _execute_with_cursor(
@@ -6321,6 +6323,10 @@ def contact_search():
         )
     ).fetchall()
 
+    call_list_contact_ids = set()
+    if salesperson_id:
+        call_list_contact_ids = get_call_list_contact_ids(salesperson_id)
+
     return jsonify([{
         'id': contact['id'],
         'name': contact['name'],
@@ -6333,7 +6339,8 @@ def contact_search():
         'customer_name': contact['customer_name'],
         'status_name': contact['status_name'],
         'status_color': contact['status_color'],
-        'timezone': contact['timezone'] or 'UTC'
+        'timezone': contact['timezone'] or 'UTC',
+        'is_on_call_list': contact['id'] in call_list_contact_ids
     } for contact in contacts])
 
 # Add this route to your customers blueprint to return JSON data for the modal
