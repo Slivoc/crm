@@ -863,6 +863,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         const parent = cards[0].parentElement;
         cards.sort((a, b) => {
+            const hasMatureHistoryA = Number.parseInt(a.dataset.hasMatureHistory ?? '0', 10);
+            const hasMatureHistoryB = Number.parseInt(b.dataset.hasMatureHistory ?? '0', 10);
+            if (hasMatureHistoryA !== hasMatureHistoryB) {
+                return hasMatureHistoryB - hasMatureHistoryA;
+            }
             const scoreA = Number.parseFloat(a.dataset.score ?? '');
             const scoreB = Number.parseFloat(b.dataset.score ?? '');
             const validA = Number.isFinite(scoreA);
@@ -917,8 +922,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 const supplierId = pill.dataset.supplierId;
                 const scoreInfo = scores[supplierId];
                 pill.innerHTML = renderSupplierScorePill(scoreInfo);
+                const card = pill.closest('.supplier-card');
+                if (card) {
+                    const matureRequests = Number.parseInt(scoreInfo?.mature_requests ?? '0', 10);
+                    card.dataset.hasMatureHistory = matureRequests > 0 ? '1' : '0';
+                }
                 if (scoreInfo && scoreInfo.score !== null && scoreInfo.score !== undefined) {
-                    const card = pill.closest('.supplier-card');
                     if (card) {
                         card.dataset.score = String(scoreInfo.score);
                     }
