@@ -583,6 +583,61 @@ def map_supplier_by_company():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@ils_bp.route('/suppliers/unmap-companies', methods=['POST'])
+def unmap_suppliers_by_companies():
+    """
+    Remove supplier mappings for one or more ILS company names.
+    Also clears supplier_id from matching ILS search results.
+    """
+    try:
+        data = request.get_json() or {}
+        company_names = data.get('company_names') or []
+        supplier_id = data.get('supplier_id')
+
+        normalized_companies = sorted({
+            str(name).strip() for name in company_names
+            if str(name).strip()
+        })
+
+        if not normalized_companies:
+            return jsonify({'success': False, 'error': 'company_names required'}), 400
+
+        placeholders = ', '.join(['?'] * len(normalized_companies))
+        supplier_filter = ''
+        params = list(normalized_companies)
+
+        if supplier_id:
+            supplier_filter = ' AND supplier_id = ?'
+            params.append(supplier_id)
+
+        with db_cursor(commit=True) as cursor:
+            _execute_with_cursor(cursor, f'''
+                UPDATE ils_supplier_mappings
+                SET supplier_id = NULL
+                WHERE ils_company_name IN ({placeholders})
+                {supplier_filter}
+            ''', tuple(params))
+            mappings_updated = cursor.rowcount or 0
+
+            _execute_with_cursor(cursor, f'''
+                UPDATE ils_search_results
+                SET supplier_id = NULL
+                WHERE ils_company_name IN ({placeholders})
+                {supplier_filter}
+            ''', tuple(params))
+            results_updated = cursor.rowcount or 0
+
+        return jsonify({
+            'success': True,
+            'message': 'Supplier mappings removed',
+            'mappings_updated': mappings_updated,
+            'results_updated': results_updated
+        })
+    except Exception as e:
+        logging.error(f'Error unmapping suppliers by companies: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @ils_bp.route('/results/<base_part_number>', methods=['GET'])
 def get_ils_results_for_part(base_part_number):
     """

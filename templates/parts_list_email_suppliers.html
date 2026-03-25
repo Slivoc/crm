@@ -259,6 +259,28 @@
     font-size: 0.7rem;
     color: #adb5bd;
 }
+
+.room-101-btn {
+    background: repeating-linear-gradient(
+        -45deg,
+        #7a0000 0,
+        #7a0000 10px,
+        #1b1b1b 10px,
+        #1b1b1b 20px
+    );
+    border: 2px solid #ff3b30;
+    color: #fff;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    box-shadow: 0 0 0.6rem rgba(255, 59, 48, 0.5);
+}
+.room-101-btn:hover,
+.room-101-btn:focus {
+    color: #fff;
+    border-color: #ff7169;
+    box-shadow: 0 0 1rem rgba(255, 59, 48, 0.8);
+}
 </style>
 {% endblock %}
 
@@ -401,6 +423,15 @@
                                 data-contact-name="{{ supplier.contact_name or '' }}"
                                 data-contact-email="{{ supplier.contact_email }}">
                             Email Supplier
+                        </button>
+                    {% endif %}
+                    {% if supplier.ils_company_names %}
+                        <button class="btn btn-sm ms-2 room-101-btn room-101-unmap-btn"
+                                data-supplier-id="{{ supplier.supplier_id }}"
+                                data-supplier-name="{{ supplier.supplier_name }}"
+                                data-ils-company-names='{{ supplier.ils_company_names | tojson }}'
+                                title="Unmap all ILS company mappings shown for this supplier">
+                            ROOM 101
                         </button>
                     {% endif %}
                 </div>
@@ -1144,6 +1175,51 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('filterPartNumber').addEventListener('input', applyFilters);
 
     fetchSupplierScoresForEmailSuppliers();
+
+    document.querySelectorAll('.room-101-unmap-btn').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const supplierId = Number.parseInt(this.dataset.supplierId, 10);
+            const supplierName = this.dataset.supplierName || 'this supplier';
+            const companies = JSON.parse(this.dataset.ilsCompanyNames || '[]');
+
+            if (!companies.length) {
+                alert('No mapped ILS company names found for this supplier.');
+                return;
+            }
+
+            const confirmed = confirm(
+                `⚠️ ROOM 101 WILL UNMAP ${companies.length} ILS COMPAN${companies.length === 1 ? 'Y' : 'IES'} FROM ${supplierName}.\n\nThis can hide this supplier from ILS email suggestions. Continue?`
+            );
+            if (!confirmed) return;
+
+            const originalText = this.textContent;
+            this.disabled = true;
+            this.textContent = 'UNMAPPING...';
+
+            try {
+                const resp = await fetch('/ils/suppliers/unmap-companies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        supplier_id: Number.isFinite(supplierId) ? supplierId : null,
+                        company_names: companies
+                    })
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.success) {
+                    throw new Error(data.error || 'Failed to unmap supplier');
+                }
+
+                alert(`ROOM 101 complete. Unmapped ${companies.length} company mapping${companies.length === 1 ? '' : 's'}.`);
+                window.location.reload();
+            } catch (error) {
+                console.error('ROOM 101 unmap failed', error);
+                alert(`ROOM 101 failed: ${error.message}`);
+                this.disabled = false;
+                this.textContent = originalText;
+            }
+        });
+    });
 
     // ---- Score Debug Tooltip --------------------------------------
     const scoreTooltip = document.createElement('div');
