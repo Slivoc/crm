@@ -3651,8 +3651,13 @@ def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_
                     'contact_email': None,
                     'contact_name': None,
                     'warning': None,
+                    'ils_company_names': [],
                     'parts': []
                 }
+
+            ils_company_name = (ils.get('ils_company_name') or '').strip()
+            if ils_company_name and ils_company_name not in suppliers_map[supplier_id]['ils_company_names']:
+                suppliers_map[supplier_id]['ils_company_names'].append(ils_company_name)
 
             # Add part if not already there
             part_exists = any(p['part_number'] == part['input_part_number']
