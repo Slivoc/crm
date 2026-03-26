@@ -3329,6 +3329,7 @@ def email_suppliers():
                     pl.name,
                     pl.status_id,
                     pl.notes,
+                    pl.customer_id,
                     pl.project_id,
                     c.name AS customer_name,
                     s.name AS status_name,
@@ -3353,9 +3354,21 @@ def email_suppliers():
             suppliers_map = process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_id=list_id)
             page_title = 'Email ILS Suppliers'
 
+        customer_used_supplier_ids = set()
+        if list_header and list_header.get('customer_id'):
+            used_rows = _execute_with_cursor(cursor, """
+                SELECT supplier_id
+                FROM customer_supplier_relationships
+                WHERE customer_id = ?
+            """, (list_header['customer_id'],)).fetchall()
+            customer_used_supplier_ids = {
+                int(row['supplier_id']) for row in (used_rows or []) if row.get('supplier_id') is not None
+            }
+
         # Fetch supplier contact details (common for both modes)
         for supplier_id, supplier_data in suppliers_map.items():
             supplier_data['preferred'] = False
+            supplier_data['used_by_customer'] = supplier_id in customer_used_supplier_ids
             supplier_info = _execute_with_cursor(cursor, '''
                 SELECT contact_name, contact_email, warning, preferred
                 FROM suppliers
