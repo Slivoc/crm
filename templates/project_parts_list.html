@@ -161,6 +161,8 @@
                 </div>
                 <div class="col-md-4 d-flex flex-wrap gap-2 align-items-end justify-content-end">
                     <span class="text-muted" id="selectedPartsCount">0 selected</span>
+                    <button class="btn btn-outline-secondary btn-sm" id="selectVisibleBtn" type="button">Select All Visible</button>
+                    <button class="btn btn-outline-secondary btn-sm" id="clearSelectionBtn" type="button">Deselect All</button>
                 </div>
             </div>
             <div class="row g-3 align-items-end mt-1">
@@ -364,6 +366,8 @@
     const markPendingBtn = document.getElementById('markPendingBtn');
     const setCategoryBtn = document.getElementById('setCategoryBtn');
     const backfillBtn = document.getElementById('backfillProjectPartsBtn');
+    const selectVisibleBtn = document.getElementById('selectVisibleBtn');
+    const clearSelectionBtn = document.getElementById('clearSelectionBtn');
     const confirmCreateBtn = document.getElementById('confirmCreatePartsList');
     const confirmSetCategoryBtn = document.getElementById('confirmSetCategory');
     const listNameInput = document.getElementById('newPartsListName');
@@ -723,6 +727,27 @@
             applyFilters();
         });
     });
+
+    if (selectVisibleBtn) {
+        selectVisibleBtn.addEventListener('click', () => {
+            getVisibleRows().forEach((row) => {
+                const checkbox = row.querySelector('.project-line-checkbox');
+                if (checkbox) {
+                    checkbox.checked = true;
+                }
+            });
+            updateSelectedCount();
+        });
+    }
+
+    if (clearSelectionBtn) {
+        clearSelectionBtn.addEventListener('click', () => {
+            lineCheckboxes.forEach((checkbox) => {
+                checkbox.checked = false;
+            });
+            updateSelectedCount();
+        });
+    }
 
     function getVisibleLineIds() {
         return getVisibleRows()

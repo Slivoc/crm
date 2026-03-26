@@ -3,7 +3,7 @@
 {% block title %}{{ 'Edit Parts' if edit_mode else 'Import Parts' }} - {{ project.name }}{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable@14.1.0/dist/handsontable.full.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
 <style>
     .import-container {
         display: flex;
@@ -79,6 +79,33 @@
         border-radius: 0.375rem;
         padding: 0.75rem 1rem;
     }
+    .spreadsheet-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #e9ecef;
+        background: #f8f9fa;
+    }
+    .spreadsheet-toolbar .form-control {
+        min-width: 260px;
+    }
+    .spreadsheet-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    .handsontable th {
+        background: #f8f9fa;
+        font-weight: 600;
+    }
+    .handsontable td,
+    .handsontable th {
+        vertical-align: middle;
+    }
 </style>
 {% endblock %}
 
@@ -125,7 +152,7 @@
                     <strong>Spreadsheet Editor</strong>
                     <span class="text-muted small ms-2">Paste directly from Excel or edit cells</span>
                 </div>
-                <div class="d-flex gap-2 align-items-center">
+                <div class="d-flex gap-2 align-items-center flex-wrap">
                     <span class="text-muted small" id="rowCount">0 rows</span>
                     <button class="btn btn-outline-secondary btn-sm" id="clearAllBtn" type="button">Clear All</button>
                     <button class="btn btn-outline-secondary btn-sm" id="addRowsBtn" type="button">Add 10 Rows</button>
@@ -134,6 +161,15 @@
         </div>
         <div class="card-body p-0">
             <div class="import-container">
+                <div class="spreadsheet-toolbar">
+                    <div class="d-flex gap-2 align-items-center flex-wrap">
+                        <input type="text" class="form-control form-control-sm" id="partNumberFilter" placeholder="Filter by part number">
+                        <button class="btn btn-outline-secondary btn-sm" id="clearFilterBtn" type="button">Clear Filter</button>
+                    </div>
+                    <div class="spreadsheet-meta">
+                        <span class="text-muted small" id="filterStatus">Showing all rows</span>
+                    </div>
+                </div>
                 <div class="spreadsheet-wrapper" id="spreadsheet"></div>
             </div>
         </div>
@@ -193,13 +229,14 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/handsontable@14.1.0/dist/handsontable.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 (function() {
     const projectId = {{ project.id }};
     const maxUsageYears = {{ max_usage_years or 5 }};
     const editMode = {{ 'true' if edit_mode else 'false' }};
+    const minimumRowCount = 20;
 
     // Column definitions
     const baseColumns = [
@@ -227,11 +264,16 @@
     const totalQtyColIndex = allColumns.findIndex(c => c.key === 'total_quantity');
     const yearColIndices = yearColumns.map(c => allColumns.findIndex(col => col.key === c.key));
     const lineIdColIndex = allColumns.findIndex(c => c.key === 'line_id');
+    const lineNumberColIndex = allColumns.findIndex(c => c.key === 'line_number');
+    const partNumberFilterInput = document.getElementById('partNumberFilter');
+    const clearFilterBtn = document.getElementById('clearFilterBtn');
+    const filterStatus = document.getElementById('filterStatus');
+    let currentPartNumberFilter = '';
 
     // Initialize Handsontable
     const container = document.getElementById('spreadsheet');
     const hot = new Handsontable(container, {
-        data: createEmptyRows(20),
+        data: createEmptyRows(minimumRowCount),
         colHeaders: allColumns.map(c => {
             if (c.key === 'total_quantity') return 'Total Qty (auto)';
             return c.required ? `${c.title} *` : c.title;
@@ -241,17 +283,25 @@
             type: col.type || 'text',
             source: col.source,
             width: col.width,
-            allowInvalid: true
+            allowInvalid: true,
+            readOnly: !!col.readOnly,
+            className: col.type === 'numeric' ? 'htRight' : ''
         })),
         rowHeaders: true,
         height: '100%',
         stretchH: 'all',
         manualColumnResize: true,
-        manualRowResize: true,
+        manualRowResize: false,
         contextMenu: true,
         minSpareRows: 1,
+        renderAllRows: false,
+        viewportRowRenderingOffset: 100,
+        viewportColumnRenderingOffset: 8,
         hiddenColumns: {
             columns: editMode && lineIdColIndex >= 0 ? [lineIdColIndex] : [],
+            indicators: false
+        },
+        hiddenRows: {
             indicators: false
         },
         licenseKey: 'non-commercial-and-evaluation',
@@ -259,6 +309,7 @@
             if (source !== 'loadData') {
                 updateRowCount();
                 updateImportButton();
+                applyPartNumberFilter();
 
                 // Auto-calculate total when year columns change
                 if (changes) {
@@ -291,6 +342,7 @@
         afterRemoveRow: function() {
             updateRowCount();
             updateImportButton();
+            applyPartNumberFilter();
         },
         beforePaste: function(data, coords) {
             // Auto-expand rows if needed
@@ -322,6 +374,7 @@
                 }
                 updateRowCount();
                 updateImportButton();
+                applyPartNumberFilter();
             }, 10);
         }
     });
@@ -338,10 +391,68 @@
         return rows;
     }
 
+    function getMeaningfulCellValues(row) {
+        return Object.entries(row).filter(([key]) => key !== 'line_id' && key !== 'line_number').map(([, value]) => value);
+    }
+
+    function isRowMeaningfullyEmpty(row) {
+        return !getMeaningfulCellValues(row).some(value => value !== null && value !== '' && value !== 'normal');
+    }
+
+    function normalizePartNumber(value) {
+        return (value || '').toString().trim().toLowerCase();
+    }
+
+    function rowMatchesPartNumberFilter(row) {
+        if (!currentPartNumberFilter) {
+            return true;
+        }
+        return normalizePartNumber(row.customer_part_number).includes(currentPartNumberFilter);
+    }
+
+    function applyPartNumberFilter() {
+        const hiddenRowsPlugin = hot.getPlugin('hiddenRows');
+        if (!hiddenRowsPlugin) {
+            return;
+        }
+
+        const sourceData = hot.getSourceData();
+        const rowsToHide = [];
+
+        if (hiddenRowsPlugin.getHiddenRows) {
+            const hidden = hiddenRowsPlugin.getHiddenRows();
+            if (hidden.length) {
+                hiddenRowsPlugin.showRows(hidden);
+            }
+        }
+
+        sourceData.forEach((row, index) => {
+            if (!rowMatchesPartNumberFilter(row)) {
+                rowsToHide.push(index);
+            }
+        });
+
+        if (rowsToHide.length) {
+            hiddenRowsPlugin.hideRows(rowsToHide);
+        }
+
+        const visibleRows = sourceData.filter(row => rowMatchesPartNumberFilter(row)).length;
+        filterStatus.textContent = currentPartNumberFilter
+            ? `Showing ${visibleRows} matching row${visibleRows === 1 ? '' : 's'}`
+            : 'Showing all rows';
+
+        hot.render();
+        updateRowCount();
+    }
+
     function updateRowCount() {
-        const data = hot.getData();
-        const nonEmptyRows = data.filter(row => row.some(cell => cell !== null && cell !== '')).length;
-        document.getElementById('rowCount').textContent = `${nonEmptyRows} rows`;
+        const sourceData = hot.getSourceData();
+        const totalRows = sourceData.filter(row => !isRowMeaningfullyEmpty(row)).length;
+        const visibleRows = sourceData.filter(row => rowMatchesPartNumberFilter(row) && !isRowMeaningfullyEmpty(row)).length;
+        const rowCountLabel = currentPartNumberFilter
+            ? `${visibleRows} visible / ${totalRows} rows`
+            : `${totalRows} rows`;
+        document.getElementById('rowCount').textContent = rowCountLabel;
     }
 
     function getValidRows() {
@@ -546,9 +657,10 @@
         }
 
         // Load into spreadsheet
-        hot.loadData(rows.length > 0 ? rows : createEmptyRows(20));
+        hot.loadData(rows.length > 0 ? rows : createEmptyRows(minimumRowCount));
         updateRowCount();
         updateImportButton();
+        applyPartNumberFilter();
 
         bootstrap.Modal.getInstance(document.getElementById('columnMappingModal')).hide();
     });
@@ -556,15 +668,17 @@
     // Clear all button
     document.getElementById('clearAllBtn').addEventListener('click', function() {
         if (confirm('Clear all data?')) {
-            hot.loadData(createEmptyRows(20));
+            hot.loadData(createEmptyRows(minimumRowCount));
             updateRowCount();
             updateImportButton();
+            applyPartNumberFilter();
         }
     });
 
     // Add rows button
     document.getElementById('addRowsBtn').addEventListener('click', function() {
         hot.alter('insert_row_below', hot.countRows() - 1, 10);
+        applyPartNumberFilter();
     });
 
     // Validate button
@@ -579,7 +693,7 @@
                 valid++;
             } else if (Object.values(row).some(v => v !== null && v !== '' && v !== 'normal')) {
                 errors++;
-                hot.setCellMeta(rowIndex, 0, 'className', 'htInvalid');
+                hot.setCellMeta(rowIndex, editMode && lineNumberColIndex >= 0 ? lineNumberColIndex : 0, 'className', 'htInvalid');
             }
         });
 
@@ -661,6 +775,24 @@
     // Initial state
     updateRowCount();
     updateImportButton();
+    applyPartNumberFilter();
+
+    if (partNumberFilterInput) {
+        partNumberFilterInput.addEventListener('input', function(e) {
+            currentPartNumberFilter = normalizePartNumber(e.target.value);
+            applyPartNumberFilter();
+        });
+    }
+
+    if (clearFilterBtn) {
+        clearFilterBtn.addEventListener('click', function() {
+            currentPartNumberFilter = '';
+            if (partNumberFilterInput) {
+                partNumberFilterInput.value = '';
+            }
+            applyPartNumberFilter();
+        });
+    }
 
     async function loadExistingLines() {
         const status = document.getElementById('validationStatus');
@@ -695,9 +827,10 @@
                 return entry;
             });
 
-            hot.loadData(rows.length ? rows : createEmptyRows(20));
+            hot.loadData(rows.length ? rows : createEmptyRows(minimumRowCount));
             updateRowCount();
             updateImportButton();
+            applyPartNumberFilter();
             status.textContent = rows.length ? `Loaded ${rows.length} lines.` : 'No existing lines found.';
         } catch (error) {
             status.textContent = 'Failed to load existing lines.';
