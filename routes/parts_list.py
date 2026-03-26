@@ -3355,8 +3355,9 @@ def email_suppliers():
 
         # Fetch supplier contact details (common for both modes)
         for supplier_id, supplier_data in suppliers_map.items():
+            supplier_data['preferred'] = False
             supplier_info = _execute_with_cursor(cursor, '''
-                SELECT contact_name, contact_email, warning
+                SELECT contact_name, contact_email, warning, preferred
                 FROM suppliers
                 WHERE id = ?
             ''', (supplier_id,)).fetchone()
@@ -3365,6 +3366,7 @@ def email_suppliers():
                 supplier_data['contact_name'] = supplier_info['contact_name']
                 supplier_data['contact_email'] = supplier_info['contact_email']
                 supplier_data['warning'] = supplier_info['warning']
+                supplier_data['preferred'] = bool(supplier_info['preferred'])
 
         recent_no_bid_lookup = _get_recent_no_bid_lookup(
             cursor,
@@ -3412,6 +3414,10 @@ def email_suppliers():
             key=lambda supplier: len(supplier['parts']),
             reverse=True
         )
+
+    preferred_suppliers = [supplier for supplier in suppliers_list if supplier.get('preferred')]
+    non_preferred_suppliers = [supplier for supplier in suppliers_list if not supplier.get('preferred')]
+    suppliers_list = preferred_suppliers + non_preferred_suppliers
 
     breadcrumbs = [
         ('Home', url_for('index')),
