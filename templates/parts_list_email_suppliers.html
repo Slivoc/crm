@@ -39,6 +39,17 @@
     margin-left: 0.5rem;
     display: inline-block;
 }
+.customer-uses-supplier {
+    color: #721c24;
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: 0.25rem;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    margin-left: 0.5rem;
+    display: inline-block;
+}
 .supplier-preferred {
     color: #0f5132;
     background: #d1e7dd;
@@ -426,6 +437,11 @@
                         {% if supplier.warning %}
                             <span class="supplier-warning">
                                 ⚠ {{ supplier.warning }}
+                            </span>
+                        {% endif %}
+                        {% if supplier.used_by_customer %}
+                            <span class="customer-uses-supplier" title="This parts list customer already uses this supplier">
+                                <i class="bi bi-exclamation-triangle-fill"></i> Customer uses this supplier
                             </span>
                         {% endif %}
                         <span class="supplier-score-pill ms-2" data-supplier-id="{{ supplier.supplier_id }}">

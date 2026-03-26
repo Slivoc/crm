@@ -78,6 +78,50 @@ def _get_customer_permission_flags(customer_data):
     return can_view, can_edit
 
 
+def _get_all_suppliers_basic():
+    """Return all suppliers for customer relationship management UI."""
+    return db_execute(
+        """
+        SELECT id, name
+        FROM suppliers
+        ORDER BY name
+        """,
+        fetch='all'
+    ) or []
+
+
+def _get_customer_supplier_ids(customer_id):
+    rows = db_execute(
+        """
+        SELECT supplier_id
+        FROM customer_supplier_relationships
+        WHERE customer_id = ?
+        """,
+        (customer_id,),
+        fetch='all'
+    ) or []
+    return [int(row['supplier_id']) for row in rows if row.get('supplier_id') is not None]
+
+
+def _replace_customer_supplier_relationships(customer_id, supplier_ids):
+    with db_cursor(commit=True) as cur:
+        _execute_with_cursor(
+            cur,
+            "DELETE FROM customer_supplier_relationships WHERE customer_id = ?",
+            (customer_id,),
+        )
+        for supplier_id in supplier_ids:
+            _execute_with_cursor(
+                cur,
+                """
+                INSERT INTO customer_supplier_relationships (customer_id, supplier_id)
+                VALUES (?, ?)
+                ON CONFLICT (customer_id, supplier_id) DO NOTHING
+                """,
+                (customer_id, supplier_id),
+            )
+
+
 def _call_list_has_snoozed_until():
     try:
         with db_cursor() as cur:
@@ -358,6 +402,13 @@ def edit_customer(customer_id):
             selected_industries = request.form.getlist('industries[]')
             tags = request.form.get('tags', '').split(',')
             company_types = request.form.getlist('company_types[]')
+            raw_supplier_ids = request.form.getlist('used_supplier_ids[]')
+            used_supplier_ids = []
+            for supplier_id in raw_supplier_ids:
+                try:
+                    used_supplier_ids.append(int(supplier_id))
+                except (TypeError, ValueError):
+                    continue
 
             # Update industries
             delete_customer_industries(customer_id)
@@ -374,6 +425,8 @@ def edit_customer(customer_id):
                 remove_customer_company_type(customer_id, type_id)
             for type_id in company_types:
                 insert_customer_company_type(customer_id, type_id)
+
+            _replace_customer_supplier_relationships(customer_id, used_supplier_ids)
 
             flash("Customer updated successfully", "success")
             return redirect(url_for('customers.edit_customer', customer_id=customer_id))
@@ -425,6 +478,8 @@ def edit_customer(customer_id):
     countries = load_countries()
     currencies = get_currencies()
     customer_statuses = get_customer_statuses()
+    suppliers = _get_all_suppliers_basic()
+    selected_supplier_ids = _get_customer_supplier_ids(customer_id)
 
     development_plan = get_customer_development_plan(customer_id)
 
@@ -447,6 +502,8 @@ def edit_customer(customer_id):
                            countries=countries,  # Add countries to template context
                            currencies=currencies,
                            customer_statuses=customer_statuses,
+                           suppliers=suppliers,
+                           selected_supplier_ids=selected_supplier_ids,
                            page=page,
                            per_page=per_page,
                            breadcrumbs=breadcrumbs,

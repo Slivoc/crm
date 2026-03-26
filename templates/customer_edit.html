@@ -181,6 +181,31 @@
                    </small>
                  </div>
 
+                 <div class="mb-3">
+                   <label for="used_supplier_ids" class="form-label">Suppliers This Customer Uses:</label>
+                   <input type="text"
+                          id="used_supplier_search"
+                          class="form-control form-control-sm mb-2"
+                          placeholder="Search suppliers...">
+                   <select id="used_supplier_ids"
+                           name="used_supplier_ids[]"
+                           class="form-select"
+                           multiple
+                           size="10"
+                           data-selected-supplier-ids='{{ selected_supplier_ids | tojson }}'
+                           {{ 'disabled' if not can_edit }}>
+                     {% for supplier in suppliers %}
+                     <option value="{{ supplier.id }}"
+                             {% if supplier.id in selected_supplier_ids %}selected{% endif %}>
+                       {{ supplier.name }}
+                     </option>
+                     {% endfor %}
+                   </select>
+                   <small class="form-text text-muted">
+                     Loaded from the parts list supplier source. Hold Ctrl/Cmd to select multiple suppliers.
+                   </small>
+                 </div>
+
                  <!-- Simple country input -->
                  <div class="mb-3">
                    <label for="customer-country" class="form-label">Country (ISO Code):</label>
@@ -1205,6 +1230,81 @@ function showToast(message, type = 'success') {
         toast.remove();
     }, 4000);
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    const supplierSelect = document.getElementById('used_supplier_ids');
+    const supplierSearchInput = document.getElementById('used_supplier_search');
+    if (!supplierSelect || !supplierSearchInput) return;
+
+    const form = supplierSelect.closest('form');
+    const initialSelectedIds = JSON.parse(supplierSelect.dataset.selectedSupplierIds || '[]');
+    const selectedSupplierIds = new Set((initialSelectedIds || []).map(id => parseInt(id, 10)).filter(Number.isFinite));
+    let allSuppliers = Array.from(supplierSelect.options).map(option => ({
+        id: parseInt(option.value, 10),
+        name: option.textContent.trim()
+    })).filter(supplier => Number.isFinite(supplier.id));
+
+    function syncSelectedForVisibleOptions() {
+        Array.from(supplierSelect.options).forEach(option => {
+            const supplierId = parseInt(option.value, 10);
+            if (!Number.isFinite(supplierId)) return;
+            if (option.selected) selectedSupplierIds.add(supplierId);
+            else selectedSupplierIds.delete(supplierId);
+        });
+    }
+
+    function renderSupplierOptions(searchTerm = '') {
+        const query = (searchTerm || '').toLowerCase().trim();
+        const visibleSuppliers = query
+            ? allSuppliers.filter(supplier => supplier.name.toLowerCase().includes(query))
+            : allSuppliers;
+
+        supplierSelect.innerHTML = '';
+        visibleSuppliers.forEach(supplier => {
+            const option = document.createElement('option');
+            option.value = supplier.id;
+            option.textContent = supplier.name;
+            option.selected = selectedSupplierIds.has(supplier.id);
+            supplierSelect.appendChild(option);
+        });
+    }
+
+    supplierSelect.addEventListener('change', syncSelectedForVisibleOptions);
+    supplierSearchInput.addEventListener('input', function() {
+        syncSelectedForVisibleOptions();
+        renderSupplierOptions(supplierSearchInput.value);
+    });
+
+    if (form) {
+        form.addEventListener('submit', function() {
+            syncSelectedForVisibleOptions();
+            renderSupplierOptions('');
+            Array.from(supplierSelect.options).forEach(option => {
+                option.selected = selectedSupplierIds.has(parseInt(option.value, 10));
+            });
+        });
+    }
+
+    fetch('/parts_list/suppliers/all')
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success || !Array.isArray(data.suppliers)) {
+                throw new Error(data.error || 'Failed to load suppliers');
+            }
+            allSuppliers = data.suppliers
+                .map(supplier => ({
+                    id: parseInt(supplier.id, 10),
+                    name: (supplier.name || '').trim()
+                }))
+                .filter(supplier => Number.isFinite(supplier.id) && supplier.name)
+                .sort((a, b) => a.name.localeCompare(b.name));
+            renderSupplierOptions(supplierSearchInput.value);
+        })
+        .catch(() => {
+            allSuppliers.sort((a, b) => a.name.localeCompare(b.name));
+            renderSupplierOptions(supplierSearchInput.value);
+        });
+});
 </script>
 
 <style>
