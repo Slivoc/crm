@@ -39,6 +39,17 @@
     margin-left: 0.5rem;
     display: inline-block;
 }
+.supplier-preferred {
+    color: #0f5132;
+    background: #d1e7dd;
+    border: 1px solid #badbcc;
+    border-radius: 0.25rem;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    margin-left: 0.5rem;
+    display: inline-block;
+}
 .supplier-score-pill {
     display: inline-flex;
     align-items: center;
@@ -387,12 +398,28 @@
 
     <!-- Suppliers List -->
     {% if suppliers %}
+        {% set section = namespace(preferred_shown=false, other_shown=false) %}
         {% for supplier in suppliers %}
+        {% if supplier.preferred and not section.preferred_shown %}
+        <div class="mb-2 mt-1">
+            <h5 class="text-success mb-0">Preferred Suppliers</h5>
+        </div>
+        {% set section.preferred_shown = true %}
+        {% endif %}
+        {% if not supplier.preferred and not section.other_shown %}
+        <div class="mb-2 {% if section.preferred_shown %}mt-3{% else %}mt-1{% endif %}">
+            <h5 class="text-muted mb-0">Other Suppliers</h5>
+        </div>
+        {% set section.other_shown = true %}
+        {% endif %}
         <div class="supplier-card" data-supplier-id="{{ supplier.supplier_id }}">
             <div class="supplier-header">
                 <div>
                     <div class="supplier-name">
                         {{ supplier.supplier_name }}
+                        {% if supplier.preferred %}
+                            <span class="supplier-preferred">Preferred</span>
+                        {% endif %}
                         <a class="ms-2 small text-decoration-none" href="{{ url_for('suppliers.edit_supplier', supplier_id=supplier.supplier_id) }}" aria-label="Edit supplier">
                             <i class="bi bi-box-arrow-up-right"></i>
                         </a>
@@ -856,43 +883,11 @@ document.addEventListener('DOMContentLoaded', function() {
         `;
     }
 
-    function sortSupplierCardsByScore() {
-        const cards = Array.from(document.querySelectorAll('.supplier-card'));
-        if (!cards.length) {
-            return;
-        }
-        const parent = cards[0].parentElement;
-        cards.sort((a, b) => {
-            const hasMatureHistoryA = Number.parseInt(a.dataset.hasMatureHistory ?? '0', 10);
-            const hasMatureHistoryB = Number.parseInt(b.dataset.hasMatureHistory ?? '0', 10);
-            if (hasMatureHistoryA !== hasMatureHistoryB) {
-                return hasMatureHistoryB - hasMatureHistoryA;
-            }
-            const scoreA = Number.parseFloat(a.dataset.score ?? '');
-            const scoreB = Number.parseFloat(b.dataset.score ?? '');
-            const validA = Number.isFinite(scoreA);
-            const validB = Number.isFinite(scoreB);
-            if (validA && validB && scoreA !== scoreB) {
-                return scoreB - scoreA;
-            }
-            if (validA !== validB) {
-                return validA ? -1 : 1;
-            }
-            const orderA = Number.parseInt(a.dataset.initialOrder ?? '0', 10);
-            const orderB = Number.parseInt(b.dataset.initialOrder ?? '0', 10);
-            return orderA - orderB;
-        });
-        cards.forEach(card => parent.appendChild(card));
-    }
-
     async function fetchSupplierScoresForEmailSuppliers() {
         const cards = Array.from(document.querySelectorAll('.supplier-card'));
         if (!cards.length) {
             return;
         }
-        cards.forEach((card, index) => {
-            card.dataset.initialOrder = card.dataset.initialOrder || String(index);
-        });
         const supplierIds = cards
             .map(card => Number.parseInt(card.dataset.supplierId, 10))
             .filter(id => Number.isFinite(id));
@@ -933,7 +928,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
             });
-            sortSupplierCardsByScore();
         } catch (error) {
             console.warn('Unable to load supplier scores', error);
             document.querySelectorAll('.supplier-score-pill').forEach(pill => {
