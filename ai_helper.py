@@ -19,7 +19,10 @@ parent_dir = current_dir.parent      # C:\crm
 env_path = parent_dir / '.env'
 load_dotenv(dotenv_path=env_path)
 
-client = openai.Client(api_key=os.getenv("OPENAI_API_KEY"))
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = openai.Client(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+if client is None:
+    logging.warning("OPENAI_API_KEY not found. AI-assisted features will run in fallback mode.")
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -28,6 +31,10 @@ def extract_part_numbers_and_quantities(request_data):
     print(f"Input request_data:\n{request_data}")
 
     try:
+        if client is None:
+            logging.warning("OPENAI_API_KEY is not set; skipping AI part/quantity extraction.")
+            return []
+
         print("Attempting to send request to OpenAI API")
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -64,6 +71,10 @@ def extract_part_numbers_and_quantities(request_data):
 
 def extract_quote_info(request_data):
     logging.debug("Sending request data to OpenAI API")
+
+    if client is None:
+        logging.warning("OPENAI_API_KEY is not set; skipping AI quote extraction.")
+        return []
 
     response = client.chat.completions.create(
         model="gpt-4o",
@@ -280,6 +291,9 @@ def generate_preview_prompt(customer_names, tag_description, continent=None, cou
 def enrich_customer_data(customer_data, available_tags):
     """Call OpenAI API to enrich customer data"""
     try:
+        if client is None:
+            raise ValueError("OPENAI_API_KEY is not set; AI enrichment is unavailable.")
+
         prompt = generate_enrichment_prompt(customer_data, available_tags)
         logging.debug(f"Generated AI Prompt for enrichment: {prompt}")
 

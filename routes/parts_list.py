@@ -31,7 +31,10 @@ except Exception:
     striprtf_to_text = None
 
 # Initialize OpenAI client
-client = OpenAI()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+if client is None:
+    logging.warning("OPENAI_API_KEY not found in routes.parts_list. AI features are disabled.")
 
 parts_list_bp = Blueprint('parts_list', __name__)
 
