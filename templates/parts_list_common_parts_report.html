@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}Common Parts Report{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <div>
+            <h2 class="fw-bold mb-1">Common Parts Report</h2>
+            <p class="text-muted mb-0">Find repeated parts across parts lists and the customers that requested them.</p>
+        </div>
+        <a href="{{ url_for('parts_list.view_parts_lists') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i> Back to Parts Lists
+        </a>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="partLiveFilter" class="form-label fw-semibold">Live Part Filter</label>
+                    <input
+                        type="text"
+                        id="partLiveFilter"
+                        class="form-control"
+                        placeholder="Type to filter part numbers..."
+                        value="{{ selected_part_query or '' }}"
+                    >
+                    <small class="text-muted">Filters rows instantly by part number text.</small>
+                </div>
+                <div class="col-md-6">
+                    <label for="customerMultiFilter" class="form-label fw-semibold">Customer Filter (multi-select)</label>
+                    <select id="customerMultiFilter" class="form-select" multiple size="7">
+                        {% for customer in customers %}
+                        <option value="{{ customer.id }}" {% if customer.id in selected_customer_ids %}selected{% endif %}>
+                            {{ customer.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <small class="text-muted">Hold Ctrl/Cmd to select multiple customers.</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span class="fw-semibold">Common parts</span>
+            <span class="badge bg-secondary"><span id="visibleRowCount">{{ rows|length }}</span> visible</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover mb-0" id="commonPartsTable">
+                    <thead>
+                        <tr>
+                            <th>Part Number</th>
+                            <th class="text-center">Parts Lists</th>
+                            <th class="text-center">Customers</th>
+                            <th>Customer Names</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                        <tr data-part="{{ row.part_number|lower }}" data-customer-ids="{{ row.customer_ids|join(',') }}">
+                            <td class="fw-semibold font-monospace">{{ row.part_number }}</td>
+                            <td class="text-center">{{ row.parts_list_count }}</td>
+                            <td class="text-center">{{ row.customer_count }}</td>
+                            <td>{{ row.customer_names|join(', ') }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if not rows %}
+            <div class="p-3 text-muted">
+                No common parts were found for the current filters.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+function selectedCustomerIds() {
+    const customerSelect = document.getElementById('customerMultiFilter');
+    if (!customerSelect) return [];
+    return Array.from(customerSelect.selectedOptions).map(option => option.value);
+}
+
+function applyCommonPartsFilters() {
+    const table = document.getElementById('commonPartsTable');
+    if (!table) return;
+
+    const search = (document.getElementById('partLiveFilter')?.value || '').trim().toLowerCase();
+    const selectedCustomers = selectedCustomerIds();
+    const hasCustomerFilter = selectedCustomers.length > 0;
+    const selectedCustomerSet = new Set(selectedCustomers);
+
+    const rows = table.querySelectorAll('tbody tr');
+    let visibleCount = 0;
+
+    rows.forEach(row => {
+        const rowPart = row.dataset.part || '';
+        const rowCustomerIds = (row.dataset.customerIds || '')
+            .split(',')
+            .map(value => value.trim())
+            .filter(Boolean);
+
+        const matchesPart = !search || rowPart.includes(search);
+        const matchesCustomer = !hasCustomerFilter || rowCustomerIds.some(customerId => selectedCustomerSet.has(customerId));
+        const isVisible = matchesPart && matchesCustomer;
+
+        row.style.display = isVisible ? '' : 'none';
+        if (isVisible) visibleCount += 1;
+    });
+
+    const countEl = document.getElementById('visibleRowCount');
+    if (countEl) countEl.textContent = visibleCount;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const partFilterInput = document.getElementById('partLiveFilter');
+    const customerFilterSelect = document.getElementById('customerMultiFilter');
+
+    if (partFilterInput) {
+        partFilterInput.addEventListener('input', applyCommonPartsFilters);
+    }
+    if (customerFilterSelect) {
+        customerFilterSelect.addEventListener('change', applyCommonPartsFilters);
+    }
+
+    applyCommonPartsFilters();
+});
+</script>
+{% endblock %}

@@ -4712,6 +4712,98 @@ def view_parts_lists():
                                selected_quoted_date=None,
                                initial_part_search=part_search)
 
+@parts_list_bp.route('/parts-lists/common-parts-report', methods=['GET'])
+def common_parts_report():
+    """Show parts that appear across multiple parts lists with customer visibility."""
+    selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
+    part_query = (request.args.get('part_query') or '').strip().lower()
+
+    customers = db_execute(
+        "SELECT id, name FROM customers ORDER BY name",
+        fetch='all',
+    ) or []
+
+    sql = """
+        SELECT
+            pl.id AS parts_list_id,
+            pl.customer_id,
+            c.name AS customer_name,
+            pll.base_part_number,
+            pll.customer_part_number
+        FROM parts_list_lines pll
+        JOIN parts_lists pl ON pl.id = pll.parts_list_id
+        JOIN customers c ON c.id = pl.customer_id
+        WHERE (
+            NULLIF(TRIM(pll.base_part_number), '') IS NOT NULL
+            OR NULLIF(TRIM(pll.customer_part_number), '') IS NOT NULL
+        )
+    """
+    params = []
+
+    if selected_customer_ids:
+        placeholders = ','.join(['?'] * len(selected_customer_ids))
+        sql += f" AND pl.customer_id IN ({placeholders})"
+        params.extend(selected_customer_ids)
+
+    if part_query:
+        sql += """
+            AND (
+                LOWER(COALESCE(pll.base_part_number, '')) LIKE ?
+                OR LOWER(COALESCE(pll.customer_part_number, '')) LIKE ?
+            )
+        """
+        like_term = f"%{part_query}%"
+        params.extend([like_term, like_term])
+
+    rows = db_execute(sql, tuple(params), fetch='all') or []
+
+    grouped_parts = {}
+    for row in rows:
+        base_part = (row['base_part_number'] or '').strip()
+        customer_part = (row['customer_part_number'] or '').strip()
+        part_value = base_part or customer_part
+        if not part_value:
+            continue
+
+        part_key = part_value.upper()
+        grouped = grouped_parts.setdefault(part_key, {
+            'part_number': part_value,
+            'parts_list_ids': set(),
+            'customers': set(),
+        })
+        grouped['parts_list_ids'].add(row['parts_list_id'])
+        grouped['customers'].add((row['customer_id'], row['customer_name']))
+
+    report_rows = []
+    for grouped in grouped_parts.values():
+        if len(grouped['parts_list_ids']) < 2:
+            continue
+
+        sorted_customers = sorted(grouped['customers'], key=lambda item: (item[1] or '').lower())
+        report_rows.append({
+            'part_number': grouped['part_number'],
+            'parts_list_count': len(grouped['parts_list_ids']),
+            'customer_count': len(sorted_customers),
+            'customer_ids': [customer_id for customer_id, _ in sorted_customers],
+            'customer_names': [customer_name for _, customer_name in sorted_customers],
+        })
+
+    report_rows.sort(
+        key=lambda row: (
+            -row['customer_count'],
+            -row['parts_list_count'],
+            row['part_number'].lower(),
+        )
+    )
+
+    return render_template(
+        'parts_list_common_parts_report.html',
+        rows=report_rows,
+        customers=[dict(customer) for customer in customers],
+        selected_customer_ids=selected_customer_ids,
+        selected_part_query=request.args.get('part_query', '').strip(),
+    )
+
 @parts_list_bp.route('/parts-lists/<int:list_id>/update', methods=['POST'])
 def update_parts_list_header(list_id):
     try:
