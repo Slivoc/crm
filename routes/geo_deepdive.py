@@ -52,8 +52,7 @@ def list_deepdives():
 def generate_deepdive_content_with_perplexity(country_code, tag_description):
     """Generate deep dive content using Perplexity AI with real-time search"""
 
-    # Use the same Perplexity key as in your existing code
-    perplexity_key = "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"
+    perplexity_key = os.getenv("PERPLEXITY_API_KEY")
 
     if not perplexity_key:
         return None, "Perplexity API key not found"
@@ -477,7 +476,7 @@ def improve_deepdive_content_api(deepdive_id):
 def generate_improved_deepdive_content(existing_content, country_name, tag_description, improvement_request):
     """Generate improved deep dive content using Perplexity AI based on user request"""
 
-    perplexity_key = "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"
+    perplexity_key = os.getenv("PERPLEXITY_API_KEY")
 
     if not perplexity_key:
         return None, "Perplexity API key not found"

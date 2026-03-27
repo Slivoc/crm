@@ -11,8 +11,6 @@ import time
 from openai import OpenAI
 from flask import current_app
 
-import os
-os.environ["OPENAI_API_KEY"] = "sk-proj-c2oa9tXO8aH0N956WypjT3BlbkFJ9MVOXTavBOePTHs8ZpZ2"
 from pathlib import Path
 
 # Load .env from the parent directory (where it actually exists)
@@ -706,7 +704,7 @@ def start_bulk_enrichment(batch_size=20):
 # Perplexity-based Customer Enrichment (with live data)
 # =============================================================================
 
-PERPLEXITY_API_KEY = "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"
+PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
 
 def enrich_customer_with_perplexity(customer, available_tags, company_types):
     """
@@ -1133,8 +1131,7 @@ def fetch_customer_news_perplexity(customer):
     """Fetch news for a customer using Perplexity API"""
 
     # Only use environment variables - don't use current_app.config in streaming context
-    # Hardcoded key for production
-    perplexity_key = "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"
+    perplexity_key = os.getenv("PERPLEXITY_API_KEY")
 
 
     print(f"DEBUG: Perplexity key found: {perplexity_key is not None}")
