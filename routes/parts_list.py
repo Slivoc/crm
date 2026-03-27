@@ -4717,14 +4717,15 @@ def view_parts_lists():
                                selected_quoted_date=None,
                                initial_part_search=part_search)
 
-def _build_common_parts_report_rows(selected_customer_ids, part_query):
+def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=False):
     sql = """
         SELECT
             pl.id AS parts_list_id,
             pl.customer_id,
             c.name AS customer_name,
             pll.base_part_number,
-            pll.customer_part_number
+            pll.customer_part_number,
+            pll.quantity
         FROM parts_list_lines pll
         JOIN parts_lists pl ON pl.id = pll.parts_list_id
         JOIN customers c ON c.id = pl.customer_id
@@ -4765,12 +4766,27 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query):
             'part_number': part_value,
             'parts_list_ids': set(),
             'customers': set(),
+            'quantity_total': 0,
+            'quantity_count': 0,
         })
         grouped['parts_list_ids'].add(row['parts_list_id'])
         grouped['customers'].add((row['customer_id'], row['customer_name']))
+        quantity_value = row['quantity']
+        if quantity_value is not None:
+            try:
+                grouped['quantity_total'] += float(quantity_value)
+                grouped['quantity_count'] += 1
+            except (TypeError, ValueError):
+                pass
+
+    selected_customer_ids_set = set(selected_customer_ids or [])
 
     report_rows = []
     for grouped in grouped_parts.values():
+        grouped_customer_ids = {customer_id for customer_id, _ in grouped['customers']}
+        if selected_customer_ids_set and not selected_customer_ids_set.issubset(grouped_customer_ids):
+            continue
+
         if len(grouped['parts_list_ids']) < 2:
             continue
 
@@ -4781,6 +4797,10 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query):
             'customer_count': len(sorted_customers),
             'customer_ids': [customer_id for customer_id, _ in sorted_customers],
             'customer_names': [customer_name for _, customer_name in sorted_customers],
+            'avg_quantity': (
+                grouped['quantity_total'] / grouped['quantity_count']
+                if grouped['quantity_count'] > 0 else 0
+            ),
         })
 
     if report_rows:
@@ -4801,6 +4821,8 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query):
         stock_map = {(row['base_part_number'] or '').upper(): row['stock_level'] for row in stock_rows}
         for row in report_rows:
             row['stock_level'] = int(stock_map.get(row['part_number'].upper(), 0) or 0)
+        if exclude_in_stock:
+            report_rows = [row for row in report_rows if (row.get('stock_level') or 0) <= 0]
 
     report_rows.sort(
         key=lambda row: (
@@ -4818,6 +4840,7 @@ def common_parts_report():
     """Show parts that appear across multiple parts lists with customer visibility."""
     selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
     selected_part_query = (request.args.get('part_query') or '').strip()
+    exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
     part_query = selected_part_query.lower()
 
     customers = db_execute(
@@ -4825,7 +4848,7 @@ def common_parts_report():
         fetch='all',
     ) or []
 
-    report_rows = _build_common_parts_report_rows(selected_customer_ids, part_query)
+    report_rows = _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=exclude_in_stock)
 
     return render_template(
         'parts_list_common_parts_report.html',
@@ -4833,6 +4856,7 @@ def common_parts_report():
         customers=[dict(customer) for customer in customers],
         selected_customer_ids=selected_customer_ids,
         selected_part_query=selected_part_query,
+        exclude_in_stock=exclude_in_stock,
     )
 
 
@@ -4840,14 +4864,16 @@ def common_parts_report():
 def common_parts_report_export():
     selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
     part_query = (request.args.get('part_query') or '').strip().lower()
-    report_rows = _build_common_parts_report_rows(selected_customer_ids, part_query)
+    exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
+    report_rows = _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=exclude_in_stock)
 
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(['Part Number', 'Stock Level', 'Parts Lists', 'Customers', 'Customer Names'])
+    writer.writerow(['Part Number', 'Average Quantity', 'Stock Level', 'Parts Lists', 'Customers', 'Customer Names'])
     for row in report_rows:
         writer.writerow([
             row['part_number'],
+            round(float(row.get('avg_quantity') or 0), 2),
             row['stock_level'],
             row['parts_list_count'],
             row['customer_count'],
