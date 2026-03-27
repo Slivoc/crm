@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, url_for, redirect, session, flash, abort
+from flask import Blueprint, render_template, request, jsonify, url_for, redirect, session, flash, abort, Response
 from models import create_base_part_number, get_global_alternatives, insert_update, convert_currency
 from db import execute as db_execute, db_cursor
 import logging
@@ -9,6 +9,7 @@ from decimal import Decimal
 import json
 import re
 import copy
+import csv
 from flask_login import current_user
 import tempfile
 import extract_msg
@@ -18,6 +19,7 @@ from email import policy
 from email.message import EmailMessage
 import os
 import html
+from io import StringIO
 from routes.emails import send_graph_email, build_graph_inline_attachments
 from routes.email_signatures import get_user_default_signature
 from routes.parts_list_ai import trigger_monroe_auto_check
@@ -4712,17 +4714,7 @@ def view_parts_lists():
                                selected_quoted_date=None,
                                initial_part_search=part_search)
 
-@parts_list_bp.route('/parts-lists/common-parts-report', methods=['GET'])
-def common_parts_report():
-    """Show parts that appear across multiple parts lists with customer visibility."""
-    selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
-    part_query = (request.args.get('part_query') or '').strip().lower()
-
-    customers = db_execute(
-        "SELECT id, name FROM customers ORDER BY name",
-        fetch='all',
-    ) or []
-
+def _build_common_parts_report_rows(selected_customer_ids, part_query):
     sql = """
         SELECT
             pl.id AS parts_list_id,
@@ -4788,6 +4780,25 @@ def common_parts_report():
             'customer_names': [customer_name for _, customer_name in sorted_customers],
         })
 
+    if report_rows:
+        part_numbers = [row['part_number'] for row in report_rows]
+        placeholders = ','.join(['?'] * len(part_numbers))
+        stock_rows = db_execute(
+            f"""
+            SELECT base_part_number, COALESCE(SUM(available_quantity), 0) AS stock_level
+            FROM stock_movements
+            WHERE movement_type = 'IN'
+              AND available_quantity > 0
+              AND base_part_number IN ({placeholders})
+            GROUP BY base_part_number
+            """,
+            tuple(part_numbers),
+            fetch='all',
+        ) or []
+        stock_map = {(row['base_part_number'] or '').upper(): row['stock_level'] for row in stock_rows}
+        for row in report_rows:
+            row['stock_level'] = int(stock_map.get(row['part_number'].upper(), 0) or 0)
+
     report_rows.sort(
         key=lambda row: (
             -row['customer_count'],
@@ -4796,12 +4807,60 @@ def common_parts_report():
         )
     )
 
+    return report_rows
+
+
+@parts_list_bp.route('/parts-lists/common-parts-report', methods=['GET'])
+def common_parts_report():
+    """Show parts that appear across multiple parts lists with customer visibility."""
+    selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
+    selected_part_query = (request.args.get('part_query') or '').strip()
+    part_query = selected_part_query.lower()
+
+    customers = db_execute(
+        "SELECT id, name FROM customers ORDER BY name",
+        fetch='all',
+    ) or []
+
+    report_rows = _build_common_parts_report_rows(selected_customer_ids, part_query)
+
     return render_template(
         'parts_list_common_parts_report.html',
         rows=report_rows,
         customers=[dict(customer) for customer in customers],
         selected_customer_ids=selected_customer_ids,
-        selected_part_query=request.args.get('part_query', '').strip(),
+        selected_part_query=selected_part_query,
+    )
+
+
+@parts_list_bp.route('/parts-lists/common-parts-report/export', methods=['GET'])
+def common_parts_report_export():
+    selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
+    part_query = (request.args.get('part_query') or '').strip().lower()
+    report_rows = _build_common_parts_report_rows(selected_customer_ids, part_query)
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Part Number', 'Stock Level', 'Parts Lists', 'Customers', 'Customer Names'])
+    for row in report_rows:
+        writer.writerow([
+            row['part_number'],
+            row['stock_level'],
+            row['parts_list_count'],
+            row['customer_count'],
+            ', '.join(row['customer_names']),
+        ])
+
+    csv_data = output.getvalue()
+    output.close()
+
+    filename_date = datetime.utcnow().strftime('%Y%m%d')
+    return Response(
+        csv_data,
+        mimetype='text/csv',
+        headers={
+            'Content-Disposition': f'attachment; filename=common_parts_report_{filename_date}.csv'
+        },
     )
 
 @parts_list_bp.route('/parts-lists/<int:list_id>/update', methods=['POST'])
