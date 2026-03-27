@@ -4,13 +4,17 @@ Airbus Marketplace category suggestion and export functionality
 import logging
 import random
 import time
+import os
 from openai import OpenAI
 import json
 
 logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client - assumes you have OPENAI_API_KEY in environment
-client = OpenAI()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+if client is None:
+    logger.warning("OPENAI_API_KEY not found in airbus_marketplace_helper. AI suggestions are disabled.")
 
 # All available marketplace categories
 MARKETPLACE_CATEGORIES = [
@@ -168,6 +172,9 @@ def suggest_marketplace_category(part_number, description="", additional_info=""
         Returns None if unable to determine
     """
     try:
+        if client is None:
+            return _fallback_suggestion("missing_api_key")
+
         logger.info(f"Suggesting category for part: {part_number}")
 
         # Build context
