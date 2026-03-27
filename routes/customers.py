@@ -4326,7 +4326,7 @@ def get_tag_analysis(tag_id):
 
     # Initialize Perplexity client
     client = OpenAI(
-        api_key="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",  # Replace with your actual API key
+        api_key=os.getenv("PERPLEXITY_API_KEY"),
         base_url="https://api.perplexity.ai"
     )
 
@@ -4742,7 +4742,7 @@ def get_tag_suggestions(tag_id):
 
         # Initialize Perplexity client
         client = OpenAI(
-            api_key="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",
+            api_key=os.getenv("PERPLEXITY_API_KEY"),
             base_url="https://api.perplexity.ai"
         )
 
@@ -4884,7 +4884,7 @@ def refine_tag_suggestions(tag_id):
 
         # Get the refined AI analysis from Perplexity
         client = OpenAI(
-            api_key="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",
+            api_key=os.getenv("PERPLEXITY_API_KEY"),
             base_url="https://api.perplexity.ai"
         )
 

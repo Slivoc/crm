@@ -98,10 +98,10 @@ app.config['TICKETS_HUB_URL'] = os.getenv('TICKETS_HUB_URL', '')
 app.config['TICKETS_HUB_API_KEY'] = os.getenv('TICKETS_HUB_API_KEY', '')
 app.config['TICKETS_BASE_URL'] = os.getenv('TICKETS_BASE_URL', '')
 app.config['APOLLO_BASE_URL'] = 'https://api.apollo.io/v1'  # It's good to keep the base URL in config too
-app.config['EXCHANGE_RATE_API_KEY'] = 'dca912446be60b1b0aa83a4f'  # Get this from exchangerate-api.com or similar service
+app.config['EXCHANGE_RATE_API_KEY'] = os.getenv('EXCHANGE_RATE_API_KEY', '')
 app.config['SESSION_TYPE'] = 'filesystem'  # Store sessions in files
 app.config['SESSION_FILE_DIR'] = './flask_session'  # Session folder
-app.secret_key = 'your-secret-key-here'
+app.secret_key = os.getenv('SECRET_KEY', app.config['SECRET_KEY'])
 Session(app)
 
 logging.info(f"Loaded API_KEY: {app.config['API_KEY']}")
@@ -206,7 +206,7 @@ app.register_blueprint(parts_list_ai_bp, url_prefix='/parts-list-ai')
 app.register_blueprint(parts_list_po_check_bp, url_prefix='/parts-list')
 app.register_blueprint(tickets_bp, url_prefix='/tickets')
 app.register_blueprint(external_api_bp)
-app.secret_key = 'your-secret-key-here'  # Required for sessions
+app.secret_key = os.getenv('SECRET_KEY', app.config['SECRET_KEY'])  # Required for sessions
 app.register_blueprint(portal_api_bp)
 app.register_blueprint(portal_admin_bp)
 app.register_blueprint(manufacturer_approvals_bp)

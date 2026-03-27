@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 marketplace_bp = Blueprint('marketplace', __name__)
 
-PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY') or "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"
+PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 
 
 def _months_ago(reference: date, months: int) -> date:
