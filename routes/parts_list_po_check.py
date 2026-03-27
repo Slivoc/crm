@@ -27,7 +27,10 @@ logger = logging.getLogger(__name__)
 parts_list_po_check_bp = Blueprint('parts_list_po_check', __name__)
 
 # Initialize OpenAI client
-client = OpenAI()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+if client is None:
+    logger.warning("OPENAI_API_KEY not found in routes.parts_list_po_check. AI features are disabled.")
 
 AI_MAX_CHARS = 20000
 

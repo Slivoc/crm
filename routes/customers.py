@@ -5163,6 +5163,9 @@ def enrich_customers_with_activity(customers):
 def process_with_llm(prompt):
     """Process a prompt with the OpenAI LLM and return structured data"""
     try:
+        if client is None:
+            raise ValueError("OPENAI_API_KEY is not configured.")
+
         logging.debug(f"Sending prompt to OpenAI: {prompt}")
 
         response = client.chat.completions.create(
@@ -5206,7 +5209,10 @@ def process_with_llm(prompt):
         raise ValueError(f"LLM processing failed: {str(e)}")
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+if client is None:
+    logging.warning("OPENAI_API_KEY not found in routes.customers. AI search parsing is disabled.")
 
 
 @customers_bp.route('/natural_language_search', methods=['GET'])
