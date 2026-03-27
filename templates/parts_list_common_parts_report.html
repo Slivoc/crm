@@ -51,7 +51,21 @@
                         </option>
                         {% endfor %}
                     </select>
-                    <small class="text-muted">Type a few letters, then click a customer to include them in the filter.</small>
+                    <small class="text-muted">Type a few letters, then click customers to require parts shared by all selected customers.</small>
+                </div>
+                <div class="col-12">
+                    <div class="form-check">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="excludeInStockToggle"
+                            {% if exclude_in_stock %}checked{% endif %}
+                        >
+                        <label class="form-check-label fw-semibold" for="excludeInStockToggle">
+                            Hide items currently in stock
+                        </label>
+                        <small class="text-muted d-block">Excludes rows where stock level is greater than zero.</small>
+                    </div>
                 </div>
             </div>
         </div>
@@ -68,6 +82,7 @@
                     <thead>
                         <tr>
                             <th>Part Number</th>
+                            <th class="text-center">Avg Qty</th>
                             <th class="text-center">Stock Level</th>
                             <th class="text-center">Parts Lists</th>
                             <th class="text-center">Customers</th>
@@ -76,8 +91,13 @@
                     </thead>
                     <tbody>
                         {% for row in rows %}
-                        <tr data-part="{{ row.part_number|lower }}" data-customer-ids="{{ row.customer_ids|join(',') }}">
+                        <tr
+                            data-part="{{ row.part_number|lower }}"
+                            data-customer-ids="{{ row.customer_ids|join(',') }}"
+                            data-stock-level="{{ row.stock_level or 0 }}"
+                        >
                             <td class="fw-semibold font-monospace">{{ row.part_number }}</td>
+                            <td class="text-center">{{ "%.2f"|format(row.avg_quantity or 0) }}</td>
                             <td class="text-center">{{ row.stock_level or 0 }}</td>
                             <td class="text-center">{{ row.parts_list_count }}</td>
                             <td class="text-center">{{ row.customer_count }}</td>
@@ -119,6 +139,8 @@ function syncExportUrl() {
     const params = new URLSearchParams();
     const partQuery = (document.getElementById('partLiveFilter')?.value || '').trim();
     if (partQuery) params.set('part_query', partQuery);
+    const excludeInStock = document.getElementById('excludeInStockToggle')?.checked;
+    if (excludeInStock) params.set('exclude_in_stock', '1');
 
     selectedCustomerIds().forEach(customerId => params.append('customer_ids', customerId));
     exportBtn.href = params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
@@ -212,6 +234,7 @@ function applyCommonPartsFilters() {
     const selectedCustomers = selectedCustomerIds();
     const hasCustomerFilter = selectedCustomers.length > 0;
     const selectedCustomerSet = new Set(selectedCustomers);
+    const excludeInStock = document.getElementById('excludeInStockToggle')?.checked;
 
     const rows = table.querySelectorAll('tbody tr');
     let visibleCount = 0;
@@ -222,10 +245,12 @@ function applyCommonPartsFilters() {
             .split(',')
             .map(value => value.trim())
             .filter(Boolean);
+        const stockLevel = Number(row.dataset.stockLevel || 0);
 
         const matchesPart = !search || rowPart.includes(search);
-        const matchesCustomer = !hasCustomerFilter || rowCustomerIds.some(customerId => selectedCustomerSet.has(customerId));
-        const isVisible = matchesPart && matchesCustomer;
+        const matchesCustomer = !hasCustomerFilter || selectedCustomers.every(customerId => rowCustomerIds.includes(customerId));
+        const matchesStock = !excludeInStock || stockLevel <= 0;
+        const isVisible = matchesPart && matchesCustomer && matchesStock;
 
         row.style.display = isVisible ? '' : 'none';
         if (isVisible) visibleCount += 1;
@@ -241,6 +266,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const customerSearchInput = document.getElementById('customerSearchInput');
     const customerFilterSelect = document.getElementById('customerMultiFilter');
     const chipsContainer = document.getElementById('selectedCustomerChips');
+    const excludeInStockToggle = document.getElementById('excludeInStockToggle');
 
     if (partFilterInput) {
         partFilterInput.addEventListener('input', applyCommonPartsFilters);
@@ -258,6 +284,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (customerFilterSelect) {
         customerFilterSelect.addEventListener('change', applyCommonPartsFilters);
+    }
+    if (excludeInStockToggle) {
+        excludeInStockToggle.addEventListener('change', applyCommonPartsFilters);
     }
     if (chipsContainer) {
         chipsContainer.addEventListener('click', function(event) {

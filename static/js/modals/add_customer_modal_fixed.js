@@ -360,6 +360,7 @@ function displaySelectedApolloCompany(org) {
 
         // Apollo search variables
         let apolloSearchTimeout;
+        let lastApolloOrganizations = [];
 
         // Check if elements exist
         if (!addCustomerForm || !saveCustomerBtn) {
@@ -450,8 +451,97 @@ function displaySelectedApolloCompany(org) {
             apolloSearchLoading?.classList.add('d-none');
         }
 
+        function buildApolloResultsHeader(organizations) {
+            if (!organizations.length) return '';
+            return `
+                <div class="d-flex justify-content-between align-items-center px-3 py-2 border-bottom bg-light">
+                    <small class="text-muted">${organizations.length} result${organizations.length === 1 ? '' : 's'} displayed</small>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="addAllDisplayedApolloBtn">
+                        <i class="bi bi-plus-square me-1"></i>Add all displayed
+                    </button>
+                </div>
+            `;
+        }
+
+        async function addCustomersFromApolloOrganizations(organizations) {
+            if (!organizations || organizations.length === 0) {
+                showToast('Info', 'No displayed Apollo companies to add.', 'info');
+                return;
+            }
+
+            const total = organizations.length;
+            let created = 0;
+            let skipped = 0;
+            let failed = 0;
+            let firstCreatedCustomerId = null;
+
+            for (const org of organizations) {
+                const formData = {
+                    name: (org.name || '').trim(),
+                    country: getCountryISOCode(org.country || ''),
+                    apollo_id: org.id || '',
+                    website: org.website || '',
+                    notes: '',
+                    payment_terms: 'Pro-forma',
+                    incoterms: 'EXW'
+                };
+
+                if (!formData.name) {
+                    skipped += 1;
+                    continue;
+                }
+
+                if (org.logo_url) {
+                    formData.logo_url = org.logo_url;
+                }
+
+                try {
+                    const response = await fetch('/customers/customers/new', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(formData)
+                    });
+                    const result = await response.json();
+                    if (response.ok && result.success) {
+                        created += 1;
+                        if (!firstCreatedCustomerId && result.customer_id) {
+                            firstCreatedCustomerId = result.customer_id;
+                        }
+                    } else {
+                        failed += 1;
+                    }
+                } catch (error) {
+                    console.error('Error bulk creating customer from Apollo result:', error);
+                    failed += 1;
+                }
+            }
+
+            const summary = `${created} created, ${skipped} skipped, ${failed} failed (out of ${total}).`;
+            if (created > 0) {
+                showToast('Success', `Finished adding displayed customers: ${summary}`, 'success');
+                if (firstCreatedCustomerId) {
+                    fetch(`/customers/api/${firstCreatedCustomerId}`)
+                        .then(response => response.ok ? response.json() : null)
+                        .then(customerData => {
+                            if (customerData) {
+                                window.dispatchEvent(new CustomEvent('customerAdded', {
+                                    detail: {
+                                        customerId: firstCreatedCustomerId,
+                                        customerName: customerData.name
+                                    }
+                                }));
+                            }
+                        })
+                        .catch(error => console.error('Error fetching first created customer for event dispatch:', error));
+                }
+            } else {
+                showToast('Error', `No customers were created. ${summary}`, 'error');
+            }
+        }
+
         function displayApolloResults(organizations) {
             if (!apolloSearchResults) return;
+            lastApolloOrganizations = organizations || [];
 
             if (!organizations.length) {
                 apolloSearchResults.innerHTML = `
@@ -476,13 +566,14 @@ function displaySelectedApolloCompany(org) {
                 </div>
             `).join('');
 
-            apolloSearchResults.innerHTML = resultsHtml;
+            apolloSearchResults.innerHTML = `${buildApolloResultsHeader(organizations)}${resultsHtml}`;
             apolloSearchResults.style.display = 'block';
             apolloSearchResults.setAttribute('data-organizations', JSON.stringify(organizations));
         }
 
         function showApolloError(message) {
             if (!apolloSearchResults) return;
+            lastApolloOrganizations = [];
 
             apolloSearchResults.innerHTML = `
                 <div class="p-3 text-center text-danger">
@@ -492,6 +583,21 @@ function displaySelectedApolloCompany(org) {
             `;
             apolloSearchResults.style.display = 'block';
         }
+
+        apolloSearchResults?.addEventListener('click', async function(event) {
+            const addAllBtn = event.target.closest('#addAllDisplayedApolloBtn');
+            if (!addAllBtn) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            const originalHtml = addAllBtn.innerHTML;
+            addAllBtn.disabled = true;
+            addAllBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Adding...';
+            await addCustomersFromApolloOrganizations(lastApolloOrganizations);
+            addAllBtn.disabled = false;
+            addAllBtn.innerHTML = originalHtml;
+        });
 
         // Form submission handler
         // Form submission handler (replace the existing one in your customer modal script)
