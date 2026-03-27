@@ -1,6 +1,6 @@
 # routes/settings.py
 
-from flask import Blueprint, request, render_template, redirect, url_for, flash
+from flask import Blueprint, request, render_template, redirect, url_for, flash, current_app
 from models import (
     update_currency_rate,
     get_conversion_mode,
@@ -47,6 +47,38 @@ def _row_to_dict(row):
 
 
 settings_bp = Blueprint('settings', __name__)
+
+API_SETTING_FIELDS = [
+    {'name': 'openai_api_key', 'storage_key': 'OPENAI_API_KEY', 'label': 'OpenAI API Key'},
+    {'name': 'perplexity_api_key', 'storage_key': 'PERPLEXITY_API_KEY', 'label': 'Perplexity API Key'},
+    {'name': 'apollo_api_key', 'storage_key': 'APOLLO_API_KEY', 'label': 'Apollo API Key'},
+    {'name': 'hubspot_api_key', 'storage_key': 'HUBSPOT_API_KEY', 'label': 'HubSpot API Key'},
+    {'name': 'exchange_rate_api_key', 'storage_key': 'EXCHANGE_RATE_API_KEY', 'label': 'Exchange Rate API Key'},
+    {'name': 'tickets_hub_api_key', 'storage_key': 'TICKETS_HUB_API_KEY', 'label': 'Tickets Hub API Key'},
+    {'name': 'internal_api_key', 'storage_key': 'API_KEY', 'label': 'Internal API Key'},
+]
+
+
+def _get_app_setting_value(key, default=''):
+    row = db_execute('SELECT value FROM app_settings WHERE key = ?', (key,), fetch='one')
+    if not row:
+        return default
+    return row.get('value', default) if isinstance(row, dict) else row[0]
+
+
+def _set_app_setting_value(key, value):
+    with db_cursor(commit=True) as cur:
+        existing = _execute_with_cursor(cur, 'SELECT 1 FROM app_settings WHERE key = ?', (key,)).fetchone()
+        if existing:
+            _execute_with_cursor(cur, 'UPDATE app_settings SET value = ? WHERE key = ?', (value, key))
+        else:
+            _execute_with_cursor(cur, 'INSERT INTO app_settings (key, value) VALUES (?, ?)', (key, value))
+
+
+def _apply_api_key_to_runtime_config(storage_key, value):
+    current_app.config[storage_key] = value or ''
+    if storage_key in ('OPENAI_API_KEY', 'PERPLEXITY_API_KEY'):
+        os.environ[storage_key] = value or ''
 
 
 def convert_rates_to_new_base(old_base, new_base):
@@ -132,6 +164,13 @@ def settings():
                 if rate is not None:
                     update_currency_rate(code, rate)
 
+        for field in API_SETTING_FIELDS:
+            raw_value = (request.form.get(field['name']) or '').strip()
+            if not raw_value:
+                continue
+            _set_app_setting_value(field['storage_key'], raw_value)
+            _apply_api_key_to_runtime_config(field['storage_key'], raw_value)
+
         flash('Settings updated successfully!', 'success')
         return redirect(url_for('settings.settings'))
 
@@ -152,7 +191,14 @@ def settings():
     logging.debug(f"Conversion Mode: {conversion_mode}")
     logging.debug(f"Base Currency: {base_currency}")
 
+    api_key_status = {}
+    for field in API_SETTING_FIELDS:
+        value = _get_app_setting_value(field['storage_key'], '')
+        api_key_status[field['storage_key']] = bool(value)
+
     return render_template('settings.html',
                            exchange_rates=exchange_rates,
                            conversion_mode=conversion_mode,
-                           base_currency=base_currency)
+                           base_currency=base_currency,
+                           api_setting_fields=API_SETTING_FIELDS,
+                           api_key_status=api_key_status)

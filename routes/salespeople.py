@@ -44,7 +44,7 @@ def _get_openai_email_client():
     """Lazily instantiate the OpenAI client for outreach suggestions."""
     global _openai_email_client
     if _openai_email_client is None:
-        _openai_email_client = OpenAI()
+        _openai_email_client = OpenAI(api_key=current_app.config.get('OPENAI_API_KEY') or None)
     return _openai_email_client
 
 
