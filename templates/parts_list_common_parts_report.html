@@ -9,9 +9,14 @@
             <h2 class="fw-bold mb-1">Common Parts Report</h2>
             <p class="text-muted mb-0">Find repeated parts across parts lists and the customers that requested them.</p>
         </div>
-        <a href="{{ url_for('parts_list.view_parts_lists') }}" class="btn btn-outline-secondary">
-            <i class="bi bi-arrow-left me-1"></i> Back to Parts Lists
-        </a>
+        <div class="d-flex gap-2">
+            <a id="exportCommonPartsBtn" href="{{ url_for('parts_list.common_parts_report_export') }}" class="btn btn-success">
+                <i class="bi bi-file-earmark-excel me-1"></i> Export CSV
+            </a>
+            <a href="{{ url_for('parts_list.view_parts_lists') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i> Back to Parts Lists
+            </a>
+        </div>
     </div>
 
     <div class="card mb-3">
@@ -29,15 +34,24 @@
                     <small class="text-muted">Filters rows instantly by part number text.</small>
                 </div>
                 <div class="col-md-6">
-                    <label for="customerMultiFilter" class="form-label fw-semibold">Customer Filter (multi-select)</label>
-                    <select id="customerMultiFilter" class="form-select" multiple size="7">
+                    <label for="customerSearchInput" class="form-label fw-semibold">Customer Filter</label>
+                    <input
+                        type="text"
+                        id="customerSearchInput"
+                        class="form-control"
+                        placeholder="Search customers and click to add filter..."
+                        autocomplete="off"
+                    >
+                    <div id="customerSearchResults" class="list-group mt-2" style="max-height: 220px; overflow-y: auto;"></div>
+                    <div id="selectedCustomerChips" class="d-flex flex-wrap gap-2 mt-2"></div>
+                    <select id="customerMultiFilter" class="d-none" multiple>
                         {% for customer in customers %}
                         <option value="{{ customer.id }}" {% if customer.id in selected_customer_ids %}selected{% endif %}>
                             {{ customer.name }}
                         </option>
                         {% endfor %}
                     </select>
-                    <small class="text-muted">Hold Ctrl/Cmd to select multiple customers.</small>
+                    <small class="text-muted">Type a few letters, then click a customer to include them in the filter.</small>
                 </div>
             </div>
         </div>
@@ -54,6 +68,7 @@
                     <thead>
                         <tr>
                             <th>Part Number</th>
+                            <th class="text-center">Stock Level</th>
                             <th class="text-center">Parts Lists</th>
                             <th class="text-center">Customers</th>
                             <th>Customer Names</th>
@@ -63,6 +78,7 @@
                         {% for row in rows %}
                         <tr data-part="{{ row.part_number|lower }}" data-customer-ids="{{ row.customer_ids|join(',') }}">
                             <td class="fw-semibold font-monospace">{{ row.part_number }}</td>
+                            <td class="text-center">{{ row.stock_level or 0 }}</td>
                             <td class="text-center">{{ row.parts_list_count }}</td>
                             <td class="text-center">{{ row.customer_count }}</td>
                             <td>{{ row.customer_names|join(', ') }}</td>
@@ -81,10 +97,111 @@
 </div>
 
 <script>
+let customerSearchTimeout;
+const selectedCustomersMap = new Map();
+
+function customerNameById(customerId) {
+    const option = document.querySelector(`#customerMultiFilter option[value="${customerId}"]`);
+    return option ? option.textContent.trim() : `Customer #${customerId}`;
+}
+
 function selectedCustomerIds() {
     const customerSelect = document.getElementById('customerMultiFilter');
     if (!customerSelect) return [];
     return Array.from(customerSelect.selectedOptions).map(option => option.value);
+}
+
+function syncExportUrl() {
+    const exportBtn = document.getElementById('exportCommonPartsBtn');
+    if (!exportBtn) return;
+
+    const baseUrl = "{{ url_for('parts_list.common_parts_report_export') }}";
+    const params = new URLSearchParams();
+    const partQuery = (document.getElementById('partLiveFilter')?.value || '').trim();
+    if (partQuery) params.set('part_query', partQuery);
+
+    selectedCustomerIds().forEach(customerId => params.append('customer_ids', customerId));
+    exportBtn.href = params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
+}
+
+function renderSelectedCustomerChips() {
+    const chipsContainer = document.getElementById('selectedCustomerChips');
+    if (!chipsContainer) return;
+
+    chipsContainer.innerHTML = '';
+    const selectedIds = selectedCustomerIds();
+
+    selectedIds.forEach(customerId => {
+        const name = selectedCustomersMap.get(customerId) || customerNameById(customerId);
+        selectedCustomersMap.set(customerId, name);
+        const chip = document.createElement('span');
+        chip.className = 'badge bg-primary d-inline-flex align-items-center gap-1';
+        chip.innerHTML = `
+            <span>${name}</span>
+            <button type="button" class="btn-close btn-close-white" aria-label="Remove" data-remove-customer-id="${customerId}" style="font-size: 0.5rem;"></button>
+        `;
+        chipsContainer.appendChild(chip);
+    });
+}
+
+function addCustomerToFilter(customerId, customerName) {
+    const customerSelect = document.getElementById('customerMultiFilter');
+    if (!customerSelect) return;
+
+    const option = customerSelect.querySelector(`option[value="${customerId}"]`);
+    if (!option) return;
+    option.selected = true;
+    selectedCustomersMap.set(String(customerId), customerName || option.textContent.trim());
+
+    renderSelectedCustomerChips();
+    applyCommonPartsFilters();
+}
+
+function removeCustomerFromFilter(customerId) {
+    const customerSelect = document.getElementById('customerMultiFilter');
+    if (!customerSelect) return;
+    const option = customerSelect.querySelector(`option[value="${customerId}"]`);
+    if (option) option.selected = false;
+    renderSelectedCustomerChips();
+    applyCommonPartsFilters();
+}
+
+function renderCustomerSearchResults(customers) {
+    const resultsEl = document.getElementById('customerSearchResults');
+    if (!resultsEl) return;
+
+    resultsEl.innerHTML = '';
+    if (!customers || customers.length === 0) {
+        resultsEl.innerHTML = '<div class="list-group-item text-muted">No customers found.</div>';
+        return;
+    }
+
+    customers.forEach(customer => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'list-group-item list-group-item-action';
+        const alreadySelected = selectedCustomerIds().includes(String(customer.id));
+        item.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">${customer.name}</span>
+                ${alreadySelected ? '<span class="badge bg-secondary">Selected</span>' : ''}
+            </div>
+            ${customer.country ? `<small class="text-muted">${customer.country}</small>` : ''}
+        `;
+        item.addEventListener('click', () => {
+            addCustomerToFilter(String(customer.id), customer.name);
+            resultsEl.innerHTML = '';
+            document.getElementById('customerSearchInput').value = '';
+        });
+        resultsEl.appendChild(item);
+    });
+}
+
+function searchCustomers(query) {
+    fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=12`)
+        .then(response => response.json())
+        .then(data => renderCustomerSearchResults(data || []))
+        .catch(() => renderCustomerSearchResults([]));
 }
 
 function applyCommonPartsFilters() {
@@ -116,19 +233,41 @@ function applyCommonPartsFilters() {
 
     const countEl = document.getElementById('visibleRowCount');
     if (countEl) countEl.textContent = visibleCount;
+    syncExportUrl();
 }
 
 document.addEventListener('DOMContentLoaded', function() {
     const partFilterInput = document.getElementById('partLiveFilter');
+    const customerSearchInput = document.getElementById('customerSearchInput');
     const customerFilterSelect = document.getElementById('customerMultiFilter');
+    const chipsContainer = document.getElementById('selectedCustomerChips');
 
     if (partFilterInput) {
         partFilterInput.addEventListener('input', applyCommonPartsFilters);
     }
+    if (customerSearchInput) {
+        customerSearchInput.addEventListener('input', function(event) {
+            const query = (event.target.value || '').trim();
+            clearTimeout(customerSearchTimeout);
+            if (query.length < 2) {
+                document.getElementById('customerSearchResults').innerHTML = '';
+                return;
+            }
+            customerSearchTimeout = setTimeout(() => searchCustomers(query), 220);
+        });
+    }
     if (customerFilterSelect) {
         customerFilterSelect.addEventListener('change', applyCommonPartsFilters);
     }
+    if (chipsContainer) {
+        chipsContainer.addEventListener('click', function(event) {
+            const removeBtn = event.target.closest('[data-remove-customer-id]');
+            if (!removeBtn) return;
+            removeCustomerFromFilter(removeBtn.dataset.removeCustomerId);
+        });
+    }
 
+    renderSelectedCustomerChips();
     applyCommonPartsFilters();
 });
 </script>
