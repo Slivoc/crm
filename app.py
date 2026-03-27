@@ -104,6 +104,35 @@ app.config['SESSION_FILE_DIR'] = './flask_session'  # Session folder
 app.secret_key = os.getenv('SECRET_KEY', app.config['SECRET_KEY'])
 Session(app)
 
+def _load_api_key_overrides_from_db():
+    tracked_keys = (
+        'OPENAI_API_KEY',
+        'PERPLEXITY_API_KEY',
+        'API_KEY',
+        'APOLLO_API_KEY',
+        'HUBSPOT_API_KEY',
+        'TICKETS_HUB_API_KEY',
+        'EXCHANGE_RATE_API_KEY',
+    )
+    try:
+        rows = db_execute(
+            "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?, ?, ?, ?)",
+            tracked_keys,
+            fetch='all'
+        ) or []
+        for row in rows:
+            key = row.get('key')
+            value = row.get('value')
+            if key and value:
+                app.config[key] = value
+                if key in ('OPENAI_API_KEY', 'PERPLEXITY_API_KEY'):
+                    os.environ[key] = value
+    except Exception as exc:
+        logging.warning(f"Unable to load API key overrides from app_settings: {exc}")
+
+
+_load_api_key_overrides_from_db()
+
 logging.info(f"Loaded API_KEY: {app.config['API_KEY']}")
 
 EMAIL_HOST = os.getenv('EMAIL_HOST')
