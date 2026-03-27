@@ -11,7 +11,10 @@ from decimal import Decimal
 import os
 
 # Initialize OpenAI client
-client = OpenAI()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+if client is None:
+    logging.warning("OPENAI_API_KEY not found in routes.parts_list_ai. AI features are disabled.")
 
 # Try to import playwright for Monroe scraping
 try:
