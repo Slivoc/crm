@@ -723,6 +723,7 @@ def _resolve_offer_identity(part, source_mode):
                     baseline_product_id_text,
                     _normalize_offer_product_id_type(baseline_product_id_type, baseline_product_id_text, part_number),
                 )
+        return ('', '')
 
     return (part_number, 'mpnTitle')
 

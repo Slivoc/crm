@@ -2,6 +2,15 @@
 
 {% block title %}Common Parts Report{% endblock %}
 
+{% block extra_css %}
+<style>
+#latestOffersModal .modal-dialog {
+    max-width: 96vw;
+    width: 96vw;
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid mt-4">
     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -52,6 +61,18 @@
                         {% endfor %}
                     </select>
                     <small class="text-muted">Type a few letters, then click customers to require parts shared by all selected customers.</small>
+                </div>
+                <div class="col-md-6">
+                    <label for="bomFilter" class="form-label fw-semibold">BOM Filter</label>
+                    <select id="bomFilter" class="form-select">
+                        <option value="">All BOMs</option>
+                        {% for bom in boms %}
+                        <option value="{{ bom.id }}" {% if bom.id == selected_bom_id %}selected{% endif %}>
+                            {{ bom.name }}{% if bom.description %} - {{ bom.description }}{% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <small class="text-muted">Limit the report to parts that appear on a selected BOM.</small>
                 </div>
                 <div class="col-12">
                     <div class="form-check">
@@ -196,6 +217,8 @@ function syncExportUrl() {
     const params = new URLSearchParams();
     const partQuery = (document.getElementById('partLiveFilter')?.value || '').trim();
     if (partQuery) params.set('part_query', partQuery);
+    const bomId = document.getElementById('bomFilter')?.value;
+    if (bomId) params.set('bom_id', bomId);
     const excludeInStock = document.getElementById('excludeInStockToggle')?.checked;
     if (excludeInStock) params.set('exclude_in_stock', '1');
 
@@ -480,6 +503,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const partFilterInput = document.getElementById('partLiveFilter');
     const customerSearchInput = document.getElementById('customerSearchInput');
     const customerFilterSelect = document.getElementById('customerMultiFilter');
+    const bomFilter = document.getElementById('bomFilter');
     const chipsContainer = document.getElementById('selectedCustomerChips');
     const excludeInStockToggle = document.getElementById('excludeInStockToggle');
     const offerButtons = document.querySelectorAll('.view-offers-btn');
@@ -500,6 +524,20 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (customerFilterSelect) {
         customerFilterSelect.addEventListener('change', applyCommonPartsFilters);
+    }
+    if (bomFilter) {
+        bomFilter.addEventListener('change', function() {
+            const params = new URLSearchParams(window.location.search);
+            if (bomFilter.value) {
+                params.set('bom_id', bomFilter.value);
+            } else {
+                params.delete('bom_id');
+            }
+            const queryString = params.toString();
+            window.location.href = queryString
+                ? `${window.location.pathname}?${queryString}`
+                : window.location.pathname;
+        });
     }
     if (excludeInStockToggle) {
         excludeInStockToggle.addEventListener('change', applyCommonPartsFilters);

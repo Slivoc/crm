@@ -1212,9 +1212,7 @@ function getBaselineRowValue(baselineRow, targetHeader) {
 function resolveOfferProductId(part, baselineRow) {
     if (partSourceMode === 'baseline') {
         const baselineValue = String(getBaselineRowValue(baselineRow, 'product-id') || '').trim();
-        if (baselineValue) {
-            return baselineValue;
-        }
+        return baselineValue;
     }
     return String((part && (part.part_number || part.base_part_number)) || '').trim();
 }
@@ -1230,6 +1228,9 @@ function normalizeOfferProductIdType(productIdType, productId, part) {
 }
 
 function resolveOfferProductIdType(part, baselineRow) {
+    if (partSourceMode === 'baseline') {
+        return String(getBaselineRowValue(baselineRow, 'product-id-type') || '').trim();
+    }
     const baselineValue = String(getBaselineRowValue(baselineRow, 'product-id-type') || '').trim();
     return normalizeOfferProductIdType(baselineValue, '', part);
 }
@@ -1936,12 +1937,19 @@ function validateMandatoryForProductPayload(payload) {
 function validateMandatoryForOfferPayload(offer) {
     const missing = [];
     const partNumber = (offer['sku'] || '').trim();
+    const productId = (offer['product-id'] || '').trim();
+    const productIdType = (offer['product-id-type'] || '').trim();
     const quantity = coercePositiveNumber(offer['quantity']);
     const price = coerceNumber(offer['price']);
 
     if (!partNumber) {
         missing.push('sku');
+    }
+    if (!productId) {
         missing.push('product-id');
+    }
+    if (!productIdType) {
+        missing.push('product-id-type');
     }
     if (price === null) {
         missing.push('price');

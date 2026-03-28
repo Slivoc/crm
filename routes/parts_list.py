@@ -5030,7 +5030,7 @@ def _build_common_parts_buy_recommendation(part_number, offers):
     }
 
 
-def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=False):
+def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=False, bom_id=None):
     customer_filters, child_to_parent = _get_common_parts_report_customer_filters()
     parent_customer_lookup = {customer['id']: customer['name'] for customer in customer_filters}
     normalized_customer_ids = _normalize_customer_filter_ids(selected_customer_ids, child_to_parent)
@@ -5062,6 +5062,17 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
         """
         like_term = f"%{part_query}%"
         params.extend([like_term, like_term])
+
+    if bom_id:
+        sql += """
+            AND EXISTS (
+                SELECT 1
+                FROM bom_lines bl
+                WHERE bl.bom_header_id = ?
+                  AND bl.base_part_number = pll.base_part_number
+            )
+        """
+        params.append(bom_id)
 
     rows = db_execute(sql, tuple(params), fetch='all') or []
 
@@ -5153,18 +5164,35 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
 def common_parts_report():
     """Show parts that appear across multiple parts lists with customer visibility."""
     raw_selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
+    selected_bom_id = request.args.get('bom_id', type=int)
     selected_part_query = (request.args.get('part_query') or '').strip()
     exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
     part_query = selected_part_query.lower()
     customers, child_to_parent = _get_common_parts_report_customer_filters()
     selected_customer_ids = _normalize_customer_filter_ids(raw_selected_customer_ids, child_to_parent)
+    boms = db_execute(
+        """
+        SELECT id, name, description
+        FROM bom_headers
+        WHERE type = 'kit'
+        ORDER BY name
+        """,
+        fetch='all',
+    ) or []
 
-    report_rows = _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=exclude_in_stock)
+    report_rows = _build_common_parts_report_rows(
+        selected_customer_ids,
+        part_query,
+        exclude_in_stock=exclude_in_stock,
+        bom_id=selected_bom_id,
+    )
 
     return render_template(
         'parts_list_common_parts_report.html',
         rows=report_rows,
         customers=customers,
+        boms=[dict(bom) for bom in boms],
+        selected_bom_id=selected_bom_id,
         selected_customer_ids=selected_customer_ids,
         selected_part_query=selected_part_query,
         exclude_in_stock=exclude_in_stock,
@@ -5242,11 +5270,17 @@ def common_parts_report_offers():
 @parts_list_bp.route('/parts-lists/common-parts-report/export', methods=['GET'])
 def common_parts_report_export():
     raw_selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
+    selected_bom_id = request.args.get('bom_id', type=int)
     part_query = (request.args.get('part_query') or '').strip().lower()
     exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
     _, child_to_parent = _get_common_parts_report_customer_filters()
     selected_customer_ids = _normalize_customer_filter_ids(raw_selected_customer_ids, child_to_parent)
-    report_rows = _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=exclude_in_stock)
+    report_rows = _build_common_parts_report_rows(
+        selected_customer_ids,
+        part_query,
+        exclude_in_stock=exclude_in_stock,
+        bom_id=selected_bom_id,
+    )
 
     output = StringIO()
     writer = csv.writer(output)
