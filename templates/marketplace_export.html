@@ -1210,41 +1210,15 @@ function getBaselineRowValue(baselineRow, targetHeader) {
 }
 
 function resolveOfferProductId(part, baselineRow) {
-    const baselineValue = String(getBaselineRowValue(baselineRow, 'product-id') || '').trim();
-    if (baselineValue) {
-        return baselineValue;
-    }
-    const storedValue = String((part && part.mkp_offer_product_id) || '').trim();
-    if (storedValue) {
-        return storedValue;
-    }
     return String((part && (part.part_number || part.base_part_number)) || '').trim();
 }
 
 function normalizeOfferProductIdType(productIdType, productId, part) {
-    const normalizedType = String(productIdType || '').trim();
-    if (!normalizedType) {
-        return 'mpnTitle';
-    }
-
-    const normalizedTypeKey = normalizedType.toLowerCase();
-    const partNumber = String((part && (part.part_number || part.base_part_number)) || '').trim();
-    const normalizedProductId = String(productId || '').trim();
-    if (normalizedTypeKey === 'sku' && partNumber && normalizedProductId === partNumber) {
-        return 'mpnTitle';
-    }
-
-    return normalizedType;
+    return 'mpnTitle';
 }
 
 function resolveOfferProductIdType(part, baselineRow) {
-    const productId = resolveOfferProductId(part, baselineRow);
-    const baselineValue = String(getBaselineRowValue(baselineRow, 'product-id-type') || '').trim();
-    if (baselineValue) {
-        return normalizeOfferProductIdType(baselineValue, productId, part);
-    }
-    const storedValue = String((part && part.mkp_offer_product_id_type) || '').trim();
-    return normalizeOfferProductIdType(storedValue, productId, part);
+    return normalizeOfferProductIdType('', '', part);
 }
 
 function formatStockDisplay(part) {

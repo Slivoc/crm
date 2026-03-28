@@ -705,16 +705,7 @@ def _extract_offer_product_identity(row_data):
 
 
 def _normalize_offer_product_id_type(product_id_type, product_id, part_number):
-    normalized_type = _coerce_text(product_id_type, default='').strip()
-    if not normalized_type:
-        return 'mpnTitle'
-
-    normalized_product_id = _coerce_text(product_id, default='').strip()
-    normalized_part_number = _coerce_text(part_number, default='').strip()
-    if normalized_type.lower() == 'sku' and normalized_part_number and normalized_product_id == normalized_part_number:
-        return 'mpnTitle'
-
-    return normalized_type
+    return 'mpnTitle'
 
 
 _MARKETPLACE_MANUFACTURER_JOIN = """
@@ -741,6 +732,9 @@ def _build_offer_row_from_payload(offer):
 
     payload['price'] = offer.get('price', payload.get('price', ''))
     payload['quantity'] = offer.get('quantity', payload.get('quantity', ''))
+    payload['sku'] = offer.get('sku', payload.get('sku', ''))
+    payload['product-id'] = offer.get('product-id', payload.get('product-id', ''))
+    payload['product-id-type'] = offer.get('product-id-type', payload.get('product-id-type', ''))
     payload['commercial-on-collection'] = offer.get(
         'commercial-on-collection',
         payload.get('commercial-on-collection', '')
@@ -2173,12 +2167,8 @@ def export_to_marketplace():
             for part in parts_data:
                 part_number = _part_identifier(part)
                 description = _coerce_text(part.get('mkp_description') or part.get('description'), default=part_number)
-                offer_product_id = _coerce_text(part.get('mkp_offer_product_id'), default=part_number)
-                offer_product_id_type = _normalize_offer_product_id_type(
-                    part.get('mkp_offer_product_id_type'),
-                    offer_product_id,
-                    part_number,
-                )
+                offer_product_id = part_number
+                offer_product_id_type = _normalize_offer_product_id_type('', offer_product_id, part_number)
                 csv_rows.append(_build_offer_row_from_payload({
                     'sku': part_number,
                     'product-id': offer_product_id,

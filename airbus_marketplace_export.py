@@ -253,6 +253,9 @@ def _build_airbus_row(part):
 
     payload["price"] = generated_payload["price"]
     payload["quantity"] = generated_payload["quantity"]
+    payload["sku"] = generated_payload["sku"]
+    payload["product-id"] = generated_payload["product-id"]
+    payload["product-id-type"] = generated_payload["product-id-type"]
     payload["commercial-on-collection"] = generated_payload["commercial-on-collection"]
 
     if not payload["price"]:
