@@ -4717,7 +4717,56 @@ def view_parts_lists():
                                selected_quoted_date=None,
                                initial_part_search=part_search)
 
+def _get_common_parts_report_customer_filters():
+    """Return parent-only customer filters plus child->parent normalization for associations."""
+    customer_rows = db_execute(
+        """
+        SELECT c.id, c.name, ca.main_customer_id
+        FROM customers c
+        LEFT JOIN customer_associations ca ON ca.associated_customer_id = c.id
+        ORDER BY c.name
+        """,
+        fetch='all',
+    ) or []
+
+    child_to_parent = {}
+    parent_customers = []
+
+    for row in customer_rows:
+        customer = dict(row)
+        customer_id = customer['id']
+        parent_id = customer.get('main_customer_id')
+        if parent_id:
+            child_to_parent[customer_id] = parent_id
+            continue
+        parent_customers.append({
+            'id': customer_id,
+            'name': customer.get('name') or f'Customer #{customer_id}',
+        })
+
+    return parent_customers, child_to_parent
+
+
+def _normalize_customer_filter_ids(customer_ids, child_to_parent):
+    """Map associated customers onto their parent IDs while preserving order."""
+    normalized_ids = []
+    seen = set()
+
+    for customer_id in customer_ids or []:
+        normalized_id = child_to_parent.get(customer_id, customer_id)
+        if normalized_id in seen:
+            continue
+        seen.add(normalized_id)
+        normalized_ids.append(normalized_id)
+
+    return normalized_ids
+
+
 def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=False):
+    customer_filters, child_to_parent = _get_common_parts_report_customer_filters()
+    parent_customer_lookup = {customer['id']: customer['name'] for customer in customer_filters}
+    normalized_customer_ids = _normalize_customer_filter_ids(selected_customer_ids, child_to_parent)
+
     sql = """
         SELECT
             pl.id AS parts_list_id,
@@ -4735,11 +4784,6 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
         )
     """
     params = []
-
-    if selected_customer_ids:
-        placeholders = ','.join(['?'] * len(selected_customer_ids))
-        sql += f" AND pl.customer_id IN ({placeholders})"
-        params.extend(selected_customer_ids)
 
     if part_query:
         sql += """
@@ -4769,8 +4813,10 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
             'quantity_total': 0,
             'quantity_count': 0,
         })
+        consolidated_customer_id = child_to_parent.get(row['customer_id'], row['customer_id'])
+        consolidated_customer_name = parent_customer_lookup.get(consolidated_customer_id, row['customer_name'])
         grouped['parts_list_ids'].add(row['parts_list_id'])
-        grouped['customers'].add((row['customer_id'], row['customer_name']))
+        grouped['customers'].add((consolidated_customer_id, consolidated_customer_name))
         quantity_value = row['quantity']
         if quantity_value is not None:
             try:
@@ -4779,7 +4825,7 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
             except (TypeError, ValueError):
                 pass
 
-    selected_customer_ids_set = set(selected_customer_ids or [])
+    selected_customer_ids_set = set(normalized_customer_ids or [])
 
     report_rows = []
     for grouped in grouped_parts.values():
@@ -4838,22 +4884,19 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
 @parts_list_bp.route('/parts-lists/common-parts-report', methods=['GET'])
 def common_parts_report():
     """Show parts that appear across multiple parts lists with customer visibility."""
-    selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
+    raw_selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
     selected_part_query = (request.args.get('part_query') or '').strip()
     exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
     part_query = selected_part_query.lower()
-
-    customers = db_execute(
-        "SELECT id, name FROM customers ORDER BY name",
-        fetch='all',
-    ) or []
+    customers, child_to_parent = _get_common_parts_report_customer_filters()
+    selected_customer_ids = _normalize_customer_filter_ids(raw_selected_customer_ids, child_to_parent)
 
     report_rows = _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=exclude_in_stock)
 
     return render_template(
         'parts_list_common_parts_report.html',
         rows=report_rows,
-        customers=[dict(customer) for customer in customers],
+        customers=customers,
         selected_customer_ids=selected_customer_ids,
         selected_part_query=selected_part_query,
         exclude_in_stock=exclude_in_stock,
@@ -4862,9 +4905,11 @@ def common_parts_report():
 
 @parts_list_bp.route('/parts-lists/common-parts-report/export', methods=['GET'])
 def common_parts_report_export():
-    selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
+    raw_selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
     part_query = (request.args.get('part_query') or '').strip().lower()
     exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
+    _, child_to_parent = _get_common_parts_report_customer_filters()
+    selected_customer_ids = _normalize_customer_filter_ids(raw_selected_customer_ids, child_to_parent)
     report_rows = _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=exclude_in_stock)
 
     output = StringIO()
