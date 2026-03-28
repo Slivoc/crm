@@ -6,6 +6,7 @@ import openai
 from openai import OpenAI
 from datetime import datetime, timedelta, date
 from decimal import Decimal
+from math import ceil
 import json
 import re
 import copy
