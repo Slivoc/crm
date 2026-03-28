@@ -87,6 +87,7 @@
                             <th class="text-center">Parts Lists</th>
                             <th class="text-center">Customers</th>
                             <th>Customer Names</th>
+                            <th class="text-center">Offers</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -102,6 +103,13 @@
                             <td class="text-center">{{ row.parts_list_count }}</td>
                             <td class="text-center">{{ row.customer_count }}</td>
                             <td>{{ row.customer_names|join(', ') }}</td>
+                            <td class="text-center">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-primary view-offers-btn"
+                                        data-part-number="{{ row.part_number }}">
+                                    <i class="bi bi-clock-history me-1"></i>Latest 10
+                                </button>
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -116,10 +124,58 @@
     </div>
 </div>
 
+<div class="modal fade" id="latestOffersModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    Latest Supplier Offers
+                    <span class="text-muted" id="latestOffersPartNumber"></span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="latestOffersLoading" class="text-center py-4" style="display: none;">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="text-muted mt-2 mb-0">Loading latest offers...</p>
+                </div>
+                <div id="latestOffersRecommendation" class="alert alert-info" style="display: none;"></div>
+                <div id="latestOffersEmpty" class="text-center py-4 text-muted" style="display: none;">
+                    No supplier offers found for this part.
+                </div>
+                <div id="latestOffersTableWrap" class="table-responsive" style="display: none;">
+                    <table class="table table-hover table-sm align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Quote Date</th>
+                                <th>Supplier</th>
+                                <th>Customer</th>
+                                <th>Parts List</th>
+                                <th>Quoted Part</th>
+                                <th>Manufacturer</th>
+                                <th class="text-end">Qty</th>
+                                <th class="text-end">Avail</th>
+                                <th class="text-end">Increment</th>
+                                <th class="text-end">MOQ</th>
+                                <th class="text-end">Unit Price</th>
+                                <th class="text-center">Lead</th>
+                                <th>Cond</th>
+                                <th>Certs</th>
+                            </tr>
+                        </thead>
+                        <tbody id="latestOffersTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 let customerSearchTimeout;
 const selectedCustomersMap = new Map();
 const availableCustomers = {{ customers|tojson }};
+let latestOffersModal;
 
 function customerNameById(customerId) {
     const option = document.querySelector(`#customerMultiFilter option[value="${customerId}"]`);
@@ -233,6 +289,158 @@ function searchCustomers(query) {
     renderCustomerSearchResults(matches);
 }
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatOfferDate(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleDateString('en-GB');
+}
+
+function formatOfferPrice(offer) {
+    if (offer.is_no_bid) return '<span class="badge bg-secondary">No bid</span>';
+    const unitPrice = Number(offer.unit_price);
+    if (!Number.isFinite(unitPrice)) return '-';
+    const currency = offer.symbol || offer.currency_code || '';
+    return `${escapeHtml(currency)}${unitPrice.toFixed(2)}`;
+}
+
+function renderLatestOffers(offers) {
+    const tbody = document.getElementById('latestOffersTableBody');
+    const empty = document.getElementById('latestOffersEmpty');
+    const tableWrap = document.getElementById('latestOffersTableWrap');
+    if (!tbody || !empty || !tableWrap) return;
+
+    tbody.innerHTML = '';
+    if (!offers || offers.length === 0) {
+        empty.style.display = 'block';
+        tableWrap.style.display = 'none';
+        return;
+    }
+
+    empty.style.display = 'none';
+    tableWrap.style.display = 'block';
+
+    offers.forEach(offer => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${escapeHtml(formatOfferDate(offer.quote_date))}</td>
+            <td>${escapeHtml(offer.supplier_name || '-')}</td>
+            <td>${escapeHtml(offer.customer_name || '-')}</td>
+            <td><a href="${escapeHtml(offer.costing_url || '#')}" target="_blank" rel="noopener">${escapeHtml(offer.parts_list_name || `Parts List #${offer.parts_list_id}`)}</a></td>
+            <td class="font-monospace">${escapeHtml(offer.quoted_part_number || '')}</td>
+            <td>${escapeHtml(offer.manufacturer || '-')}</td>
+            <td class="text-end">${escapeHtml(offer.quantity_quoted ?? '-')}</td>
+            <td class="text-end">${escapeHtml(offer.qty_available ?? '-')}</td>
+            <td class="text-end">${escapeHtml(offer.purchase_increment ?? '-')}</td>
+            <td class="text-end">${escapeHtml(offer.moq ?? '-')}</td>
+            <td class="text-end">${formatOfferPrice(offer)}</td>
+            <td class="text-center">${escapeHtml(offer.lead_time_days ?? '-')}</td>
+            <td>${escapeHtml(offer.condition_code || '-')}</td>
+            <td>${escapeHtml(offer.certifications || '-')}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function renderBuyRecommendation(recommendation) {
+    const box = document.getElementById('latestOffersRecommendation');
+    if (!box) return;
+    if (!recommendation) {
+        box.style.display = 'none';
+        box.innerHTML = '';
+        return;
+    }
+
+    const supplier = recommendation.supplier;
+    const shouldBuyBadge = recommendation.should_buy
+        ? '<span class="badge bg-success">Buy Candidate</span>'
+        : '<span class="badge bg-secondary">No Buy Signal</span>';
+
+    let supplierHtml = '<div class="text-muted">No supplier recommendation.</div>';
+    if (supplier) {
+        const reasonBits = Array.isArray(supplier.reasons) ? supplier.reasons : [];
+        const reasonText = reasonBits.length ? reasonBits.join(' | ') : supplier.rating_label;
+        supplierHtml = `
+            <div><strong>Supplier:</strong> ${escapeHtml(supplier.supplier_name || '-')}</div>
+            <div><strong>Offer:</strong> ${escapeHtml(supplier.currency_code || 'GBP')} ${escapeHtml(supplier.display_price ?? '-')} (${escapeHtml(supplier.rating_label || 'No history')})</div>
+            <div><strong>Offer qty:</strong> ${escapeHtml(supplier.offer_quantity ?? '-')}</div>
+            <div class="small text-muted mt-1">${escapeHtml(reasonText || '')}</div>
+        `;
+    }
+
+    box.className = `alert ${recommendation.should_buy ? 'alert-success' : 'alert-secondary'}`;
+    box.innerHTML = `
+        <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+            <div>
+                <div class="mb-2">${shouldBuyBadge}</div>
+                <div><strong>Suggested buy quantity:</strong> ${escapeHtml(recommendation.suggested_quantity ?? 0)}</div>
+                <div><strong>Stock on hand:</strong> ${escapeHtml(recommendation.stock_quantity ?? 0)}</div>
+                <div class="small text-muted mt-1">${escapeHtml(recommendation.reason || '')}</div>
+            </div>
+            <div>
+                ${supplierHtml}
+            </div>
+        </div>
+        <div class="small text-muted mt-2">
+            24m demand: ${escapeHtml(recommendation.total_qty_24m ?? 0)} units across ${escapeHtml(recommendation.order_count_24m ?? 0)} orders.
+            Common parts signal: ${escapeHtml(recommendation.parts_list_count ?? 0)} parts lists / ${escapeHtml(recommendation.customer_count ?? 0)} customers.
+        </div>
+    `;
+    box.style.display = 'block';
+}
+
+function showLatestOffers(partNumber) {
+    const modalEl = document.getElementById('latestOffersModal');
+    const titleEl = document.getElementById('latestOffersPartNumber');
+    const loading = document.getElementById('latestOffersLoading');
+    const empty = document.getElementById('latestOffersEmpty');
+    const tableWrap = document.getElementById('latestOffersTableWrap');
+    const tbody = document.getElementById('latestOffersTableBody');
+    const recommendationBox = document.getElementById('latestOffersRecommendation');
+    if (!modalEl || !titleEl || !loading || !empty || !tableWrap || !tbody || !recommendationBox) return;
+
+    if (!latestOffersModal) {
+        latestOffersModal = new bootstrap.Modal(modalEl);
+    }
+
+    titleEl.textContent = partNumber ? `- ${partNumber}` : '';
+    loading.style.display = 'block';
+    empty.style.display = 'none';
+    tableWrap.style.display = 'none';
+    recommendationBox.style.display = 'none';
+    recommendationBox.innerHTML = '';
+    tbody.innerHTML = '';
+    latestOffersModal.show();
+
+    fetch(`/parts_list/parts-lists/common-parts-report/offers?part_number=${encodeURIComponent(partNumber)}`)
+        .then(response => response.json())
+        .then(data => {
+            loading.style.display = 'none';
+            if (!data.success) {
+                empty.textContent = data.message || 'Unable to load supplier offers.';
+                empty.style.display = 'block';
+                return;
+            }
+            empty.textContent = 'No supplier offers found for this part.';
+            renderBuyRecommendation(data.recommendation || null);
+            renderLatestOffers(data.offers || []);
+        })
+        .catch(() => {
+            loading.style.display = 'none';
+            empty.textContent = 'Unable to load supplier offers.';
+            empty.style.display = 'block';
+        });
+}
+
 function applyCommonPartsFilters() {
     const table = document.getElementById('commonPartsTable');
     if (!table) return;
@@ -274,6 +482,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const customerFilterSelect = document.getElementById('customerMultiFilter');
     const chipsContainer = document.getElementById('selectedCustomerChips');
     const excludeInStockToggle = document.getElementById('excludeInStockToggle');
+    const offerButtons = document.querySelectorAll('.view-offers-btn');
 
     if (partFilterInput) {
         partFilterInput.addEventListener('input', applyCommonPartsFilters);
@@ -302,6 +511,11 @@ document.addEventListener('DOMContentLoaded', function() {
             removeCustomerFromFilter(removeBtn.dataset.removeCustomerId);
         });
     }
+    offerButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            showLatestOffers(button.dataset.partNumber || '');
+        });
+    });
 
     renderSelectedCustomerChips();
     applyCommonPartsFilters();

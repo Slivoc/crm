@@ -1210,15 +1210,28 @@ function getBaselineRowValue(baselineRow, targetHeader) {
 }
 
 function resolveOfferProductId(part, baselineRow) {
+    if (partSourceMode === 'baseline') {
+        const baselineValue = String(getBaselineRowValue(baselineRow, 'product-id') || '').trim();
+        if (baselineValue) {
+            return baselineValue;
+        }
+    }
     return String((part && (part.part_number || part.base_part_number)) || '').trim();
 }
 
 function normalizeOfferProductIdType(productIdType, productId, part) {
+    if (partSourceMode === 'baseline') {
+        const normalizedType = String(productIdType || '').trim();
+        if (normalizedType) {
+            return normalizedType;
+        }
+    }
     return 'mpnTitle';
 }
 
 function resolveOfferProductIdType(part, baselineRow) {
-    return normalizeOfferProductIdType('', '', part);
+    const baselineValue = String(getBaselineRowValue(baselineRow, 'product-id-type') || '').trim();
+    return normalizeOfferProductIdType(baselineValue, '', part);
 }
 
 function formatStockDisplay(part) {
@@ -2125,6 +2138,7 @@ async function exportToCsv(mode) {
 
     const exportData = {
         base_part_numbers: exportParts.map(p => p.base_part_number),
+        source_mode: partSourceMode,
         default_quantity: parseInt($('#defaultQuantity').val(), 10) || 1,
         export_mode: exportMode,
         skip_invalid_mandatory: skipInvalidMandatory,

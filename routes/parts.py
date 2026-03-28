@@ -108,35 +108,51 @@ def _get_alt_groups(search_query=''):
 
     like_term = f'%{search_query.lower()}%'
 
-    query = '''
+    summary_query = '''
         WITH matched_groups AS (
-            SELECT DISTINCT g.id
-            FROM part_alt_groups g
-            JOIN part_alt_group_members m ON m.group_id = g.id
+            SELECT DISTINCT m.group_id
+            FROM part_alt_group_members m
             WHERE LOWER(m.base_part_number) LIKE ?
         )
         SELECT
-            g.id AS group_id,
+            mg.group_id AS group_id,
             COALESCE(g.description, '') AS description,
-            COUNT(m.base_part_number) AS member_count,
-            STRING_AGG(m.base_part_number, '||' ORDER BY m.base_part_number) AS members_serialized
+            COUNT(m.base_part_number) AS member_count
         FROM matched_groups mg
-        JOIN part_alt_groups g ON g.id = mg.id
-        JOIN part_alt_group_members m ON m.group_id = g.id
-        GROUP BY g.id, g.description
-        ORDER BY COUNT(m.base_part_number) DESC, g.id DESC
+        LEFT JOIN part_alt_groups g ON g.id = mg.group_id
+        JOIN part_alt_group_members m ON m.group_id = mg.group_id
+        GROUP BY mg.group_id, g.description
+        ORDER BY COUNT(m.base_part_number) DESC, mg.group_id DESC
     '''
 
-    rows = db_execute(query, (like_term,), fetch='all') or []
+    rows = db_execute(summary_query, (like_term,), fetch='all') or []
+    if not rows:
+        return []
+
+    group_ids = [row['group_id'] for row in rows]
+    placeholders = ', '.join(['?'] * len(group_ids))
+    member_rows = db_execute(
+        f'''
+        SELECT group_id, base_part_number
+        FROM part_alt_group_members
+        WHERE group_id IN ({placeholders})
+        ORDER BY group_id DESC, base_part_number
+        ''',
+        group_ids,
+        fetch='all',
+    ) or []
+
+    members_by_group = {}
+    for member_row in member_rows:
+        members_by_group.setdefault(member_row['group_id'], []).append(member_row['base_part_number'])
 
     groups = []
     for row in rows:
-        members = [member for member in (row.get('members_serialized') or '').split('||') if member]
         groups.append({
             'group_id': row['group_id'],
             'description': row.get('description') or '',
             'member_count': row.get('member_count', 0),
-            'members': members,
+            'members': members_by_group.get(row['group_id'], []),
         })
 
     return groups
@@ -1012,7 +1028,7 @@ def check_alt_groups():
                 g.description,
                 m2.base_part_number as group_member
             FROM part_alt_group_members m
-            JOIN part_alt_groups g ON m.group_id = g.id
+            LEFT JOIN part_alt_groups g ON m.group_id = g.id
             JOIN part_alt_group_members m2 ON m.group_id = m2.group_id
             WHERE m.base_part_number IN ({placeholders})
         """
@@ -1072,9 +1088,9 @@ def create_alt_group():
 
         # Get group info
         group_info = db_execute("""
-            SELECT g.id, g.description
-            FROM part_alt_groups g
-            JOIN part_alt_group_members m ON g.id = m.group_id
+            SELECT m.group_id AS id, g.description
+            FROM part_alt_group_members m
+            LEFT JOIN part_alt_groups g ON g.id = m.group_id
             WHERE m.base_part_number = ?
         """, (primary,), fetch='one')
 

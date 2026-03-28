@@ -4762,6 +4762,273 @@ def _normalize_customer_filter_ids(customer_ids, child_to_parent):
     return normalized_ids
 
 
+def _convert_offer_price_to_gbp(unit_price, currency_code):
+    price = _safe_float(unit_price)
+    if price is None:
+        return None
+    code = (currency_code or 'GBP').upper()
+    if code == 'GBP':
+        return price
+    try:
+        converted = convert_currency(Decimal(str(price)), code, 'GBP')
+        return float(converted) if converted is not None else None
+    except Exception:
+        return None
+
+
+def _build_common_parts_buy_recommendation(part_number, offers):
+    base_part_number = _normalize_part_number_key(part_number)
+    if not base_part_number:
+        return {
+            'should_buy': False,
+            'suggested_quantity': 0,
+            'reason': 'Part number is missing.',
+            'supplier': None,
+        }
+
+    sales_cutoff = (datetime.utcnow() - timedelta(days=730)).strftime('%Y-%m-%d')
+
+    sales_stats_row = db_execute(
+        """
+        SELECT
+            COUNT(*) as line_count,
+            COUNT(DISTINCT so.id) as order_count,
+            COALESCE(AVG(sol.quantity), 0) as avg_qty,
+            COALESCE(MAX(sol.quantity), 0) as max_qty,
+            COALESCE(SUM(sol.quantity), 0) as total_qty,
+            MAX(so.date_entered) as last_sale_date,
+            AVG(CASE WHEN sol.price > 0 THEN sol.price END) AS avg_sale_price
+        FROM sales_order_lines sol
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE sol.base_part_number = ?
+          AND so.date_entered >= ?
+        """,
+        (base_part_number, sales_cutoff),
+        fetch='one',
+    )
+    sales_stats = dict(sales_stats_row) if sales_stats_row else {}
+
+    customer_quote_stats_row = db_execute(
+        """
+        SELECT
+            COUNT(*) AS customer_quote_count,
+            AVG(cql.quote_price_gbp) AS avg_customer_quote_price
+        FROM customer_quote_lines cql
+        JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+        WHERE pll.base_part_number = ?
+          AND cql.quote_price_gbp IS NOT NULL
+          AND cql.quote_price_gbp > 0
+          AND COALESCE(cql.is_no_bid, 0) = 0
+        """,
+        (base_part_number,),
+        fetch='one',
+    )
+    customer_quote_stats = dict(customer_quote_stats_row) if customer_quote_stats_row else {}
+
+    common_part_stats_row = db_execute(
+        """
+        SELECT
+            COUNT(DISTINCT pll.parts_list_id) AS parts_list_count,
+            COUNT(DISTINCT pl.customer_id) AS customer_count,
+            COALESCE(AVG(pll.quantity), 0) AS avg_list_qty
+        FROM parts_list_lines pll
+        JOIN parts_lists pl ON pl.id = pll.parts_list_id
+        WHERE pll.base_part_number = ?
+        """,
+        (base_part_number,),
+        fetch='one',
+    )
+    common_part_stats = dict(common_part_stats_row) if common_part_stats_row else {}
+
+    stock_result = db_execute(
+        """
+        SELECT COALESCE(SUM(available_quantity), 0) AS stock_quantity
+        FROM stock_movements
+        WHERE movement_type = 'IN'
+          AND available_quantity > 0
+          AND base_part_number = ?
+        """,
+        (base_part_number,),
+        fetch='one',
+    )
+    stock_row = dict(stock_result) if stock_result else {}
+
+    cost_results = db_execute(
+        """
+        SELECT chosen_supplier_id, chosen_cost
+        FROM parts_list_lines
+        WHERE base_part_number = ?
+          AND chosen_cost IS NOT NULL
+        """,
+        (base_part_number,),
+        fetch='all',
+    ) or []
+    cost_rows = [dict(row) for row in cost_results]
+
+    order_count = int(_safe_int(sales_stats.get('order_count')) or 0)
+    avg_qty = float(_safe_float(sales_stats.get('avg_qty')) or 0)
+    max_qty = int(_safe_int(sales_stats.get('max_qty')) or 0)
+    total_qty = int(_safe_int(sales_stats.get('total_qty')) or 0)
+    avg_list_qty = float(_safe_float(common_part_stats.get('avg_list_qty')) or 0)
+    parts_list_count = int(_safe_int(common_part_stats.get('parts_list_count')) or 0)
+    customer_count = int(_safe_int(common_part_stats.get('customer_count')) or 0)
+    stock_quantity = int(_safe_int(stock_row.get('stock_quantity')) or 0)
+    customer_quote_count = int(_safe_int(customer_quote_stats.get('customer_quote_count')) or 0)
+    avg_sale_price = _safe_float(sales_stats.get('avg_sale_price'))
+    avg_customer_quote_price = _safe_float(customer_quote_stats.get('avg_customer_quote_price'))
+
+    demand_buffer_qty = ceil(avg_qty * 1.25) if avg_qty > 0 else 0
+    common_parts_qty = ceil(avg_list_qty) if avg_list_qty > 0 else 0
+    suggested_quantity = max(max_qty, demand_buffer_qty, common_parts_qty)
+    evidence_count = max(order_count, customer_quote_count, parts_list_count)
+    should_buy = evidence_count >= 3 and suggested_quantity > 0 and suggested_quantity > stock_quantity
+
+    if not should_buy:
+        if stock_quantity >= suggested_quantity > 0:
+            reason = f'Current stock already covers the estimated demand ({stock_quantity} on hand vs {suggested_quantity} suggested).'
+        else:
+            reason = 'Not enough demand history yet to support a speculative buy.'
+    else:
+        reason = (
+            f"Suggested quantity {suggested_quantity} based on 24m sales demand "
+            f"(max {max_qty}, avg {avg_qty:.1f}) and {parts_list_count} parts lists across {customer_count} customers."
+        )
+
+    all_historical_costs = []
+    historical_costs_by_supplier = {}
+    for row in cost_rows:
+        cost = _safe_float(row.get('chosen_cost'))
+        supplier_id = _safe_int(row.get('chosen_supplier_id'))
+        if cost is None:
+            continue
+        all_historical_costs.append(cost)
+        if supplier_id:
+            historical_costs_by_supplier.setdefault(supplier_id, []).append(cost)
+
+    valid_offers = []
+    for offer in offers:
+        if offer.get('is_no_bid'):
+            continue
+        price_gbp = _convert_offer_price_to_gbp(offer.get('unit_price'), offer.get('currency_code'))
+        if price_gbp is None or price_gbp <= 0:
+            continue
+
+        offer_qty = _safe_int(offer.get('qty_available'))
+        if offer_qty is None:
+            offer_qty = _safe_int(offer.get('quantity_quoted'))
+        supplier_id = _safe_int(offer.get('supplier_id'))
+        supplier_history = historical_costs_by_supplier.get(supplier_id) or all_historical_costs
+        history_avg = (sum(supplier_history) / len(supplier_history)) if supplier_history else None
+        history_min = min(supplier_history) if supplier_history else None
+
+        rating = 'unknown'
+        rating_label = 'No history'
+        rating_bonus = 0
+        if history_avg is not None and history_min is not None:
+            if price_gbp <= history_min * 1.02:
+                rating = 'excellent'
+                rating_label = 'Excellent vs history'
+                rating_bonus = 12
+            elif price_gbp <= history_avg * 0.97:
+                rating = 'good'
+                rating_label = 'Good vs history'
+                rating_bonus = 8
+            elif price_gbp <= history_avg * 1.05:
+                rating = 'fair'
+                rating_label = 'In line with history'
+                rating_bonus = 3
+            else:
+                rating = 'high'
+                rating_label = 'High vs history'
+
+        reasons = []
+        opportunity_score = 0.0
+        sales_discount_pct = None
+        quote_discount_pct = None
+
+        if avg_sale_price and order_count >= 3:
+            sales_discount_pct = ((avg_sale_price - price_gbp) / avg_sale_price) * 100
+            if sales_discount_pct >= 35:
+                reasons.append(f"{sales_discount_pct:.1f}% under average sell price")
+                opportunity_score += sales_discount_pct * 1.1
+
+        if avg_customer_quote_price and customer_quote_count >= 3:
+            quote_discount_pct = ((avg_customer_quote_price - price_gbp) / avg_customer_quote_price) * 100
+            if quote_discount_pct >= 35:
+                reasons.append(f"{quote_discount_pct:.1f}% under average quoted sell price")
+                opportunity_score += quote_discount_pct
+
+        demand_score = min(25.0, (total_qty * 0.5) + (order_count * 1.5) + (customer_quote_count * 0.5))
+        stock_penalty = min(15.0, stock_quantity * 0.5)
+        coverage_bonus = 0
+        if suggested_quantity > 0 and offer_qty:
+            coverage_bonus = min(10.0, (offer_qty / suggested_quantity) * 10.0)
+        elif offer_qty:
+            coverage_bonus = 2.0
+
+        total_score = max(opportunity_score + demand_score - stock_penalty + rating_bonus + coverage_bonus, 0)
+
+        valid_offers.append({
+            'supplier_id': supplier_id,
+            'supplier_name': offer.get('supplier_name'),
+            'unit_price_gbp': round(price_gbp, 4),
+            'offer_quantity': offer_qty,
+            'quote_reference': offer.get('quote_reference'),
+            'quote_date': offer.get('quote_date'),
+            'rating': rating,
+            'rating_label': rating_label,
+            'score': round(total_score, 1),
+            'reasons': reasons,
+            'parts_list_name': offer.get('parts_list_name'),
+            'condition_code': offer.get('condition_code'),
+            'currency_code': offer.get('currency_code') or 'GBP',
+            'display_price': _safe_float(offer.get('unit_price')),
+            'sales_discount_pct': round(sales_discount_pct, 1) if sales_discount_pct is not None else None,
+            'quote_discount_pct': round(quote_discount_pct, 1) if quote_discount_pct is not None else None,
+        })
+
+    valid_offers.sort(
+        key=lambda item: (
+            item['score'],
+            1 if item['rating'] in ('excellent', 'good') else 0,
+            item['offer_quantity'] or 0,
+            -(item['unit_price_gbp'] or 0),
+        ),
+        reverse=True,
+    )
+
+    chosen_supplier = None
+    if should_buy and valid_offers:
+        top_offer = valid_offers[0]
+        good_history = top_offer['rating'] in ('excellent', 'good')
+        strong_discount = bool(top_offer['reasons'])
+        enough_cover = (top_offer['offer_quantity'] or 0) >= suggested_quantity if suggested_quantity else True
+        if good_history or strong_discount or enough_cover:
+            chosen_supplier = top_offer
+
+    if should_buy and chosen_supplier is None and valid_offers:
+        reason += ' No available offer stands out enough to recommend a supplier yet.'
+    elif chosen_supplier:
+        cover_qty = chosen_supplier.get('offer_quantity')
+        if cover_qty:
+            suggested_quantity = min(suggested_quantity, cover_qty)
+        reason += f" Recommended supplier: {chosen_supplier.get('supplier_name') or 'Unknown supplier'}."
+
+    return {
+        'should_buy': bool(should_buy),
+        'suggested_quantity': int(suggested_quantity or 0),
+        'reason': reason,
+        'stock_quantity': stock_quantity,
+        'order_count_24m': order_count,
+        'avg_qty_24m': round(avg_qty, 1),
+        'max_qty_24m': max_qty,
+        'total_qty_24m': total_qty,
+        'parts_list_count': parts_list_count,
+        'customer_count': customer_count,
+        'supplier': chosen_supplier,
+    }
+
+
 def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=False):
     customer_filters, child_to_parent = _get_common_parts_report_customer_filters()
     parent_customer_lookup = {customer['id']: customer['name'] for customer in customer_filters}
@@ -4901,6 +5168,74 @@ def common_parts_report():
         selected_part_query=selected_part_query,
         exclude_in_stock=exclude_in_stock,
     )
+
+
+@parts_list_bp.route('/parts-lists/common-parts-report/offers', methods=['GET'])
+def common_parts_report_offers():
+    """Return the latest supplier offers for a reported part number."""
+    part_number = (request.args.get('part_number') or '').strip()
+    if not part_number:
+        return jsonify(success=False, message='Part number is required'), 400
+
+    try:
+        offers = db_execute(
+            """
+            SELECT
+                sql.id AS quote_line_id,
+                sql.quoted_part_number,
+                sql.manufacturer,
+                sql.quantity_quoted,
+                sql.qty_available,
+                sql.purchase_increment,
+                sql.moq,
+                sql.unit_price,
+                sql.lead_time_days,
+                sql.condition_code,
+                sql.certifications,
+                sql.is_no_bid,
+                sql.line_notes,
+                sq.id AS quote_id,
+                sq.quote_reference,
+                sq.quote_date,
+                sq.supplier_id,
+                s.name AS supplier_name,
+                sq.currency_id,
+                c.currency_code,
+                c.symbol,
+                pl.id AS parts_list_id,
+                pl.name AS parts_list_name,
+                COALESCE(parent_customer.name, customer.name) AS customer_name
+            FROM parts_list_supplier_quote_lines sql
+            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            JOIN suppliers s ON s.id = sq.supplier_id
+            LEFT JOIN currencies c ON c.id = sq.currency_id
+            JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+            JOIN parts_lists pl ON pl.id = pll.parts_list_id
+            JOIN customers customer ON customer.id = pl.customer_id
+            LEFT JOIN customer_associations ca ON ca.associated_customer_id = customer.id
+            LEFT JOIN customers parent_customer ON parent_customer.id = ca.main_customer_id
+            WHERE UPPER(COALESCE(NULLIF(TRIM(pll.base_part_number), ''), NULLIF(TRIM(pll.customer_part_number), ''))) = ?
+            ORDER BY
+                COALESCE(sq.quote_date, sq.created_at, sq.id) DESC,
+                sql.id DESC
+            LIMIT 10
+            """,
+            (part_number.upper(),),
+            fetch='all',
+        ) or []
+
+        offer_rows = []
+        for row in offers:
+            offer = dict(row)
+            offer['costing_url'] = url_for('parts_list.parts_list_costing', list_id=offer['parts_list_id'])
+            offer_rows.append(offer)
+
+        recommendation = _build_common_parts_buy_recommendation(part_number, offer_rows)
+
+        return jsonify(success=True, offers=offer_rows, recommendation=recommendation)
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
 
 
 @parts_list_bp.route('/parts-lists/common-parts-report/export', methods=['GET'])

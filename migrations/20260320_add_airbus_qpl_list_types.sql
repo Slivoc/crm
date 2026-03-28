@@ -1,4 +1,4 @@
-ALTER TABLE manufacturer_approval_imports
+rALTER TABLE manufacturer_approval_imports
     ADD COLUMN IF NOT EXISTS approval_list_type TEXT NOT NULL DEFAULT 'airbus_fixed_wing',
     ADD COLUMN IF NOT EXISTS source_file_count INTEGER NOT NULL DEFAULT 1,
     ADD COLUMN IF NOT EXISTS source_files_json JSONB,

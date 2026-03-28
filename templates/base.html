@@ -950,6 +950,9 @@ input:-webkit-autofill {
     <div class="collapse" id="inventory-collapse">
         <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
             <li><a href="{{ url_for('parts.parts') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-cpu me-2"></i>Parts</a></li>
+            <li><a href="{{ url_for('parts.alt_groups') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-diagram-3 me-2"></i>Global Alternative Groups</a></li>
+            <li><a href="{{ url_for('purchase_suggestions.purchase_suggestions') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-graph-up me-2"></i>Purchase Suggestions</a></li>
+            <li><a href="{{ url_for('purchase_suggestions.speculative_buy_report') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-graph-up me-2"></i>Speculative Buy Report</a></li>
             <li><a href="{{ url_for('manufacturers.manufacturers') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-tools me-2"></i>Manufacturers</a></li>
             <li><a href="{{ url_for('manufacturer_approvals.manufacturer_approvals_dashboard') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-patch-check me-2"></i>QPL Approvals</a></li>
             <li><a href="{{ url_for('excess.view_excess_lists') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-box-seam me-2"></i>Excess Stock Lists</a></li>

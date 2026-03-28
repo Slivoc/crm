@@ -705,7 +705,26 @@ def _extract_offer_product_identity(row_data):
 
 
 def _normalize_offer_product_id_type(product_id_type, product_id, part_number):
-    return 'mpnTitle'
+    normalized_type = _coerce_text(product_id_type, default='').strip()
+    return normalized_type or 'mpnTitle'
+
+
+def _resolve_offer_identity(part, source_mode):
+    part_number = _part_identifier(part)
+    baseline_row = part.get('baseline_row') or {}
+
+    if source_mode == 'baseline':
+        found_product_id, baseline_product_id = _get_import_row_value(baseline_row, 'product-id')
+        if found_product_id:
+            baseline_product_id_text = _coerce_text(baseline_product_id, default='').strip()
+            if baseline_product_id_text:
+                _, baseline_product_id_type = _get_import_row_value(baseline_row, 'product-id-type')
+                return (
+                    baseline_product_id_text,
+                    _normalize_offer_product_id_type(baseline_product_id_type, baseline_product_id_text, part_number),
+                )
+
+    return (part_number, 'mpnTitle')
 
 
 _MARKETPLACE_MANUFACTURER_JOIN = """
@@ -2056,6 +2075,9 @@ def export_to_marketplace():
         if export_mode not in ('products', 'offers'):
             export_mode = 'products'
         export_defaults = _normalize_marketplace_export_defaults(export_data.get('defaults'))
+        source_mode = _coerce_text(export_data.get('source_mode'), default='filters')
+        if source_mode not in ('filters', 'baseline'):
+            source_mode = 'filters'
         baseline_rows = export_data.get('baseline_rows') or {}
 
         if not base_part_numbers:
@@ -2167,8 +2189,7 @@ def export_to_marketplace():
             for part in parts_data:
                 part_number = _part_identifier(part)
                 description = _coerce_text(part.get('mkp_description') or part.get('description'), default=part_number)
-                offer_product_id = part_number
-                offer_product_id_type = _normalize_offer_product_id_type('', offer_product_id, part_number)
+                offer_product_id, offer_product_id_type = _resolve_offer_identity(part, source_mode)
                 csv_rows.append(_build_offer_row_from_payload({
                     'sku': part_number,
                     'product-id': offer_product_id,
