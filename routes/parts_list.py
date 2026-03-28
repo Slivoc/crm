@@ -5216,7 +5216,7 @@ def common_parts_report_offers():
             LEFT JOIN customers parent_customer ON parent_customer.id = ca.main_customer_id
             WHERE UPPER(COALESCE(NULLIF(TRIM(pll.base_part_number), ''), NULLIF(TRIM(pll.customer_part_number), ''))) = ?
             ORDER BY
-                COALESCE(sq.quote_date, sq.created_at, sq.id) DESC,
+                COALESCE(sq.quote_date, sq.date_created) DESC,
                 sql.id DESC
             LIMIT 10
             """,
