@@ -298,6 +298,22 @@ def manufacturer_approvals_dashboard():
             direction=search_data['direction'],
         )
         imports_filter = request.args.get('imports_list_type') or filters['approval_list_type']
+        prev_page_url = (
+            url_for(
+                'manufacturer_approvals.manufacturer_approvals_dashboard',
+                **(page_params | {'page': search_data['page'] - 1}),
+            )
+            if search_data['page'] > 1
+            else '#'
+        )
+        next_page_url = (
+            url_for(
+                'manufacturer_approvals.manufacturer_approvals_dashboard',
+                **(page_params | {'page': search_data['page'] + 1}),
+            )
+            if search_data['page'] < search_data['total_pages']
+            else '#'
+        )
 
         return render_template(
             'manufacturer_approvals.html',
@@ -305,6 +321,8 @@ def manufacturer_approvals_dashboard():
             summaries=_get_list_summaries(),
             search=search_data,
             page_params=page_params,
+            prev_page_url=prev_page_url,
+            next_page_url=next_page_url,
             imports=_get_import_history(limit=20, approval_list_type=_normalize_list_type(imports_filter) if imports_filter else None),
             allowed_extensions=sorted(ALLOWED_EXTENSIONS),
         )
@@ -317,6 +335,8 @@ def manufacturer_approvals_dashboard():
             summaries=[],
             search={'filters': _base_filters_from_request(request.args), 'results': [], 'page': 1, 'per_page': 50, 'total': 0, 'total_pages': 0, 'sort': 'updated_at', 'direction': 'desc'},
             page_params={},
+            prev_page_url='#',
+            next_page_url='#',
             imports=[],
             allowed_extensions=sorted(ALLOWED_EXTENSIONS),
         )

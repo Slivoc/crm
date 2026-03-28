@@ -246,8 +246,8 @@
                         {{ [search.page * search.per_page, search.total]|min }} of {{ search.total }}.
                     </div>
                     <div class="btn-group">
-                        <a class="btn btn-outline-secondary {% if search.page <= 1 %}disabled{% endif %}" href="{{ url_for('manufacturer_approvals.manufacturer_approvals_dashboard', **page_params, page=search.page - 1) if search.page > 1 else '#' }}">Previous</a>
-                        <a class="btn btn-outline-secondary {% if search.page >= search.total_pages %}disabled{% endif %}" href="{{ url_for('manufacturer_approvals.manufacturer_approvals_dashboard', **page_params, page=search.page + 1) if search.page < search.total_pages else '#' }}">Next</a>
+                        <a class="btn btn-outline-secondary {% if search.page <= 1 %}disabled{% endif %}" href="{{ prev_page_url }}">Previous</a>
+                        <a class="btn btn-outline-secondary {% if search.page >= search.total_pages %}disabled{% endif %}" href="{{ next_page_url }}">Next</a>
                     </div>
                 </div>
                 {% endif %}
