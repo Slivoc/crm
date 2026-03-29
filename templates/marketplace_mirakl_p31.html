@@ -1,0 +1,296 @@
+{% extends "base.html" %}
+
+{% block title %}Mirakl P31 Lookup{% endblock %}
+
+{% block extra_css %}
+<style>
+    .p31-panel {
+        background: linear-gradient(180deg, #ffffff 0%, #f7f9fc 100%);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 16px;
+    }
+    .p31-metric {
+        min-width: 120px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: #fff;
+    }
+    .p31-grid td,
+    .p31-grid th {
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+    .p31-grid td.wrap {
+        white-space: normal;
+    }
+    .p31-ok {
+        color: #0f766e;
+        font-weight: 600;
+    }
+    .p31-warn {
+        color: #b45309;
+        font-weight: 600;
+    }
+    .p31-bad {
+        color: #b91c1c;
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h2 class="mb-1">Mirakl P31 Lookup</h2>
+            <div class="text-muted">Resolve dev product ids from product references, review latest CRM price and stock, then push offer updates.</div>
+        </div>
+        <a class="btn btn-outline-secondary" href="/marketplace/mirakl">Mirakl Connection</a>
+    </div>
+
+    <div class="card p31-panel mb-3">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-lg-3">
+                    <label class="form-label fw-bold">Reference Type</label>
+                    <input type="text" class="form-control" id="p31ReferenceType" value="mpnTitle">
+                    <div class="form-text">Use an operator product reference. `SKU` and `SHOP_SKU` are not valid for P31.</div>
+                </div>
+                <div class="col-lg-9">
+                    <label class="form-label fw-bold">References</label>
+                    <textarea class="form-control" id="p31References" rows="7" placeholder="One part number per line"></textarea>
+                    <div class="form-text">Paste the part numbers you want to test against dev.</div>
+                </div>
+            </div>
+            <div class="d-flex gap-2 mt-3">
+                <button class="btn btn-primary" id="p31LookupBtn">Lookup Products</button>
+                <button class="btn btn-success" id="p31PushBtn" disabled>Push Offer Updates</button>
+            </div>
+            <div class="small text-muted mt-2" id="p31Status">Idle.</div>
+        </div>
+    </div>
+
+    <div class="d-flex flex-wrap gap-2 mb-3" id="p31Metrics" style="display:none;">
+        <div class="p31-metric"><div class="small text-muted">Requested</div><div class="fs-5 fw-bold" id="metricRequested">0</div></div>
+        <div class="p31-metric"><div class="small text-muted">CRM Matched</div><div class="fs-5 fw-bold" id="metricCrmMatched">0</div></div>
+        <div class="p31-metric"><div class="small text-muted">P31 Found</div><div class="fs-5 fw-bold" id="metricProductFound">0</div></div>
+        <div class="p31-metric"><div class="small text-muted">Offer Ready</div><div class="fs-5 fw-bold" id="metricOfferReady">0</div></div>
+    </div>
+
+    <div class="card">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0 p31-grid">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Reference</th>
+                            <th>CRM Match</th>
+                            <th>P31</th>
+                            <th>Resolved Product ID</th>
+                            <th>Type</th>
+                            <th>Price EUR</th>
+                            <th>Qty</th>
+                            <th>Lead Days</th>
+                            <th class="wrap">Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody id="p31ResultsBody">
+                        <tr><td colspan="9" class="text-muted p-3">No lookup run yet.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    (function () {
+        let lookupRows = [];
+
+        function escapeHtml(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function setStatus(message) {
+            $('#p31Status').text(message);
+        }
+
+        function updateMetrics(summary) {
+            $('#p31Metrics').show();
+            $('#metricRequested').text(summary.requested || 0);
+            $('#metricCrmMatched').text(summary.crm_matched || 0);
+            $('#metricProductFound').text(summary.product_found || 0);
+            $('#metricOfferReady').text(summary.offer_ready || 0);
+        }
+
+        function renderRows() {
+            const tbody = $('#p31ResultsBody');
+            if (!lookupRows.length) {
+                tbody.html('<tr><td colspan="9" class="text-muted p-3">No lookup run yet.</td></tr>');
+                $('#p31PushBtn').prop('disabled', true);
+                return;
+            }
+
+            const html = lookupRows.map((row, index) => {
+                const crm = row.crm_part || {};
+                const hasCrm = !!row.crm_part;
+                const found = !!row.product_found;
+                const ready = hasCrm && row.resolved_product_id && row.resolved_product_id_type;
+                const notes = [];
+                if (!hasCrm) notes.push('No CRM match');
+                if (!found) notes.push('No P31 match');
+                if (hasCrm && !row.resolved_product_id) notes.push('Missing product id');
+                return `
+                    <tr data-row-index="${index}">
+                        <td>${escapeHtml(row.requested_reference)}</td>
+                        <td class="${hasCrm ? 'p31-ok' : 'p31-bad'}">${hasCrm ? escapeHtml(crm.part_number || crm.base_part_number) : 'Missing'}</td>
+                        <td class="${found ? 'p31-ok' : 'p31-warn'}">${found ? 'Found' : 'Not found'}</td>
+                        <td><input class="form-control form-control-sm p31-product-id" value="${escapeHtml(row.resolved_product_id || '')}"></td>
+                        <td><input class="form-control form-control-sm p31-product-id-type" value="${escapeHtml(row.resolved_product_id_type || '')}"></td>
+                        <td>${crm.estimated_price_eur !== null && crm.estimated_price_eur !== undefined && crm.estimated_price_eur !== '' ? escapeHtml(Number(crm.estimated_price_eur).toFixed(2)) : ''}</td>
+                        <td>${escapeHtml(crm.in_stock ? (crm.stock_qty || 0) : 1)}</td>
+                        <td>${escapeHtml(crm.estimated_lead_days || '')}</td>
+                        <td class="wrap ${ready ? 'p31-ok' : 'p31-warn'}">${escapeHtml(notes.join('; ') || 'Ready')}</td>
+                    </tr>
+                `;
+            }).join('');
+            tbody.html(html);
+            $('#p31PushBtn').prop('disabled', false);
+        }
+
+        function collectEditedRows() {
+            return lookupRows.map((row, index) => {
+                const tr = $(`#p31ResultsBody tr[data-row-index="${index}"]`);
+                return {
+                    ...row,
+                    resolved_product_id: tr.find('.p31-product-id').val().trim(),
+                    resolved_product_id_type: tr.find('.p31-product-id-type').val().trim()
+                };
+            });
+        }
+
+        $('#p31LookupBtn').on('click', function () {
+            const references = $('#p31References').val().trim();
+            const referenceType = $('#p31ReferenceType').val().trim();
+            if (!references) {
+                alert('Enter at least one reference.');
+                return;
+            }
+            $('#p31LookupBtn').prop('disabled', true);
+            setStatus('Looking up products in Mirakl...');
+            $.ajax({
+                url: '/marketplace/mirakl/p31/lookup',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    references: references,
+                    reference_type: referenceType
+                })
+            }).done(function (response) {
+                if (!response.success) {
+                    alert(response.error || 'Lookup failed.');
+                    setStatus(response.error || 'Lookup failed.');
+                    return;
+                }
+                lookupRows = response.rows || [];
+                updateMetrics(response.summary || {});
+                renderRows();
+                setStatus(`Lookup complete. ${response.summary ? response.summary.offer_ready : 0} row(s) are ready to push.`);
+            }).fail(function (xhr) {
+                const error = (xhr.responseJSON && xhr.responseJSON.error) || xhr.statusText || 'Lookup failed';
+                alert(error);
+                setStatus(error);
+            }).always(function () {
+                $('#p31LookupBtn').prop('disabled', false);
+            });
+        });
+
+        $('#p31PushBtn').on('click', function () {
+            const rows = collectEditedRows();
+            const offers = rows
+                .filter(row => row.crm_part && row.resolved_product_id && row.resolved_product_id_type)
+                .map(row => {
+                    const crm = row.crm_part || {};
+                    return {
+                        'sku': crm.part_number || crm.base_part_number || row.requested_reference,
+                        'product-id': row.resolved_product_id,
+                        'product-id-type': row.resolved_product_id_type,
+                        'description': crm.mkp_description || crm.part_number || crm.base_part_number || row.requested_reference,
+                        'internal-description': '',
+                        'price': crm.estimated_price_eur,
+                        'price-additional-info': '',
+                        'quantity': crm.in_stock ? (crm.stock_qty || 0) : 1,
+                        'min-quantity-alert': '',
+                        'state': '1',
+                        'available-start-date': '',
+                        'available-end-date': '',
+                        'logistic-class': '',
+                        'favorite-rank': '',
+                        'discount-start-date': '',
+                        'discount-end-date': '',
+                        'discount-price': '',
+                        'update-delete': 'update',
+                        'allow-quote-requests': 'true',
+                        'leadtime-to-ship': crm.estimated_lead_days || '',
+                        'min-order-quantity': '',
+                        'max-order-quantity': '',
+                        'package-quantity': '',
+                        'commercial-on-collection': 'ON_DEMAND',
+                        'plt': '',
+                        'plt-unit': '',
+                        'shelflife': '',
+                        'shelflife-unit': '',
+                        'warranty': '',
+                        'warranty-unit': '',
+                        'up-sell': '',
+                        'cross-sell': '',
+                        'vendor-reference': ''
+                    };
+                });
+
+            if (!offers.length) {
+                alert('No rows are ready to push.');
+                return;
+            }
+            if (!confirm(`Push ${offers.length} offer update(s) to the configured Mirakl environment?`)) {
+                return;
+            }
+
+            $('#p31PushBtn').prop('disabled', true);
+            setStatus('Submitting offer updates...');
+            $.ajax({
+                url: '/marketplace/mirakl/offers/import',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    offers: offers,
+                    import_mode: 'NORMAL',
+                    skip_invalid_mandatory: true
+                })
+            }).done(function (response) {
+                if (!response.success) {
+                    alert(response.error || 'Push failed.');
+                    setStatus(response.error || 'Push failed.');
+                    return;
+                }
+                const importId = response.result && response.result.import_id ? response.result.import_id : 'unknown';
+                setStatus(`Offer update submitted. Import ID: ${importId}`);
+            }).fail(function (xhr) {
+                const error = (xhr.responseJSON && xhr.responseJSON.error) || xhr.statusText || 'Push failed';
+                alert(error);
+                setStatus(error);
+            }).always(function () {
+                $('#p31PushBtn').prop('disabled', false);
+            });
+        });
+    })();
+</script>
+{% endblock %}

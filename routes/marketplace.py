@@ -196,6 +196,73 @@ def _normalize_part_reference(value):
     return re.sub(r'[^A-Z0-9]+', '', str(value or '').strip().upper())
 
 
+def _parse_reference_input(raw_value):
+    return [
+        item
+        for item in (
+            _coerce_text(chunk, default='')
+            for chunk in re.split(r'[\r\n,;]+', str(raw_value or ''))
+        )
+        if item
+    ]
+
+
+def _iter_scalar_strings(value):
+    if value is None:
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _iter_scalar_strings(item)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            yield from _iter_scalar_strings(item)
+        return
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            yield text
+
+
+def _extract_mirakl_product_rows(payload):
+    if isinstance(payload, dict):
+        for key in ('products', 'data', 'items'):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    return []
+
+
+def _extract_mirakl_product_sku(product):
+    for key in ('sku', 'product_sku', 'productSku', 'shop_sku', 'shopSku'):
+        value = _coerce_optional_text(product.get(key))
+        if value:
+            return value
+    return ''
+
+
+def _extract_mirakl_product_label(product):
+    for key in ('label', 'title', 'name', 'product', 'product_title', 'productTitle'):
+        value = _coerce_optional_text(product.get(key))
+        if value:
+            return value
+    return ''
+
+
+def _match_mirakl_products_by_reference(products, references):
+    remaining = {ref.upper(): ref for ref in references}
+    matches = {}
+    for product in products:
+        scalar_values = {text.upper(): text for text in _iter_scalar_strings(product)}
+        for ref_upper, original_ref in list(remaining.items()):
+            if ref_upper in scalar_values:
+                matches[original_ref] = product
+                remaining.pop(ref_upper, None)
+    return matches
+
+
 def _normalize_marketplace_export_defaults(raw_defaults):
     payload = raw_defaults or {}
     description_mode = _coerce_text(payload.get('description_mode'), default='part_number')
@@ -851,6 +918,109 @@ def _get_portal_estimates(parts, customer_id):
     }
 
 
+def _fetch_marketplace_parts_by_references(references):
+    cleaned_refs = [ref.strip() for ref in references if ref and ref.strip()]
+    if not cleaned_refs:
+        return []
+
+    exact_references = {ref.upper() for ref in cleaned_refs}
+    normalized_references = {
+        normalized
+        for normalized in (_normalize_part_reference(ref) for ref in cleaned_refs)
+        if normalized
+    }
+    exact_placeholders = ','.join(['?'] * len(exact_references)) if exact_references else ''
+    normalized_placeholders = ','.join(['?'] * len(normalized_references)) if normalized_references else ''
+    where_clauses = []
+    params = []
+
+    if exact_references:
+        where_clauses.append(f"UPPER(pn.base_part_number) IN ({exact_placeholders})")
+        params.extend(exact_references)
+        where_clauses.append(f"UPPER(pn.part_number) IN ({exact_placeholders})")
+        params.extend(exact_references)
+
+    if normalized_references:
+        where_clauses.append(
+            f"REGEXP_REPLACE(UPPER(COALESCE(pn.base_part_number, '')), '[^A-Z0-9]+', '', 'g') IN ({normalized_placeholders})"
+        )
+        params.extend(normalized_references)
+        where_clauses.append(
+            f"REGEXP_REPLACE(UPPER(COALESCE(pn.part_number, '')), '[^A-Z0-9]+', '', 'g') IN ({normalized_placeholders})"
+        )
+        params.extend(normalized_references)
+
+    if not where_clauses:
+        return []
+
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute(
+        f"""
+        SELECT
+            pn.base_part_number,
+            pn.part_number,
+            marketplace_mfg.manufacturer_name,
+            pn.mkp_category,
+            pn.mkp_description,
+            pn.mkp_name,
+            pn.mkp_offer_product_id,
+            pn.mkp_offer_product_id_type
+        FROM part_numbers pn
+        {_MARKETPLACE_MANUFACTURER_JOIN}
+        WHERE {' OR '.join(where_clauses)}
+        ORDER BY pn.part_number
+        """,
+        params,
+    )
+    rows = cursor.fetchall()
+
+    customer_id = _get_marketplace_customer_id()
+    parts_payload = [
+        {'part_number': row['part_number'] or row['base_part_number'], 'quantity': 1}
+        for row in rows
+    ]
+    estimates = _get_portal_estimates(parts_payload, customer_id)
+
+    exact_lookup = {}
+    normalized_lookup = {}
+    for row in rows:
+        part_number = row['part_number'] or row['base_part_number']
+        estimate = estimates.get(row['base_part_number']) or estimates.get(part_number) or {}
+        part = {
+            'base_part_number': row['base_part_number'],
+            'part_number': part_number,
+            'manufacturer': _coerce_text(row['manufacturer_name'], default=''),
+            'mkp_category': row['mkp_category'],
+            'mkp_description': row['mkp_description'],
+            'mkp_name': row['mkp_name'],
+            'mkp_offer_product_id': row['mkp_offer_product_id'],
+            'mkp_offer_product_id_type': row['mkp_offer_product_id_type'],
+            'estimated_price_gbp': estimate.get('estimated_price'),
+            'estimated_price_eur': _convert_marketplace_price_to_eur(estimate.get('estimated_price')),
+            'estimated_lead_days': estimate.get('estimated_lead_days'),
+            'in_stock': bool(estimate.get('in_stock')),
+            'stock_qty': estimate.get('stock_quantity') if estimate.get('stock_quantity') is not None else 0,
+            'price_source': estimate.get('price_source'),
+        }
+        for value in (row['base_part_number'], row['part_number']):
+            if value:
+                exact_lookup.setdefault(str(value).strip().upper(), part)
+                normalized = _normalize_part_reference(value)
+                if normalized:
+                    normalized_lookup.setdefault(normalized, part)
+
+    ordered = []
+    for ref in cleaned_refs:
+        ref_key = ref.strip().upper()
+        normalized_ref = _normalize_part_reference(ref)
+        ordered.append({
+            'requested_reference': ref,
+            'crm_part': exact_lookup.get(ref_key) or (normalized_lookup.get(normalized_ref) if normalized_ref else None),
+        })
+    return ordered
+
+
 @marketplace_bp.route('/import-details-file', methods=['POST'])
 def import_marketplace_details_file():
     """
@@ -1220,6 +1390,69 @@ def mirakl_connection_page():
         mirakl_api_key_set=bool(portal_api_key or env_api_key),
         mirakl_env_configured=bool(env_base_url or env_shop_id or env_api_key),
     )
+
+
+@marketplace_bp.route('/mirakl/p31', methods=['GET'])
+def mirakl_p31_page():
+    return render_template('marketplace_mirakl_p31.html')
+
+
+@marketplace_bp.route('/mirakl/p31/lookup', methods=['POST'])
+def mirakl_p31_lookup():
+    client, error = _get_mirakl_client()
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+
+    data = request.get_json() or {}
+    reference_type = _coerce_text(data.get('reference_type'), default='mpnTitle')
+    references = list(dict.fromkeys(_parse_reference_input(data.get('references'))))
+
+    if not references:
+        return jsonify({'success': False, 'error': 'At least one reference is required.'}), 400
+    if len(references) > 500:
+        return jsonify({'success': False, 'error': 'Please limit lookups to 500 references at a time.'}), 400
+
+    crm_rows = _fetch_marketplace_parts_by_references(references)
+    crm_lookup = {row['requested_reference']: row.get('crm_part') for row in crm_rows}
+    matched_products = {}
+
+    try:
+        for start in range(0, len(references), 100):
+            batch = references[start:start + 100]
+            response = client.get_products_by_references([f'{reference_type}|{value}' for value in batch])
+            products = _extract_mirakl_product_rows(response)
+            matched_products.update(_match_mirakl_products_by_reference(products, batch))
+    except MiraklError as exc:
+        logger.exception("Mirakl P31 lookup failed")
+        return jsonify({'success': False, 'error': str(exc)}), 502
+
+    rows = []
+    for ref in references:
+        crm_part = crm_lookup.get(ref)
+        product = matched_products.get(ref)
+        product_sku = _extract_mirakl_product_sku(product or {})
+        rows.append({
+            'requested_reference': ref,
+            'reference_type': reference_type,
+            'crm_part': crm_part,
+            'product_found': bool(product),
+            'resolved_product_id': product_sku,
+            'resolved_product_id_type': 'SKU' if product_sku else '',
+            'resolved_product_label': _extract_mirakl_product_label(product or {}),
+            'mirakl_product': product or {},
+        })
+
+    return jsonify({
+        'success': True,
+        'reference_type': reference_type,
+        'rows': rows,
+        'summary': {
+            'requested': len(references),
+            'crm_matched': sum(1 for row in rows if row.get('crm_part')),
+            'product_found': sum(1 for row in rows if row.get('product_found')),
+            'offer_ready': sum(1 for row in rows if row.get('crm_part') and row.get('resolved_product_id')),
+        },
+    }), 200
 
 
 @marketplace_bp.route('/categories', methods=['GET'])

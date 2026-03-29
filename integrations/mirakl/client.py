@@ -79,6 +79,22 @@ class MiraklClient:
     def get_account(self) -> Dict[str, Any]:
         return self.request('GET', '/api/account')
 
+    def get_products_by_references(
+        self,
+        product_references: list[str],
+        *,
+        shop_id: Optional[str] = None,
+        locale: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            'product_references': ','.join(product_references),
+        }
+        if shop_id:
+            params['shop_id'] = shop_id
+        if locale:
+            params['locale'] = locale
+        return self.request('GET', '/api/products', params=params)
+
     def import_offers(self, csv_bytes: bytes, *, import_mode: str = 'NORMAL') -> Dict[str, Any]:
         files = {'file': ('offers.csv', csv_bytes, 'text/csv')}
         data = {'import_mode': import_mode}
