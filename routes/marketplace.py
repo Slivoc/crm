@@ -263,6 +263,23 @@ def _match_mirakl_products_by_reference(products, references):
     return matches
 
 
+def _collect_matching_candidates(products, reference):
+    ref_upper = _coerce_text(reference, default='').upper()
+    if not ref_upper:
+        return []
+    candidates = []
+    for product in products:
+        scalar_values = list(dict.fromkeys(text for text in _iter_scalar_strings(product)))
+        matched_values = [text for text in scalar_values if text.upper() == ref_upper]
+        if matched_values:
+            candidates.append({
+                'product': product,
+                'matched_values': matched_values[:10],
+                'scalar_preview': scalar_values[:25],
+            })
+    return candidates
+
+
 def _normalize_marketplace_export_defaults(raw_defaults):
     payload = raw_defaults or {}
     description_mode = _coerce_text(payload.get('description_mode'), default='part_number')
@@ -1415,6 +1432,7 @@ def mirakl_p31_lookup():
     crm_rows = _fetch_marketplace_parts_by_references(references)
     crm_lookup = {row['requested_reference']: row.get('crm_part') for row in crm_rows}
     matched_products = {}
+    candidate_map = {ref: [] for ref in references}
 
     try:
         for start in range(0, len(references), 100):
@@ -1422,6 +1440,8 @@ def mirakl_p31_lookup():
             response = client.get_products_by_references([f'{reference_type}|{value}' for value in batch])
             products = _extract_mirakl_product_rows(response)
             matched_products.update(_match_mirakl_products_by_reference(products, batch))
+            for ref in batch:
+                candidate_map[ref].extend(_collect_matching_candidates(products, ref))
     except MiraklError as exc:
         logger.exception("Mirakl P31 lookup failed")
         return jsonify({'success': False, 'error': str(exc)}), 502
@@ -1440,6 +1460,7 @@ def mirakl_p31_lookup():
             'resolved_product_id_type': 'SKU' if product_sku else '',
             'resolved_product_label': _extract_mirakl_product_label(product or {}),
             'mirakl_product': product or {},
+            'mirakl_candidates': candidate_map.get(ref, [])[:5],
         })
 
     return jsonify({

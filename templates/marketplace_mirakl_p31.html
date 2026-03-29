@@ -24,6 +24,12 @@
     .p31-grid td.wrap {
         white-space: normal;
     }
+    .p31-grid pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+        font-size: 0.78rem;
+    }
     .p31-ok {
         color: #0f766e;
         font-weight: 600;
@@ -90,16 +96,17 @@
                             <th>Resolved Product ID</th>
                             <th>Type</th>
                             <th>Price EUR</th>
-                            <th>Qty</th>
-                            <th>Lead Days</th>
-                            <th class="wrap">Notes</th>
-                        </tr>
-                    </thead>
-                    <tbody id="p31ResultsBody">
-                        <tr><td colspan="9" class="text-muted p-3">No lookup run yet.</td></tr>
-                    </tbody>
-                </table>
-            </div>
+                        <th>Qty</th>
+                        <th>Lead Days</th>
+                        <th class="wrap">Notes</th>
+                        <th>Debug</th>
+                    </tr>
+                </thead>
+                <tbody id="p31ResultsBody">
+                        <tr><td colspan="10" class="text-muted p-3">No lookup run yet.</td></tr>
+                </tbody>
+            </table>
+        </div>
         </div>
     </div>
 </div>
@@ -134,7 +141,7 @@
         function renderRows() {
             const tbody = $('#p31ResultsBody');
             if (!lookupRows.length) {
-                tbody.html('<tr><td colspan="9" class="text-muted p-3">No lookup run yet.</td></tr>');
+                tbody.html('<tr><td colspan="10" class="text-muted p-3">No lookup run yet.</td></tr>');
                 $('#p31PushBtn').prop('disabled', true);
                 return;
             }
@@ -148,6 +155,13 @@
                 if (!hasCrm) notes.push('No CRM match');
                 if (!found) notes.push('No P31 match');
                 if (hasCrm && !row.resolved_product_id) notes.push('Missing product id');
+                const debugPayload = {
+                    reference: row.requested_reference,
+                    reference_type: row.reference_type,
+                    resolved_product_label: row.resolved_product_label,
+                    mirakl_product: row.mirakl_product || {},
+                    mirakl_candidates: row.mirakl_candidates || []
+                };
                 return `
                     <tr data-row-index="${index}">
                         <td>${escapeHtml(row.requested_reference)}</td>
@@ -159,6 +173,12 @@
                         <td>${escapeHtml(crm.in_stock ? (crm.stock_qty || 0) : 1)}</td>
                         <td>${escapeHtml(crm.estimated_lead_days || '')}</td>
                         <td class="wrap ${ready ? 'p31-ok' : 'p31-warn'}">${escapeHtml(notes.join('; ') || 'Ready')}</td>
+                        <td><button type="button" class="btn btn-sm btn-outline-secondary p31-debug-btn" data-row-index="${index}">Debug</button></td>
+                    </tr>
+                    <tr class="d-none" data-debug-row="${index}">
+                        <td colspan="10" class="bg-light">
+                            <pre>${escapeHtml(JSON.stringify(debugPayload, null, 2))}</pre>
+                        </td>
                     </tr>
                 `;
             }).join('');
@@ -290,6 +310,12 @@
             }).always(function () {
                 $('#p31PushBtn').prop('disabled', false);
             });
+        });
+
+        $(document).on('click', '.p31-debug-btn', function () {
+            const rowIndex = $(this).data('row-index');
+            const debugRow = $(`#p31ResultsBody tr[data-debug-row="${rowIndex}"]`);
+            debugRow.toggleClass('d-none');
         });
     })();
 </script>
