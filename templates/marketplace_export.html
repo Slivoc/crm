@@ -1076,13 +1076,19 @@ function renderBaselineSourceSummary(summary) {
     const storedOfferIds = summary && summary.stored_offer_product_ids_count !== undefined
         ? summary.stored_offer_product_ids_count
         : 0;
+    const matchedWithOfferIdentity = summary && summary.matched_with_offer_identity !== undefined
+        ? summary.matched_with_offer_identity
+        : 0;
+    const matchedMissingOfferIdentity = summary && summary.matched_missing_offer_identity !== undefined
+        ? summary.matched_missing_offer_identity
+        : 0;
     const title = templateKind === 'offers'
         ? 'Offers list ready'
         : templateKind === 'products'
             ? 'Product list ready'
             : 'Airbus list ready';
     const detailText = templateKind === 'offers'
-        ? `Processed ${processed} row(s). Matched ${matched} CRM part(s), invalid ${invalid}, no match ${noMatch}. Stored ${storedOfferIds} marketplace product ID(s) for future offer updates.`
+        ? `Processed ${processed} row(s). Matched ${matched} CRM part(s), invalid ${invalid}, no match ${noMatch}. ${matchedWithOfferIdentity} matched row(s) have offer identity and ${matchedMissingOfferIdentity} do not. Stored ${storedOfferIds} marketplace product ID(s) for future offer updates.`
         : `Processed ${processed} row(s). Matched ${matched} CRM part(s), invalid ${invalid}, no match ${noMatch}. Use this list as the working set for export.`;
 
     $('#baselineSourceSummary').html(`

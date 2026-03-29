@@ -19,7 +19,7 @@ from airbus_marketplace_helper import (
     get_available_categories
 )
 from airbus_marketplace_export import export_parts_to_airbus_marketplace_csv
-from models import get_db
+from models import get_db, convert_currency
 from routes.portal_api import _analyze_quote_internal, get_portal_setting
 from integrations.mirakl.client import MiraklClient, MiraklError
 from integrations.mirakl.services.offers import build_offers_csv, OFFER_IMPORT_FIELDS
@@ -138,6 +138,17 @@ def _coerce_price(value):
         return round(float(text.replace(',', '.')), 2)
     except ValueError:
         return ''
+
+
+def _convert_marketplace_price_to_eur(value):
+    price = _coerce_price(value)
+    if price == '':
+        return ''
+    try:
+        return round(float(convert_currency(float(price), 'GBP', 'EUR')), 2)
+    except Exception:
+        logger.exception("Failed to convert marketplace price from GBP to EUR")
+        return price
 
 
 def _coerce_numeric_number(value):
@@ -689,15 +700,26 @@ def _get_import_row_value(row_data, target_header):
 
 def _extract_offer_product_identity(row_data):
     found_product_id, product_id = _get_import_row_value(row_data, 'product-id')
-    if not found_product_id:
-        return None
+    product_id_text = _coerce_optional_text(product_id) if found_product_id else None
+    product_id_type_text = None
 
-    product_id_text = _coerce_optional_text(product_id)
-    if not product_id_text:
-        return None
+    if product_id_text:
+        _, product_id_type = _get_import_row_value(row_data, 'product-id-type')
+        product_id_type_text = _coerce_optional_text(product_id_type) or 'SKU'
+    else:
+        found_product_sku, product_sku = _get_import_row_value(row_data, 'productsku')
+        product_sku_text = _coerce_optional_text(product_sku) if found_product_sku else None
+        if not product_sku_text:
+            found_product_sku, product_sku = _get_import_row_value(row_data, 'product sku')
+            product_sku_text = _coerce_optional_text(product_sku) if found_product_sku else None
+        if not product_sku_text:
+            found_shop_sku, shop_sku = _get_import_row_value(row_data, 'shop_sku')
+            product_sku_text = _coerce_optional_text(shop_sku) if found_shop_sku else None
+        if not product_sku_text:
+            return None
+        product_id_text = product_sku_text
+        product_id_type_text = 'SKU'
 
-    _, product_id_type = _get_import_row_value(row_data, 'product-id-type')
-    product_id_type_text = _coerce_optional_text(product_id_type) or 'SKU'
     return {
         'product_id': product_id_text,
         'product_id_type': product_id_type_text,
@@ -714,14 +736,17 @@ def _resolve_offer_identity(part, source_mode):
     baseline_row = part.get('baseline_row') or {}
 
     if source_mode == 'baseline':
-        found_product_id, baseline_product_id = _get_import_row_value(baseline_row, 'product-id')
-        if found_product_id:
-            baseline_product_id_text = _coerce_text(baseline_product_id, default='').strip()
+        baseline_identity = _extract_offer_product_identity(baseline_row)
+        if baseline_identity:
+            baseline_product_id_text = _coerce_text(baseline_identity.get('product_id'), default='').strip()
             if baseline_product_id_text:
-                _, baseline_product_id_type = _get_import_row_value(baseline_row, 'product-id-type')
                 return (
                     baseline_product_id_text,
-                    _normalize_offer_product_id_type(baseline_product_id_type, baseline_product_id_text, part_number),
+                    _normalize_offer_product_id_type(
+                        baseline_identity.get('product_id_type'),
+                        baseline_product_id_text,
+                        part_number,
+                    ),
                 )
         return ('', '')
 
@@ -980,6 +1005,7 @@ def import_marketplace_stock_price_file():
         exact_references = set()
         normalized_references = set()
         offer_identity_updates = {}
+        matched_offer_identity_count = 0
 
         for row_number, row_data in rows:
             processed += 1
@@ -1071,6 +1097,7 @@ def import_marketplace_stock_price_file():
                 offer_identity = _extract_offer_product_identity(baseline_row)
                 if offer_identity:
                     offer_identity_updates[str(base_part_number)] = offer_identity
+                    matched_offer_identity_count += 1
 
         stored_offer_product_ids_count = 0
         if template_kind == 'offers' and offer_identity_updates:
@@ -1108,6 +1135,8 @@ def import_marketplace_stock_price_file():
                 'matched_rows': len(matched_baselines),
                 'skipped_invalid': skipped_invalid,
                 'skipped_no_match': skipped_no_match,
+                'matched_with_offer_identity': matched_offer_identity_count,
+                'matched_missing_offer_identity': max(len(matched_baselines) - matched_offer_identity_count, 0),
             },
             'header_diagnostics': header_summary,
             'template_kind': template_kind,
@@ -2179,7 +2208,7 @@ def export_to_marketplace():
                 'description': resolved_description,
                 'manufacturer': _coerce_text(row['manufacturer_name'], default=''),
                 'quantity': quantity,
-                'price': _coerce_price(price) if price is not None else 0.0,
+                'price': _convert_marketplace_price_to_eur(price) if price is not None else 0.0,
                 'condition': 'New',
                 'lead_time_days': lead_time_value,
                 'baseline_row': baseline_row,
@@ -2446,6 +2475,8 @@ def mirakl_import_offers():
 
     skipped_invalid = []
     offers = [_build_offer_row_from_payload(offer) for offer in offers]
+    for offer in offers:
+        offer['price'] = _convert_marketplace_price_to_eur(offer.get('price'))
     if skip_invalid_mandatory:
         offers, skipped_invalid = _split_valid_rows(
             offers,
@@ -2498,6 +2529,8 @@ def mirakl_import_products():
         return jsonify({'success': False, 'error': 'parts array is required'}), 400
 
     skipped_invalid = []
+    for part in parts:
+        part['price'] = _convert_marketplace_price_to_eur(part.get('price'))
     if skip_invalid_mandatory:
         parts, skipped_invalid = _split_valid_rows(
             parts,
