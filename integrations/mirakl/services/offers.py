@@ -128,29 +128,31 @@ def build_offers_csv(
     *,
     fieldnames: Iterable[str] = DEFAULT_FIELDS,
     delimiter: str = ';',
+    validate_required: bool = True,
 ) -> bytes:
     rows = list(offers)
     if not rows:
         raise ValueError("offers payload is empty.")
 
-    missing_by_row = []
-    for idx, row in enumerate(rows, start=1):
-        row_missing = []
-        for field in REQUIRED_FIELDS:
-            if field == 'price':
-                if _coerce_number(row.get(field)) is None:
+    if validate_required:
+        missing_by_row = []
+        for idx, row in enumerate(rows, start=1):
+            row_missing = []
+            for field in REQUIRED_FIELDS:
+                if field == 'price':
+                    if _coerce_number(row.get(field)) is None:
+                        row_missing.append(field)
+                    continue
+                if field not in row or _is_blank(row.get(field)):
                     row_missing.append(field)
-                continue
-            if field not in row or _is_blank(row.get(field)):
-                row_missing.append(field)
-        if row_missing:
-            sku = str(row.get('sku') or '').strip()
-            missing_by_row.append(f"row {idx} (sku={sku or 'n/a'}): {', '.join(row_missing)}")
+            if row_missing:
+                sku = str(row.get('sku') or '').strip()
+                missing_by_row.append(f"row {idx} (sku={sku or 'n/a'}): {', '.join(row_missing)}")
 
-    if missing_by_row:
-        preview = '; '.join(missing_by_row[:10])
-        suffix = ' ...' if len(missing_by_row) > 10 else ''
-        raise ValueError(f"Missing required offer fields: {preview}{suffix}")
+        if missing_by_row:
+            preview = '; '.join(missing_by_row[:10])
+            suffix = ' ...' if len(missing_by_row) > 10 else ''
+            raise ValueError(f"Missing required offer fields: {preview}{suffix}")
 
     output = io.StringIO()
     resolved_fieldnames = list(fieldnames)

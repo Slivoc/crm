@@ -2242,7 +2242,7 @@ def export_to_marketplace():
                         'skipped_invalid_preview': skipped_invalid[:20],
                     }), 400
 
-            csv_bytes = build_offers_csv(csv_rows)
+            csv_bytes = build_offers_csv(csv_rows, validate_required=skip_invalid_mandatory)
             csv_file = io.BytesIO(csv_bytes)
             csv_file.seek(0)
             filename_prefix = "AH_Marketplace_Offers"

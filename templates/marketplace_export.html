@@ -2024,7 +2024,8 @@ function filterExistingMarketplaceProducts(parts, mode) {
     };
 }
 
-function resolveExportParts(parts, mode, defaults, actionLabel) {
+function resolveExportParts(parts, mode, defaults, actionLabel, options = {}) {
+    const allowInvalidRows = !!options.allowInvalidRows;
     const productIdFilter = filterExistingMarketplaceProducts(parts, mode);
     if (!productIdFilter.parts.length) {
         const skippedExistingCount = (productIdFilter.skippedExisting || []).length;
@@ -2075,6 +2076,32 @@ function resolveExportParts(parts, mode, defaults, actionLabel) {
         };
     }
 
+    if (allowInvalidRows) {
+        const confirmed = confirm(
+            `${split.invalid.length} line(s) are missing mandatory ${modeLabel} fields.\n\n` +
+            `Examples: ${preview || 'See console for details.'}\n\n` +
+            `Press OK to export the raw CSV with those invalid lines included, or Cancel to review them first.`
+        );
+        if (!confirmed) {
+            $('#exportStatus').text(`Blocked by ${split.invalid.length} line(s) missing mandatory ${modeLabel} fields. ${preview}`);
+            console.warn('Invalid marketplace lines:', split.invalid);
+            return {
+                proceed: false,
+                parts: [],
+                skipped: split.invalid,
+                skippedExisting: productIdFilter.skippedExisting
+            };
+        }
+        $('#exportStatus').text(`Exporting raw CSV with ${split.invalid.length} line(s) missing mandatory ${modeLabel} fields. ${preview}`);
+        console.warn('Exporting invalid marketplace lines:', split.invalid);
+        return {
+            proceed: true,
+            parts: productIdFilter.parts,
+            skipped: split.invalid,
+            skippedExisting: productIdFilter.skippedExisting
+        };
+    }
+
     const confirmed = confirm(
         `${split.invalid.length} line(s) are missing mandatory ${modeLabel} fields and ${actionLabel} will fail.\n\n` +
         `Examples: ${preview || 'See console for details.'}\n\n` +
@@ -2091,7 +2118,6 @@ function resolveExportParts(parts, mode, defaults, actionLabel) {
         };
     }
 
-    $('#skipInvalidMandatoryFields').prop('checked', true);
     $('#exportStatus').text(`Skipping ${split.invalid.length} line(s) missing mandatory ${modeLabel} fields. ${preview}`);
     console.warn('Skipped invalid marketplace lines:', split.invalid);
     if (!split.valid.length) {
@@ -2125,7 +2151,8 @@ async function exportToCsv(mode) {
         categorizedParts,
         exportMode,
         defaults,
-        exportMode === 'offers' ? 'offer export' : 'product export'
+        exportMode === 'offers' ? 'offer export' : 'product export',
+        { allowInvalidRows: exportMode === 'offers' }
     );
     if (!resolved.proceed) {
         return;
