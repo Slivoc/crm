@@ -5167,6 +5167,8 @@ def common_parts_report():
     selected_bom_id = request.args.get('bom_id', type=int)
     selected_part_query = (request.args.get('part_query') or '').strip()
     exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
+    show_all = str(request.args.get('show_all', '')).lower() in ('1', 'true', 'yes', 'on')
+    initial_limit = 100
     part_query = selected_part_query.lower()
     customers, child_to_parent = _get_common_parts_report_customer_filters()
     selected_customer_ids = _normalize_customer_filter_ids(raw_selected_customer_ids, child_to_parent)
@@ -5186,16 +5188,23 @@ def common_parts_report():
         exclude_in_stock=exclude_in_stock,
         bom_id=selected_bom_id,
     )
+    total_rows = len(report_rows)
+    is_limited = not show_all and total_rows > initial_limit
+    displayed_rows = report_rows[:initial_limit] if is_limited else report_rows
 
     return render_template(
         'parts_list_common_parts_report.html',
-        rows=report_rows,
+        rows=displayed_rows,
+        total_rows=total_rows,
+        initial_limit=initial_limit,
+        is_limited=is_limited,
         customers=customers,
         boms=[dict(bom) for bom in boms],
         selected_bom_id=selected_bom_id,
         selected_customer_ids=selected_customer_ids,
         selected_part_query=selected_part_query,
         exclude_in_stock=exclude_in_stock,
+        show_all=show_all,
     )
 
 

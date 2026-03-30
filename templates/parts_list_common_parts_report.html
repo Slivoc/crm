@@ -98,6 +98,12 @@
             <span class="badge bg-secondary"><span id="visibleRowCount">{{ rows|length }}</span> visible</span>
         </div>
         <div class="card-body p-0">
+            {% if is_limited %}
+            <div class="alert alert-info rounded-0 border-0 border-bottom d-flex flex-wrap justify-content-between align-items-center gap-2 mb-0">
+                <span>Showing the first <strong>{{ rows|length }}</strong> of <strong>{{ total_rows }}</strong> parts for faster initial load.</span>
+                <a id="loadAllPartsBtn" class="btn btn-sm btn-primary" href="#">Load all {{ total_rows }} parts</a>
+            </div>
+            {% endif %}
             <div class="table-responsive">
                 <table class="table table-striped table-hover mb-0" id="commonPartsTable">
                     <thead>
@@ -500,6 +506,7 @@ function applyCommonPartsFilters() {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+    const loadAllBtn = document.getElementById('loadAllPartsBtn');
     const partFilterInput = document.getElementById('partLiveFilter');
     const customerSearchInput = document.getElementById('customerSearchInput');
     const customerFilterSelect = document.getElementById('customerMultiFilter');
@@ -507,6 +514,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const chipsContainer = document.getElementById('selectedCustomerChips');
     const excludeInStockToggle = document.getElementById('excludeInStockToggle');
     const offerButtons = document.querySelectorAll('.view-offers-btn');
+
+    if (loadAllBtn) {
+        const params = new URLSearchParams(window.location.search);
+        params.set('show_all', '1');
+        loadAllBtn.href = `${window.location.pathname}?${params.toString()}`;
+    }
 
     if (partFilterInput) {
         partFilterInput.addEventListener('input', applyCommonPartsFilters);
