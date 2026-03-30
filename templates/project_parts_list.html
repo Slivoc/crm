@@ -51,6 +51,29 @@
         text-decoration: none;
         opacity: 1;
     }
+    .prefix-group-list {
+        max-height: 220px;
+        overflow-y: auto;
+    }
+    .prefix-group-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        width: 100%;
+        padding: 0.45rem 0.65rem;
+        border: 1px solid #dee2e6;
+        border-radius: 0.5rem;
+        background: #fff;
+        text-align: left;
+    }
+    .prefix-group-item.active {
+        border-color: #0d6efd;
+        background: #e7f1ff;
+    }
+    .prefix-group-item code {
+        font-size: 0.9rem;
+    }
 </style>
 {% endblock %}
 
@@ -145,8 +168,8 @@
     <div class="card border-0 shadow-sm mb-3">
         <div class="card-body">
             <div class="row g-3 align-items-end">
-                <div class="col-md-4">
-                    <label for="projectPartsSearch" class="form-label">Search</label>
+                <div class="col-md-3">
+                    <label for="projectPartsSearch" class="form-label">General Search</label>
                     <input type="text" id="projectPartsSearch" class="form-control" placeholder="Filter by part number, description, category, comment...">
                 </div>
                 <div class="col-md-4">
@@ -159,13 +182,29 @@
                         <button type="button" class="btn btn-outline-secondary filter-btn" data-filter="ignore">Ignore</button>
                     </div>
                 </div>
-                <div class="col-md-4 d-flex flex-wrap gap-2 align-items-end justify-content-end">
+                <div class="col-md-2">
+                    <label for="partNumberIncludeFilter" class="form-label">PN Includes</label>
+                    <input type="text" id="partNumberIncludeFilter" class="form-control" placeholder="Contains text">
+                </div>
+                <div class="col-md-3 d-flex flex-wrap gap-2 align-items-end justify-content-end">
                     <span class="text-muted" id="selectedPartsCount">0 selected</span>
                     <button class="btn btn-outline-secondary btn-sm" id="selectVisibleBtn" type="button">Select All Visible</button>
                     <button class="btn btn-outline-secondary btn-sm" id="clearSelectionBtn" type="button">Deselect All</button>
                 </div>
             </div>
             <div class="row g-3 align-items-end mt-1">
+                <div class="col-md-3">
+                    <label for="partNumberExcludeFilter" class="form-label">PN Excludes</label>
+                    <input type="text" id="partNumberExcludeFilter" class="form-control form-control-sm" placeholder="Does not include">
+                </div>
+                <div class="col-md-3">
+                    <label for="descriptionIncludeFilter" class="form-label">Description Includes</label>
+                    <input type="text" id="descriptionIncludeFilter" class="form-control form-control-sm" placeholder="Contains text">
+                </div>
+                <div class="col-md-3">
+                    <label for="descriptionExcludeFilter" class="form-label">Description Excludes</label>
+                    <input type="text" id="descriptionExcludeFilter" class="form-control form-control-sm" placeholder="Does not include">
+                </div>
                 <div class="col-md-3">
                     <label for="quotedFilter" class="form-label">Quoted</label>
                     <select id="quotedFilter" class="form-select form-select-sm">
@@ -174,6 +213,8 @@
                         <option value="no">Not quoted</option>
                     </select>
                 </div>
+            </div>
+            <div class="row g-3 align-items-end mt-1">
                 <div class="col-md-3">
                     <label for="costedFilter" class="form-label">Costed</label>
                     <select id="costedFilter" class="form-select form-select-sm">
@@ -181,6 +222,27 @@
                         <option value="yes">Costed</option>
                         <option value="no">Not costed</option>
                     </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="prefixLengthFilter" class="form-label">Prefix Group Length</label>
+                    <input type="number" id="prefixLengthFilter" class="form-control form-control-sm" min="1" max="25" step="1" value="6">
+                </div>
+            </div>
+            <div class="row g-3 mt-1">
+                <div class="col-12">
+                    <div class="border rounded p-3 bg-light-subtle">
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                            <div>
+                                <div class="fw-semibold">Part Number Prefix Groups</div>
+                                <div class="text-muted small" id="prefixGroupSummary">Set a prefix length to see repeated part-number starts.</div>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="small text-muted" id="activePrefixLabel">No prefix group selected</span>
+                                <button class="btn btn-outline-secondary btn-sm" id="clearPrefixFilterBtn" type="button" disabled>Clear Prefix Filter</button>
+                            </div>
+                        </div>
+                        <div class="prefix-group-list d-grid gap-2" id="prefixGroupList"></div>
+                    </div>
                 </div>
             </div>
             <div class="d-flex gap-2 mt-3 flex-wrap">
@@ -376,6 +438,15 @@
     const setCategoryCountEl = document.getElementById('setCategoryCount');
     const quotedFilter = document.getElementById('quotedFilter');
     const costedFilter = document.getElementById('costedFilter');
+    const partNumberIncludeFilter = document.getElementById('partNumberIncludeFilter');
+    const partNumberExcludeFilter = document.getElementById('partNumberExcludeFilter');
+    const descriptionIncludeFilter = document.getElementById('descriptionIncludeFilter');
+    const descriptionExcludeFilter = document.getElementById('descriptionExcludeFilter');
+    const prefixLengthFilter = document.getElementById('prefixLengthFilter');
+    const prefixGroupList = document.getElementById('prefixGroupList');
+    const prefixGroupSummary = document.getElementById('prefixGroupSummary');
+    const activePrefixLabel = document.getElementById('activePrefixLabel');
+    const clearPrefixFilterBtn = document.getElementById('clearPrefixFilterBtn');
     const projectId = {{ project.id }};
 
     const quickCustomerPn = document.getElementById('quickCustomerPn');
@@ -392,9 +463,45 @@
 
     let usageYearCount = Number.parseInt('{{ max_usage_years }}', 10) || 1;
     let currentStatusFilter = 'all';
+    let activePrefixFilter = '';
 
     function getVisibleRows() {
         return rows.filter((row) => !row.classList.contains('d-none'));
+    }
+
+    function getRowFieldValue(row, field) {
+        const cell = row.querySelector(`[data-field="${field}"]`);
+        return ((cell ? cell.textContent : '') || '').trim().toLowerCase();
+    }
+
+    function splitFilterTerms(rawValue) {
+        return String(rawValue || '')
+            .split(/[,\n;]+/)
+            .map((term) => term.trim().toLowerCase())
+            .filter(Boolean);
+    }
+
+    function matchesIncludeExclude(value, includeTerms, excludeTerms) {
+        const source = String(value || '').toLowerCase();
+        const includesOk = includeTerms.every((term) => source.includes(term));
+        const excludesOk = excludeTerms.every((term) => !source.includes(term));
+        return includesOk && excludesOk;
+    }
+
+    function getPrefixLength() {
+        const parsed = Number.parseInt(prefixLengthFilter ? prefixLengthFilter.value : '6', 10);
+        if (!Number.isFinite(parsed)) {
+            return 6;
+        }
+        return Math.min(Math.max(parsed, 1), 25);
+    }
+
+    function getRowPrefixValue(row, prefixLength) {
+        const partNumber = getRowFieldValue(row, 'customer_part_number');
+        if (!partNumber) {
+            return '';
+        }
+        return partNumber.slice(0, prefixLength);
     }
 
     function updateCreateButtonState() {
@@ -413,11 +520,18 @@
         setCategoryCountEl.textContent = `${count} line${count !== 1 ? 's' : ''} will be updated.`;
     }
 
-    function applyFilters() {
+    function getRowsMatchingBaseFilters() {
         const query = (searchInput.value || '').trim().toLowerCase();
         const quotedValue = quotedFilter ? quotedFilter.value : 'all';
         const costedValue = costedFilter ? costedFilter.value : 'all';
-        rows.forEach((row) => {
+        const pnIncludeTerms = splitFilterTerms(partNumberIncludeFilter ? partNumberIncludeFilter.value : '');
+        const pnExcludeTerms = splitFilterTerms(partNumberExcludeFilter ? partNumberExcludeFilter.value : '');
+        const descIncludeTerms = splitFilterTerms(descriptionIncludeFilter ? descriptionIncludeFilter.value : '');
+        const descExcludeTerms = splitFilterTerms(descriptionExcludeFilter ? descriptionExcludeFilter.value : '');
+
+        return rows.filter((row) => {
+            const partNumber = getRowFieldValue(row, 'customer_part_number');
+            const description = getRowFieldValue(row, 'description');
             const matchesQuery = !query || row.dataset.search.includes(query);
             const matchesStatus = currentStatusFilter === 'all' || row.dataset.status === currentStatusFilter;
             const isQuoted = row.dataset.quoted === '1';
@@ -428,9 +542,83 @@
             const matchesCosted = costedValue === 'all'
                 || (costedValue === 'yes' && isCosted)
                 || (costedValue === 'no' && !isCosted);
-            row.classList.toggle('d-none', !matchesQuery || !matchesStatus || !matchesQuoted || !matchesCosted);
+            const matchesPartNumber = matchesIncludeExclude(partNumber, pnIncludeTerms, pnExcludeTerms);
+            const matchesDescription = matchesIncludeExclude(description, descIncludeTerms, descExcludeTerms);
+            return matchesQuery && matchesStatus && matchesQuoted && matchesCosted && matchesPartNumber && matchesDescription;
+        });
+    }
+
+    function renderPrefixGroups() {
+        if (!prefixGroupList || !prefixGroupSummary || !activePrefixLabel) {
+            return;
+        }
+
+        const prefixLength = getPrefixLength();
+        const matchingRows = getRowsMatchingBaseFilters();
+        const groups = new Map();
+
+        matchingRows.forEach((row) => {
+            const prefix = getRowPrefixValue(row, prefixLength);
+            if (!prefix) {
+                return;
+            }
+            groups.set(prefix, (groups.get(prefix) || 0) + 1);
+        });
+
+        const sortedGroups = Array.from(groups.entries())
+            .filter(([, count]) => count > 1)
+            .sort((a, b) => {
+                if (b[1] !== a[1]) {
+                    return b[1] - a[1];
+                }
+                return a[0].localeCompare(b[0]);
+            });
+
+        if (activePrefixFilter && !groups.has(activePrefixFilter)) {
+            activePrefixFilter = '';
+        }
+
+        activePrefixLabel.textContent = activePrefixFilter
+            ? `Filtering prefix: ${activePrefixFilter}`
+            : 'No prefix group selected';
+        clearPrefixFilterBtn.disabled = !activePrefixFilter;
+
+        if (!sortedGroups.length) {
+            prefixGroupSummary.textContent = 'No repeated prefixes match the current filters.';
+            prefixGroupList.innerHTML = '<div class="text-muted small">Try reducing the other filters or changing the prefix length.</div>';
+            return;
+        }
+
+        prefixGroupSummary.textContent = `${sortedGroups.length} prefix group${sortedGroups.length !== 1 ? 's' : ''} across ${matchingRows.length} part${matchingRows.length !== 1 ? 's' : ''} at length ${prefixLength}.`;
+        prefixGroupList.innerHTML = sortedGroups
+            .map(([prefix, count]) => `
+                <button type="button" class="prefix-group-item ${activePrefixFilter === prefix ? 'active' : ''}" data-prefix-group="${prefix}">
+                    <span><code>${prefix}</code></span>
+                    <span class="badge text-bg-secondary">${count}</span>
+                </button>
+            `)
+            .join('');
+
+        prefixGroupList.querySelectorAll('[data-prefix-group]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const nextPrefix = button.dataset.prefixGroup || '';
+                activePrefixFilter = activePrefixFilter === nextPrefix ? '' : nextPrefix;
+                applyFilters();
+            });
+        });
+    }
+
+    function applyFilters() {
+        const prefixLength = getPrefixLength();
+        const baseRows = new Set(getRowsMatchingBaseFilters());
+
+        rows.forEach((row) => {
+            const matchesBase = baseRows.has(row);
+            const matchesPrefix = !activePrefixFilter || getRowPrefixValue(row, prefixLength) === activePrefixFilter;
+            row.classList.toggle('d-none', !matchesBase || !matchesPrefix);
         });
         updateCreateButtonState();
+        renderPrefixGroups();
     }
 
     function updateRowStatus(rowEl, newStatus) {
@@ -713,12 +901,37 @@
         searchInput.addEventListener('input', applyFilters);
     }
 
+    [
+        partNumberIncludeFilter,
+        partNumberExcludeFilter,
+        descriptionIncludeFilter,
+        descriptionExcludeFilter,
+    ].forEach((input) => {
+        if (input) {
+            input.addEventListener('input', applyFilters);
+        }
+    });
+
     if (quotedFilter) {
         quotedFilter.addEventListener('change', applyFilters);
     }
 
     if (costedFilter) {
         costedFilter.addEventListener('change', applyFilters);
+    }
+
+    if (prefixLengthFilter) {
+        prefixLengthFilter.addEventListener('input', () => {
+            activePrefixFilter = '';
+            applyFilters();
+        });
+    }
+
+    if (clearPrefixFilterBtn) {
+        clearPrefixFilterBtn.addEventListener('click', () => {
+            activePrefixFilter = '';
+            applyFilters();
+        });
     }
 
     lineCheckboxes.forEach((checkbox) => {
