@@ -5144,8 +5144,25 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
             fetch='all',
         ) or []
         stock_map = {(row['base_part_number'] or '').upper(): row['stock_level'] for row in stock_rows}
+
+        ils_rows = db_execute(
+            f"""
+            SELECT
+                UPPER(base_part_number) AS part_number,
+                COUNT(DISTINCT COALESCE(NULLIF(TRIM(ils_company_name), ''), CAST(id AS TEXT))) AS ils_hits
+            FROM ils_search_results
+            WHERE UPPER(base_part_number) IN ({placeholders})
+            GROUP BY UPPER(base_part_number)
+            """,
+            tuple(part_numbers),
+            fetch='all',
+        ) or []
+        ils_map = {(row['part_number'] or '').upper(): int(row['ils_hits'] or 0) for row in ils_rows}
+
         for row in report_rows:
-            row['stock_level'] = int(stock_map.get(row['part_number'].upper(), 0) or 0)
+            row_part_number = row['part_number'].upper()
+            row['stock_level'] = int(stock_map.get(row_part_number, 0) or 0)
+            row['ils_hits'] = int(ils_map.get(row_part_number, 0) or 0)
         if exclude_in_stock:
             report_rows = [row for row in report_rows if (row.get('stock_level') or 0) <= 0]
 
@@ -5293,12 +5310,13 @@ def common_parts_report_export():
 
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(['Part Number', 'Average Quantity', 'Stock Level', 'Parts Lists', 'Customers', 'Customer Names'])
+    writer.writerow(['Part Number', 'Average Quantity', 'Stock Level', 'ILS Hits', 'Parts Lists', 'Customers', 'Customer Names'])
     for row in report_rows:
         writer.writerow([
             row['part_number'],
             round(float(row.get('avg_quantity') or 0), 2),
             row['stock_level'],
+            row.get('ils_hits', 0),
             row['parts_list_count'],
             row['customer_count'],
             ', '.join(row['customer_names']),
