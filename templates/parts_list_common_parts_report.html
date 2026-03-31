@@ -16,7 +16,7 @@
     <div class="d-flex align-items-center justify-content-between mb-3">
         <div>
             <h2 class="fw-bold mb-1">Common Parts Report</h2>
-            <p class="text-muted mb-0">Find repeated parts across parts lists and the customers that requested them.</p>
+            <p class="text-muted mb-0">Find repeated parts across parts lists, customers, and projects.</p>
         </div>
         <div class="d-flex gap-2">
             <a id="exportCommonPartsBtn" href="{{ url_for('parts_list.common_parts_report_export') }}" class="btn btn-success">
@@ -74,6 +74,26 @@
                     </select>
                     <small class="text-muted">Limit the report to parts that appear on a selected BOM.</small>
                 </div>
+                <div class="col-md-6">
+                    <label for="projectSearchInput" class="form-label fw-semibold">Project Filter</label>
+                    <input
+                        type="text"
+                        id="projectSearchInput"
+                        class="form-control"
+                        placeholder="Search projects and click to add filter..."
+                        autocomplete="off"
+                    >
+                    <div id="projectSearchResults" class="list-group mt-2" style="max-height: 220px; overflow-y: auto;"></div>
+                    <div id="selectedProjectChips" class="d-flex flex-wrap gap-2 mt-2"></div>
+                    <select id="projectMultiFilter" class="d-none" multiple>
+                        {% for project in projects %}
+                        <option value="{{ project.id }}" {% if project.id in selected_project_ids %}selected{% endif %}>
+                            {{ project.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <small class="text-muted">Select projects to require parts shared across all chosen projects.</small>
+                </div>
                 <div class="col-12">
                     <div class="form-check">
                         <input
@@ -122,6 +142,7 @@
                         {% for row in rows %}
                         <tr
                             data-part="{{ row.part_number|lower }}"
+                            data-base-part-number="{{ row.base_part_number }}"
                             data-customer-ids="{{ row.customer_ids|join(',') }}"
                             data-stock-level="{{ row.stock_level or 0 }}"
                         >
@@ -134,9 +155,10 @@
                             <td>{{ row.customer_names|join(', ') }}</td>
                             <td class="text-center">
                                 <button type="button"
-                                        class="btn btn-sm btn-outline-primary view-offers-btn"
-                                        data-part-number="{{ row.part_number }}">
-                                    <i class="bi bi-clock-history me-1"></i>Latest 10
+                                        class="btn btn-sm btn-link text-muted text-decoration-none p-0 view-offers-btn"
+                                        data-part-number="{{ row.part_number }}"
+                                        data-base-part-number="{{ row.base_part_number }}">
+                                    <i class="bi bi-clock-history me-1"></i>Offers
                                 </button>
                             </td>
                         </tr>
@@ -202,8 +224,11 @@
 
 <script>
 let customerSearchTimeout;
+let projectSearchTimeout;
 const selectedCustomersMap = new Map();
+const selectedProjectsMap = new Map();
 const availableCustomers = {{ customers|tojson }};
+const availableProjects = {{ projects|tojson }};
 let latestOffersModal;
 
 function customerNameById(customerId) {
@@ -217,21 +242,50 @@ function selectedCustomerIds() {
     return Array.from(customerSelect.selectedOptions).map(option => option.value);
 }
 
+function projectNameById(projectId) {
+    const option = document.querySelector(`#projectMultiFilter option[value="${projectId}"]`);
+    return option ? option.textContent.trim() : `Project #${projectId}`;
+}
+
+function selectedProjectIds() {
+    const projectSelect = document.getElementById('projectMultiFilter');
+    if (!projectSelect) return [];
+    return Array.from(projectSelect.selectedOptions).map(option => option.value);
+}
+
+function buildCommonPartsParams() {
+    const params = new URLSearchParams();
+    const partQuery = (document.getElementById('partLiveFilter')?.value || '').trim();
+    if (partQuery) params.set('part_query', partQuery);
+
+    const bomId = document.getElementById('bomFilter')?.value;
+    if (bomId) params.set('bom_id', bomId);
+
+    const excludeInStock = document.getElementById('excludeInStockToggle')?.checked;
+    if (excludeInStock) params.set('exclude_in_stock', '1');
+
+    selectedCustomerIds().forEach(customerId => params.append('customer_ids', customerId));
+    selectedProjectIds().forEach(projectId => params.append('project_ids', projectId));
+
+    return params;
+}
+
 function syncExportUrl() {
     const exportBtn = document.getElementById('exportCommonPartsBtn');
     if (!exportBtn) return;
 
     const baseUrl = "{{ url_for('parts_list.common_parts_report_export') }}";
-    const params = new URLSearchParams();
-    const partQuery = (document.getElementById('partLiveFilter')?.value || '').trim();
-    if (partQuery) params.set('part_query', partQuery);
-    const bomId = document.getElementById('bomFilter')?.value;
-    if (bomId) params.set('bom_id', bomId);
-    const excludeInStock = document.getElementById('excludeInStockToggle')?.checked;
-    if (excludeInStock) params.set('exclude_in_stock', '1');
-
-    selectedCustomerIds().forEach(customerId => params.append('customer_ids', customerId));
+    const params = buildCommonPartsParams();
     exportBtn.href = params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
+}
+
+function syncLoadAllUrl() {
+    const loadAllBtn = document.getElementById('loadAllPartsBtn');
+    if (!loadAllBtn) return;
+
+    const params = buildCommonPartsParams();
+    params.set('show_all', '1');
+    loadAllBtn.href = `${window.location.pathname}?${params.toString()}`;
 }
 
 function renderSelectedCustomerChips() {
@@ -254,6 +308,26 @@ function renderSelectedCustomerChips() {
     });
 }
 
+function renderSelectedProjectChips() {
+    const chipsContainer = document.getElementById('selectedProjectChips');
+    if (!chipsContainer) return;
+
+    chipsContainer.innerHTML = '';
+    const selectedIds = selectedProjectIds();
+
+    selectedIds.forEach(projectId => {
+        const name = selectedProjectsMap.get(projectId) || projectNameById(projectId);
+        selectedProjectsMap.set(projectId, name);
+        const chip = document.createElement('span');
+        chip.className = 'badge bg-info text-dark d-inline-flex align-items-center gap-1';
+        chip.innerHTML = `
+            <span>${name}</span>
+            <button type="button" class="btn-close" aria-label="Remove" data-remove-project-id="${projectId}" style="font-size: 0.5rem;"></button>
+        `;
+        chipsContainer.appendChild(chip);
+    });
+}
+
 function addCustomerToFilter(customerId, customerName) {
     const customerSelect = document.getElementById('customerMultiFilter');
     if (!customerSelect) return;
@@ -267,6 +341,19 @@ function addCustomerToFilter(customerId, customerName) {
     applyCommonPartsFilters();
 }
 
+function addProjectToFilter(projectId, projectName) {
+    const projectSelect = document.getElementById('projectMultiFilter');
+    if (!projectSelect) return;
+
+    const option = projectSelect.querySelector(`option[value="${projectId}"]`);
+    if (!option) return;
+    option.selected = true;
+    selectedProjectsMap.set(String(projectId), projectName || option.textContent.trim());
+
+    renderSelectedProjectChips();
+    reloadCommonPartsReport();
+}
+
 function removeCustomerFromFilter(customerId) {
     const customerSelect = document.getElementById('customerMultiFilter');
     if (!customerSelect) return;
@@ -274,6 +361,15 @@ function removeCustomerFromFilter(customerId) {
     if (option) option.selected = false;
     renderSelectedCustomerChips();
     applyCommonPartsFilters();
+}
+
+function removeProjectFromFilter(projectId) {
+    const projectSelect = document.getElementById('projectMultiFilter');
+    if (!projectSelect) return;
+    const option = projectSelect.querySelector(`option[value="${projectId}"]`);
+    if (option) option.selected = false;
+    renderSelectedProjectChips();
+    reloadCommonPartsReport();
 }
 
 function renderCustomerSearchResults(customers) {
@@ -318,6 +414,57 @@ function searchCustomers(query) {
         .filter(customer => (customer.name || '').toLowerCase().includes(normalizedQuery))
         .slice(0, 12);
     renderCustomerSearchResults(matches);
+}
+
+function renderProjectSearchResults(projects) {
+    const resultsEl = document.getElementById('projectSearchResults');
+    if (!resultsEl) return;
+
+    resultsEl.innerHTML = '';
+    if (!projects || projects.length === 0) {
+        resultsEl.innerHTML = '<div class="list-group-item text-muted">No projects found.</div>';
+        return;
+    }
+
+    projects.forEach(project => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'list-group-item list-group-item-action';
+        const alreadySelected = selectedProjectIds().includes(String(project.id));
+        item.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">${project.name}</span>
+                ${alreadySelected ? '<span class="badge bg-secondary">Selected</span>' : ''}
+            </div>
+        `;
+        item.addEventListener('click', () => {
+            addProjectToFilter(String(project.id), project.name);
+            resultsEl.innerHTML = '';
+            document.getElementById('projectSearchInput').value = '';
+        });
+        resultsEl.appendChild(item);
+    });
+}
+
+function searchProjects(query) {
+    const normalizedQuery = (query || '').trim().toLowerCase();
+    if (!normalizedQuery) {
+        renderProjectSearchResults([]);
+        return;
+    }
+
+    const matches = availableProjects
+        .filter(project => (project.name || '').toLowerCase().includes(normalizedQuery))
+        .slice(0, 12);
+    renderProjectSearchResults(matches);
+}
+
+function reloadCommonPartsReport(extraParams = null) {
+    const params = extraParams || buildCommonPartsParams();
+    const queryString = params.toString();
+    window.location.href = queryString
+        ? `${window.location.pathname}?${queryString}`
+        : window.location.pathname;
 }
 
 function escapeHtml(value) {
@@ -429,7 +576,7 @@ function renderBuyRecommendation(recommendation) {
     box.style.display = 'block';
 }
 
-function showLatestOffers(partNumber) {
+function showLatestOffers(partNumber, basePartNumber) {
     const modalEl = document.getElementById('latestOffersModal');
     const titleEl = document.getElementById('latestOffersPartNumber');
     const loading = document.getElementById('latestOffersLoading');
@@ -452,7 +599,11 @@ function showLatestOffers(partNumber) {
     tbody.innerHTML = '';
     latestOffersModal.show();
 
-    fetch(`/parts_list/parts-lists/common-parts-report/offers?part_number=${encodeURIComponent(partNumber)}`)
+    const params = new URLSearchParams();
+    if (partNumber) params.set('part_number', partNumber);
+    if (basePartNumber) params.set('base_part_number', basePartNumber);
+
+    fetch(`/parts_list/parts-lists/common-parts-report/offers?${params.toString()}`)
         .then(response => response.json())
         .then(data => {
             loading.style.display = 'none';
@@ -505,6 +656,7 @@ function applyCommonPartsFilters() {
     const countEl = document.getElementById('visibleRowCount');
     if (countEl) countEl.textContent = visibleCount;
     syncExportUrl();
+    syncLoadAllUrl();
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -512,15 +664,16 @@ document.addEventListener('DOMContentLoaded', function() {
     const partFilterInput = document.getElementById('partLiveFilter');
     const customerSearchInput = document.getElementById('customerSearchInput');
     const customerFilterSelect = document.getElementById('customerMultiFilter');
+    const projectSearchInput = document.getElementById('projectSearchInput');
+    const projectFilterSelect = document.getElementById('projectMultiFilter');
     const bomFilter = document.getElementById('bomFilter');
     const chipsContainer = document.getElementById('selectedCustomerChips');
+    const projectChipsContainer = document.getElementById('selectedProjectChips');
     const excludeInStockToggle = document.getElementById('excludeInStockToggle');
     const offerButtons = document.querySelectorAll('.view-offers-btn');
 
     if (loadAllBtn) {
-        const params = new URLSearchParams(window.location.search);
-        params.set('show_all', '1');
-        loadAllBtn.href = `${window.location.pathname}?${params.toString()}`;
+        syncLoadAllUrl();
     }
 
     if (partFilterInput) {
@@ -540,18 +693,26 @@ document.addEventListener('DOMContentLoaded', function() {
     if (customerFilterSelect) {
         customerFilterSelect.addEventListener('change', applyCommonPartsFilters);
     }
+    if (projectSearchInput) {
+        projectSearchInput.addEventListener('input', function(event) {
+            const query = (event.target.value || '').trim();
+            clearTimeout(projectSearchTimeout);
+            if (query.length < 2) {
+                document.getElementById('projectSearchResults').innerHTML = '';
+                return;
+            }
+            projectSearchTimeout = setTimeout(() => searchProjects(query), 220);
+        });
+    }
+    if (projectFilterSelect) {
+        projectFilterSelect.addEventListener('change', function() {
+            renderSelectedProjectChips();
+            reloadCommonPartsReport();
+        });
+    }
     if (bomFilter) {
         bomFilter.addEventListener('change', function() {
-            const params = new URLSearchParams(window.location.search);
-            if (bomFilter.value) {
-                params.set('bom_id', bomFilter.value);
-            } else {
-                params.delete('bom_id');
-            }
-            const queryString = params.toString();
-            window.location.href = queryString
-                ? `${window.location.pathname}?${queryString}`
-                : window.location.pathname;
+            reloadCommonPartsReport();
         });
     }
     if (excludeInStockToggle) {
@@ -564,13 +725,21 @@ document.addEventListener('DOMContentLoaded', function() {
             removeCustomerFromFilter(removeBtn.dataset.removeCustomerId);
         });
     }
+    if (projectChipsContainer) {
+        projectChipsContainer.addEventListener('click', function(event) {
+            const removeBtn = event.target.closest('[data-remove-project-id]');
+            if (!removeBtn) return;
+            removeProjectFromFilter(removeBtn.dataset.removeProjectId);
+        });
+    }
     offerButtons.forEach(button => {
         button.addEventListener('click', function() {
-            showLatestOffers(button.dataset.partNumber || '');
+            showLatestOffers(button.dataset.partNumber || '', button.dataset.basePartNumber || '');
         });
     });
 
     renderSelectedCustomerChips();
+    renderSelectedProjectChips();
     applyCommonPartsFilters();
 });
 </script>

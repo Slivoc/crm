@@ -5030,22 +5030,34 @@ def _build_common_parts_buy_recommendation(part_number, offers):
     }
 
 
-def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_in_stock=False, bom_id=None):
+def _build_common_parts_report_rows(
+    selected_customer_ids,
+    part_query,
+    exclude_in_stock=False,
+    bom_id=None,
+    selected_project_ids=None,
+):
     customer_filters, child_to_parent = _get_common_parts_report_customer_filters()
     parent_customer_lookup = {customer['id']: customer['name'] for customer in customer_filters}
     normalized_customer_ids = _normalize_customer_filter_ids(selected_customer_ids, child_to_parent)
+    normalized_project_ids = sorted({int(project_id) for project_id in (selected_project_ids or []) if project_id})
 
     sql = """
         SELECT
             pl.id AS parts_list_id,
             pl.customer_id,
             c.name AS customer_name,
+            pl.project_id,
+            p.name AS project_name,
+            pn.part_number,
             pll.base_part_number,
             pll.customer_part_number,
             pll.quantity
         FROM parts_list_lines pll
         JOIN parts_lists pl ON pl.id = pll.parts_list_id
         JOIN customers c ON c.id = pl.customer_id
+        LEFT JOIN projects p ON p.id = pl.project_id
+        LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
         WHERE (
             NULLIF(TRIM(pll.base_part_number), '') IS NOT NULL
             OR NULLIF(TRIM(pll.customer_part_number), '') IS NOT NULL
@@ -5056,12 +5068,13 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
     if part_query:
         sql += """
             AND (
-                LOWER(COALESCE(pll.base_part_number, '')) LIKE ?
+                LOWER(COALESCE(pn.part_number, '')) LIKE ?
+                OR LOWER(COALESCE(pll.base_part_number, '')) LIKE ?
                 OR LOWER(COALESCE(pll.customer_part_number, '')) LIKE ?
             )
         """
         like_term = f"%{part_query}%"
-        params.extend([like_term, like_term])
+        params.extend([like_term, like_term, like_term])
 
     if bom_id:
         sql += """
@@ -5074,21 +5087,31 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
         """
         params.append(bom_id)
 
+    if normalized_project_ids:
+        project_placeholders = ','.join(['?'] * len(normalized_project_ids))
+        sql += f"""
+            AND pl.project_id IN ({project_placeholders})
+        """
+        params.extend(normalized_project_ids)
+
     rows = db_execute(sql, tuple(params), fetch='all') or []
 
     grouped_parts = {}
     for row in rows:
+        part_number = (row['part_number'] or '').strip()
         base_part = (row['base_part_number'] or '').strip()
         customer_part = (row['customer_part_number'] or '').strip()
-        part_value = base_part or customer_part
-        if not part_value:
+        display_part = part_number or customer_part or base_part
+        group_key = (base_part or part_number or customer_part).upper()
+        if not display_part or not group_key:
             continue
 
-        part_key = part_value.upper()
-        grouped = grouped_parts.setdefault(part_key, {
-            'part_number': part_value,
+        grouped = grouped_parts.setdefault(group_key, {
+            'base_part_number': base_part or part_number or customer_part,
+            'part_number': display_part,
             'parts_list_ids': set(),
             'customers': set(),
+            'projects': set(),
             'quantity_total': 0,
             'quantity_count': 0,
         })
@@ -5096,6 +5119,8 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
         consolidated_customer_name = parent_customer_lookup.get(consolidated_customer_id, row['customer_name'])
         grouped['parts_list_ids'].add(row['parts_list_id'])
         grouped['customers'].add((consolidated_customer_id, consolidated_customer_name))
+        if row['project_id']:
+            grouped['projects'].add((row['project_id'], row['project_name'] or f"Project #{row['project_id']}"))
         quantity_value = row['quantity']
         if quantity_value is not None:
             try:
@@ -5105,6 +5130,7 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
                 pass
 
     selected_customer_ids_set = set(normalized_customer_ids or [])
+    selected_project_ids_set = set(normalized_project_ids)
 
     report_rows = []
     for grouped in grouped_parts.values():
@@ -5112,16 +5138,25 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
         if selected_customer_ids_set and not selected_customer_ids_set.issubset(grouped_customer_ids):
             continue
 
+        grouped_project_ids = {project_id for project_id, _ in grouped['projects']}
+        if selected_project_ids_set and not selected_project_ids_set.issubset(grouped_project_ids):
+            continue
+
         if len(grouped['parts_list_ids']) < 2:
             continue
 
         sorted_customers = sorted(grouped['customers'], key=lambda item: (item[1] or '').lower())
+        sorted_projects = sorted(grouped['projects'], key=lambda item: (item[1] or '').lower())
         report_rows.append({
+            'base_part_number': grouped['base_part_number'],
             'part_number': grouped['part_number'],
             'parts_list_count': len(grouped['parts_list_ids']),
             'customer_count': len(sorted_customers),
             'customer_ids': [customer_id for customer_id, _ in sorted_customers],
             'customer_names': [customer_name for _, customer_name in sorted_customers],
+            'project_count': len(sorted_projects),
+            'project_ids': [project_id for project_id, _ in sorted_projects],
+            'project_names': [project_name for _, project_name in sorted_projects],
             'avg_quantity': (
                 grouped['quantity_total'] / grouped['quantity_count']
                 if grouped['quantity_count'] > 0 else 0
@@ -5129,8 +5164,8 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
         })
 
     if report_rows:
-        part_numbers = [row['part_number'] for row in report_rows]
-        placeholders = ','.join(['?'] * len(part_numbers))
+        base_part_numbers = [row['base_part_number'] for row in report_rows]
+        placeholders = ','.join(['?'] * len(base_part_numbers))
         stock_rows = db_execute(
             f"""
             SELECT base_part_number, COALESCE(SUM(available_quantity), 0) AS stock_level
@@ -5140,7 +5175,7 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
               AND base_part_number IN ({placeholders})
             GROUP BY base_part_number
             """,
-            tuple(part_numbers),
+            tuple(base_part_numbers),
             fetch='all',
         ) or []
         stock_map = {(row['base_part_number'] or '').upper(): row['stock_level'] for row in stock_rows}
@@ -5154,13 +5189,13 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
             WHERE UPPER(base_part_number) IN ({placeholders})
             GROUP BY UPPER(base_part_number)
             """,
-            tuple(part_numbers),
+            tuple(base_part_numbers),
             fetch='all',
         ) or []
         ils_map = {(row['part_number'] or '').upper(): int(row['ils_hits'] or 0) for row in ils_rows}
 
         for row in report_rows:
-            row_part_number = row['part_number'].upper()
+            row_part_number = (row['base_part_number'] or '').upper()
             row['stock_level'] = int(stock_map.get(row_part_number, 0) or 0)
             row['ils_hits'] = int(ils_map.get(row_part_number, 0) or 0)
         if exclude_in_stock:
@@ -5181,6 +5216,7 @@ def _build_common_parts_report_rows(selected_customer_ids, part_query, exclude_i
 def common_parts_report():
     """Show parts that appear across multiple parts lists with customer visibility."""
     raw_selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
+    selected_project_ids = [pid for pid in request.args.getlist('project_ids', type=int) if pid]
     selected_bom_id = request.args.get('bom_id', type=int)
     selected_part_query = (request.args.get('part_query') or '').strip()
     exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
@@ -5198,12 +5234,22 @@ def common_parts_report():
         """,
         fetch='all',
     ) or []
+    projects = db_execute(
+        """
+        SELECT DISTINCT p.id, p.name
+        FROM projects p
+        JOIN parts_lists pl ON pl.project_id = p.id
+        ORDER BY p.name
+        """,
+        fetch='all',
+    ) or []
 
     report_rows = _build_common_parts_report_rows(
         selected_customer_ids,
         part_query,
         exclude_in_stock=exclude_in_stock,
         bom_id=selected_bom_id,
+        selected_project_ids=selected_project_ids,
     )
     total_rows = len(report_rows)
     is_limited = not show_all and total_rows > initial_limit
@@ -5216,9 +5262,11 @@ def common_parts_report():
         initial_limit=initial_limit,
         is_limited=is_limited,
         customers=customers,
+        projects=[dict(project) for project in projects],
         boms=[dict(bom) for bom in boms],
         selected_bom_id=selected_bom_id,
         selected_customer_ids=selected_customer_ids,
+        selected_project_ids=selected_project_ids,
         selected_part_query=selected_part_query,
         exclude_in_stock=exclude_in_stock,
         show_all=show_all,
@@ -5228,8 +5276,10 @@ def common_parts_report():
 @parts_list_bp.route('/parts-lists/common-parts-report/offers', methods=['GET'])
 def common_parts_report_offers():
     """Return the latest supplier offers for a reported part number."""
+    base_part_number = (request.args.get('base_part_number') or '').strip()
     part_number = (request.args.get('part_number') or '').strip()
-    if not part_number:
+    lookup_part_number = base_part_number or part_number
+    if not lookup_part_number:
         return jsonify(success=False, message='Part number is required'), 400
 
     try:
@@ -5269,13 +5319,13 @@ def common_parts_report_offers():
             JOIN customers customer ON customer.id = pl.customer_id
             LEFT JOIN customer_associations ca ON ca.associated_customer_id = customer.id
             LEFT JOIN customers parent_customer ON parent_customer.id = ca.main_customer_id
-            WHERE UPPER(COALESCE(NULLIF(TRIM(pll.base_part_number), ''), NULLIF(TRIM(pll.customer_part_number), ''))) = ?
+            WHERE UPPER(pll.base_part_number) = ?
             ORDER BY
                 COALESCE(sq.quote_date, sq.date_created) DESC,
                 sql.id DESC
             LIMIT 10
             """,
-            (part_number.upper(),),
+            (lookup_part_number.upper(),),
             fetch='all',
         ) or []
 
@@ -5285,7 +5335,7 @@ def common_parts_report_offers():
             offer['costing_url'] = url_for('parts_list.parts_list_costing', list_id=offer['parts_list_id'])
             offer_rows.append(offer)
 
-        recommendation = _build_common_parts_buy_recommendation(part_number, offer_rows)
+        recommendation = _build_common_parts_buy_recommendation(lookup_part_number, offer_rows)
 
         return jsonify(success=True, offers=offer_rows, recommendation=recommendation)
     except Exception as e:
@@ -5296,6 +5346,7 @@ def common_parts_report_offers():
 @parts_list_bp.route('/parts-lists/common-parts-report/export', methods=['GET'])
 def common_parts_report_export():
     raw_selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
+    selected_project_ids = [pid for pid in request.args.getlist('project_ids', type=int) if pid]
     selected_bom_id = request.args.get('bom_id', type=int)
     part_query = (request.args.get('part_query') or '').strip().lower()
     exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
@@ -5306,11 +5357,12 @@ def common_parts_report_export():
         part_query,
         exclude_in_stock=exclude_in_stock,
         bom_id=selected_bom_id,
+        selected_project_ids=selected_project_ids,
     )
 
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(['Part Number', 'Average Quantity', 'Stock Level', 'ILS Hits', 'Parts Lists', 'Customers', 'Customer Names'])
+    writer.writerow(['Part Number', 'Average Quantity', 'Stock Level', 'ILS Hits', 'Parts Lists', 'Customers', 'Customer Names', 'Projects', 'Project Names'])
     for row in report_rows:
         writer.writerow([
             row['part_number'],
@@ -5320,6 +5372,8 @@ def common_parts_report_export():
             row['parts_list_count'],
             row['customer_count'],
             ', '.join(row['customer_names']),
+            row.get('project_count', 0),
+            ', '.join(row.get('project_names') or []),
         ])
 
     csv_data = output.getvalue()
