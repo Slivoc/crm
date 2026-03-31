@@ -5205,6 +5205,51 @@ def _build_common_parts_report_rows(
     return report_rows
 
 
+def _get_common_parts_project_totals(selected_project_ids):
+    normalized_project_ids = sorted({int(project_id) for project_id in (selected_project_ids or []) if project_id})
+    if not normalized_project_ids:
+        return {}
+
+    placeholders = ','.join(['?'] * len(normalized_project_ids))
+    rows = db_execute(
+        f"""
+        SELECT
+            ppl.project_id,
+            ppl.customer_part_number,
+            ppl.total_quantity,
+            pll.base_part_number AS linked_base_part_number
+        FROM project_parts_list_lines ppl
+        LEFT JOIN parts_list_lines pll ON pll.id = ppl.parts_list_line_id
+        WHERE ppl.project_id IN ({placeholders})
+        """,
+        tuple(normalized_project_ids),
+        fetch='all',
+    ) or []
+
+    totals_by_project = {project_id: {} for project_id in normalized_project_ids}
+    for row in rows:
+        project_id = row.get('project_id')
+        if not project_id:
+            continue
+        base_part_number = (row.get('linked_base_part_number') or '').strip()
+        if not base_part_number:
+            customer_part_number = (row.get('customer_part_number') or '').strip()
+            base_part_number = create_base_part_number(customer_part_number) if customer_part_number else ''
+        if not base_part_number:
+            continue
+
+        total_quantity = row.get('total_quantity')
+        try:
+            numeric_quantity = float(total_quantity)
+        except (TypeError, ValueError):
+            continue
+
+        project_totals = totals_by_project.setdefault(project_id, {})
+        project_totals[base_part_number.upper()] = project_totals.get(base_part_number.upper(), 0) + numeric_quantity
+
+    return totals_by_project
+
+
 @parts_list_bp.route('/parts-lists/common-parts-report', methods=['GET'])
 def common_parts_report():
     """Show parts that appear across multiple parts lists with customer visibility."""
@@ -5249,6 +5294,13 @@ def common_parts_report():
         bom_id=selected_bom_id,
         selected_project_ids=selected_project_ids,
     )
+    project_totals_by_project = _get_common_parts_project_totals(selected_project_ids)
+    for row in report_rows:
+        base_key = (row.get('base_part_number') or '').upper()
+        row['project_quantities'] = {
+            project_id: project_totals_by_project.get(project_id, {}).get(base_key)
+            for project_id in selected_project_ids
+        }
     total_rows = len(report_rows)
     is_limited = not show_all and total_rows > initial_limit
     displayed_rows = report_rows[:initial_limit] if is_limited else report_rows

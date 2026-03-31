@@ -133,6 +133,9 @@
                             <th class="text-center">Stock Level</th>
                             <th class="text-center">ILS Hits</th>
                             <th class="text-center">Parts Lists</th>
+                            {% for project in projects if project.id in selected_project_ids %}
+                            <th class="text-center">{{ project.name }}<br><small class="text-muted">ID {{ project.id }} Qty</small></th>
+                            {% endfor %}
                             <th class="text-center">Customers</th>
                             <th>Customer Names</th>
                             <th class="text-center">Offers</th>
@@ -151,6 +154,20 @@
                             <td class="text-center">{{ row.stock_level or 0 }}</td>
                             <td class="text-center">{{ row.ils_hits or 0 }}</td>
                             <td class="text-center">{{ row.parts_list_count }}</td>
+                            {% for project in projects if project.id in selected_project_ids %}
+                            {% set project_qty = row.project_quantities.get(project.id) %}
+                            <td class="text-center">
+                                {% if project_qty is not none %}
+                                    {% if project_qty == (project_qty|int) %}
+                                        {{ project_qty|int }}
+                                    {% else %}
+                                        {{ "%.2f"|format(project_qty) }}
+                                    {% endif %}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            {% endfor %}
                             <td class="text-center">{{ row.customer_count }}</td>
                             <td>{{ row.customer_names|join(', ') }}</td>
                             <td class="text-center">
