@@ -5087,13 +5087,6 @@ def _build_common_parts_report_rows(
         """
         params.append(bom_id)
 
-    if normalized_project_ids:
-        project_placeholders = ','.join(['?'] * len(normalized_project_ids))
-        sql += f"""
-            AND pl.project_id IN ({project_placeholders})
-        """
-        params.extend(normalized_project_ids)
-
     rows = db_execute(sql, tuple(params), fetch='all') or []
 
     grouped_parts = {}
@@ -5234,15 +5227,20 @@ def common_parts_report():
         """,
         fetch='all',
     ) or []
-    projects = db_execute(
+    project_rows = db_execute(
         """
         SELECT DISTINCT p.id, p.name
         FROM projects p
         JOIN parts_lists pl ON pl.project_id = p.id
-        ORDER BY p.name
+        ORDER BY p.name, p.id DESC
         """,
         fetch='all',
     ) or []
+    projects = []
+    for row in project_rows:
+        project = dict(row)
+        project['display_name'] = f"{project.get('name') or f'Project #{project.get('id')}'} (ID {project.get('id')})"
+        projects.append(project)
 
     report_rows = _build_common_parts_report_rows(
         selected_customer_ids,
@@ -5262,7 +5260,7 @@ def common_parts_report():
         initial_limit=initial_limit,
         is_limited=is_limited,
         customers=customers,
-        projects=[dict(project) for project in projects],
+        projects=projects,
         boms=[dict(bom) for bom in boms],
         selected_bom_id=selected_bom_id,
         selected_customer_ids=selected_customer_ids,

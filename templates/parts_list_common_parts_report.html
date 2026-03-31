@@ -88,11 +88,11 @@
                     <select id="projectMultiFilter" class="d-none" multiple>
                         {% for project in projects %}
                         <option value="{{ project.id }}" {% if project.id in selected_project_ids %}selected{% endif %}>
-                            {{ project.name }}
+                            {{ project.display_name }}
                         </option>
                         {% endfor %}
                     </select>
-                    <small class="text-muted">Select projects to require parts shared across all chosen projects.</small>
+                    <small class="text-muted">Select multiple projects. Labels include project IDs so duplicate names are distinguishable.</small>
                 </div>
                 <div class="col-12">
                     <div class="form-check">
@@ -433,12 +433,12 @@ function renderProjectSearchResults(projects) {
         const alreadySelected = selectedProjectIds().includes(String(project.id));
         item.innerHTML = `
             <div class="d-flex justify-content-between align-items-center">
-                <span class="fw-semibold">${project.name}</span>
+                <span class="fw-semibold">${project.display_name || `${project.name} (ID ${project.id})`}</span>
                 ${alreadySelected ? '<span class="badge bg-secondary">Selected</span>' : ''}
             </div>
         `;
         item.addEventListener('click', () => {
-            addProjectToFilter(String(project.id), project.name);
+            addProjectToFilter(String(project.id), project.display_name || `${project.name} (ID ${project.id})`);
             resultsEl.innerHTML = '';
             document.getElementById('projectSearchInput').value = '';
         });
