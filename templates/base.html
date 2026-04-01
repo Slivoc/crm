@@ -1184,9 +1184,43 @@ input:-webkit-autofill {
                     {% for shortcut in shortcuts %}
     <a href="{{ shortcut.link }}" class="btn btn-{{ shortcut.class }}">{{ shortcut.label }}</a>
 {% endfor %}
-                                            <a href="{{ url_for('parts_list.parts_list') }}" class="btn btn-primary">
-        <i class="bi bi-list"></i>
-    </a>
+                    <div class="btn-group">
+                        <a href="{{ url_for('parts_list.parts_list') }}" class="btn btn-primary" title="Parts Lists">
+                            <i class="bi bi-list"></i>
+                        </a>
+                        <button type="button"
+                                class="btn btn-primary dropdown-toggle dropdown-toggle-split"
+                                data-bs-toggle="dropdown"
+                                aria-expanded="false"
+                                title="Pinned parts lists">
+                            <span class="visually-hidden">Pinned parts lists</span>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            {% if pinned_parts_lists %}
+                                {% for customer_group in pinned_parts_lists|groupby('customer_name') %}
+                                    <li><h6 class="dropdown-header">{{ customer_group.grouper }}</h6></li>
+                                    {% for pinned_list in customer_group.list %}
+                                        <li>
+                                            <a class="dropdown-item d-flex align-items-center justify-content-between"
+                                               href="{{ url_for('parts_list.view_parts_list', list_id=pinned_list.id) }}">
+                                                <span class="text-truncate me-2" style="max-width: 240px;">
+                                                    {{ pinned_list.name }}
+                                                </span>
+                                                <small class="text-muted">#{{ pinned_list.id }}</small>
+                                            </a>
+                                        </li>
+                                    {% endfor %}
+                                    {% if not loop.last %}
+                                        <li><hr class="dropdown-divider"></li>
+                                    {% endif %}
+                                {% endfor %}
+                            {% else %}
+                                <li>
+                                    <span class="dropdown-item-text text-muted">No pinned lists yet</span>
+                                </li>
+                            {% endif %}
+                        </ul>
+                    </div>
                 </div>
 
             </div>

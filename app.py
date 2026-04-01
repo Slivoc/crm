@@ -312,6 +312,26 @@ def inject_auth_status():
 def inject_salespeople():
     return dict(salespeople=g.salespeople)
 
+@app.context_processor
+def inject_pinned_parts_lists():
+    if _is_static_request() or not current_user.is_authenticated:
+        return {'pinned_parts_lists': []}
+
+    rows = db_execute(
+        """
+        SELECT pl.id,
+               pl.name,
+               COALESCE(c.name, 'Unassigned Customer') AS customer_name
+        FROM parts_lists pl
+        LEFT JOIN customers c ON c.id = pl.customer_id
+        WHERE COALESCE(pl.is_pinned, FALSE) = TRUE
+        ORDER BY COALESCE(c.name, 'Unassigned Customer') ASC, pl.date_modified DESC, pl.id DESC
+        LIMIT 24
+        """,
+        fetch='all',
+    ) or []
+    return {'pinned_parts_lists': [dict(row) for row in rows]}
+
 # Define routes
 @app.route('/')
 def index():
