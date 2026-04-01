@@ -369,6 +369,7 @@ def _fetch_project_parts_lists_summary(project_id, limit=None):
         SELECT
             pl.id,
             pl.name,
+            pl.notes,
             pl.date_created,
             pl.date_modified,
             pl.status_id,
@@ -396,6 +397,38 @@ def _fetch_project_parts_lists_summary(project_id, limit=None):
         params.append(limit)
     rows = db_execute(sql, params, fetch='all') or []
     return [dict(row) for row in rows]
+
+
+@projects_bp.route('/<int:project_id>/parts-lists/<int:list_id>/comments', methods=['POST'])
+def project_parts_list_update_comments(project_id, list_id):
+    payload = request.get_json(force=True) or {}
+    notes = payload.get('notes')
+
+    if notes is not None and not isinstance(notes, str):
+        return jsonify(success=False, message='Comments must be a string'), 400
+
+    exists = db_execute(
+        """
+        SELECT 1
+        FROM parts_lists
+        WHERE id = ? AND project_id = ?
+        """,
+        (list_id, project_id),
+        fetch='one',
+    )
+    if not exists:
+        return jsonify(success=False, message='Parts list not found for project'), 404
+
+    db_execute(
+        """
+        UPDATE parts_lists
+        SET notes = ?, date_modified = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (notes, list_id),
+        commit=True,
+    )
+    return jsonify(success=True)
 
 @projects_bp.route('/new', methods=['POST'])
 def create_project():
