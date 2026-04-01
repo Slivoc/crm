@@ -40,6 +40,7 @@
                                 <th class="text-center">Quoted</th>
                                 <th class="text-center">Requested</th>
                                 <th class="text-center">Supplier Offers</th>
+                                <th style="min-width: 280px;">Comments</th>
                                 <th>Created</th>
                                 <th>Modified</th>
                                 <th class="text-end">Open</th>
@@ -67,6 +68,17 @@
                                     <td class="text-center supplier-offers-cell" data-parts-list-id="{{ parts_list.id }}">
                                         <span class="spinner-border spinner-border-sm text-muted" role="status"></span>
                                     </td>
+                                    <td>
+                                        <div class="d-flex align-items-start gap-2">
+                                            <textarea
+                                                class="form-control form-control-sm parts-list-comments-input"
+                                                data-parts-list-id="{{ parts_list.id }}"
+                                                rows="2"
+                                                placeholder="Add comments..."
+                                            >{{ parts_list.notes or '' }}</textarea>
+                                            <span class="small text-muted mt-1 comments-save-status" data-parts-list-id="{{ parts_list.id }}"></span>
+                                        </div>
+                                    </td>
                                     <td>{{ parts_list.date_created.strftime('%Y-%m-%d') if parts_list.date_created else '-' }}</td>
                                     <td>{{ parts_list.date_modified.strftime('%Y-%m-%d') if parts_list.date_modified else '-' }}</td>
                                     <td class="text-end">
@@ -89,7 +101,58 @@
 document.addEventListener('DOMContentLoaded', function() {
     const offerCells = document.querySelectorAll('.supplier-offers-cell');
     const requestedCells = document.querySelectorAll('.requested-cell');
+    const commentInputs = document.querySelectorAll('.parts-list-comments-input');
+    const saveStatusByListId = new Map();
     if (offerCells.length === 0) return;
+
+    document.querySelectorAll('.comments-save-status').forEach(el => {
+        saveStatusByListId.set(el.dataset.partsListId, el);
+    });
+
+    function setCommentStatus(listId, message, isError = false) {
+        const statusEl = saveStatusByListId.get(String(listId));
+        if (!statusEl) return;
+        statusEl.textContent = message;
+        statusEl.classList.toggle('text-danger', isError);
+        statusEl.classList.toggle('text-muted', !isError);
+    }
+
+    function saveComments(inputEl) {
+        const listId = inputEl.dataset.partsListId;
+        const value = inputEl.value;
+
+        if (value === inputEl.dataset.lastSavedValue) {
+            return;
+        }
+
+        setCommentStatus(listId, 'Saving...');
+        fetch(`{{ url_for("projects.project_parts_list_update_comments", project_id=project.id, list_id=0) }}`.replace('/0/comments', `/${listId}/comments`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notes: value })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) throw new Error(data.message || 'Unable to save comments');
+                inputEl.dataset.lastSavedValue = value;
+                setCommentStatus(listId, 'Saved');
+                setTimeout(() => setCommentStatus(listId, ''), 1000);
+            })
+            .catch(() => {
+                setCommentStatus(listId, 'Save failed', true);
+            });
+    }
+
+    commentInputs.forEach(input => {
+        input.dataset.lastSavedValue = input.value;
+        input.addEventListener('blur', () => saveComments(input));
+        input.addEventListener('keydown', event => {
+            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                event.preventDefault();
+                input.blur();
+            }
+        });
+    });
 
     fetch('{{ url_for("projects.project_parts_lists_supplier_quote_counts", project_id=project.id) }}')
         .then(response => response.json())
