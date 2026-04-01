@@ -391,6 +391,10 @@
                                 {% endif %}
                             </td>
                             <td class="text-end">
+                                <i class="bi {% if list.is_pinned %}bi-pin-angle-fill text-warning{% else %}bi-pin-angle text-muted{% endif %} me-2"
+                                   style="cursor: pointer;"
+                                   onclick="event.stopPropagation(); togglePinned({{ list.id }}, this)"
+                                   title="{% if list.is_pinned %}Unpin{% else %}Pin{% endif %}"></i>
                                 <i class="bi bi-x-lg text-danger"
                                    style="cursor: pointer;"
                                    onclick="event.stopPropagation(); deleteList({{ list.id }}, '{{ list.name|replace("'", "\\'") }}')"
@@ -720,6 +724,30 @@ function updateProject(listId, selectElement) {
         alert('Error updating project');
         selectElement.disabled = false;
         selectElement.value = originalValue;
+    });
+}
+
+function togglePinned(listId, iconElement) {
+    const currentlyPinned = iconElement.classList.contains('bi-pin-angle-fill');
+    iconElement.style.pointerEvents = 'none';
+
+    fetch("{{ url_for('parts_list.toggle_parts_list_pinned', list_id=0) }}".replace('/0/', `/${listId}/`), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ is_pinned: !currentlyPinned })
+    })
+    .then(response => response.json())
+    .then(data => {
+        iconElement.style.pointerEvents = '';
+        if (!data.success) {
+            throw new Error(data.message || 'Unable to update pinned state');
+        }
+        window.location.reload();
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        iconElement.style.pointerEvents = '';
+        alert(error.message || 'Error updating pinned state');
     });
 }
 
