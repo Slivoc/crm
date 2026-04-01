@@ -523,7 +523,16 @@ def analyze_quote():
                             'estimated_lead_days': 0,
                             'debug_info': {
                                 'winning_source': 'pricing_agreement',
-                                'source_details': {'type': 'Contract', 'price': agreement_price}
+                                'source_details': {
+                                    'type': 'Contract',
+                                    'price': agreement_price,
+                                    'cost': agreement_price,
+                                    'cost_currency': base_currency_code,
+                                    'cost_in_base': agreement_price,
+                                    'margin_pct': 0,
+                                    'target_price': agreement_price,
+                                    'rounded_price': agreement_price,
+                                }
                             }
                         }
                         if show_quantities:
@@ -591,6 +600,7 @@ def analyze_quote():
                             sql.unit_price as supplier_cost,
                             COALESCE(sq.quote_date, sq.date_created) as effective_date,
                             sq.currency_id,
+                            c.currency_code,
                             c.{rate_column} as currency_rate,
                             s.name as supplier_name,
                             sq.quote_reference
@@ -622,6 +632,8 @@ def analyze_quote():
                         pl_supplier_details = {
                             'supplier': pl_supplier_quote['supplier_name'],
                             'cost': _to_float(pl_supplier_quote['supplier_cost']),
+                            'cost_currency': pl_supplier_quote['currency_code'] or base_currency_code,
+                            'cost_in_base': cost_base,
                             'reference': pl_supplier_quote['quote_reference'],
                             'date': pl_supplier_quote_date,
                             'margin_pct': vq_margin,
@@ -652,6 +664,8 @@ def analyze_quote():
                             vq_details = {
                                 'supplier': vq_data['supplier_name'],
                                 'cost': vendor_price,
+                                'cost_currency': base_currency_code,
+                                'cost_in_base': vendor_price,
                                 'reference': vq_data['vq_number'],
                                 'margin_pct': vq_margin,
                                 'target_price': vq_margin_debug['target'] if vq_margin_debug else None,
@@ -673,6 +687,8 @@ def analyze_quote():
                             po_details = {
                                 'supplier': po_data['supplier_name'],
                                 'cost': po_price_base,
+                                'cost_currency': base_currency_code,
+                                'cost_in_base': po_price_base,
                                 'reference': po_data['purchase_order_ref'],
                                 'margin_pct': po_margin,
                                 'target_price': po_margin_debug['target'] if po_margin_debug else None,
@@ -723,6 +739,8 @@ def analyze_quote():
                             'winning_source': 'stock',
                             'source_details': {
                                 'cost': avg_cost_value,
+                                'cost_currency': base_currency_code,
+                                'cost_in_base': avg_cost_value,
                                 'type': 'Inventory',
                                 'margin_pct': stock_margin,
                                 'target_price': stock_margin_debug['target'] if stock_margin_debug else None,
@@ -747,6 +765,9 @@ def analyze_quote():
                                     'date': cq_price['quote_date'],
                                     'priority': 1,
                                     'details': {
+                                        'cost': _to_float(cq_price['most_recent_price']),
+                                        'cost_currency': cq_price['currency_code'] or base_currency_code,
+                                        'cost_in_base': round(cq_price_base, 2),
                                         'reference': cq_price['cq_number'],
                                         'type': 'Historic Quote',
                                         'date': cq_price['quote_date'].strftime('%Y-%m-%d') if cq_price['quote_date'] else None,
@@ -767,7 +788,13 @@ def analyze_quote():
                                     'currency': base_currency_code,
                                     'date': sales_price['sale_date'],
                                     'priority': 1,
-                                    'details': {'reference': sales_price['sales_order_ref'], 'type': 'Historic Sale'}
+                                    'details': {
+                                        'cost': _to_float(sales_price['most_recent_price']),
+                                        'cost_currency': sales_price['currency_code'] or base_currency_code,
+                                        'cost_in_base': round(sales_price_base, 2),
+                                        'reference': sales_price['sales_order_ref'],
+                                        'type': 'Historic Sale',
+                                    }
                                 })
                         if pl_customer_quote and pl_customer_quote['most_recent_price']:
                             pl_customer_quote_price = _to_float(pl_customer_quote['most_recent_price'])
@@ -778,7 +805,12 @@ def analyze_quote():
                                     'currency': base_currency_code,
                                     'date': pl_customer_quote['quote_date'],
                                     'priority': 1,
-                                    'details': {'type': 'Previous Quote Request'}
+                                    'details': {
+                                        'type': 'Previous Quote Request',
+                                        'cost': round(pl_customer_quote_price, 2),
+                                        'cost_currency': base_currency_code,
+                                        'cost_in_base': round(pl_customer_quote_price, 2),
+                                    }
                                 })
                         if pl_supplier_quote_price:
                             price_candidates.append({

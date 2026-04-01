@@ -192,6 +192,75 @@ def _coerce_optional_text(value):
     return text if text else None
 
 
+def _format_debug_number(value):
+    number = _coerce_numeric_number(value)
+    if number is None:
+        return ''
+    return round(number, 4)
+
+
+def _build_offer_debug_row(part, offer_row, default_quantity):
+    pricing_debug = part.get('pricing_debug') or {}
+    source_details = pricing_debug.get('source_details') or {}
+    winning_source = pricing_debug.get('winning_source') or part.get('price_source') or ''
+    estimate_currency = part.get('source_currency') or 'GBP'
+
+    raw_source_cost = source_details.get('cost')
+    raw_source_currency = source_details.get('cost_currency') or estimate_currency
+    source_cost_in_base = source_details.get('cost_in_base')
+    margin_pct = source_details.get('margin_pct')
+    target_price = source_details.get('target_price')
+    rounded_price = source_details.get('rounded_price')
+    exported_offer_price = offer_row.get('price')
+
+    if raw_source_cost is None and source_cost_in_base is not None:
+        raw_source_cost = source_cost_in_base
+    if source_cost_in_base is None and raw_source_cost is not None and raw_source_currency == estimate_currency:
+        source_cost_in_base = raw_source_cost
+    if rounded_price is None:
+        rounded_price = part.get('source_cost')
+
+    pathway_steps = [f"winning_source {winning_source or 'unknown'}"]
+    if raw_source_cost is not None:
+        pathway_steps.append(f"raw_cost {round(float(raw_source_cost), 4)} {raw_source_currency}")
+    if source_cost_in_base is not None:
+        pathway_steps.append(f"base_cost {round(float(source_cost_in_base), 4)} {estimate_currency}")
+    if margin_pct is not None:
+        pathway_steps.append(f"margin {round(float(margin_pct), 4)}%")
+    if target_price is not None:
+        pathway_steps.append(f"target_price {round(float(target_price), 4)} {estimate_currency}")
+    if rounded_price is not None:
+        pathway_steps.append(f"rounded_price {round(float(rounded_price), 4)} {estimate_currency}")
+    pathway_steps.append(f"offer_price {exported_offer_price}")
+
+    return {
+        'sku': offer_row.get('sku'),
+        'product-id': offer_row.get('product-id'),
+        'product-id-type': offer_row.get('product-id-type'),
+        'winning_source': winning_source,
+        'source_type': source_details.get('type') or '',
+        'source_reference': source_details.get('reference') or '',
+        'source_supplier': source_details.get('supplier') or '',
+        'source_date': source_details.get('date') or '',
+        'price_source': part.get('price_source') or '',
+        'source_currency': raw_source_currency,
+        'source_cost': _format_debug_number(raw_source_cost),
+        'source_cost_in_gbp': _format_debug_number(source_cost_in_base),
+        'margin_pct': _format_debug_number(margin_pct),
+        'target_price_gbp': _format_debug_number(target_price),
+        'rounded_price_gbp': _format_debug_number(rounded_price),
+        'converted_price_eur': _format_debug_number(part.get('price')),
+        'exported_offer_price': exported_offer_price,
+        'in_stock': 'true' if part.get('source_in_stock') else 'false',
+        'stock_qty': part.get('source_stock_qty'),
+        'default_quantity_input': default_quantity,
+        'exported_offer_quantity': offer_row.get('quantity'),
+        'source_lead_days': '' if part.get('source_lead_days') is None else part.get('source_lead_days'),
+        'exported_lead_days': offer_row.get('leadtime-to-ship'),
+        'pricing_pathway': " -> ".join(pathway_steps),
+    }
+
+
 def _normalize_part_reference(value):
     return re.sub(r'[^A-Z0-9]+', '', str(value or '').strip().upper())
 
@@ -2466,6 +2535,7 @@ def export_to_marketplace():
                 'source_cost': price,
                 'source_currency': estimate.get('currency') if estimate else None,
                 'price_source': estimate.get('price_source') if estimate else None,
+                'pricing_debug': estimate.get('debug_info') if estimate else None,
                 'source_lead_days': estimate.get('estimated_lead_days') if estimate else None,
                 'source_in_stock': in_stock,
                 'source_stock_qty': stock_qty_value,
@@ -2521,30 +2591,7 @@ def export_to_marketplace():
                 csv_rows.append(offer_row)
 
                 if debug_offer_export:
-                    raw_price_gbp = part.get('source_cost')
-                    converted_price_eur = part.get('price')
-                    debug_rows.append({
-                        'sku': offer_row.get('sku'),
-                        'product-id': offer_row.get('product-id'),
-                        'product-id-type': offer_row.get('product-id-type'),
-                        'price_source': part.get('price_source') or '',
-                        'source_currency': part.get('source_currency') or 'GBP',
-                        'source_cost': '' if raw_price_gbp is None else raw_price_gbp,
-                        'converted_price_eur': '' if converted_price_eur is None else converted_price_eur,
-                        'exported_offer_price': offer_row.get('price'),
-                        'in_stock': 'true' if part.get('source_in_stock') else 'false',
-                        'stock_qty': part.get('source_stock_qty'),
-                        'default_quantity_input': default_quantity,
-                        'exported_offer_quantity': offer_row.get('quantity'),
-                        'source_lead_days': '' if part.get('source_lead_days') is None else part.get('source_lead_days'),
-                        'exported_lead_days': offer_row.get('leadtime-to-ship'),
-                        'pricing_pathway': (
-                            f"source_cost {raw_price_gbp if raw_price_gbp is not None else 'N/A'} "
-                            f"{(part.get('source_currency') or 'GBP')} -> "
-                            f"convert_to_eur {converted_price_eur if converted_price_eur is not None else 'N/A'} "
-                            f"-> offer_price {offer_row.get('price')}"
-                        ),
-                    })
+                    debug_rows.append(_build_offer_debug_row(part, offer_row, default_quantity))
 
             skipped_invalid = []
             if skip_invalid_mandatory:
@@ -2571,9 +2618,18 @@ def export_to_marketplace():
                     'sku',
                     'product-id',
                     'product-id-type',
+                    'winning_source',
+                    'source_type',
+                    'source_reference',
+                    'source_supplier',
+                    'source_date',
                     'price_source',
                     'source_currency',
                     'source_cost',
+                    'source_cost_in_gbp',
+                    'margin_pct',
+                    'target_price_gbp',
+                    'rounded_price_gbp',
                     'converted_price_eur',
                     'exported_offer_price',
                     'in_stock',
