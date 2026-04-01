@@ -1184,10 +1184,8 @@ function getPortalPrice(part) {
 
 function getExportQuantity(part) {
     const defaultQty = parseInt($('#defaultQuantity').val(), 10) || 1;
-    if (part.in_stock && part.stock_qty && part.stock_qty > 0) {
-        return part.stock_qty;
-    }
-    return defaultQty;
+    const stockQty = parseInt(part.stock_qty, 10);
+    return Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQty;
 }
 
 function getImportedAirbusBaselineRow(part) {
@@ -1792,7 +1790,7 @@ function resolveDefaultDescription(part, defaults) {
 function buildProductPayload(part, defaultQuantity, defaults) {
     const partNumber = (part.part_number || part.base_part_number || '').trim();
     const stockQty = parseInt(part.stock_qty, 10);
-    const quantity = part.in_stock && Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
+    const quantity = Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
     const leadTime = part.estimated_lead_days ?? 7;
     const description = resolveDefaultDescription(part, defaults);
     const baselineRow = getImportedAirbusBaselineRow(part);
@@ -1838,7 +1836,7 @@ function buildProductPayload(part, defaultQuantity, defaults) {
 function buildOfferPayload(part, defaultQuantity, defaults) {
     const partNumber = (part.part_number || part.base_part_number || '').trim();
     const stockQty = parseInt(part.stock_qty, 10);
-    const quantity = part.in_stock && Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
+    const quantity = Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
     const leadTime = part.estimated_lead_days ?? 7;
     const baselineRow = getImportedAirbusBaselineRow(part);
     const rawPrice = part.estimated_price ?? '';

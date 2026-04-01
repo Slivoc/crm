@@ -2423,7 +2423,7 @@ def export_to_marketplace():
 
             quantity = default_quantity
             stock_qty_value = _coerce_int(stock_qty, default=0)
-            if in_stock and stock_qty_value:
+            if stock_qty_value > 0:
                 quantity = stock_qty_value
 
             if lead_time is None:
