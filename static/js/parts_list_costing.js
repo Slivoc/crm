@@ -43,6 +43,14 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+    // Delete line
+    document.querySelectorAll('.delete-line-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+            const lineId = this.dataset.lineId;
+            deleteLine(lineId, this);
+        });
+    });
+
     document.querySelectorAll('.copy-part-number-btn').forEach(btn => {
         btn.addEventListener('click', function () {
             const partNumber = this.dataset.partNumber;
@@ -738,6 +746,42 @@ function duplicateLine(lineId, button) {
                 button.innerHTML = originalHtml;
             }
             showToast(error.message || 'Failed to duplicate line', 'danger');
+        });
+}
+
+function deleteLine(lineId, button) {
+    const listId = window.PARTS_LIST_ID;
+    if (!listId) {
+        showToast('Error: Parts list ID not found. Please refresh the page.', 'danger');
+        return;
+    }
+
+    const confirmed = window.confirm('Delete this line? This cannot be undone.');
+    if (!confirmed) return;
+
+    const originalHtml = button ? button.innerHTML : '';
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
+
+    fetch(`/parts_list/parts-lists/${listId}/lines/${lineId}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                throw new Error(data.message || 'Failed to delete line');
+            }
+            window.location.reload();
+        })
+        .catch(error => {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalHtml;
+            }
+            showToast(error.message || 'Failed to delete line', 'danger');
         });
 }
 
