@@ -70,7 +70,7 @@
                     <small class="text-muted d-block mt-1">
                         <i class="bi bi-calendar-event me-1"></i>
                         Quotes on {{ selected_quoted_date }}
-                        <a class="ms-2" href="{{ url_for('parts_list.view_parts_lists', status_id=selected_status_id if selected_status_id is not none else '', customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '') }}">Clear date filter</a>
+                        <a class="ms-2" href="{{ url_for('parts_list.view_parts_lists', status_id=selected_status_id if selected_status_id is not none else '', customer_id=selected_customer_id if selected_customer_id else '', project_filter=selected_project_filter if selected_project_filter else 'none', salesperson_id=selected_salesperson_id if selected_salesperson_id else '') }}">Clear date filter</a>
                     </small>
                 {% endif %}
             </div>
@@ -90,7 +90,7 @@
                     <ul class="dropdown-menu">
                         {% if current_salesperson %}
                             <li>
-                                <a class="dropdown-item" href="{{ url_for('parts_list.view_parts_lists', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
+                                <a class="dropdown-item" href="{{ url_for('parts_list.view_parts_lists', project_filter=selected_project_filter if selected_project_filter else 'none', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
                                     <i class="bi bi-people"></i> All Salespeople
                                 </a>
                             </li>
@@ -100,7 +100,7 @@
                             {% for sp in all_salespeople %}
                                 {% if not current_salesperson or sp.id != current_salesperson.id %}
                                     <li>
-                                        <a class="dropdown-item" href="{{ url_for('parts_list.view_parts_lists', salesperson_id=sp.id, quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
+                                        <a class="dropdown-item" href="{{ url_for('parts_list.view_parts_lists', salesperson_id=sp.id, project_filter=selected_project_filter if selected_project_filter else 'none', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
                                             <i class="bi bi-person"></i> {{ sp.name }}
                                             {% if sp.parts_list_count > 0 %}
                                                 <span class="badge bg-secondary ms-2">{{ sp.parts_list_count }}</span>
@@ -175,14 +175,14 @@
                     <ul class="nav nav-pills" role="tablist">
                         <li class="nav-item" role="presentation">
                             <a class="nav-link {% if not selected_status_id %}active{% endif %}"
-                               href="{{ url_for('parts_list.view_parts_lists', status_id=0, customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
+                               href="{{ url_for('parts_list.view_parts_lists', status_id=0, customer_id=selected_customer_id if selected_customer_id else '', project_filter=selected_project_filter if selected_project_filter else 'none', salesperson_id=selected_salesperson_id if selected_salesperson_id else '', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
                                 All Statuses
                             </a>
                         </li>
                         {% for status in statuses %}
                         <li class="nav-item" role="presentation">
                             <a class="nav-link {% if status.id|string == selected_status_id|string %}active{% endif %}"
-                               href="{{ url_for('parts_list.view_parts_lists', status_id=status.id, customer_id=selected_customer_id if selected_customer_id else '', salesperson_id=selected_salesperson_id if selected_salesperson_id else '', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
+                               href="{{ url_for('parts_list.view_parts_lists', status_id=status.id, customer_id=selected_customer_id if selected_customer_id else '', project_filter=selected_project_filter if selected_project_filter else 'none', salesperson_id=selected_salesperson_id if selected_salesperson_id else '', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
                                 {{ status.name }}
                             </a>
                         </li>
@@ -204,6 +204,21 @@
                         </button>
                     </div>
                     <small class="text-muted">Live filter on the customer and list name columns of the table below.</small>
+                </div>
+
+                <div class="col-md-3">
+                    <label for="projectFilterSelect" class="form-label">Project Association</label>
+                    <select id="projectFilterSelect" class="form-select" onchange="filterByProjectAssociation(this.value)">
+                        <option value="none" {% if selected_project_filter == 'none' %}selected{% endif %}>No project</option>
+                        <option value="all" {% if selected_project_filter == 'all' %}selected{% endif %}>All lists</option>
+                        <option value="with" {% if selected_project_filter == 'with' %}selected{% endif %}>With any project</option>
+                        {% for project in projects %}
+                            {% set project_filter_value = 'id:' ~ project.id %}
+                            <option value="{{ project_filter_value }}" {% if selected_project_filter == project_filter_value %}selected{% endif %}>
+                                Project: {{ project.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
                 </div>
 
             </div>
@@ -446,6 +461,7 @@
 // Customer filter function
 function filterByCustomer(customerId) {
     const currentStatus = "{{ selected_status_id if selected_status_id is not none and selected_status_id != 0 else '' }}";
+    const currentProjectFilter = "{{ selected_project_filter or 'none' }}";
     const currentSalesperson = "{{ selected_salesperson_id or '' }}";
     const currentQuotedDate = "{{ selected_quoted_date or '' }}";
     let url = "{{ url_for('parts_list.view_parts_lists') }}";
@@ -456,6 +472,40 @@ function filterByCustomer(customerId) {
     }
     if (customerId) {
         params.append('customer_id', customerId);
+    }
+    if (currentProjectFilter) {
+        params.append('project_filter', currentProjectFilter);
+    }
+    if (currentSalesperson) {
+        params.append('salesperson_id', currentSalesperson);
+    }
+    if (currentQuotedDate) {
+        params.append('quoted_date', currentQuotedDate);
+    }
+
+    if (params.toString()) {
+        url += '?' + params.toString();
+    }
+
+    window.location.href = url;
+}
+
+function filterByProjectAssociation(projectFilter) {
+    const currentStatus = "{{ selected_status_id if selected_status_id is not none and selected_status_id != 0 else '' }}";
+    const currentCustomer = "{{ selected_customer_id or '' }}";
+    const currentSalesperson = "{{ selected_salesperson_id or '' }}";
+    const currentQuotedDate = "{{ selected_quoted_date or '' }}";
+    let url = "{{ url_for('parts_list.view_parts_lists') }}";
+    const params = new URLSearchParams();
+
+    if (currentStatus) {
+        params.append('status_id', currentStatus);
+    }
+    if (currentCustomer) {
+        params.append('customer_id', currentCustomer);
+    }
+    if (projectFilter) {
+        params.append('project_filter', projectFilter);
     }
     if (currentSalesperson) {
         params.append('salesperson_id', currentSalesperson);

@@ -4503,6 +4503,9 @@ def view_parts_lists():
                     status_id = None
 
         customer_id = request.args.get('customer_id', type=int)
+        project_filter = (request.args.get('project_filter') or '').strip()
+        if not project_filter:
+            project_filter = 'none'
         salesperson_id_param = request.args.get('salesperson_id', type=int)
         salesperson_id = salesperson_id_param
         part_search = (request.args.get('q') or '').strip()
@@ -4530,6 +4533,7 @@ def view_parts_lists():
 
         has_explicit_filters = any([
             request.args.get('customer_id'),
+            request.args.get('project_filter'),
             request.args.get('salesperson_id'),
             request.args.get('quoted_date'),
             request.args.get('q'),
@@ -4630,6 +4634,18 @@ def view_parts_lists():
                 where_clauses.append("pl.customer_id = ?")
                 params.append(customer_id)
 
+            if project_filter == 'none':
+                where_clauses.append("pl.project_id IS NULL")
+            elif project_filter == 'with':
+                where_clauses.append("pl.project_id IS NOT NULL")
+            elif project_filter.startswith('id:'):
+                try:
+                    project_id = int(project_filter.split(':', 1)[1])
+                    where_clauses.append("pl.project_id = ?")
+                    params.append(project_id)
+                except (TypeError, ValueError):
+                    pass
+
             if salesperson_id:
                 where_clauses.append("pl.salesperson_id = ?")
                 params.append(salesperson_id)
@@ -4702,6 +4718,7 @@ def view_parts_lists():
                                selected_status_id=status_id,
                                selected_customer_id=customer_id,
                                selected_customer_name=selected_customer_name,
+                               selected_project_filter=project_filter,
                                selected_salesperson_id=salesperson_id,
                                explicit_salesperson_id=salesperson_id_param,
                                selected_quoted_date=quoted_date_filter,
@@ -4715,6 +4732,7 @@ def view_parts_lists():
                                all_salespeople=[],
                                current_salesperson=None,
                                current_user_salesperson_id=None,
+                               selected_project_filter='none',
                                selected_quoted_date=None,
                                initial_part_search=part_search)
 
