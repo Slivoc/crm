@@ -4577,6 +4577,7 @@ def view_parts_lists():
             sql = """
                 SELECT pl.id,
                        pl.name,
+                       COALESCE(pl.is_pinned, FALSE) AS is_pinned,
                        pl.date_created,
                        pl.date_modified,
                        pl.status_id,
@@ -4667,7 +4668,7 @@ def view_parts_lists():
             if where_clauses:
                 sql += " WHERE " + " AND ".join(where_clauses)
 
-            sql += " ORDER BY pl.date_modified DESC, pl.date_created DESC"
+            sql += " ORDER BY COALESCE(pl.is_pinned, FALSE) DESC, pl.date_modified DESC, pl.date_created DESC"
 
             rows = db_execute(sql, params, fetch='all')
 
@@ -5610,7 +5611,7 @@ def update_parts_list_header(list_id):
         fields = []
         params = []
 
-        for key in ('name', 'customer_id', 'contact_id', 'salesperson_id', 'status_id', 'notes', 'project_id'):
+        for key in ('name', 'customer_id', 'contact_id', 'salesperson_id', 'status_id', 'notes', 'project_id', 'is_pinned'):
             if key in data:
                 fields.append(f"{key} = ?")
                 params.append(data.get(key))
@@ -5667,6 +5668,43 @@ def delete_parts_list(list_id):
             _execute_with_cursor(cur, "DELETE FROM parts_lists WHERE id = ?", (list_id,))
 
         return jsonify(success=True)
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/pin', methods=['POST'])
+def toggle_parts_list_pinned(list_id):
+    """Pin or unpin a parts list."""
+    try:
+        data = request.get_json(silent=True) or {}
+        should_pin = data.get('is_pinned')
+
+        with db_cursor(commit=True) as cur:
+            parts_list = _execute_with_cursor(
+                cur,
+                "SELECT id, COALESCE(is_pinned, FALSE) AS is_pinned FROM parts_lists WHERE id = ?",
+                (list_id,),
+            ).fetchone()
+            if not parts_list:
+                return jsonify(success=False, message="Parts list not found"), 404
+
+            if should_pin is None:
+                new_value = not bool(_safe_row_get(parts_list, 'is_pinned', False))
+            else:
+                new_value = bool(should_pin)
+
+            _execute_with_cursor(
+                cur,
+                """
+                UPDATE parts_lists
+                SET is_pinned = ?, date_modified = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (new_value, list_id),
+            )
+
+        return jsonify(success=True, is_pinned=new_value)
     except Exception as e:
         logging.exception(e)
         return jsonify(success=False, message=str(e)), 500
