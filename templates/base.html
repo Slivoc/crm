@@ -1197,16 +1197,22 @@ input:-webkit-autofill {
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end">
                             {% if pinned_parts_lists %}
-                                {% for pinned_list in pinned_parts_lists %}
-                                    <li>
-                                        <a class="dropdown-item d-flex align-items-center justify-content-between"
-                                           href="{{ url_for('parts_list.view_parts_list', list_id=pinned_list.id) }}">
-                                            <span class="text-truncate me-2" style="max-width: 240px;">
-                                                {{ pinned_list.name }}
-                                            </span>
-                                            <small class="text-muted">#{{ pinned_list.id }}</small>
-                                        </a>
-                                    </li>
+                                {% for customer_group in pinned_parts_lists|groupby('customer_name') %}
+                                    <li><h6 class="dropdown-header">{{ customer_group.grouper }}</h6></li>
+                                    {% for pinned_list in customer_group.list %}
+                                        <li>
+                                            <a class="dropdown-item d-flex align-items-center justify-content-between"
+                                               href="{{ url_for('parts_list.view_parts_list', list_id=pinned_list.id) }}">
+                                                <span class="text-truncate me-2" style="max-width: 240px;">
+                                                    {{ pinned_list.name }}
+                                                </span>
+                                                <small class="text-muted">#{{ pinned_list.id }}</small>
+                                            </a>
+                                        </li>
+                                    {% endfor %}
+                                    {% if not loop.last %}
+                                        <li><hr class="dropdown-divider"></li>
+                                    {% endif %}
                                 {% endfor %}
                             {% else %}
                                 <li>

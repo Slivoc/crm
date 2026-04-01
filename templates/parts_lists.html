@@ -391,10 +391,12 @@
                                 {% endif %}
                             </td>
                             <td class="text-end">
-                                <i class="bi {% if list.is_pinned %}bi-pin-angle-fill text-warning{% else %}bi-pin-angle text-muted{% endif %} me-2"
-                                   style="cursor: pointer;"
-                                   onclick="event.stopPropagation(); togglePinned({{ list.id }}, this)"
-                                   title="{% if list.is_pinned %}Unpin{% else %}Pin{% endif %}"></i>
+                                <button class="btn btn-sm {% if list.is_pinned %}btn-warning{% else %}btn-outline-secondary{% endif %} me-2"
+                                        onclick="event.stopPropagation(); togglePinned({{ list.id }}, this)"
+                                        title="{% if list.is_pinned %}Unpin{% else %}Pin{% endif %}">
+                                    <i class="bi {% if list.is_pinned %}bi-pin-angle-fill{% else %}bi-pin-angle{% endif %} me-1"></i>
+                                    {% if list.is_pinned %}Pinned{% else %}Pin{% endif %}
+                                </button>
                                 <i class="bi bi-x-lg text-danger"
                                    style="cursor: pointer;"
                                    onclick="event.stopPropagation(); deleteList({{ list.id }}, '{{ list.name|replace("'", "\\'") }}')"
@@ -728,8 +730,8 @@ function updateProject(listId, selectElement) {
 }
 
 function togglePinned(listId, iconElement) {
-    const currentlyPinned = iconElement.classList.contains('bi-pin-angle-fill');
-    iconElement.style.pointerEvents = 'none';
+    const currentlyPinned = iconElement.classList.contains('btn-warning');
+    iconElement.disabled = true;
 
     fetch("{{ url_for('parts_list.toggle_parts_list_pinned', list_id=0) }}".replace('/0/', `/${listId}/`), {
         method: 'POST',
@@ -738,7 +740,7 @@ function togglePinned(listId, iconElement) {
     })
     .then(response => response.json())
     .then(data => {
-        iconElement.style.pointerEvents = '';
+        iconElement.disabled = false;
         if (!data.success) {
             throw new Error(data.message || 'Unable to update pinned state');
         }
@@ -746,7 +748,7 @@ function togglePinned(listId, iconElement) {
     })
     .catch(error => {
         console.error('Error:', error);
-        iconElement.style.pointerEvents = '';
+        iconElement.disabled = false;
         alert(error.message || 'Error updating pinned state');
     });
 }

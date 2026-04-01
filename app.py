@@ -319,11 +319,14 @@ def inject_pinned_parts_lists():
 
     rows = db_execute(
         """
-        SELECT id, name
-        FROM parts_lists
-        WHERE COALESCE(is_pinned, FALSE) = TRUE
-        ORDER BY date_modified DESC, id DESC
-        LIMIT 12
+        SELECT pl.id,
+               pl.name,
+               COALESCE(c.name, 'Unassigned Customer') AS customer_name
+        FROM parts_lists pl
+        LEFT JOIN customers c ON c.id = pl.customer_id
+        WHERE COALESCE(pl.is_pinned, FALSE) = TRUE
+        ORDER BY COALESCE(c.name, 'Unassigned Customer') ASC, pl.date_modified DESC, pl.id DESC
+        LIMIT 24
         """,
         fetch='all',
     ) or []
