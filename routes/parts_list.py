@@ -5036,6 +5036,7 @@ def _build_common_parts_report_rows(
     exclude_in_stock=False,
     bom_id=None,
     selected_project_ids=None,
+    selected_qpl_manufacturers=None,
 ):
     customer_filters, child_to_parent = _get_common_parts_report_customer_filters()
     parent_customer_lookup = {customer['id']: customer['name'] for customer in customer_filters}
@@ -5125,6 +5126,12 @@ def _build_common_parts_report_rows(
     selected_customer_ids_set = set(normalized_customer_ids or [])
     selected_project_ids_set = set(normalized_project_ids)
 
+    selected_qpl_manufacturer_keys = {
+        (manufacturer or '').strip().lower()
+        for manufacturer in (selected_qpl_manufacturers or [])
+        if (manufacturer or '').strip()
+    }
+
     report_rows = []
     for grouped in grouped_parts.values():
         grouped_customer_ids = {customer_id for customer_id, _ in grouped['customers']}
@@ -5154,6 +5161,10 @@ def _build_common_parts_report_rows(
                 grouped['quantity_total'] / grouped['quantity_count']
                 if grouped['quantity_count'] > 0 else 0
             ),
+            'qpl_approval_count': 0,
+            'qpl_manufacturers': [],
+            'qpl_manufacturers_display': '',
+            'qpl_manufacturer_supplier_map': [],
         })
 
     if report_rows:
@@ -5187,10 +5198,103 @@ def _build_common_parts_report_rows(
         ) or []
         ils_map = {(row['part_number'] or '').upper(): int(row['ils_hits'] or 0) for row in ils_rows}
 
+        qpl_lookup = {}
+        qpl_rows = db_execute(
+            f"""
+            SELECT
+                UPPER(COALESCE(NULLIF(TRIM(ma.airbus_material_base), ''), NULLIF(TRIM(ma.manufacturer_part_number_base), ''))) AS base_part_number,
+                TRIM(ma.manufacturer_name) AS manufacturer_name
+            FROM manufacturer_approvals ma
+            WHERE (
+                UPPER(ma.airbus_material_base) IN ({placeholders})
+                OR UPPER(ma.manufacturer_part_number_base) IN ({placeholders})
+            )
+              AND TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
+            """,
+            tuple(base_part_numbers + base_part_numbers),
+            fetch='all',
+        ) or []
+
+        with db_cursor() as cur:
+            has_supplier_is_active = _execute_with_cursor(cur, """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'suppliers'
+                  AND column_name = 'is_active'
+                LIMIT 1
+            """).fetchone() is not None
+
+            if has_supplier_is_active:
+                supplier_rows = _execute_with_cursor(cur, """
+                    SELECT id, name
+                    FROM suppliers
+                    WHERE COALESCE(is_active, TRUE) = TRUE
+                    ORDER BY name
+                """).fetchall() or []
+            else:
+                supplier_rows = _execute_with_cursor(cur, """
+                    SELECT id, name
+                    FROM suppliers
+                    ORDER BY name
+                """).fetchall() or []
+
+            qpl_saved_mapping_map = _load_qpl_mapping_supplier_map(cur)
+
+        for qpl_row in qpl_rows:
+            base_key = (qpl_row.get('base_part_number') or '').strip().upper()
+            manufacturer_name = (qpl_row.get('manufacturer_name') or '').strip()
+            if not base_key or not manufacturer_name:
+                continue
+            entry = qpl_lookup.setdefault(base_key, set())
+            entry.add(manufacturer_name)
+
         for row in report_rows:
             row_part_number = (row['base_part_number'] or '').upper()
             row['stock_level'] = int(stock_map.get(row_part_number, 0) or 0)
             row['ils_hits'] = int(ils_map.get(row_part_number, 0) or 0)
+
+            manufacturer_names = sorted(qpl_lookup.get(row_part_number, set()), key=lambda value: value.lower())
+            row['qpl_manufacturers'] = manufacturer_names
+            row['qpl_approval_count'] = len(manufacturer_names)
+            row['qpl_manufacturers_display'] = ', '.join(manufacturer_names)
+
+            mapped_suppliers = []
+            for manufacturer_name in manufacturer_names:
+                normalized_qpl_name = _normalize_company_name_for_match(manufacturer_name)
+                saved_mapping = qpl_saved_mapping_map.get(normalized_qpl_name)
+
+                matched_supplier_id = None
+                matched_supplier_name = None
+                mapping_source = None
+                if saved_mapping:
+                    matched_supplier_id = saved_mapping.get('supplier_id')
+                    matched_supplier_name = saved_mapping.get('supplier_name')
+                    mapping_source = 'saved_map'
+                else:
+                    for supplier_row in supplier_rows:
+                        supplier_name = _safe_row_get(supplier_row, 'name')
+                        if supplier_name and _is_supplier_match_for_qpl(manufacturer_name, supplier_name):
+                            matched_supplier_id = _safe_row_get(supplier_row, 'id')
+                            matched_supplier_name = supplier_name
+                            mapping_source = 'name_match'
+                            break
+
+                mapped_suppliers.append({
+                    'manufacturer_name': manufacturer_name,
+                    'matched_supplier_id': matched_supplier_id,
+                    'matched_supplier_name': matched_supplier_name,
+                    'mapping_source': mapping_source,
+                })
+
+            row['qpl_manufacturer_supplier_map'] = mapped_suppliers
+
+        if selected_qpl_manufacturer_keys:
+            report_rows = [
+                row for row in report_rows
+                if any((manufacturer or '').strip().lower() in selected_qpl_manufacturer_keys for manufacturer in row.get('qpl_manufacturers', []))
+            ]
+
         if exclude_in_stock:
             report_rows = [row for row in report_rows if (row.get('stock_level') or 0) <= 0]
 
@@ -5255,6 +5359,7 @@ def common_parts_report():
     """Show parts that appear across multiple parts lists with customer visibility."""
     raw_selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
     selected_project_ids = [pid for pid in request.args.getlist('project_ids', type=int) if pid]
+    selected_qpl_manufacturers = [name.strip() for name in request.args.getlist('qpl_manufacturers') if (name or '').strip()]
     selected_bom_id = request.args.get('bom_id', type=int)
     selected_part_query = (request.args.get('part_query') or '').strip()
     exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
@@ -5284,7 +5389,8 @@ def common_parts_report():
     projects = []
     for row in project_rows:
         project = dict(row)
-        project['display_name'] = f"{project.get('name') or f'Project #{project.get('id')}'} (ID {project.get('id')})"
+        project_name = project.get('name') or f"Project #{project.get('id')}"
+        project['display_name'] = f"{project_name} (ID {project.get('id')})"
         projects.append(project)
 
     report_rows = _build_common_parts_report_rows(
@@ -5293,6 +5399,7 @@ def common_parts_report():
         exclude_in_stock=exclude_in_stock,
         bom_id=selected_bom_id,
         selected_project_ids=selected_project_ids,
+        selected_qpl_manufacturers=selected_qpl_manufacturers,
     )
     project_totals_by_project = _get_common_parts_project_totals(selected_project_ids)
     for row in report_rows:
@@ -5304,6 +5411,12 @@ def common_parts_report():
     total_rows = len(report_rows)
     is_limited = not show_all and total_rows > initial_limit
     displayed_rows = report_rows[:initial_limit] if is_limited else report_rows
+    qpl_manufacturer_options = sorted({
+        manufacturer
+        for row in report_rows
+        for manufacturer in (row.get('qpl_manufacturers') or [])
+        if manufacturer
+    }, key=lambda name: name.lower())
 
     return render_template(
         'parts_list_common_parts_report.html',
@@ -5317,6 +5430,8 @@ def common_parts_report():
         selected_bom_id=selected_bom_id,
         selected_customer_ids=selected_customer_ids,
         selected_project_ids=selected_project_ids,
+        selected_qpl_manufacturers=selected_qpl_manufacturers,
+        qpl_manufacturer_options=qpl_manufacturer_options,
         selected_part_query=selected_part_query,
         exclude_in_stock=exclude_in_stock,
         show_all=show_all,
@@ -5397,6 +5512,7 @@ def common_parts_report_offers():
 def common_parts_report_export():
     raw_selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
     selected_project_ids = [pid for pid in request.args.getlist('project_ids', type=int) if pid]
+    selected_qpl_manufacturers = [name.strip() for name in request.args.getlist('qpl_manufacturers') if (name or '').strip()]
     selected_bom_id = request.args.get('bom_id', type=int)
     part_query = (request.args.get('part_query') or '').strip().lower()
     exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
@@ -5408,17 +5524,29 @@ def common_parts_report_export():
         exclude_in_stock=exclude_in_stock,
         bom_id=selected_bom_id,
         selected_project_ids=selected_project_ids,
+        selected_qpl_manufacturers=selected_qpl_manufacturers,
     )
 
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(['Part Number', 'Average Quantity', 'Stock Level', 'ILS Hits', 'Parts Lists', 'Customers', 'Customer Names', 'Projects', 'Project Names'])
+    writer.writerow([
+        'Part Number', 'Average Quantity', 'Stock Level', 'ILS Hits',
+        'QPL Approvals', 'QPL Manufacturers', 'QPL Manufacturer -> Supplier Mapping',
+        'Parts Lists', 'Customers', 'Customer Names', 'Projects', 'Project Names'
+    ])
     for row in report_rows:
+        qpl_mapping_display = '; '.join([
+            f"{entry.get('manufacturer_name')}: {entry.get('matched_supplier_name') or 'Unmapped'}"
+            for entry in (row.get('qpl_manufacturer_supplier_map') or [])
+        ])
         writer.writerow([
             row['part_number'],
             round(float(row.get('avg_quantity') or 0), 2),
             row['stock_level'],
             row.get('ils_hits', 0),
+            row.get('qpl_approval_count', 0),
+            row.get('qpl_manufacturers_display', ''),
+            qpl_mapping_display,
             row['parts_list_count'],
             row['customer_count'],
             ', '.join(row['customer_names']),
