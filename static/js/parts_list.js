@@ -341,6 +341,15 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
               <i class="bi bi-plus-square"></i>
            </button>`
         : '';
+    const canDeleteLine = !!(currentListId && part.line_id);
+    const deleteLineButton = canDeleteLine
+        ? `<button class="btn btn-sm icon-action-btn text-danger delete-line-btn"
+                   data-part-index="${actualIndex}"
+                   data-line-id="${part.line_id}"
+                   title="Delete this line">
+              <i class="bi bi-trash"></i>
+           </button>`
+        : '';
     const canSuggestAlternative = !isSubLine && !!(part.base_part_number || part.input_part_number);
     const suggestAlternativeButton = canSuggestAlternative
         ? `<button class="btn btn-sm icon-action-btn suggest-alt-btn"
@@ -437,6 +446,7 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
                     ${editLinePartButton}
                     ${editLineQtyButton}
                     ${duplicateButton}
+                    ${deleteLineButton}
                 </div>
             </div>
         </td>
@@ -2181,6 +2191,52 @@ function duplicateLineForPriceBreak(partIndex, buttonElement) {
         });
 }
 
+function deleteLineFromPartsList(partIndex, buttonElement) {
+    const originalHtml = buttonElement ? buttonElement.innerHTML : '';
+    if (buttonElement) {
+        buttonElement.disabled = true;
+        buttonElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
+
+    const part = window.allResults[partIndex];
+    if (!part || !part.line_id || !currentListId) {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.innerHTML = originalHtml;
+        }
+        alert('This line must be saved before it can be deleted.');
+        return;
+    }
+
+    if (!window.confirm('Delete this line? This cannot be undone.')) {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.innerHTML = originalHtml;
+        }
+        return;
+    }
+
+    fetch(`/parts_list/parts-lists/${currentListId}/lines/${part.line_id}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                throw new Error(data.message || 'Failed to delete line');
+            }
+            window.location.reload();
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            if (buttonElement) {
+                buttonElement.disabled = false;
+                buttonElement.innerHTML = originalHtml;
+            }
+            alert('Error deleting line: ' + error.message);
+        });
+}
+
 function showIlsDetailsModal(part) {
     const modalTitle = document.getElementById('ilsDetailsModalLabel');
     const modalContent = document.getElementById('ilsModalContent');
@@ -2694,10 +2750,19 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             const button = event.target.closest('.duplicate-line-btn');
-            if (!button) return;
-            const partIndex = parseInt(button.getAttribute('data-part-index'), 10);
+            if (button) {
+                const partIndex = parseInt(button.getAttribute('data-part-index'), 10);
+                if (!Number.isNaN(partIndex)) {
+                    duplicateLineForPriceBreak(partIndex, button);
+                }
+                return;
+            }
+
+            const deleteButton = event.target.closest('.delete-line-btn');
+            if (!deleteButton) return;
+            const partIndex = parseInt(deleteButton.getAttribute('data-part-index'), 10);
             if (Number.isNaN(partIndex)) return;
-            duplicateLineForPriceBreak(partIndex, button);
+            deleteLineFromPartsList(partIndex, deleteButton);
         });
     }
 
