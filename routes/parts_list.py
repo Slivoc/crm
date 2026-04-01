@@ -5411,12 +5411,31 @@ def common_parts_report():
     total_rows = len(report_rows)
     is_limited = not show_all and total_rows > initial_limit
     displayed_rows = report_rows[:initial_limit] if is_limited else report_rows
-    qpl_manufacturer_options = sorted({
+    qpl_manufacturer_names = {
         manufacturer
         for row in report_rows
         for manufacturer in (row.get('qpl_manufacturers') or [])
         if manufacturer
-    }, key=lambda name: name.lower())
+    }
+    mapped_qpl_manufacturer_names = {
+        (qpl_map.get('manufacturer_name') or '').strip()
+        for row in report_rows
+        for qpl_map in (row.get('qpl_manufacturer_supplier_map') or [])
+        if qpl_map.get('matched_supplier_name')
+    }
+    qpl_manufacturer_options = [
+        {
+            'name': manufacturer,
+            'is_mapped': manufacturer in mapped_qpl_manufacturer_names,
+        }
+        for manufacturer in sorted(
+            qpl_manufacturer_names,
+            key=lambda name: (
+                0 if name in mapped_qpl_manufacturer_names else 1,
+                name.lower(),
+            ),
+        )
+    ]
 
     return render_template(
         'parts_list_common_parts_report.html',
