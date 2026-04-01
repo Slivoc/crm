@@ -94,6 +94,17 @@
                     </select>
                     <small class="text-muted">Select multiple projects. Labels include project IDs so duplicate names are distinguishable.</small>
                 </div>
+                <div class="col-md-6">
+                    <label for="qplManufacturerFilter" class="form-label fw-semibold">QPL Manufacturer Filter</label>
+                    <select id="qplManufacturerFilter" class="form-select" multiple size="6">
+                        {% for manufacturer in qpl_manufacturer_options %}
+                        <option value="{{ manufacturer }}" {% if manufacturer in selected_qpl_manufacturers %}selected{% endif %}>
+                            {{ manufacturer }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <small class="text-muted">Multi-select to show parts that match any selected QPL manufacturer.</small>
+                </div>
                 <div class="col-12">
                     <div class="form-check">
                         <input
@@ -132,6 +143,7 @@
                             <th class="text-center">Avg Qty</th>
                             <th class="text-center">Stock Level</th>
                             <th class="text-center">ILS Hits</th>
+                            <th class="text-center">QPL</th>
                             <th class="text-center">Parts Lists</th>
                             {% for project in projects if project.id in selected_project_ids %}
                             <th class="text-center">{{ project.name }}<br><small class="text-muted">ID {{ project.id }} Qty</small></th>
@@ -148,11 +160,32 @@
                             data-base-part-number="{{ row.base_part_number }}"
                             data-customer-ids="{{ row.customer_ids|join(',') }}"
                             data-stock-level="{{ row.stock_level or 0 }}"
+                            data-qpl-manufacturers="{{ row.qpl_manufacturers|join('|')|lower }}"
                         >
                             <td class="fw-semibold font-monospace">{{ row.part_number }}</td>
                             <td class="text-center">{{ "%.2f"|format(row.avg_quantity or 0) }}</td>
                             <td class="text-center">{{ row.stock_level or 0 }}</td>
                             <td class="text-center">{{ row.ils_hits or 0 }}</td>
+                            <td>
+                                {% if row.qpl_approval_count %}
+                                <span class="badge bg-primary">{{ row.qpl_approval_count }} approvals</span>
+                                <div class="small mt-1">
+                                    {% for qpl_map in row.qpl_manufacturer_supplier_map %}
+                                    <div>
+                                        <span class="fw-semibold">{{ qpl_map.manufacturer_name }}</span>
+                                        {% if qpl_map.matched_supplier_name %}
+                                        <br><span class="text-muted">Mapped: {{ qpl_map.matched_supplier_name }}</span>
+                                        {% if qpl_map.mapping_source == 'saved_map' %}
+                                        <span class="badge bg-success-subtle text-success border ms-1">Saved</span>
+                                        {% endif %}
+                                        {% endif %}
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
                             <td class="text-center">{{ row.parts_list_count }}</td>
                             {% for project in projects if project.id in selected_project_ids %}
                             {% set project_qty = row.project_quantities.get(project.id) %}
@@ -270,6 +303,12 @@ function selectedProjectIds() {
     return Array.from(projectSelect.selectedOptions).map(option => option.value);
 }
 
+function selectedQplManufacturers() {
+    const qplSelect = document.getElementById('qplManufacturerFilter');
+    if (!qplSelect) return [];
+    return Array.from(qplSelect.selectedOptions).map(option => option.value);
+}
+
 function buildCommonPartsParams() {
     const params = new URLSearchParams();
     const partQuery = (document.getElementById('partLiveFilter')?.value || '').trim();
@@ -283,6 +322,7 @@ function buildCommonPartsParams() {
 
     selectedCustomerIds().forEach(customerId => params.append('customer_ids', customerId));
     selectedProjectIds().forEach(projectId => params.append('project_ids', projectId));
+    selectedQplManufacturers().forEach(manufacturer => params.append('qpl_manufacturers', manufacturer));
 
     return params;
 }
@@ -687,6 +727,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const chipsContainer = document.getElementById('selectedCustomerChips');
     const projectChipsContainer = document.getElementById('selectedProjectChips');
     const excludeInStockToggle = document.getElementById('excludeInStockToggle');
+    const qplManufacturerFilter = document.getElementById('qplManufacturerFilter');
     const offerButtons = document.querySelectorAll('.view-offers-btn');
 
     if (loadAllBtn) {
@@ -734,6 +775,11 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (excludeInStockToggle) {
         excludeInStockToggle.addEventListener('change', applyCommonPartsFilters);
+    }
+    if (qplManufacturerFilter) {
+        qplManufacturerFilter.addEventListener('change', function() {
+            reloadCommonPartsReport();
+        });
     }
     if (chipsContainer) {
         chipsContainer.addEventListener('click', function(event) {
