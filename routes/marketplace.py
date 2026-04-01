@@ -2356,6 +2356,7 @@ def export_to_marketplace():
         default_quantity = int(export_data.get('default_quantity') or 1)
         skip_invalid_mandatory = _coerce_bool(export_data.get('skip_invalid_mandatory'), default=False)
         export_mode = _coerce_text(export_data.get('export_mode'), default='products')
+        debug_offer_export = _coerce_bool(export_data.get('debug_offer_export'), default=False)
         if export_mode not in ('products', 'offers'):
             export_mode = 'products'
         export_defaults = _normalize_marketplace_export_defaults(export_data.get('defaults'))
@@ -2462,6 +2463,12 @@ def export_to_marketplace():
                 'description': resolved_description,
                 'manufacturer': _coerce_text(row['manufacturer_name'], default=''),
                 'quantity': quantity,
+                'source_cost': price,
+                'source_currency': estimate.get('currency') if estimate else None,
+                'price_source': estimate.get('price_source') if estimate else None,
+                'source_lead_days': estimate.get('estimated_lead_days') if estimate else None,
+                'source_in_stock': in_stock,
+                'source_stock_qty': stock_qty_value,
                 'price': _convert_marketplace_price_to_eur(price) if price is not None else 0.0,
                 'condition': 'New',
                 'lead_time_days': lead_time_value,
@@ -2470,11 +2477,12 @@ def export_to_marketplace():
 
         if export_mode == 'offers':
             csv_rows = []
+            debug_rows = []
             for part in parts_data:
                 part_number = _part_identifier(part)
                 description = _coerce_text(part.get('mkp_description') or part.get('description'), default=part_number)
                 offer_product_id, offer_product_id_type = _resolve_offer_identity(part, source_mode)
-                csv_rows.append(_build_offer_row_from_payload({
+                offer_row = _build_offer_row_from_payload({
                     'sku': part_number,
                     'product-id': offer_product_id,
                     'product-id-type': offer_product_id_type,
@@ -2509,7 +2517,34 @@ def export_to_marketplace():
                     'cross-sell': '',
                     'vendor-reference': '',
                     'baseline_row': part.get('baseline_row'),
-                }))
+                })
+                csv_rows.append(offer_row)
+
+                if debug_offer_export:
+                    raw_price_gbp = part.get('source_cost')
+                    converted_price_eur = part.get('price')
+                    debug_rows.append({
+                        'sku': offer_row.get('sku'),
+                        'product-id': offer_row.get('product-id'),
+                        'product-id-type': offer_row.get('product-id-type'),
+                        'price_source': part.get('price_source') or '',
+                        'source_currency': part.get('source_currency') or 'GBP',
+                        'source_cost': '' if raw_price_gbp is None else raw_price_gbp,
+                        'converted_price_eur': '' if converted_price_eur is None else converted_price_eur,
+                        'exported_offer_price': offer_row.get('price'),
+                        'in_stock': 'true' if part.get('source_in_stock') else 'false',
+                        'stock_qty': part.get('source_stock_qty'),
+                        'default_quantity_input': default_quantity,
+                        'exported_offer_quantity': offer_row.get('quantity'),
+                        'source_lead_days': '' if part.get('source_lead_days') is None else part.get('source_lead_days'),
+                        'exported_lead_days': offer_row.get('leadtime-to-ship'),
+                        'pricing_pathway': (
+                            f"source_cost {raw_price_gbp if raw_price_gbp is not None else 'N/A'} "
+                            f"{(part.get('source_currency') or 'GBP')} -> "
+                            f"convert_to_eur {converted_price_eur if converted_price_eur is not None else 'N/A'} "
+                            f"-> offer_price {offer_row.get('price')}"
+                        ),
+                    })
 
             skipped_invalid = []
             if skip_invalid_mandatory:
@@ -2518,6 +2553,12 @@ def export_to_marketplace():
                     _get_offer_missing_required_fields,
                     lambda row: str(row.get('sku') or '').strip(),
                 )
+                if debug_offer_export:
+                    valid_skus = {str(row.get('sku') or '').strip() for row in csv_rows}
+                    debug_rows = [
+                        row for row in debug_rows
+                        if str(row.get('sku') or '').strip() in valid_skus
+                    ]
                 if not csv_rows:
                     return jsonify({
                         'error': 'All selected lines are missing mandatory offer fields.',
@@ -2525,10 +2566,36 @@ def export_to_marketplace():
                         'skipped_invalid_preview': skipped_invalid[:20],
                     }), 400
 
-            csv_bytes = build_offers_csv(csv_rows, validate_required=skip_invalid_mandatory)
-            csv_file = io.BytesIO(csv_bytes)
-            csv_file.seek(0)
-            filename_prefix = "AH_Marketplace_Offers"
+            if debug_offer_export:
+                fieldnames = [
+                    'sku',
+                    'product-id',
+                    'product-id-type',
+                    'price_source',
+                    'source_currency',
+                    'source_cost',
+                    'converted_price_eur',
+                    'exported_offer_price',
+                    'in_stock',
+                    'stock_qty',
+                    'default_quantity_input',
+                    'exported_offer_quantity',
+                    'source_lead_days',
+                    'exported_lead_days',
+                    'pricing_pathway',
+                ]
+                csv_text = io.StringIO()
+                writer = csv.DictWriter(csv_text, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(debug_rows)
+                csv_file = io.BytesIO(csv_text.getvalue().encode('utf-8'))
+                csv_file.seek(0)
+                filename_prefix = "AH_Marketplace_Offers_Debug"
+            else:
+                csv_bytes = build_offers_csv(csv_rows, validate_required=skip_invalid_mandatory)
+                csv_file = io.BytesIO(csv_bytes)
+                csv_file.seek(0)
+                filename_prefix = "AH_Marketplace_Offers"
         else:
             skipped_invalid = []
             if skip_invalid_mandatory:

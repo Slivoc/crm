@@ -497,6 +497,9 @@
                             <button class="btn btn-lg btn-outline-success w-100" id="exportOffersCsvBtn">
                                 <i class="bi bi-download"></i> Download Offers CSV
                             </button>
+                            <button class="btn btn-lg btn-outline-secondary w-100" id="exportOffersDebugCsvBtn">
+                                <i class="bi bi-bug"></i> Download Debug Offers CSV
+                            </button>
                         </div>
                         <select class="form-select form-select-sm" id="miraklPushMode">
                             <option value="products">Push full Airbus template</option>
@@ -804,6 +807,9 @@ $(document).ready(function() {
 
     $('#exportOffersCsvBtn').click(function() {
         exportToCsv('offers');
+    });
+    $('#exportOffersDebugCsvBtn').click(function() {
+        exportToCsv('offers_debug');
     });
 
     $('#pushToMarketplaceBtn').click(function() {
@@ -2150,7 +2156,8 @@ async function exportToCsv(mode) {
     }
 
     const defaults = getMarketplaceDefaults();
-    const exportMode = mode === 'offers' ? 'offers' : 'products';
+    const isDebugOfferExport = mode === 'offers_debug';
+    const exportMode = (mode === 'offers' || isDebugOfferExport) ? 'offers' : 'products';
     const resolved = resolveExportParts(
         categorizedParts,
         exportMode,
@@ -2165,13 +2172,19 @@ async function exportToCsv(mode) {
     const exportParts = resolved.parts;
     const skippedExisting = resolved.skippedExisting || [];
 
-    const buttonSelector = exportMode === 'offers' ? '#exportOffersCsvBtn' : '#exportProductsCsvBtn';
-    const buttonLabel = exportMode === 'offers'
-        ? '<i class="bi bi-download"></i> Download Offers CSV'
-        : '<i class="bi bi-download"></i> Download Full Airbus CSV';
-    const fallbackFilename = exportMode === 'offers'
-        ? 'AH_Marketplace_Offers.csv'
-        : 'AH_Marketplace_Upload.csv';
+    const buttonSelector = isDebugOfferExport
+        ? '#exportOffersDebugCsvBtn'
+        : (exportMode === 'offers' ? '#exportOffersCsvBtn' : '#exportProductsCsvBtn');
+    const buttonLabel = isDebugOfferExport
+        ? '<i class="bi bi-bug"></i> Download Debug Offers CSV'
+        : (exportMode === 'offers'
+            ? '<i class="bi bi-download"></i> Download Offers CSV'
+            : '<i class="bi bi-download"></i> Download Full Airbus CSV');
+    const fallbackFilename = isDebugOfferExport
+        ? 'AH_Marketplace_Offers_Debug.csv'
+        : (exportMode === 'offers'
+            ? 'AH_Marketplace_Offers.csv'
+            : 'AH_Marketplace_Upload.csv');
 
     $(buttonSelector).prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Generating...');
 
@@ -2180,6 +2193,7 @@ async function exportToCsv(mode) {
         source_mode: partSourceMode,
         default_quantity: parseInt($('#defaultQuantity').val(), 10) || 1,
         export_mode: exportMode,
+        debug_offer_export: isDebugOfferExport,
         skip_invalid_mandatory: skipInvalidMandatory,
         defaults: defaults,
         baseline_rows: exportParts.reduce((acc, part) => {
