@@ -1,4 +1,5 @@
 import os
+import re
 
 from flask import jsonify, Blueprint, render_template, request, redirect, url_for, flash
 from db import db_cursor, execute as db_execute
@@ -26,6 +27,84 @@ def _execute_with_cursor(cur, query, params=None):
     return cur
 
 
+def _normalize_qpl_manufacturer_name(name):
+    value = (name or '').strip().lower()
+    value = re.sub(r'\s+', ' ', value)
+    return value
+
+
+def _qpl_mapping_table_exists():
+    row = db_execute(
+        """
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name = ?
+        LIMIT 1
+        """,
+        ('qpl_manufacturer_mappings',),
+        fetch='one',
+    )
+    return row is not None
+
+
+def _load_qpl_manufacturer_rows():
+    qpl_rows = db_execute(
+        """
+        SELECT
+            manufacturer_name,
+            COUNT(*) AS approvals_count,
+            COUNT(DISTINCT approval_list_type) AS list_type_count
+        FROM manufacturer_approvals
+        WHERE manufacturer_name IS NOT NULL
+          AND TRIM(manufacturer_name) <> ''
+        GROUP BY manufacturer_name
+        ORDER BY COUNT(*) DESC, manufacturer_name
+        """,
+        fetch='all',
+    ) or []
+
+    qpl_mapping_rows = []
+    if _qpl_mapping_table_exists():
+        qpl_mapping_rows = db_execute(
+            """
+            SELECT qpl_manufacturer_name_normalized, manufacturer_id
+            FROM qpl_manufacturer_mappings
+            """,
+            fetch='all',
+        ) or []
+
+    mapping_by_normalized_name = {
+        (row.get('qpl_manufacturer_name_normalized') or '').strip(): row.get('manufacturer_id')
+        for row in qpl_mapping_rows
+        if (row.get('qpl_manufacturer_name_normalized') or '').strip()
+    }
+
+    manufacturers_lookup = {
+        row['id']: row
+        for row in (get_all_manufacturers(include_merged=False) or [])
+    }
+
+    results = []
+    for row in qpl_rows:
+        qpl_name = (row.get('manufacturer_name') or '').strip()
+        if not qpl_name:
+            continue
+        normalized_name = _normalize_qpl_manufacturer_name(qpl_name)
+        mapped_manufacturer_id = mapping_by_normalized_name.get(normalized_name)
+        mapped_manufacturer = manufacturers_lookup.get(mapped_manufacturer_id) if mapped_manufacturer_id else None
+        results.append({
+            'qpl_name': qpl_name,
+            'qpl_name_normalized': normalized_name,
+            'approvals_count': row.get('approvals_count', 0),
+            'list_type_count': row.get('list_type_count', 0),
+            'mapped_manufacturer_id': mapped_manufacturer_id,
+            'mapped_manufacturer_name': mapped_manufacturer.get('name') if mapped_manufacturer else None,
+        })
+
+    return results
+
+
 @manufacturers_bp.route('/manufacturers', methods=['GET', 'POST'])
 def manufacturers():
     if request.method == 'POST':
@@ -36,7 +115,15 @@ def manufacturers():
 
     # Use include_merged=True to show all manufacturers including merged ones
     manufacturers = get_all_manufacturers(include_merged=True)
-    return render_template('manufacturers.html', manufacturers=manufacturers)
+    active_manufacturers = [row for row in manufacturers if not row.get('merged_into')]
+    qpl_manufacturers = _load_qpl_manufacturer_rows()
+    return render_template(
+        'manufacturers.html',
+        manufacturers=manufacturers,
+        active_manufacturers=active_manufacturers,
+        qpl_manufacturers=qpl_manufacturers,
+        has_qpl_mapping_table=_qpl_mapping_table_exists(),
+    )
 
 @manufacturers_bp.route('/manufacturers/<int:manufacturer_id>/delete', methods=['POST'])
 def delete_manufacturer_route(manufacturer_id):
@@ -100,6 +187,55 @@ def merge_manufacturers():
         flash(f'Error merging manufacturers: {str(exc)}', 'error')
 
     return redirect(url_for('manufacturers.manufacturers'))
+
+
+@manufacturers_bp.route('/manufacturers/qpl-mappings', methods=['POST'])
+def upsert_qpl_mapping():
+    qpl_name = (request.form.get('qpl_name') or '').strip()
+    qpl_name_normalized = _normalize_qpl_manufacturer_name(qpl_name)
+    manufacturer_id = request.form.get('manufacturer_id', type=int)
+
+    if not _qpl_mapping_table_exists():
+        flash('QPL mapping table is missing. Run migration 20260402_add_qpl_manufacturer_mappings.sql.', 'warning')
+        return redirect(url_for('manufacturers.manufacturers'))
+
+    if not qpl_name_normalized:
+        flash('QPL manufacturer name is required.', 'error')
+        return redirect(url_for('manufacturers.manufacturers'))
+
+    try:
+        with db_cursor(commit=True) as cur:
+            if manufacturer_id:
+                _execute_with_cursor(
+                    cur,
+                    """
+                    INSERT INTO qpl_manufacturer_mappings (
+                        qpl_manufacturer_name,
+                        qpl_manufacturer_name_normalized,
+                        manufacturer_id
+                    )
+                    VALUES (?, ?, ?)
+                    ON CONFLICT (qpl_manufacturer_name_normalized)
+                    DO UPDATE SET
+                        qpl_manufacturer_name = EXCLUDED.qpl_manufacturer_name,
+                        manufacturer_id = EXCLUDED.manufacturer_id,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (qpl_name, qpl_name_normalized, manufacturer_id),
+                )
+                flash('QPL manufacturer mapping updated.', 'success')
+            else:
+                _execute_with_cursor(
+                    cur,
+                    'DELETE FROM qpl_manufacturer_mappings WHERE qpl_manufacturer_name_normalized = ?',
+                    (qpl_name_normalized,),
+                )
+                flash('QPL manufacturer mapping removed.', 'success')
+    except Exception as exc:
+        flash(f'Unable to save QPL mapping: {exc}', 'error')
+
+    return redirect(url_for('manufacturers.manufacturers'))
+
 
 @manufacturers_bp.route('/get_or_create', methods=['POST'])
 def get_or_create_manufacturer():
