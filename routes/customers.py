@@ -6999,7 +6999,7 @@ def get_customer_associations_api(customer_id):
                 'notes': parent['notes'] or ''
             })
 
-        return jsonify({
+        response = jsonify({
             'success': True,
             'associations': associations_data,
             'parents': parents_data,
@@ -7008,6 +7008,9 @@ def get_customer_associations_api(customer_id):
             'has_subsidiaries': len(associations_data) > 0,
             'has_parent': len(parents_data) > 0
         })
+        response.headers['Cache-Control'] = 'no-store, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        return response
 
     except Exception as e:
         print(f"ERROR: Error in get_customer_associations_api: {str(e)}")

@@ -1052,7 +1052,12 @@ function loadAssociations() {
 
     if (!customerId) return;
 
-    fetch(`/customers/${customerId}/associations/api`)
+    fetch(`/customers/${customerId}/associations/api`, {
+        cache: 'no-store',
+        headers: {
+            'Cache-Control': 'no-cache'
+        }
+    })
         .then(response => response.json())
         .then(data => {
             if (data.success && data.associations.length > 0) {
@@ -1194,7 +1199,12 @@ function loadAssociationIndicators() {
     const customerId = document.querySelector('[data-customer-id]')?.dataset?.customerId;
     if (!customerId) return;
 
-    fetch(`/customers/${customerId}/associations/api`)
+    fetch(`/customers/${customerId}/associations/api`, {
+        cache: 'no-store',
+        headers: {
+            'Cache-Control': 'no-cache'
+        }
+    })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
