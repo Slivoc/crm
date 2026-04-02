@@ -1,4 +1,5 @@
 import os
+import re
 
 from flask import jsonify, Blueprint, render_template, request, redirect, url_for, flash
 from db import db_cursor, execute as db_execute
@@ -26,6 +27,92 @@ def _execute_with_cursor(cur, query, params=None):
     return cur
 
 
+def _normalize_qpl_manufacturer_name(name):
+    if not name:
+        return ''
+    value = re.sub(r'[^a-z0-9 ]+', ' ', str(name).lower())
+    tokens = [
+        token for token in value.split()
+        if token not in {
+            'ltd', 'limited', 'inc', 'llc', 'plc', 'corp', 'corporation',
+            'co', 'company', 'gmbh', 'sa', 'bv', 'ag', 'srl', 'pte', 'group'
+        }
+    ]
+    return ''.join(tokens)
+
+
+def _qpl_mapping_table_exists():
+    row = db_execute(
+        """
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name = ?
+        LIMIT 1
+        """,
+        ('qpl_manufacturer_supplier_mappings',),
+        fetch='one',
+    )
+    return row is not None
+
+
+def _load_qpl_manufacturer_rows():
+    qpl_rows = db_execute(
+        """
+        SELECT
+            manufacturer_name,
+            COUNT(*) AS approvals_count,
+            COUNT(DISTINCT approval_list_type) AS list_type_count
+        FROM manufacturer_approvals
+        WHERE manufacturer_name IS NOT NULL
+          AND TRIM(manufacturer_name) <> ''
+        GROUP BY manufacturer_name
+        ORDER BY COUNT(*) DESC, manufacturer_name
+        """,
+        fetch='all',
+    ) or []
+
+    qpl_mapping_rows = []
+    if _qpl_mapping_table_exists():
+        qpl_mapping_rows = db_execute(
+            """
+            SELECT manufacturer_name_normalized, supplier_id
+            FROM qpl_manufacturer_supplier_mappings
+            """,
+            fetch='all',
+        ) or []
+
+    mapping_by_normalized_name = {
+        (row.get('manufacturer_name_normalized') or '').strip(): row.get('supplier_id')
+        for row in qpl_mapping_rows
+        if (row.get('manufacturer_name_normalized') or '').strip()
+    }
+
+    suppliers_lookup = {
+        row['id']: row
+        for row in (db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or [])
+    }
+
+    results = []
+    for row in qpl_rows:
+        qpl_name = (row.get('manufacturer_name') or '').strip()
+        if not qpl_name:
+            continue
+        normalized_name = _normalize_qpl_manufacturer_name(qpl_name)
+        mapped_supplier_id = mapping_by_normalized_name.get(normalized_name)
+        mapped_supplier = suppliers_lookup.get(mapped_supplier_id) if mapped_supplier_id else None
+        results.append({
+            'qpl_name': qpl_name,
+            'qpl_name_normalized': normalized_name,
+            'approvals_count': row.get('approvals_count', 0),
+            'list_type_count': row.get('list_type_count', 0),
+            'mapped_supplier_id': mapped_supplier_id,
+            'mapped_supplier_name': mapped_supplier.get('name') if mapped_supplier else None,
+        })
+
+    return results
+
+
 @manufacturers_bp.route('/manufacturers', methods=['GET', 'POST'])
 def manufacturers():
     if request.method == 'POST':
@@ -36,7 +123,15 @@ def manufacturers():
 
     # Use include_merged=True to show all manufacturers including merged ones
     manufacturers = get_all_manufacturers(include_merged=True)
-    return render_template('manufacturers.html', manufacturers=manufacturers)
+    suppliers = db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or []
+    qpl_manufacturers = _load_qpl_manufacturer_rows()
+    return render_template(
+        'manufacturers.html',
+        manufacturers=manufacturers,
+        suppliers=suppliers,
+        qpl_manufacturers=qpl_manufacturers,
+        has_qpl_mapping_table=_qpl_mapping_table_exists(),
+    )
 
 @manufacturers_bp.route('/manufacturers/<int:manufacturer_id>/delete', methods=['POST'])
 def delete_manufacturer_route(manufacturer_id):
@@ -100,6 +195,55 @@ def merge_manufacturers():
         flash(f'Error merging manufacturers: {str(exc)}', 'error')
 
     return redirect(url_for('manufacturers.manufacturers'))
+
+
+@manufacturers_bp.route('/manufacturers/qpl-mappings', methods=['POST'])
+def upsert_qpl_mapping():
+    qpl_name = (request.form.get('qpl_name') or '').strip()
+    qpl_name_normalized = _normalize_qpl_manufacturer_name(qpl_name)
+    supplier_id = request.form.get('supplier_id', type=int)
+
+    if not _qpl_mapping_table_exists():
+        flash('QPL mapping table is missing. Run migration 20260307_add_qpl_manufacturer_supplier_mappings.sql.', 'warning')
+        return redirect(url_for('manufacturers.manufacturers'))
+
+    if not qpl_name_normalized:
+        flash('QPL manufacturer name is required.', 'error')
+        return redirect(url_for('manufacturers.manufacturers'))
+
+    try:
+        with db_cursor(commit=True) as cur:
+            if supplier_id:
+                _execute_with_cursor(
+                    cur,
+                    """
+                    INSERT INTO qpl_manufacturer_supplier_mappings (
+                        manufacturer_name,
+                        manufacturer_name_normalized,
+                        supplier_id
+                    )
+                    VALUES (?, ?, ?)
+                    ON CONFLICT (manufacturer_name_normalized)
+                    DO UPDATE SET
+                        manufacturer_name = EXCLUDED.manufacturer_name,
+                        supplier_id = EXCLUDED.supplier_id,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (qpl_name, qpl_name_normalized, supplier_id),
+                )
+                flash('QPL manufacturer mapping updated.', 'success')
+            else:
+                _execute_with_cursor(
+                    cur,
+                    'DELETE FROM qpl_manufacturer_supplier_mappings WHERE manufacturer_name_normalized = ?',
+                    (qpl_name_normalized,),
+                )
+                flash('QPL manufacturer mapping removed.', 'success')
+    except Exception as exc:
+        flash(f'Unable to save QPL mapping: {exc}', 'error')
+
+    return redirect(url_for('manufacturers.manufacturers'))
+
 
 @manufacturers_bp.route('/get_or_create', methods=['POST'])
 def get_or_create_manufacturer():
