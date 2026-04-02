@@ -283,7 +283,7 @@ def _fetch_project_qpl_mapped_rows(project_id):
                 s.name AS mapped_supplier_name
             FROM manufacturer_approvals ma
             JOIN qpl_manufacturer_supplier_mappings map
-                ON LOWER(TRIM(map.qpl_manufacturer_name_normalized)) = LOWER(TRIM(ma.manufacturer_name))
+                ON LOWER(TRIM(map.manufacturer_name_normalized)) = LOWER(TRIM(ma.manufacturer_name))
             LEFT JOIN suppliers s ON s.id = map.supplier_id
             WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
               AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''))) <> ''
