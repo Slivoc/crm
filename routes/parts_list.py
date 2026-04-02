@@ -3462,6 +3462,7 @@ def email_suppliers():
                            page_title=page_title,
                            list_id=list_id,
                            list_name=list_header['name'] if list_header else None,
+                           customer_id=list_header['customer_id'] if list_header else None,
                            list_notes=list_header['notes'] if list_header else None,
                            customer_name=list_header['customer_name'] if list_header else None,
                            nav_is_pinned=bool(list_header.get('is_pinned')) if list_header else False,
@@ -3469,6 +3470,45 @@ def email_suppliers():
                            project_name=list_header.get('project_name') if list_header else None,
                            status_id=list_header['status_id'] if list_header else None,
                            status_name=list_header['status_name'] if list_header else None)
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/suppliers/<int:supplier_id>/mark-customer-uses', methods=['POST'])
+def mark_customer_uses_supplier(list_id, supplier_id):
+    """Mark supplier as used by the parts list customer."""
+    try:
+        with db_cursor() as cursor:
+            list_row = _execute_with_cursor(cursor, """
+                SELECT customer_id
+                FROM parts_lists
+                WHERE id = ?
+            """, (list_id,)).fetchone()
+
+            if not list_row:
+                return jsonify(success=False, error='Parts list not found'), 404
+
+            customer_id = list_row.get('customer_id')
+            if not customer_id:
+                return jsonify(success=False, error='Parts list has no customer assigned'), 400
+
+            supplier_row = _execute_with_cursor(cursor, """
+                SELECT id
+                FROM suppliers
+                WHERE id = ?
+            """, (supplier_id,)).fetchone()
+            if not supplier_row:
+                return jsonify(success=False, error='Supplier not found'), 404
+
+            _execute_with_cursor(cursor, """
+                INSERT INTO customer_supplier_relationships (customer_id, supplier_id)
+                VALUES (?, ?)
+                ON CONFLICT (customer_id, supplier_id) DO NOTHING
+            """, (customer_id, supplier_id))
+            cursor.connection.commit()
+
+        return jsonify(success=True, customer_id=customer_id, supplier_id=supplier_id)
+    except Exception as e:
+        logging.exception('Failed to mark customer/supplier relationship')
+        return jsonify(success=False, error=str(e)), 500
 
 
 @parts_list_bp.route('/ils-copy-queue', methods=['GET'])

@@ -423,7 +423,9 @@
         </div>
         {% set section.other_shown = true %}
         {% endif %}
-        <div class="supplier-card" data-supplier-id="{{ supplier.supplier_id }}">
+        <div class="supplier-card"
+             data-supplier-id="{{ supplier.supplier_id }}"
+             data-used-by-customer="{{ '1' if supplier.used_by_customer else '0' }}">
             <div class="supplier-header">
                 <div>
                     <div class="supplier-name">
@@ -466,6 +468,14 @@
                                 data-contact-name="{{ supplier.contact_name or '' }}"
                                 data-contact-email="{{ supplier.contact_email }}">
                             Email Supplier
+                        </button>
+                    {% endif %}
+                    {% if customer_id and not supplier.used_by_customer %}
+                        <button class="btn btn-sm btn-outline-danger ms-2 mark-used-by-customer-btn"
+                                data-supplier-id="{{ supplier.supplier_id }}"
+                                data-supplier-name="{{ supplier.supplier_name }}"
+                                title="Mark this supplier as one the customer uses">
+                            Flag customer uses
                         </button>
                     {% endif %}
                     {% if supplier.ils_company_names %}
@@ -1234,6 +1244,48 @@ document.addEventListener('DOMContentLoaded', function() {
             } catch (error) {
                 console.error('ROOM 101 unmap failed', error);
                 alert(`ROOM 101 failed: ${error.message}`);
+                this.disabled = false;
+                this.textContent = originalText;
+            }
+        });
+    });
+
+    // ---- Mark Supplier As Used By Customer -----------------------
+    document.querySelectorAll('.mark-used-by-customer-btn').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const supplierId = Number.parseInt(this.dataset.supplierId, 10);
+            if (!Number.isFinite(supplierId)) return;
+
+            this.disabled = true;
+            const originalText = this.textContent;
+            this.textContent = 'Flagging...';
+
+            try {
+                const response = await fetch(`/parts_list/parts-lists/{{ list_id }}/suppliers/${supplierId}/mark-customer-uses`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Failed to flag supplier');
+                }
+
+                const card = this.closest('.supplier-card');
+                if (card) {
+                    card.dataset.usedByCustomer = '1';
+                    const supplierNameEl = card.querySelector('.supplier-name');
+                    if (supplierNameEl && !supplierNameEl.querySelector('.customer-uses-supplier')) {
+                        const badge = document.createElement('span');
+                        badge.className = 'customer-uses-supplier';
+                        badge.title = 'This parts list customer already uses this supplier';
+                        badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> Customer uses this supplier';
+                        supplierNameEl.appendChild(badge);
+                    }
+                }
+
+                this.remove();
+            } catch (error) {
+                console.error('Failed to flag supplier as customer-used:', error);
+                alert(error.message || 'Failed to flag supplier');
                 this.disabled = false;
                 this.textContent = originalText;
             }
