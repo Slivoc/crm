@@ -28,9 +28,17 @@ def _execute_with_cursor(cur, query, params=None):
 
 
 def _normalize_qpl_manufacturer_name(name):
-    value = (name or '').strip().lower()
-    value = re.sub(r'\s+', ' ', value)
-    return value
+    if not name:
+        return ''
+    value = re.sub(r'[^a-z0-9 ]+', ' ', str(name).lower())
+    tokens = [
+        token for token in value.split()
+        if token not in {
+            'ltd', 'limited', 'inc', 'llc', 'plc', 'corp', 'corporation',
+            'co', 'company', 'gmbh', 'sa', 'bv', 'ag', 'srl', 'pte', 'group'
+        }
+    ]
+    return ''.join(tokens)
 
 
 def _qpl_mapping_table_exists():
@@ -42,7 +50,7 @@ def _qpl_mapping_table_exists():
           AND table_name = ?
         LIMIT 1
         """,
-        ('qpl_manufacturer_mappings',),
+        ('qpl_manufacturer_supplier_mappings',),
         fetch='one',
     )
     return row is not None
@@ -68,21 +76,21 @@ def _load_qpl_manufacturer_rows():
     if _qpl_mapping_table_exists():
         qpl_mapping_rows = db_execute(
             """
-            SELECT qpl_manufacturer_name_normalized, manufacturer_id
-            FROM qpl_manufacturer_mappings
+            SELECT manufacturer_name_normalized, supplier_id
+            FROM qpl_manufacturer_supplier_mappings
             """,
             fetch='all',
         ) or []
 
     mapping_by_normalized_name = {
-        (row.get('qpl_manufacturer_name_normalized') or '').strip(): row.get('manufacturer_id')
+        (row.get('manufacturer_name_normalized') or '').strip(): row.get('supplier_id')
         for row in qpl_mapping_rows
-        if (row.get('qpl_manufacturer_name_normalized') or '').strip()
+        if (row.get('manufacturer_name_normalized') or '').strip()
     }
 
-    manufacturers_lookup = {
+    suppliers_lookup = {
         row['id']: row
-        for row in (get_all_manufacturers(include_merged=False) or [])
+        for row in (db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or [])
     }
 
     results = []
@@ -91,15 +99,15 @@ def _load_qpl_manufacturer_rows():
         if not qpl_name:
             continue
         normalized_name = _normalize_qpl_manufacturer_name(qpl_name)
-        mapped_manufacturer_id = mapping_by_normalized_name.get(normalized_name)
-        mapped_manufacturer = manufacturers_lookup.get(mapped_manufacturer_id) if mapped_manufacturer_id else None
+        mapped_supplier_id = mapping_by_normalized_name.get(normalized_name)
+        mapped_supplier = suppliers_lookup.get(mapped_supplier_id) if mapped_supplier_id else None
         results.append({
             'qpl_name': qpl_name,
             'qpl_name_normalized': normalized_name,
             'approvals_count': row.get('approvals_count', 0),
             'list_type_count': row.get('list_type_count', 0),
-            'mapped_manufacturer_id': mapped_manufacturer_id,
-            'mapped_manufacturer_name': mapped_manufacturer.get('name') if mapped_manufacturer else None,
+            'mapped_supplier_id': mapped_supplier_id,
+            'mapped_supplier_name': mapped_supplier.get('name') if mapped_supplier else None,
         })
 
     return results
@@ -115,12 +123,12 @@ def manufacturers():
 
     # Use include_merged=True to show all manufacturers including merged ones
     manufacturers = get_all_manufacturers(include_merged=True)
-    active_manufacturers = [row for row in manufacturers if not row.get('merged_into')]
+    suppliers = db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or []
     qpl_manufacturers = _load_qpl_manufacturer_rows()
     return render_template(
         'manufacturers.html',
         manufacturers=manufacturers,
-        active_manufacturers=active_manufacturers,
+        suppliers=suppliers,
         qpl_manufacturers=qpl_manufacturers,
         has_qpl_mapping_table=_qpl_mapping_table_exists(),
     )
@@ -193,10 +201,10 @@ def merge_manufacturers():
 def upsert_qpl_mapping():
     qpl_name = (request.form.get('qpl_name') or '').strip()
     qpl_name_normalized = _normalize_qpl_manufacturer_name(qpl_name)
-    manufacturer_id = request.form.get('manufacturer_id', type=int)
+    supplier_id = request.form.get('supplier_id', type=int)
 
     if not _qpl_mapping_table_exists():
-        flash('QPL mapping table is missing. Run migration 20260402_add_qpl_manufacturer_mappings.sql.', 'warning')
+        flash('QPL mapping table is missing. Run migration 20260307_add_qpl_manufacturer_supplier_mappings.sql.', 'warning')
         return redirect(url_for('manufacturers.manufacturers'))
 
     if not qpl_name_normalized:
@@ -205,29 +213,29 @@ def upsert_qpl_mapping():
 
     try:
         with db_cursor(commit=True) as cur:
-            if manufacturer_id:
+            if supplier_id:
                 _execute_with_cursor(
                     cur,
                     """
-                    INSERT INTO qpl_manufacturer_mappings (
-                        qpl_manufacturer_name,
-                        qpl_manufacturer_name_normalized,
-                        manufacturer_id
+                    INSERT INTO qpl_manufacturer_supplier_mappings (
+                        manufacturer_name,
+                        manufacturer_name_normalized,
+                        supplier_id
                     )
                     VALUES (?, ?, ?)
-                    ON CONFLICT (qpl_manufacturer_name_normalized)
+                    ON CONFLICT (manufacturer_name_normalized)
                     DO UPDATE SET
-                        qpl_manufacturer_name = EXCLUDED.qpl_manufacturer_name,
-                        manufacturer_id = EXCLUDED.manufacturer_id,
+                        manufacturer_name = EXCLUDED.manufacturer_name,
+                        supplier_id = EXCLUDED.supplier_id,
                         updated_at = CURRENT_TIMESTAMP
                     """,
-                    (qpl_name, qpl_name_normalized, manufacturer_id),
+                    (qpl_name, qpl_name_normalized, supplier_id),
                 )
                 flash('QPL manufacturer mapping updated.', 'success')
             else:
                 _execute_with_cursor(
                     cur,
-                    'DELETE FROM qpl_manufacturer_mappings WHERE qpl_manufacturer_name_normalized = ?',
+                    'DELETE FROM qpl_manufacturer_supplier_mappings WHERE manufacturer_name_normalized = ?',
                     (qpl_name_normalized,),
                 )
                 flash('QPL manufacturer mapping removed.', 'success')
