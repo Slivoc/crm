@@ -317,6 +317,10 @@ def inject_pinned_parts_lists():
     if _is_static_request() or not current_user.is_authenticated:
         return {'pinned_parts_lists': []}
 
+    salesperson_id = getattr(g, 'current_salesperson_id', None)
+    if not salesperson_id:
+        return {'pinned_parts_lists': []}
+
     rows = db_execute(
         """
         SELECT pl.id,
@@ -325,9 +329,11 @@ def inject_pinned_parts_lists():
         FROM parts_lists pl
         LEFT JOIN customers c ON c.id = pl.customer_id
         WHERE COALESCE(pl.is_pinned, FALSE) = TRUE
+          AND pl.salesperson_id = ?
         ORDER BY COALESCE(c.name, 'Unassigned Customer') ASC, pl.date_modified DESC, pl.id DESC
         LIMIT 24
         """,
+        (salesperson_id,),
         fetch='all',
     ) or []
     return {'pinned_parts_lists': [dict(row) for row in rows]}

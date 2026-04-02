@@ -156,6 +156,7 @@
 <div class="container-fluid mt-4">
     {% set nav_active = 'overview' %}
     {% set nav_icon = 'bi-list-ul' %}
+    {% set nav_is_pinned = loaded_list.header.is_pinned %}
     {% include 'partials/parts_list_nav.html' %}
 
     <!-- Loading Spinner -->
@@ -179,15 +180,6 @@
                 </h5>
 
                 <div class="btn-group">
-                    <button type="button"
-                            class="btn btn-sm {% if loaded_list.header.is_pinned %}btn-warning{% else %}btn-outline-secondary{% endif %}"
-                            id="pin-parts-list-btn"
-                            data-list-id="{{ list_id }}"
-                            data-is-pinned="{{ 1 if loaded_list.header.is_pinned else 0 }}">
-                        <i class="bi {% if loaded_list.header.is_pinned %}bi-pin-angle-fill{% else %}bi-pin-angle{% endif %} me-1"></i>
-                        {% if loaded_list.header.is_pinned %}Pinned{% else %}Pin List{% endif %}
-                    </button>
-
                     <!-- Quick Add Part Button -->
                     <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#quickAddPartModal">
                         <i class="bi bi-plus-circle me-1"></i>Add Part
@@ -435,39 +427,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-document.addEventListener('DOMContentLoaded', function() {
-    const pinBtn = document.getElementById('pin-parts-list-btn');
-    if (!pinBtn) return;
-
-    pinBtn.addEventListener('click', function() {
-        const listId = this.getAttribute('data-list-id');
-        const currentlyPinned = this.getAttribute('data-is-pinned') === '1';
-        this.disabled = true;
-
-        fetch(`/parts_list/parts-lists/${listId}/pin`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ is_pinned: !currentlyPinned })
-        })
-        .then(response => response.json())
-        .then(data => {
-            this.disabled = false;
-            if (!data.success) {
-                throw new Error(data.message || 'Unable to update pin');
-            }
-            this.setAttribute('data-is-pinned', data.is_pinned ? '1' : '0');
-            this.classList.toggle('btn-warning', !!data.is_pinned);
-            this.classList.toggle('btn-outline-secondary', !data.is_pinned);
-            this.innerHTML = data.is_pinned
-                ? '<i class="bi bi-pin-angle-fill me-1"></i>Pinned'
-                : '<i class="bi bi-pin-angle me-1"></i>Pin List';
-        })
-        .catch(error => {
-            this.disabled = false;
-            alert(error.message || 'Unable to update pin');
-        });
-    });
-});
 </script>
 <!-- Quick Add Part Modal -->
 <div class="modal fade" id="quickAddPartModal" tabindex="-1" aria-labelledby="quickAddPartModalLabel" aria-hidden="true">
