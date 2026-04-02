@@ -88,6 +88,9 @@
             <a class="btn btn-outline-secondary" href="{{ url_for('projects.edit_project', project_id=project.id) }}">
                 Back to Project
             </a>
+            <a class="btn btn-outline-success" href="{{ url_for('projects.project_parts_list_qpl_mapped_report', project_id=project.id) }}">
+                QPL Mapped Report
+            </a>
             <a class="btn btn-outline-primary" href="{{ url_for('projects.project_parts_list_report', project_id=project.id) }}">
                 Full Report
             </a>
