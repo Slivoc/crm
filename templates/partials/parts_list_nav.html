@@ -2,6 +2,7 @@
 {% set icon_class = nav_icon|default('bi-list-ul') %}
 {% set active_page = nav_active|default('') %}
 {% set show_quote_views = show_quote_views|default(false) %}
+{% set is_pinned = nav_is_pinned|default(false) %}
 <div class="card mb-4" style="border:1px solid #dee2e6;box-shadow:0 2px 4px rgba(0,0,0,.05);">
     <div class="card-header" style="background:#fff;border-bottom:2px solid #e9ecef;">
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
@@ -42,6 +43,15 @@
                             title="{{ 'Assign Customer' if not customer_name else 'Reassign Customer/Contact' }}"
                             aria-label="{{ 'Assign Customer' if not customer_name else 'Reassign Customer/Contact' }}">
                         <i class="bi {{ 'bi-person-plus' if not customer_name else 'bi-person-gear' }}"></i>
+                    </button>
+                    <button type="button"
+                            class="btn btn-sm pl-icon-btn {{ 'text-warning' if is_pinned else 'text-secondary' }}"
+                            id="pin-parts-list-btn"
+                            data-list-id="{{ list_id }}"
+                            data-is-pinned="{{ 1 if is_pinned else 0 }}"
+                            title="{% if is_pinned %}Unpin Parts List{% else %}Pin Parts List{% endif %}"
+                            aria-label="{% if is_pinned %}Unpin Parts List{% else %}Pin Parts List{% endif %}">
+                        <i class="bi {{ 'bi-pin-angle-fill' if is_pinned else 'bi-pin-angle' }}"></i>
                     </button>
                     <button type="button"
                             class="btn btn-sm pl-icon-btn text-danger"
@@ -190,6 +200,35 @@
     const projectStatus = document.getElementById('partsListProjectStatus');
     const projectPopoverBtn = document.getElementById('project-popover-btn');
     const projectPopover = document.getElementById('project-popover');
+    const pinBtn = document.getElementById('pin-parts-list-btn');
+
+    if (pinBtn) {
+        pinBtn.addEventListener('click', async function() {
+            const currentlyPinned = this.getAttribute('data-is-pinned') === '1';
+
+            try {
+                const response = await fetch(`/parts_list/parts-lists/${listId}/pin`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_pinned: !currentlyPinned })
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || 'Unable to update pin');
+                }
+
+                const pinned = !!data.is_pinned;
+                this.setAttribute('data-is-pinned', pinned ? '1' : '0');
+                this.classList.toggle('text-warning', pinned);
+                this.classList.toggle('text-secondary', !pinned);
+                this.title = pinned ? 'Unpin Parts List' : 'Pin Parts List';
+                this.setAttribute('aria-label', pinned ? 'Unpin Parts List' : 'Pin Parts List');
+                this.innerHTML = `<i class="bi ${pinned ? 'bi-pin-angle-fill' : 'bi-pin-angle'}"></i>`;
+            } catch (error) {
+                alert(error.message || 'Unable to update pin');
+            }
+        });
+    }
 
     // Project popover toggle
     if (projectPopoverBtn && projectPopover) {
