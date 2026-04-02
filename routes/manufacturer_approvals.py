@@ -6,7 +6,7 @@ from flask import Blueprint, current_app, flash, jsonify, redirect, render_templ
 from flask_login import current_user
 from werkzeug.utils import secure_filename
 
-from db import execute as db_execute
+from db import db_cursor, execute as db_execute
 from manufacturer_approval_importer import LIST_TYPES, process_workbooks
 
 
@@ -286,6 +286,69 @@ def _save_uploaded_files(files):
     return temp_paths
 
 
+def _reassign_import_list_type(import_id, target_list_type):
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            '''
+            SELECT id, approval_list_type
+            FROM manufacturer_approval_imports
+            WHERE id = ?
+            ''',
+            (import_id,),
+        )
+        import_row = cur.fetchone()
+        if not import_row:
+            raise ValueError('Import not found.')
+
+        current_list_type = import_row['approval_list_type']
+        if current_list_type == target_list_type:
+            return {'updated_rows': 0, 'deleted_conflicts': 0, 'previous_list_type': current_list_type}
+
+        cur.execute(
+            '''
+            DELETE FROM manufacturer_approvals target
+            USING manufacturer_approvals source
+            WHERE source.import_id = ?
+              AND source.id <> target.id
+              AND source.approval_list_type = ?
+              AND target.approval_list_type = ?
+              AND COALESCE(source.airbus_material, '') = COALESCE(target.airbus_material, '')
+              AND COALESCE(source.manufacturer_part_number, '') = COALESCE(target.manufacturer_part_number, '')
+              AND source.manufacturer_name = target.manufacturer_name
+              AND COALESCE(source.cage_code, '') = COALESCE(target.cage_code, '')
+              AND COALESCE(source.location, '') = COALESCE(target.location, '')
+            ''',
+            (import_id, current_list_type, target_list_type),
+        )
+        deleted_conflicts = cur.rowcount or 0
+
+        cur.execute(
+            '''
+            UPDATE manufacturer_approvals
+            SET approval_list_type = ?,
+                updated_at = NOW()
+            WHERE import_id = ?
+            ''',
+            (target_list_type, import_id),
+        )
+        updated_rows = cur.rowcount or 0
+
+        cur.execute(
+            '''
+            UPDATE manufacturer_approval_imports
+            SET approval_list_type = ?
+            WHERE id = ?
+            ''',
+            (target_list_type, import_id),
+        )
+
+    return {
+        'updated_rows': updated_rows,
+        'deleted_conflicts': deleted_conflicts,
+        'previous_list_type': current_list_type,
+    }
+
+
 @manufacturer_approvals_bp.route('/manufacturer-approvals', methods=['GET'])
 def manufacturer_approvals_dashboard():
     try:
@@ -399,6 +462,35 @@ def import_manufacturer_approvals():
                 current_app.logger.warning('Could not remove temp file %s', temp_path)
 
     return redirect(url_for('manufacturer_approvals.manufacturer_approvals_dashboard', approval_list_type=approval_list_type))
+
+
+@manufacturer_approvals_bp.route('/manufacturer-approvals/imports/<int:import_id>/list-type', methods=['POST'])
+def update_manufacturer_approval_import_list_type(import_id):
+    target_list_type = _normalize_list_type(request.form.get('approval_list_type'))
+
+    try:
+        result = _reassign_import_list_type(import_id, target_list_type)
+        if result['updated_rows'] == 0 and result['previous_list_type'] == target_list_type:
+            flash(f'Import #{import_id} is already assigned to {LIST_TYPES[target_list_type]}.', 'info')
+        else:
+            message = (
+                f"Import #{import_id} moved from {LIST_TYPES[result['previous_list_type']]} "
+                f"to {LIST_TYPES[target_list_type]}. Updated {result['updated_rows']:,} row(s)."
+            )
+            if result['deleted_conflicts']:
+                message += f" Removed {result['deleted_conflicts']:,} duplicate row(s) already present in the target list."
+            flash(message, 'success')
+    except Exception as exc:
+        logging.exception('Error reassigning manufacturer approval import %s', import_id)
+        flash(f'Unable to reassign import #{import_id}: {exc}', 'danger')
+
+    return redirect(
+        url_for(
+            'manufacturer_approvals.manufacturer_approvals_dashboard',
+            approval_list_type=target_list_type,
+            imports_list_type=target_list_type,
+        )
+    )
 
 
 @manufacturer_approvals_bp.route('/manufacturer-approvals/search', methods=['GET'])
