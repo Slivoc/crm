@@ -90,7 +90,7 @@
                                     <td>{{ row.qpl_manufacturer_name }}</td>
                                     <td>
                                         {% if row.mapped_supplier_id %}
-                                            <a href="{{ url_for('suppliers.view_supplier', supplier_id=row.mapped_supplier_id) }}">
+                                            <a href="{{ url_for('suppliers.edit_supplier', supplier_id=row.mapped_supplier_id) }}">
                                                 {{ row.mapped_supplier_name }}
                                             </a>
                                         {% else %}
