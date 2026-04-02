@@ -238,6 +238,78 @@ def _fetch_project_parts_list_rows(project_id):
     return [dict(row) for row in rows]
 
 
+def _qpl_supplier_mapping_table_exists():
+    row = db_execute(
+        """
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name = ?
+        LIMIT 1
+        """,
+        ('qpl_manufacturer_supplier_mappings',),
+        fetch='one',
+    )
+    return row is not None
+
+
+def _fetch_project_qpl_mapped_rows(project_id):
+    if not _qpl_supplier_mapping_table_exists():
+        return []
+
+    rows = db_execute(
+        """
+        WITH project_lines AS (
+            SELECT
+                pl.id AS parts_list_id,
+                pl.name AS parts_list_name,
+                pll.id AS parts_list_line_id,
+                pll.line_number,
+                pll.customer_part_number,
+                pll.base_part_number,
+                pll.description,
+                pll.quantity AS requested_qty,
+                UPPER(TRIM(pll.base_part_number)) AS normalized_base_part_number
+            FROM parts_lists pl
+            JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+            WHERE pl.project_id = ?
+              AND TRIM(COALESCE(pll.base_part_number, '')) <> ''
+        ),
+        qpl_mapped AS (
+            SELECT DISTINCT
+                UPPER(TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, '')))) AS normalized_base_part_number,
+                TRIM(ma.manufacturer_name) AS qpl_manufacturer_name,
+                map.supplier_id,
+                s.name AS mapped_supplier_name
+            FROM manufacturer_approvals ma
+            JOIN qpl_manufacturer_supplier_mappings map
+                ON LOWER(TRIM(map.qpl_manufacturer_name_normalized)) = LOWER(TRIM(ma.manufacturer_name))
+            LEFT JOIN suppliers s ON s.id = map.supplier_id
+            WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
+              AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''))) <> ''
+        )
+        SELECT
+            pl.parts_list_id,
+            pl.parts_list_name,
+            pl.parts_list_line_id,
+            pl.line_number,
+            pl.customer_part_number,
+            pl.base_part_number,
+            pl.description,
+            pl.requested_qty,
+            qm.qpl_manufacturer_name,
+            qm.supplier_id AS mapped_supplier_id,
+            qm.mapped_supplier_name
+        FROM project_lines pl
+        JOIN qpl_mapped qm ON qm.normalized_base_part_number = pl.normalized_base_part_number
+        ORDER BY pl.parts_list_id, pl.line_number, pl.parts_list_line_id, qm.qpl_manufacturer_name
+        """,
+        (project_id,),
+        fetch='all',
+    ) or []
+    return [dict(row) for row in rows]
+
+
 def _fetch_project_parts_list_overview(project_id):
     rows = db_execute(
         """
@@ -536,6 +608,35 @@ def project_parts_list_report(project_id):
     return render_template(
         'project_parts_list_report.html',
         project=project,
+        summary=summary,
+        rows=rows,
+    )
+
+
+@projects_bp.route('/<int:project_id>/parts-lists/report/qpl-mapped', methods=['GET'])
+def project_parts_list_qpl_mapped_report(project_id):
+    project = get_project_by_id(project_id)
+    if not project:
+        flash('Project not found', 'error')
+        return redirect(url_for('projects.list_projects'))
+
+    has_mapping_table = _qpl_supplier_mapping_table_exists()
+    rows = _fetch_project_qpl_mapped_rows(project_id) if has_mapping_table else []
+
+    summary = {
+        'line_count': len({row.get('parts_list_line_id') for row in rows if row.get('parts_list_line_id') is not None}),
+        'mapping_count': len(rows),
+        'supplier_count': len({
+            row.get('mapped_supplier_id')
+            for row in rows
+            if row.get('mapped_supplier_id') is not None
+        }),
+    }
+
+    return render_template(
+        'project_parts_list_qpl_report.html',
+        project=project,
+        has_mapping_table=has_mapping_table,
         summary=summary,
         rows=rows,
     )
