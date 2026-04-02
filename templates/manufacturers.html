@@ -68,6 +68,58 @@
         </div>
     </div>
 
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Mapped Supplier Quote Prefix Report</span>
+            <span class="text-muted small">From parts list supplier quotes</span>
+        </div>
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label for="mappedPrefixLength" class="form-label">Prefix Group Length</label>
+                    <input type="number" id="mappedPrefixLength" class="form-control form-control-sm" min="1" max="25" step="1" value="6">
+                </div>
+                <div class="col-md-3">
+                    <label for="mappedPrefixMinCount" class="form-label">Minimum Occurrences</label>
+                    <input type="number" id="mappedPrefixMinCount" class="form-control form-control-sm" min="1" step="1" value="2">
+                </div>
+                <div class="col-md-4">
+                    <label for="mappedPrefixSupplier" class="form-label">Mapped Supplier Filter</label>
+                    <select id="mappedPrefixSupplier" class="form-select form-select-sm">
+                        <option value="">All mapped suppliers</option>
+                        {% for supplier in suppliers %}
+                            <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2 d-grid">
+                    <button type="button" class="btn btn-sm btn-primary" id="loadMappedPrefixReportBtn">Run Report</button>
+                </div>
+            </div>
+
+            <div class="text-muted small mt-3" id="mappedPrefixSummary">
+                Choose a prefix length and click "Run Report" to group part-number starts for mapped suppliers.
+            </div>
+            <div class="table-responsive mt-2">
+                <table class="table table-sm align-middle" id="mappedPrefixReportTable">
+                    <thead>
+                        <tr>
+                            <th>Prefix</th>
+                            <th>Quote Lines</th>
+                            <th>Quotes</th>
+                            <th>Suppliers</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td colspan="4" class="text-muted">No report loaded yet.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- Manufacturers List -->
     <div class="table-responsive">
         <table class="table">
@@ -173,6 +225,80 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+
+    const prefixLengthInput = document.getElementById('mappedPrefixLength');
+    const minCountInput = document.getElementById('mappedPrefixMinCount');
+    const supplierSelect = document.getElementById('mappedPrefixSupplier');
+    const runBtn = document.getElementById('loadMappedPrefixReportBtn');
+    const reportSummary = document.getElementById('mappedPrefixSummary');
+    const reportTableBody = document.querySelector('#mappedPrefixReportTable tbody');
+
+    async function loadMappedSupplierPrefixReport() {
+        if (!runBtn || !reportTableBody || !reportSummary) {
+            return;
+        }
+
+        const prefixLength = Math.min(25, Math.max(1, Number.parseInt(prefixLengthInput?.value || '6', 10) || 6));
+        const minOccurrences = Math.max(1, Number.parseInt(minCountInput?.value || '2', 10) || 2);
+        const supplierId = supplierSelect?.value || '';
+
+        const params = new URLSearchParams({
+            prefix_length: String(prefixLength),
+            min_occurrences: String(minOccurrences),
+        });
+        if (supplierId) {
+            params.set('supplier_id', supplierId);
+        }
+
+        runBtn.disabled = true;
+        reportSummary.textContent = 'Loading prefix report...';
+        reportTableBody.innerHTML = '<tr><td colspan="4" class="text-muted">Loading...</td></tr>';
+
+        try {
+            const response = await fetch(`/manufacturers/qpl-mappings/prefix-report?${params.toString()}`);
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Failed to load report');
+            }
+
+            const rows = Array.isArray(data.rows) ? data.rows : [];
+            if (!rows.length) {
+                reportSummary.textContent = `No prefixes found (length ${data.prefix_length}, min ${data.min_occurrences}).`;
+                reportTableBody.innerHTML = '<tr><td colspan="4" class="text-muted">No matching prefixes.</td></tr>';
+                return;
+            }
+
+            reportSummary.textContent = `${rows.length} prefix group(s) returned at length ${data.prefix_length}.`;
+            reportTableBody.innerHTML = rows.map((row) => `
+                <tr>
+                    <td><code>${row.prefix || ''}</code></td>
+                    <td>${row.line_count || 0}</td>
+                    <td>${row.quote_count || 0}</td>
+                    <td>${row.supplier_count || 0}</td>
+                </tr>
+            `).join('');
+        } catch (error) {
+            reportSummary.textContent = `Error: ${error.message}`;
+            reportTableBody.innerHTML = '<tr><td colspan="4" class="text-danger">Unable to load prefix report.</td></tr>';
+        } finally {
+            runBtn.disabled = false;
+        }
+    }
+
+    runBtn?.addEventListener('click', loadMappedSupplierPrefixReport);
+    prefixLengthInput?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            loadMappedSupplierPrefixReport();
+        }
+    });
+    minCountInput?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            loadMappedSupplierPrefixReport();
+        }
+    });
 });
 </script>
 {% endblock %}

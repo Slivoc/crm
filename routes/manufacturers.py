@@ -41,6 +41,18 @@ def _normalize_qpl_manufacturer_name(name):
     return ''.join(tokens)
 
 
+def _part_number_prefix_sql():
+    if _using_postgres():
+        return (
+            "UPPER(SUBSTRING(TRIM(COALESCE(NULLIF(sql.quoted_part_number, ''), "
+            "NULLIF(pll.part_number, ''), NULLIF(pll.base_part_number, ''))) FROM 1 FOR ?))"
+        )
+    return (
+        "UPPER(SUBSTR(TRIM(COALESCE(NULLIF(sql.quoted_part_number, ''), "
+        "NULLIF(pll.part_number, ''), NULLIF(pll.base_part_number, ''))), 1, ?))"
+    )
+
+
 def _qpl_mapping_table_exists():
     row = db_execute(
         """
@@ -132,6 +144,76 @@ def manufacturers():
         qpl_manufacturers=qpl_manufacturers,
         has_qpl_mapping_table=_qpl_mapping_table_exists(),
     )
+
+
+@manufacturers_bp.route('/manufacturers/qpl-mappings/prefix-report', methods=['GET'])
+def qpl_mapped_supplier_prefix_report():
+    if not _qpl_mapping_table_exists():
+        return jsonify(success=False, message='QPL mapping table is missing.'), 400
+
+    prefix_length = request.args.get('prefix_length', type=int) or 6
+    prefix_length = min(max(prefix_length, 1), 25)
+
+    min_occurrences = request.args.get('min_occurrences', type=int) or 2
+    min_occurrences = max(min_occurrences, 1)
+
+    limit = request.args.get('limit', type=int) or 100
+    limit = min(max(limit, 1), 500)
+
+    supplier_id = request.args.get('supplier_id', type=int)
+
+    prefix_sql = _part_number_prefix_sql()
+    supplier_filter_sql = ''
+    params = [prefix_length]
+
+    if supplier_id:
+        supplier_filter_sql = 'AND sq.supplier_id = ?'
+        params.append(supplier_id)
+
+    params.extend([prefix_length, min_occurrences, limit])
+
+    rows = db_execute(
+        f"""
+        WITH mapped_suppliers AS (
+            SELECT DISTINCT supplier_id
+            FROM qpl_manufacturer_supplier_mappings
+        ),
+        source_lines AS (
+            SELECT
+                sq.id AS supplier_quote_id,
+                sq.supplier_id,
+                {prefix_sql} AS pn_prefix
+            FROM parts_list_supplier_quote_lines sql
+            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            LEFT JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+            JOIN mapped_suppliers ms ON ms.supplier_id = sq.supplier_id
+            WHERE TRIM(COALESCE(NULLIF(sql.quoted_part_number, ''), NULLIF(pll.part_number, ''), NULLIF(pll.base_part_number, ''))) <> ''
+              {supplier_filter_sql}
+        )
+        SELECT
+            pn_prefix AS prefix,
+            COUNT(*) AS line_count,
+            COUNT(DISTINCT supplier_quote_id) AS quote_count,
+            COUNT(DISTINCT supplier_id) AS supplier_count
+        FROM source_lines
+        WHERE LENGTH(pn_prefix) = ?
+        GROUP BY pn_prefix
+        HAVING COUNT(*) >= ?
+        ORDER BY line_count DESC, prefix ASC
+        LIMIT ?
+        """,
+        tuple(params),
+        fetch='all',
+    ) or []
+
+    return jsonify(
+        success=True,
+        prefix_length=prefix_length,
+        min_occurrences=min_occurrences,
+        supplier_id=supplier_id,
+        rows=rows,
+    )
+
 
 @manufacturers_bp.route('/manufacturers/<int:manufacturer_id>/delete', methods=['POST'])
 def delete_manufacturer_route(manufacturer_id):
