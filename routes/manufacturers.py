@@ -68,7 +68,31 @@ def _qpl_mapping_table_exists():
     return row is not None
 
 
-def _load_qpl_manufacturer_rows():
+def _load_qpl_manufacturer_rows(search_term='', limit=10, mapped_only=True):
+    limit = min(max(int(limit or 10), 1), 100)
+    search_term = (search_term or '').strip()
+
+    mapping_rows = []
+    if _qpl_mapping_table_exists():
+        mapping_rows = db_execute(
+            """
+            SELECT manufacturer_name_normalized, supplier_id
+            FROM qpl_manufacturer_supplier_mappings
+            """,
+            fetch='all',
+        ) or []
+
+    mapping_by_normalized_name = {
+        (row.get('manufacturer_name_normalized') or '').strip(): row.get('supplier_id')
+        for row in mapping_rows
+        if (row.get('manufacturer_name_normalized') or '').strip()
+    }
+
+    suppliers_lookup = {
+        row['id']: row
+        for row in (db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or [])
+    }
+
     qpl_rows = db_execute(
         """
         SELECT
@@ -84,36 +108,22 @@ def _load_qpl_manufacturer_rows():
         fetch='all',
     ) or []
 
-    qpl_mapping_rows = []
-    if _qpl_mapping_table_exists():
-        qpl_mapping_rows = db_execute(
-            """
-            SELECT manufacturer_name_normalized, supplier_id
-            FROM qpl_manufacturer_supplier_mappings
-            """,
-            fetch='all',
-        ) or []
-
-    mapping_by_normalized_name = {
-        (row.get('manufacturer_name_normalized') or '').strip(): row.get('supplier_id')
-        for row in qpl_mapping_rows
-        if (row.get('manufacturer_name_normalized') or '').strip()
-    }
-
-    suppliers_lookup = {
-        row['id']: row
-        for row in (db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or [])
-    }
-
-    results = []
+    filtered_results = []
     for row in qpl_rows:
         qpl_name = (row.get('manufacturer_name') or '').strip()
         if not qpl_name:
             continue
+
         normalized_name = _normalize_qpl_manufacturer_name(qpl_name)
         mapped_supplier_id = mapping_by_normalized_name.get(normalized_name)
         mapped_supplier = suppliers_lookup.get(mapped_supplier_id) if mapped_supplier_id else None
-        results.append({
+
+        if mapped_only and not mapped_supplier_id:
+            continue
+        if search_term and search_term.lower() not in qpl_name.lower():
+            continue
+
+        filtered_results.append({
             'qpl_name': qpl_name,
             'qpl_name_normalized': normalized_name,
             'approvals_count': row.get('approvals_count', 0),
@@ -122,7 +132,8 @@ def _load_qpl_manufacturer_rows():
             'mapped_supplier_name': mapped_supplier.get('name') if mapped_supplier else None,
         })
 
-    return results
+    filtered_results.sort(key=lambda row: (-int(row.get('approvals_count', 0) or 0), row.get('qpl_name', '').lower()))
+    return filtered_results[:limit], len(filtered_results)
 
 
 def _load_qpl_mapped_suppliers():
@@ -188,10 +199,13 @@ def manufacturers():
 
     search = (request.args.get('search') or '').strip()
     limit = request.args.get('limit', type=int) or 10
+    qpl_search = (request.args.get('qpl_search') or '').strip()
+    qpl_limit = request.args.get('qpl_limit', type=int) or 10
+    qpl_mapped_only = str(request.args.get('qpl_mapped_only', '1')).lower() not in ('0', 'false', 'off', '')
     manufacturers, manufacturer_total = _load_manufacturers_page(search, limit)
     active_manufacturers = get_all_manufacturers(include_merged=False)
     suppliers = db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or []
-    qpl_manufacturers = _load_qpl_manufacturer_rows()
+    qpl_manufacturers, qpl_manufacturer_total = _load_qpl_manufacturer_rows(qpl_search, qpl_limit, qpl_mapped_only)
     qpl_mapped_suppliers = _load_qpl_mapped_suppliers()
     return render_template(
         'manufacturers.html',
@@ -203,6 +217,10 @@ def manufacturers():
         suppliers=suppliers,
         qpl_mapped_suppliers=qpl_mapped_suppliers,
         qpl_manufacturers=qpl_manufacturers,
+        qpl_manufacturer_total=qpl_manufacturer_total,
+        qpl_search=qpl_search,
+        qpl_limit=min(max(qpl_limit, 1), 100),
+        qpl_mapped_only=qpl_mapped_only,
         has_qpl_mapping_table=_qpl_mapping_table_exists(),
     )
 

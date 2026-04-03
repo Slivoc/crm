@@ -15,9 +15,34 @@
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
             <span>QPL Manufacturer Mappings</span>
-            <span class="text-muted small">{{ qpl_manufacturers|length }} manufacturer(s)</span>
+            <span class="text-muted small">Showing {{ qpl_manufacturers|length }} of {{ qpl_manufacturer_total }}</span>
         </div>
         <div class="card-body">
+            <form method="GET" action="{{ url_for('manufacturers.manufacturers') }}" class="row g-2 align-items-end mb-3">
+                <input type="hidden" name="search" value="{{ manufacturer_search }}">
+                <input type="hidden" name="limit" value="{{ manufacturer_limit }}">
+                <div class="col-md-5">
+                    <label for="qplSearch" class="form-label">Search QPL Manufacturers</label>
+                    <input type="text" id="qplSearch" name="qpl_search" class="form-control" value="{{ qpl_search }}" placeholder="Search QPL manufacturer names">
+                </div>
+                <div class="col-md-2">
+                    <label for="qplLimit" class="form-label">Rows</label>
+                    <select id="qplLimit" name="qpl_limit" class="form-select">
+                        {% for option in [10, 25, 50, 100] %}
+                            <option value="{{ option }}" {% if qpl_limit == option %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check mt-4 pt-2">
+                        <input class="form-check-input" type="checkbox" id="qplMappedOnly" name="qpl_mapped_only" value="1" {% if qpl_mapped_only %}checked{% endif %}>
+                        <label class="form-check-label" for="qplMappedOnly">Mapped only</label>
+                    </div>
+                </div>
+                <div class="col-md-2 d-grid">
+                    <button type="submit" class="btn btn-primary">Filter</button>
+                </div>
+            </form>
             <div class="d-flex justify-content-end mb-3">
                 <form action="{{ url_for('manufacturers.import_qpl_manufacturers') }}" method="POST">
                     <button type="submit" class="btn btn-sm btn-outline-success">Import QPL Manufacturers Into Table</button>
@@ -28,7 +53,7 @@
                     QPL mapping table is missing. Run migration <code>20260307_add_qpl_manufacturer_supplier_mappings.sql</code>.
                 </div>
             {% elif not qpl_manufacturers %}
-                <p class="text-muted mb-0">No manufacturers found in QPL approvals yet.</p>
+                <p class="text-muted mb-0">No QPL manufacturers match the current filter.</p>
             {% else %}
                 <div class="table-responsive">
                     <table class="table table-sm align-middle">
