@@ -140,6 +140,42 @@ def _load_qpl_mapped_suppliers():
     ) or []
 
 
+def _load_manufacturers_page(search_term='', limit=10):
+    limit = min(max(int(limit or 10), 1), 100)
+    search_term = (search_term or '').strip()
+    params = []
+    where_clause = ''
+
+    if search_term:
+        where_clause = 'WHERE LOWER(m.name) LIKE LOWER(?)'
+        params.append(f'%{search_term}%')
+
+    rows = db_execute(
+        f"""
+        SELECT m.id, m.name, m.merged_into, m2.name AS merged_into_name
+        FROM manufacturers m
+        LEFT JOIN manufacturers m2 ON m.merged_into = m2.id
+        {where_clause}
+        ORDER BY m.name
+        LIMIT ?
+        """,
+        tuple(params + [limit]),
+        fetch='all',
+    ) or []
+
+    total_row = db_execute(
+        f"""
+        SELECT COUNT(*) AS total_count
+        FROM manufacturers m
+        {where_clause}
+        """,
+        tuple(params),
+        fetch='one',
+    ) or {}
+
+    return [dict(row) for row in rows], int(total_row.get('total_count', 0) or 0)
+
+
 @manufacturers_bp.route('', methods=['GET', 'POST'])
 @manufacturers_bp.route('/', methods=['GET', 'POST'])
 @manufacturers_bp.route('/manufacturers', methods=['GET', 'POST'])
@@ -150,14 +186,20 @@ def manufacturers():
         flash('Manufacturer added successfully!', 'success')
         return redirect(url_for('manufacturers.manufacturers'))
 
-    # Use include_merged=True to show all manufacturers including merged ones
-    manufacturers = get_all_manufacturers(include_merged=True)
+    search = (request.args.get('search') or '').strip()
+    limit = request.args.get('limit', type=int) or 10
+    manufacturers, manufacturer_total = _load_manufacturers_page(search, limit)
+    active_manufacturers = get_all_manufacturers(include_merged=False)
     suppliers = db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or []
     qpl_manufacturers = _load_qpl_manufacturer_rows()
     qpl_mapped_suppliers = _load_qpl_mapped_suppliers()
     return render_template(
         'manufacturers.html',
         manufacturers=manufacturers,
+        manufacturer_total=manufacturer_total,
+        manufacturer_search=search,
+        manufacturer_limit=min(max(limit, 1), 100),
+        active_manufacturers=active_manufacturers,
         suppliers=suppliers,
         qpl_mapped_suppliers=qpl_mapped_suppliers,
         qpl_manufacturers=qpl_manufacturers,
@@ -347,6 +389,69 @@ def upsert_qpl_mapping():
     except Exception as exc:
         flash(f'Unable to save QPL mapping: {exc}', 'error')
 
+    return redirect(url_for('manufacturers.manufacturers'))
+
+
+@manufacturers_bp.route('/import-qpl-manufacturers', methods=['POST'])
+@manufacturers_bp.route('/manufacturers/import-qpl-manufacturers', methods=['POST'])
+def import_qpl_manufacturers():
+    qpl_rows = db_execute(
+        """
+        SELECT DISTINCT TRIM(manufacturer_name) AS manufacturer_name
+        FROM manufacturer_approvals
+        WHERE manufacturer_name IS NOT NULL
+          AND TRIM(manufacturer_name) <> ''
+        ORDER BY TRIM(manufacturer_name)
+        """,
+        fetch='all',
+    ) or []
+
+    if not qpl_rows:
+        flash('No QPL manufacturers found to import.', 'warning')
+        return redirect(url_for('manufacturers.manufacturers'))
+
+    existing_rows = db_execute(
+        """
+        SELECT LOWER(TRIM(name)) AS manufacturer_key
+        FROM manufacturers
+        WHERE name IS NOT NULL
+          AND TRIM(name) <> ''
+        """,
+        fetch='all',
+    ) or []
+    existing_keys = {
+        (row.get('manufacturer_key') or '').strip()
+        for row in existing_rows
+        if (row.get('manufacturer_key') or '').strip()
+    }
+
+    names_to_insert = []
+    seen_new = set()
+    for row in qpl_rows:
+        manufacturer_name = (row.get('manufacturer_name') or '').strip()
+        manufacturer_key = manufacturer_name.lower()
+        if not manufacturer_name or manufacturer_key in existing_keys or manufacturer_key in seen_new:
+            continue
+        names_to_insert.append(manufacturer_name)
+        seen_new.add(manufacturer_key)
+
+    inserted_count = 0
+    if names_to_insert:
+        with db_cursor(commit=True) as cur:
+            for manufacturer_name in names_to_insert:
+                _execute_with_cursor(
+                    cur,
+                    "INSERT INTO manufacturers (name) VALUES (?)",
+                    (manufacturer_name,),
+                )
+                inserted_count += 1
+
+    skipped_count = len(qpl_rows) - inserted_count
+    flash(
+        f'Imported {inserted_count} QPL manufacturer(s) into the manufacturers table. '
+        f'Skipped {skipped_count} existing name(s).',
+        'success' if inserted_count else 'info',
+    )
     return redirect(url_for('manufacturers.manufacturers'))
 
 
