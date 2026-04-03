@@ -62,7 +62,7 @@
                     <div>
                         <h4 class="mb-1">Manage existing groups</h4>
                         <p class="text-muted mb-0 small">
-                            Search for a member part number to load matching groups, then select members to remove or split out.
+                            Search for a member part number or load the biggest groups to catch suspicious accidental merges.
                         </p>
                     </div>
                     <form method="get" action="{{ url_for('parts.alt_groups') }}" class="d-flex flex-wrap gap-2">
@@ -78,12 +78,40 @@
                         <button type="submit" class="btn btn-outline-primary">
                             <i class="bi bi-search me-2"></i>Search
                         </button>
-                        {% if search_query %}
+                        {% if search_query or view_mode == 'largest' %}
                             <a href="{{ url_for('parts.alt_groups') }}" class="btn btn-outline-secondary">Clear</a>
                         {% endif %}
                     </form>
                 </div>
                 <div class="card-body">
+                    <div class="border rounded-3 p-3 bg-light-subtle mb-4">
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-2">
+                            <div>
+                                <div class="fw-semibold">Find unusually large groups</div>
+                                <div class="text-muted small">Large global alt groups usually point to parts being grouped together by mistake.</div>
+                            </div>
+                            {% if view_mode == 'largest' %}
+                                <span class="badge text-bg-warning">Largest groups view</span>
+                            {% endif %}
+                        </div>
+                        <form method="get" action="{{ url_for('parts.alt_groups') }}" class="row g-2 align-items-end">
+                            <input type="hidden" name="view" value="largest">
+                            <div class="col-sm-4 col-lg-3">
+                                <label for="minSize" class="form-label mb-1">Minimum group size</label>
+                                <input id="minSize" type="number" class="form-control" name="min_size" min="2" max="1000" value="{{ min_size }}">
+                            </div>
+                            <div class="col-sm-4 col-lg-3">
+                                <label for="limit" class="form-label mb-1">Groups to show</label>
+                                <input id="limit" type="number" class="form-control" name="limit" min="1" max="100" value="{{ top_limit }}">
+                            </div>
+                            <div class="col-sm-4 col-lg-3">
+                                <button type="submit" class="btn btn-warning w-100">
+                                    <i class="bi bi-sort-numeric-down me-2"></i>Show biggest groups
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+
                     {% if groups %}
                         <div class="d-grid gap-3">
                             {% for group in groups %}
@@ -105,6 +133,9 @@
 
                                     <form method="post" class="group-management-form">
                                         <input type="hidden" name="q" value="{{ search_query }}">
+                                        <input type="hidden" name="view" value="{{ view_mode }}">
+                                        <input type="hidden" name="limit" value="{{ top_limit }}">
+                                        <input type="hidden" name="min_size" value="{{ min_size }}">
 
                                         <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
                                             <button type="button" class="btn btn-sm btn-outline-secondary select-all-btn">Select all</button>
@@ -159,17 +190,21 @@
                                 <i class="bi bi-inboxes fs-1"></i>
                             </div>
                             <h5 class="mb-2">
-                                {% if search_query %}
+                                {% if view_mode == 'largest' %}
+                                    No large groups found
+                                {% elif search_query %}
                                     No groups found
                                 {% else %}
-                                    Search for a part number
+                                    Search or review the biggest groups
                                 {% endif %}
                             </h5>
                             <p class="text-muted mb-0">
-                                {% if search_query %}
+                                {% if view_mode == 'largest' %}
+                                    No groups matched the current size threshold.
+                                {% elif search_query %}
                                     No groups matched “{{ search_query }}”.
                                 {% else %}
-                                    Enter a part number above to find the matching alternative group(s).
+                                    Enter a part number above, or use "Show biggest groups" to review possible grouping mistakes.
                                 {% endif %}
                             </p>
                         </div>

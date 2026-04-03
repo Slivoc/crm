@@ -158,6 +158,86 @@ def _get_alt_groups(search_query=''):
     return groups
 
 
+def _get_largest_alt_groups(limit=25, min_size=5):
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 25
+
+    try:
+        min_size = int(min_size)
+    except (TypeError, ValueError):
+        min_size = 5
+
+    limit = max(1, min(limit, 100))
+    min_size = max(2, min(min_size, 1000))
+
+    rows = db_execute(
+        '''
+        SELECT
+            m.group_id AS group_id,
+            COALESCE(g.description, '') AS description,
+            COUNT(m.base_part_number) AS member_count
+        FROM part_alt_group_members m
+        LEFT JOIN part_alt_groups g ON g.id = m.group_id
+        GROUP BY m.group_id, g.description
+        HAVING COUNT(m.base_part_number) >= ?
+        ORDER BY COUNT(m.base_part_number) DESC, m.group_id DESC
+        LIMIT ?
+        ''',
+        (min_size, limit),
+        fetch='all',
+    ) or []
+
+    if not rows:
+        return []
+
+    group_ids = [row['group_id'] for row in rows]
+    placeholders = ', '.join(['?'] * len(group_ids))
+    member_rows = db_execute(
+        f'''
+        SELECT group_id, base_part_number
+        FROM part_alt_group_members
+        WHERE group_id IN ({placeholders})
+        ORDER BY group_id DESC, base_part_number
+        ''',
+        group_ids,
+        fetch='all',
+    ) or []
+
+    members_by_group = {}
+    for member_row in member_rows:
+        members_by_group.setdefault(member_row['group_id'], []).append(member_row['base_part_number'])
+
+    groups = []
+    for row in rows:
+        groups.append({
+            'group_id': row['group_id'],
+            'description': row.get('description') or '',
+            'member_count': row.get('member_count', 0),
+            'members': members_by_group.get(row['group_id'], []),
+        })
+
+    return groups
+
+
+def _alt_groups_redirect_args(form_data):
+    view_mode = (form_data.get('view') or '').strip().lower()
+
+    if view_mode == 'largest':
+        limit = form_data.get('limit', 25)
+        min_size = form_data.get('min_size', 5)
+        return {
+            'view': 'largest',
+            'limit': int(limit) if str(limit).isdigit() else 25,
+            'min_size': int(min_size) if str(min_size).isdigit() else 5,
+        }
+
+    return {
+        'q': (form_data.get('q') or '').strip(),
+    }
+
+
 class Part:
     def __init__(self, row_dict):
         self.__dict__.update(row_dict)
@@ -1112,7 +1192,16 @@ def alt_groups():
     """Page for managing alternative part groups"""
     try:
         search_query = request.args.get('q', '').strip()
-        groups = _get_alt_groups(search_query) if search_query else []
+        view_mode = request.args.get('view', '').strip().lower()
+        top_limit = request.args.get('limit', 25)
+        min_size = request.args.get('min_size', 5)
+
+        if view_mode == 'largest':
+            groups = _get_largest_alt_groups(limit=top_limit, min_size=min_size)
+        else:
+            view_mode = 'search'
+            groups = _get_alt_groups(search_query) if search_query else []
+
         breadcrumbs = [
             ('Home', url_for('index')),
             ('Parts', url_for('parts.parts')),
@@ -1123,6 +1212,9 @@ def alt_groups():
             breadcrumbs=breadcrumbs,
             groups=groups,
             search_query=search_query,
+            view_mode=view_mode,
+            top_limit=int(top_limit) if str(top_limit).isdigit() else 25,
+            min_size=int(min_size) if str(min_size).isdigit() else 5,
         )
 
     except Exception as e:
@@ -1137,11 +1229,11 @@ def alt_groups():
 @parts_bp.route('/alt_groups/<int:group_id>/remove', methods=['POST'])
 def remove_alt_group_members(group_id):
     selected_parts = _normalize_base_part_numbers(request.form.getlist('selected_part_numbers'))
-    search_query = request.form.get('q', '').strip()
+    redirect_args = _alt_groups_redirect_args(request.form)
 
     if not selected_parts:
         flash('Select at least one part to remove from the group.', 'warning')
-        return redirect(url_for('parts.alt_groups', q=search_query))
+        return redirect(url_for('parts.alt_groups', **redirect_args))
 
     try:
         with db_cursor(commit=True) as cur:
@@ -1151,7 +1243,7 @@ def remove_alt_group_members(group_id):
 
             if not removable_parts:
                 flash('None of the selected parts are still in that group.', 'warning')
-                return redirect(url_for('parts.alt_groups', q=search_query))
+                return redirect(url_for('parts.alt_groups', **redirect_args))
 
             placeholders = ', '.join(['?'] * len(removable_parts))
             _execute_with_cursor(
@@ -1180,17 +1272,17 @@ def remove_alt_group_members(group_id):
         logging.error(f'Error removing members from alt group {group_id}: {e}')
         flash(f'Could not remove the selected parts: {e}', 'danger')
 
-    return redirect(url_for('parts.alt_groups', q=search_query))
+    return redirect(url_for('parts.alt_groups', **redirect_args))
 
 
 @parts_bp.route('/alt_groups/<int:group_id>/split', methods=['POST'])
 def split_alt_group(group_id):
     selected_parts = _normalize_base_part_numbers(request.form.getlist('selected_part_numbers'))
-    search_query = request.form.get('q', '').strip()
+    redirect_args = _alt_groups_redirect_args(request.form)
 
     if len(selected_parts) < 2:
         flash('Select at least two parts to create a new group.', 'warning')
-        return redirect(url_for('parts.alt_groups', q=search_query))
+        return redirect(url_for('parts.alt_groups', **redirect_args))
 
     try:
         with db_cursor(commit=True) as cur:
@@ -1200,11 +1292,11 @@ def split_alt_group(group_id):
 
             if len(split_members) < 2:
                 flash('At least two selected parts must belong to the same current group.', 'warning')
-                return redirect(url_for('parts.alt_groups', q=search_query))
+                return redirect(url_for('parts.alt_groups', **redirect_args))
 
             if len(split_members) == len(current_members):
                 flash('Select only part of the group when splitting. Creating a new group for every member would not change anything.', 'warning')
-                return redirect(url_for('parts.alt_groups', q=search_query))
+                return redirect(url_for('parts.alt_groups', **redirect_args))
 
             description = f"Split from group {group_id}: {' / '.join(split_members[:3])}"
             insert_query = _with_returning_clause(
@@ -1246,4 +1338,4 @@ def split_alt_group(group_id):
         logging.error(f'Error splitting alt group {group_id}: {e}')
         flash(f'Could not split the selected parts into a new group: {e}', 'danger')
 
-    return redirect(url_for('parts.alt_groups', q=search_query))
+    return redirect(url_for('parts.alt_groups', **redirect_args))
