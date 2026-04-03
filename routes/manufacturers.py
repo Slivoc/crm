@@ -42,6 +42,17 @@ def _normalize_qpl_manufacturer_name(name):
     return ''.join(tokens)
 
 
+def _tokenize_qpl_manufacturer_name(name):
+    if not name:
+        return []
+    value = re.sub(r'[^a-z0-9 ]+', ' ', str(name).lower())
+    stopwords = {
+        'ltd', 'limited', 'inc', 'llc', 'plc', 'corp', 'corporation',
+        'co', 'company', 'gmbh', 'sa', 'bv', 'ag', 'srl', 'pte', 'group'
+    }
+    return [token for token in value.split() if token and token not in stopwords]
+
+
 def _normalize_prefix_report_manufacturer_name(name):
     return ' '.join((str(name or '').strip().lower()).split())
 
@@ -55,6 +66,18 @@ def _part_number_prefix_sql():
     return (
         "UPPER(SUBSTR(TRIM(COALESCE(NULLIF(sql.quoted_part_number, ''), "
         "NULLIF(pll.customer_part_number, ''), NULLIF(pll.base_part_number, ''))), 1, ?))"
+    )
+
+
+def _approval_part_number_prefix_sql():
+    if _using_postgres():
+        return (
+            "UPPER(SUBSTRING(TRIM(COALESCE(NULLIF(ma.manufacturer_part_number_base, ''), "
+            "NULLIF(ma.airbus_material_base, ''))) FROM 1 FOR ?))"
+        )
+    return (
+        "UPPER(SUBSTR(TRIM(COALESCE(NULLIF(ma.manufacturer_part_number_base, ''), "
+        "NULLIF(ma.airbus_material_base, ''))), 1, ?))"
     )
 
 
@@ -108,10 +131,23 @@ def _load_qpl_manufacturer_rows(search_term='', limit=10, mapped_only=True):
         if (row.get('manufacturer_name_normalized') or '').strip()
     }
 
-    suppliers_lookup = {
-        row['id']: row
-        for row in (db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or [])
-    }
+    suppliers = db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or []
+    suppliers_lookup = {row['id']: row for row in suppliers}
+    supplier_candidates = []
+    for supplier in suppliers:
+        supplier_name = (supplier.get('name') or '').strip()
+        normalized_name = _normalize_qpl_manufacturer_name(supplier_name)
+        token_set = set(_tokenize_qpl_manufacturer_name(supplier_name))
+        if not supplier_name or not normalized_name:
+            continue
+        supplier_candidates.append({
+            'id': supplier.get('id'),
+            'name': supplier_name,
+            'normalized_name': normalized_name,
+            'token_set': token_set,
+            'token_count': len(token_set),
+            'normalized_length': len(normalized_name),
+        })
 
     qpl_rows = db_execute(
         """
@@ -135,8 +171,38 @@ def _load_qpl_manufacturer_rows(search_term='', limit=10, mapped_only=True):
             continue
 
         normalized_name = _normalize_qpl_manufacturer_name(qpl_name)
+        qpl_tokens = set(_tokenize_qpl_manufacturer_name(qpl_name))
         mapped_supplier_id = mapping_by_normalized_name.get(normalized_name)
         mapped_supplier = suppliers_lookup.get(mapped_supplier_id) if mapped_supplier_id else None
+        suggested_supplier = None
+        suggested_score = 0
+
+        if normalized_name:
+            for supplier in supplier_candidates:
+                score = 0
+                overlap = len(qpl_tokens & supplier['token_set']) if qpl_tokens and supplier['token_set'] else 0
+
+                if normalized_name == supplier['normalized_name']:
+                    score = 1000
+                elif normalized_name.startswith(supplier['normalized_name']):
+                    score = 800 + supplier['normalized_length']
+                elif supplier['normalized_name'] in normalized_name:
+                    score = 700 + supplier['normalized_length']
+                elif overlap:
+                    coverage = overlap / max(supplier['token_count'], 1)
+                    score = int(coverage * 100) + overlap * 10
+                    if qpl_tokens and overlap == len(qpl_tokens):
+                        score += 40
+
+                if score > suggested_score:
+                    suggested_score = score
+                    suggested_supplier = supplier
+
+        suggested_supplier_id = None
+        suggested_supplier_name = None
+        if suggested_supplier and suggested_score >= 80 and suggested_supplier.get('id') != mapped_supplier_id:
+            suggested_supplier_id = suggested_supplier.get('id')
+            suggested_supplier_name = suggested_supplier.get('name')
 
         if mapped_only and not mapped_supplier_id:
             continue
@@ -150,6 +216,8 @@ def _load_qpl_manufacturer_rows(search_term='', limit=10, mapped_only=True):
             'list_type_count': row.get('list_type_count', 0),
             'mapped_supplier_id': mapped_supplier_id,
             'mapped_supplier_name': mapped_supplier.get('name') if mapped_supplier else None,
+            'suggested_supplier_id': suggested_supplier_id,
+            'suggested_supplier_name': suggested_supplier_name,
         })
 
     filtered_results.sort(key=lambda row: (-int(row.get('approvals_count', 0) or 0), row.get('qpl_name', '').lower()))
@@ -272,21 +340,22 @@ def qpl_mapped_supplier_prefix_report():
     min_occurrences = request.args.get('min_occurrences', type=int) or 2
     min_occurrences = max(min_occurrences, 1)
 
-    limit = request.args.get('limit', type=int) or 100
-    limit = min(max(limit, 1), 500)
+    limit = request.args.get('limit', type=int)
+    if limit is not None:
+        limit = min(max(limit, 1), 5000)
 
     supplier_id = request.args.get('supplier_id', type=int)
 
-    prefix_sql = _part_number_prefix_sql()
+    prefix_sql = _approval_part_number_prefix_sql()
     instruction_join_sql = ''
     supplier_filter_sql = ''
-    params = [prefix_length]
+    params = []
 
     if supplier_id:
-        supplier_filter_sql = 'AND sq.supplier_id = ?'
+        supplier_filter_sql = 'AND ms.supplier_id = ?'
         params.append(supplier_id)
 
-    params.extend([prefix_length, min_occurrences, limit])
+    params.extend([prefix_length, min_occurrences])
     if has_instruction_table:
         instruction_join_sql = """
         LEFT JOIN qpl_supplier_prefix_instructions instr
@@ -297,32 +366,33 @@ def qpl_mapped_supplier_prefix_report():
         """
         params.append(prefix_length)
 
+    final_limit_sql = ''
+    if limit is not None:
+        final_limit_sql = 'LIMIT ?'
+        params.append(limit)
+
     rows = db_execute(
         f"""
         WITH mapped_suppliers AS (
             SELECT DISTINCT
                 supplier_id,
-                manufacturer_name,
                 manufacturer_name_normalized
             FROM qpl_manufacturer_supplier_mappings
         ),
-        source_lines AS (
+        source_parts AS (
             SELECT
-                sq.id AS supplier_quote_id,
-                sq.supplier_id,
+                ms.supplier_id,
                 s.name AS supplier_name,
-                TRIM(COALESCE(NULLIF(sql.manufacturer, ''), '')) AS manufacturer_name,
-                LOWER(TRIM(COALESCE(NULLIF(sql.manufacturer, ''), ''))) AS manufacturer_name_normalized,
-                {prefix_sql} AS pn_prefix
-            FROM parts_list_supplier_quote_lines sql
-            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-            JOIN suppliers s ON s.id = sq.supplier_id
-            LEFT JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+                TRIM(ma.manufacturer_name) AS manufacturer_name,
+                LOWER(TRIM(ma.manufacturer_name)) AS manufacturer_name_normalized,
+                {prefix_sql} AS pn_prefix,
+                COALESCE(NULLIF(TRIM(ma.manufacturer_part_number_base), ''), NULLIF(TRIM(ma.airbus_material_base), '')) AS normalized_part_number
+            FROM manufacturer_approvals ma
             JOIN mapped_suppliers ms
-                ON ms.supplier_id = sq.supplier_id
-               AND LOWER(TRIM(ms.manufacturer_name)) = LOWER(TRIM(COALESCE(NULLIF(sql.manufacturer, ''), '')))
-            WHERE TRIM(COALESCE(NULLIF(sql.quoted_part_number, ''), NULLIF(pll.customer_part_number, ''), NULLIF(pll.base_part_number, ''))) <> ''
-              AND TRIM(COALESCE(NULLIF(sql.manufacturer, ''), '')) <> ''
+                ON ms.manufacturer_name_normalized = LOWER(TRIM(ma.manufacturer_name))
+            JOIN suppliers s ON s.id = ms.supplier_id
+            WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
+              AND TRIM(COALESCE(NULLIF(ma.manufacturer_part_number_base, ''), NULLIF(ma.airbus_material_base, ''))) <> ''
               {supplier_filter_sql}
         ),
         grouped AS (
@@ -332,9 +402,9 @@ def qpl_mapped_supplier_prefix_report():
                 manufacturer_name,
                 manufacturer_name_normalized,
                 pn_prefix AS prefix,
-                COUNT(*) AS line_count,
-                COUNT(DISTINCT supplier_quote_id) AS quote_count
-            FROM source_lines
+                COUNT(*) AS approval_count,
+                COUNT(DISTINCT normalized_part_number) AS part_count
+            FROM source_parts
             WHERE LENGTH(pn_prefix) = ?
             GROUP BY
                 supplier_id,
@@ -343,20 +413,19 @@ def qpl_mapped_supplier_prefix_report():
                 manufacturer_name_normalized,
                 pn_prefix
             HAVING COUNT(*) >= ?
-            ORDER BY supplier_name ASC, manufacturer_name ASC, line_count DESC, pn_prefix ASC
-            LIMIT ?
         )
         SELECT
             grouped.supplier_id,
             grouped.supplier_name,
             grouped.manufacturer_name,
             grouped.prefix,
-            grouped.line_count,
-            grouped.quote_count
+            grouped.approval_count,
+            grouped.part_count
             {", COALESCE(instr.instruction_text, '') AS instruction_text" if has_instruction_table else ", '' AS instruction_text"}
         FROM grouped
         {instruction_join_sql}
-        ORDER BY grouped.supplier_name ASC, grouped.manufacturer_name ASC, grouped.line_count DESC, grouped.prefix ASC
+        ORDER BY grouped.part_count DESC, grouped.approval_count DESC, grouped.supplier_name ASC, grouped.manufacturer_name ASC, grouped.prefix ASC
+        {final_limit_sql}
         """,
         tuple(params),
         fetch='all',
@@ -534,13 +603,28 @@ def upsert_qpl_mapping():
     qpl_name_normalized = _normalize_qpl_manufacturer_name(qpl_name)
     supplier_id = request.form.get('supplier_id', type=int)
 
+    wants_json = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or 'application/json' in (request.headers.get('Accept') or '')
+
+    def _json_response(success, message, status_code=200):
+        if wants_json:
+            return jsonify(
+                success=success,
+                message=message,
+                qpl_name=qpl_name,
+                supplier_id=supplier_id,
+            ), status_code
+        flash(message, 'success' if success else 'error')
+        return _redirect_to_manufacturers_return_target()
+
     if not _qpl_mapping_table_exists():
-        flash('QPL mapping table is missing. Run migration 20260307_add_qpl_manufacturer_supplier_mappings.sql.', 'warning')
+        message = 'QPL mapping table is missing. Run migration 20260307_add_qpl_manufacturer_supplier_mappings.sql.'
+        if wants_json:
+            return jsonify(success=False, message=message), 400
+        flash(message, 'warning')
         return _redirect_to_manufacturers_return_target()
 
     if not qpl_name_normalized:
-        flash('QPL manufacturer name is required.', 'error')
-        return _redirect_to_manufacturers_return_target()
+        return _json_response(False, 'QPL manufacturer name is required.', 400)
 
     try:
         with db_cursor(commit=True) as cur:
@@ -562,18 +646,18 @@ def upsert_qpl_mapping():
                     """,
                     (qpl_name, qpl_name_normalized, supplier_id),
                 )
-                flash('QPL manufacturer mapping updated.', 'success')
+                message = 'QPL manufacturer mapping updated.'
             else:
                 _execute_with_cursor(
                     cur,
                     'DELETE FROM qpl_manufacturer_supplier_mappings WHERE manufacturer_name_normalized = ?',
                     (qpl_name_normalized,),
                 )
-                flash('QPL manufacturer mapping removed.', 'success')
+                message = 'QPL manufacturer mapping removed.'
     except Exception as exc:
-        flash(f'Unable to save QPL mapping: {exc}', 'error')
+        return _json_response(False, f'Unable to save QPL mapping: {exc}', 500)
 
-    return _redirect_to_manufacturers_return_target()
+    return _json_response(True, message)
 
 
 @manufacturers_bp.route('/import-qpl-manufacturers', methods=['POST'])

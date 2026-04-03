@@ -1,5 +1,25 @@
 {% extends "base.html" %}
 
+{% block extra_css %}
+<style>
+    .qpl-supplier-cell {
+        min-width: 360px;
+    }
+
+    .qpl-supplier-select {
+        width: 100%;
+    }
+
+    .qpl-mapping-hint {
+        min-height: 1rem;
+    }
+
+    .select2-container--bootstrap-5 .select2-selection--single {
+        min-height: calc(1.8125rem + 2px);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container">
     <h2>Manufacturers</h2>
@@ -69,27 +89,42 @@
                         </thead>
                         <tbody>
                             {% for qpl in qpl_manufacturers %}
-                            <tr>
+                            <tr data-qpl-row data-is-mapped="{{ 1 if qpl.mapped_supplier_id else 0 }}">
                                 <td>{{ qpl.qpl_name }}</td>
                                 <td>{{ qpl.approvals_count }}</td>
                                 <td>{{ qpl.list_type_count }}</td>
-                                <td>
-                                    <form action="{{ url_for('manufacturers.upsert_qpl_mapping') }}" method="POST" class="d-flex gap-2">
+                                <td class="qpl-supplier-cell">
+                                    <form action="{{ url_for('manufacturers.upsert_qpl_mapping') }}" method="POST" class="qpl-mapping-form" id="qplMappingForm{{ loop.index }}">
                                         <input type="hidden" name="qpl_name" value="{{ qpl.qpl_name }}">
                                         <input type="hidden" name="return_to" value="{{ request.full_path if request.query_string else request.path }}">
-                                        <select class="form-select form-select-sm" name="supplier_id">
+                                        <select class="form-select form-select-sm qpl-supplier-select"
+                                                name="supplier_id"
+                                                data-placeholder="Search suppliers"
+                                                data-suggested-supplier-id="{{ qpl.suggested_supplier_id or '' }}"
+                                                data-suggested-supplier-name="{{ qpl.suggested_supplier_name or '' }}">
                                             <option value="">-- Unmapped --</option>
                                             {% for supplier in suppliers %}
                                                 <option value="{{ supplier.id }}"
-                                                        {% if qpl.mapped_supplier_id == supplier.id %}selected{% endif %}>
+                                                        {% if qpl.mapped_supplier_id == supplier.id %}selected{% elif not qpl.mapped_supplier_id and qpl.suggested_supplier_id == supplier.id %}selected{% endif %}>
                                                     {{ supplier.name }}
                                                 </option>
                                             {% endfor %}
                                         </select>
+                                        <div class="small mt-1 qpl-mapping-hint">
+                                            {% if qpl.mapped_supplier_id %}
+                                                <span class="text-success">Mapped</span>
+                                            {% elif qpl.suggested_supplier_id %}
+                                                <span class="text-muted">Suggested:</span>
+                                                <span class="badge bg-light text-dark border">{{ qpl.suggested_supplier_name }}</span>
+                                            {% else %}
+                                                <span class="text-muted">No automatic match</span>
+                                            {% endif %}
+                                        </div>
+                                    </form>
                                 </td>
                                 <td>
-                                        <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
-                                    </form>
+                                    <button type="submit" form="qplMappingForm{{ loop.index }}" class="btn btn-sm btn-outline-primary qpl-mapping-save-btn">Save</button>
+                                    <div class="small text-muted mt-1 qpl-mapping-status"></div>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -102,8 +137,8 @@
 
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
-            <span>Mapped Supplier Quote Prefix Report</span>
-            <span class="text-muted small">From parts list supplier quotes</span>
+            <span>Mapped Supplier Common Part Prefix Report</span>
+            <span class="text-muted small">From QPL manufacturer approvals</span>
         </div>
         <div class="card-body">
             {% if not has_qpl_prefix_instruction_table %}
@@ -135,7 +170,7 @@
             </div>
 
             <div class="text-muted small mt-3" id="mappedPrefixSummary">
-                Choose a prefix length and click "Run Report" to group part-number starts for mapped suppliers.
+                Choose a prefix length and click "Run Report" to group common approved part-number starts for mapped suppliers.
             </div>
             <div class="table-responsive mt-2">
                 <table class="table table-sm align-middle" id="mappedPrefixReportTable">
@@ -144,8 +179,8 @@
                             <th>Mapped Supplier</th>
                             <th>Manufacturer</th>
                             <th>Prefix</th>
-                            <th>Quote Lines</th>
-                            <th>Quotes</th>
+                            <th>Approvals</th>
+                            <th>Distinct Parts</th>
                             <th>Instruction</th>
                             <th></th>
                         </tr>
@@ -310,6 +345,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const manufacturersTableFilterForm = document.getElementById('manufacturersTableFilterForm');
     const manufacturerSearchInput = document.getElementById('manufacturerSearch');
     const manufacturerLimitSelect = document.getElementById('manufacturerLimit');
+    const qplMappingForms = Array.from(document.querySelectorAll('.qpl-mapping-form'));
     const hasInstructionTable = {{ 'true' if has_qpl_prefix_instruction_table else 'false' }};
     let currentReportPrefixLength = Number.parseInt(prefixLengthInput?.value || '6', 10) || 6;
     let qplSearchTimer = null;
@@ -357,8 +393,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 <td>${supplierName}</td>
                 <td>${manufacturerName}</td>
                 <td><code>${prefix}</code></td>
-                <td>${row.line_count || 0}</td>
-                <td>${row.quote_count || 0}</td>
+                <td>${row.approval_count || 0}</td>
+                <td>${row.part_count || 0}</td>
                 <td style="min-width: 280px;">
                     <textarea
                         class="form-control form-control-sm prefix-instruction-input"
@@ -375,6 +411,127 @@ document.addEventListener('DOMContentLoaded', function() {
                 </td>
             </tr>
         `;
+    }
+
+    function initializeQplSupplierSearch() {
+        if (!window.jQuery || !$.fn.select2) {
+            return;
+        }
+
+        qplMappingForms.forEach((form) => {
+            const select = form.querySelector('.qpl-supplier-select');
+            if (!select || $(select).hasClass('select2-hidden-accessible')) {
+                return;
+            }
+
+            $(select).select2({
+                theme: 'bootstrap-5',
+                width: '100%',
+                placeholder: select.dataset.placeholder || 'Search suppliers',
+                allowClear: true,
+            });
+        });
+    }
+
+    function setQplMappingStatus(form, message, tone = 'muted') {
+        const statusEl = form?.closest('tr[data-qpl-row]')?.querySelector('.qpl-mapping-status');
+        if (!statusEl) {
+            return;
+        }
+        statusEl.textContent = message || '';
+        statusEl.className = `small mt-1 qpl-mapping-status text-${tone}`;
+    }
+
+    function updateQplMappingHint(form, supplierName, isMapped) {
+        const hintEl = form?.querySelector('.qpl-mapping-hint');
+        const select = form?.querySelector('.qpl-supplier-select');
+        if (!hintEl || !select) {
+            return;
+        }
+
+        const suggestedId = select.dataset.suggestedSupplierId || '';
+        const suggestedName = select.dataset.suggestedSupplierName || '';
+        const selectedValue = select.value || '';
+
+        if (isMapped) {
+            hintEl.innerHTML = `<span class="text-success">Mapped${supplierName ? ` to ${escapeHtml(supplierName)}` : ''}</span>`;
+            return;
+        }
+
+        if (suggestedId && !selectedValue) {
+            hintEl.innerHTML = `<span class="text-muted">Suggested:</span> <span class="badge bg-light text-dark border">${escapeHtml(suggestedName)}</span>`;
+            return;
+        }
+
+        if (suggestedId && selectedValue === suggestedId) {
+            hintEl.innerHTML = `<span class="text-muted">Suggested supplier selected. Click save to apply.</span>`;
+            return;
+        }
+
+        if (selectedValue) {
+            hintEl.innerHTML = `<span class="text-muted">Unsaved selection${supplierName ? `: ${escapeHtml(supplierName)}` : ''}</span>`;
+            return;
+        }
+
+        hintEl.innerHTML = '<span class="text-muted">No automatic match</span>';
+    }
+
+    async function saveQplMapping(form) {
+        if (!form) {
+            return;
+        }
+
+        const saveBtn = form.querySelector('.qpl-mapping-save-btn');
+        const select = form.querySelector('.qpl-supplier-select');
+        const row = form.closest('tr[data-qpl-row]');
+        const selectedOption = select?.options?.[select.selectedIndex];
+        const supplierName = selectedOption?.value ? selectedOption.textContent.trim() : '';
+
+        if (!saveBtn || !select || !row) {
+            return;
+        }
+
+        saveBtn.disabled = true;
+        if (window.jQuery && $(select).data('select2')) {
+            $(select).prop('disabled', true).trigger('change.select2');
+        } else {
+            select.disabled = true;
+        }
+        setQplMappingStatus(form, 'Saving...');
+
+        try {
+            const response = await fetch(form.action, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                body: new FormData(form),
+            });
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Unable to save mapping');
+            }
+
+            const isMapped = Boolean(select.value);
+            row.dataset.isMapped = isMapped ? '1' : '0';
+            updateQplMappingHint(form, supplierName, isMapped);
+            setQplMappingStatus(form, data.message || 'Saved', 'success');
+
+            if (!isMapped && qplMappedOnlyCheckbox?.checked) {
+                row.remove();
+            }
+        } catch (error) {
+            setQplMappingStatus(form, error.message, 'danger');
+        } finally {
+            saveBtn.disabled = false;
+            if (window.jQuery && $(select).data('select2')) {
+                $(select).prop('disabled', false).trigger('change.select2');
+            } else {
+                select.disabled = false;
+            }
+        }
     }
 
     async function loadMappedSupplierPrefixReport() {
@@ -414,7 +571,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             currentReportPrefixLength = Number.parseInt(data.prefix_length, 10) || prefixLength;
-            reportSummary.textContent = `${rows.length} supplier/manufacturer prefix group(s) returned at length ${data.prefix_length}.`;
+            reportSummary.textContent = `${rows.length} supplier/manufacturer prefix group(s) returned at length ${data.prefix_length}. Counts are based on QPL approval rows and distinct approved parts.`;
             reportTableBody.innerHTML = rows.map((row) => buildInstructionCell({
                 ...row,
                 prefix_length: currentReportPrefixLength,
@@ -479,6 +636,13 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     syncQplMappedOnlyValue();
+    initializeQplSupplierSearch();
+    qplMappingForms.forEach((form) => {
+        const select = form.querySelector('.qpl-supplier-select');
+        const selectedOption = select?.options?.[select.selectedIndex];
+        const supplierName = selectedOption?.value ? selectedOption.textContent.trim() : '';
+        updateQplMappingHint(form, supplierName, form.closest('tr[data-qpl-row]')?.dataset.isMapped === '1');
+    });
 
     qplSearchInput?.addEventListener('input', () => {
         syncQplMappedOnlyValue();
@@ -491,6 +655,19 @@ document.addEventListener('DOMContentLoaded', function() {
     qplMappedOnlyCheckbox?.addEventListener('change', () => {
         syncQplMappedOnlyValue();
         qplMappingsFilterForm?.requestSubmit();
+    });
+    qplMappingForms.forEach((form) => {
+        const select = form.querySelector('.qpl-supplier-select');
+        select?.addEventListener('change', () => {
+            const selectedOption = select.options[select.selectedIndex];
+            const supplierName = selectedOption?.value ? selectedOption.textContent.trim() : '';
+            updateQplMappingHint(form, supplierName, false);
+            setQplMappingStatus(form, '');
+        });
+        form.addEventListener('submit', (event) => {
+            event.preventDefault();
+            saveQplMapping(form);
+        });
     });
     manufacturerSearchInput?.addEventListener('input', () => {
         debounce(() => manufacturersTableFilterForm?.requestSubmit(), 250, 'manufacturer');

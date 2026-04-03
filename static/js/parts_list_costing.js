@@ -1097,11 +1097,8 @@ function displayQuotes(quotes, lineId, requiredQty) {
 
         // Check if manufacturer is QPL approved
         const manufacturer = quote.manufacturer || '';
-        const isQPLApproved = manufacturer && qplManufacturers.some(qpl =>
-            qpl.toLowerCase() === manufacturer.toLowerCase() ||
-            manufacturer.toLowerCase().includes(qpl.toLowerCase()) ||
-            qpl.toLowerCase().includes(manufacturer.toLowerCase())
-        );
+        const qplBadgeLabels = getQplBadgeLabelsForManufacturer(manufacturer, qplManufacturers);
+        const isQPLApproved = qplBadgeLabels.length > 0;
 
         const row = document.createElement('tr');
 
@@ -1157,7 +1154,7 @@ function displayQuotes(quotes, lineId, requiredQty) {
             <td style="padding: 0.75rem;">
                 ${manufacturer ? `
                     <span>${manufacturer}</span>
-                    ${isQPLApproved ? '<span class="badge" style="background: #198754; font-size: 0.7rem; margin-left: 4px;" title="QPL Approved">QPL</span>' : ''}
+                    ${isQPLApproved ? qplBadgeLabels.map(label => `<span class="badge" style="background: #198754; font-size: 0.7rem; margin-left: 4px;" title="${label} Approved">${label}</span>`).join('') : ''}
                 ` : '<span style="color: #adb5bd;">-</span>'}
             </td>
             <td style="padding: 0.75rem; text-align: right;" class="quote-qty-cell">
@@ -1316,8 +1313,8 @@ function displayQPLInfo(approvals) {
         return;
     }
 
-    // Store for use in displayQuotes
-    window._qplApprovedManufacturers = approvals.map(a => a.manufacturer_name);
+    // Store full approvals for use in quote/offer highlighting.
+    window._qplApprovedManufacturers = approvals;
 
     content.innerHTML = '';
     approvals.forEach(approval => {
@@ -1327,7 +1324,7 @@ function displayQPLInfo(approvals) {
 
         let text = approval.manufacturer_name;
         if (approval.approval_list_type) {
-            const typeLabel = approval.approval_list_type === 'airbus_fixed_wing' ? 'Fixed Wing' : approval.approval_list_type === 'airbus_rotary' ? 'Rotary' : approval.approval_list_type;
+            const typeLabel = approval.approval_list_type === 'airbus_fixed_wing' ? 'AQPL' : approval.approval_list_type === 'airbus_rotary' ? 'HQPL' : approval.approval_list_type;
             text += ` · ${typeLabel}`;
         }
         if (approval.cage_code) {
@@ -1343,6 +1340,39 @@ function displayQPLInfo(approvals) {
     });
 
     section.style.display = 'block';
+}
+
+function getQplBadgeLabelsForManufacturer(manufacturer, approvals) {
+    if (!manufacturer || !approvals || approvals.length === 0) {
+        return [];
+    }
+
+    const labels = new Set();
+    approvals.forEach((approval) => {
+        const qplManufacturer = approval && approval.manufacturer_name ? approval.manufacturer_name : '';
+        if (!qplManufacturer) {
+            return;
+        }
+
+        const matches =
+            qplManufacturer.toLowerCase() === manufacturer.toLowerCase() ||
+            manufacturer.toLowerCase().includes(qplManufacturer.toLowerCase()) ||
+            qplManufacturer.toLowerCase().includes(manufacturer.toLowerCase());
+
+        if (!matches) {
+            return;
+        }
+
+        if (approval.approval_list_type === 'airbus_fixed_wing') {
+            labels.add('AQPL');
+        } else if (approval.approval_list_type === 'airbus_rotary') {
+            labels.add('HQPL');
+        } else {
+            labels.add('QPL');
+        }
+    });
+
+    return Array.from(labels);
 }
 
 function displayOtherOffers(offers, lineId, requiredQty) {
@@ -1372,11 +1402,8 @@ function displayOtherOffers(offers, lineId, requiredQty) {
 
         // Check if manufacturer is QPL approved
         const manufacturer = offer.manufacturer || '';
-        const isQPLApproved = manufacturer && qplManufacturers.some(qpl =>
-            qpl.toLowerCase() === manufacturer.toLowerCase() ||
-            manufacturer.toLowerCase().includes(qpl.toLowerCase()) ||
-            qpl.toLowerCase().includes(manufacturer.toLowerCase())
-        );
+        const qplBadgeLabels = getQplBadgeLabelsForManufacturer(manufacturer, qplManufacturers);
+        const isQPLApproved = qplBadgeLabels.length > 0;
 
         const row = document.createElement('tr');
         const offerNotes = offer.line_notes || '';
@@ -1400,7 +1427,7 @@ function displayOtherOffers(offers, lineId, requiredQty) {
             <td style="padding: 0.6rem;">
                 ${manufacturer ? `
                     <span>${manufacturer}</span>
-                    ${isQPLApproved ? '<span class="badge" style="background: #198754; font-size: 0.7rem; margin-left: 4px;" title="QPL Approved">QPL</span>' : ''}
+                    ${isQPLApproved ? qplBadgeLabels.map(label => `<span class="badge" style="background: #198754; font-size: 0.7rem; margin-left: 4px;" title="${label} Approved">${label}</span>`).join('') : ''}
                 ` : '<span style="color: #adb5bd;">-</span>'}
             </td>
             <td style="padding: 0.6rem; text-align: right;">${offer.quantity_quoted || '-'}</td>

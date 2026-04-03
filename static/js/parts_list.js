@@ -5,6 +5,22 @@ let selectedContact = null;
 let selectedCustomer = null;
 const VIEW_ANALYSIS_AUTO_LIMIT = 40;
 
+function getQplListBadge(type) {
+    if (type === 'airbus_fixed_wing') {
+        return '<span class="badge bg-primary-subtle text-primary border ms-1">AQPL</span>';
+    }
+    if (type === 'airbus_rotary') {
+        return '<span class="badge bg-success-subtle text-success border ms-1">HQPL</span>';
+    }
+    return '';
+}
+
+function getQplListLabel(type) {
+    if (type === 'airbus_fixed_wing') return 'AQPL';
+    if (type === 'airbus_rotary') return 'HQPL';
+    return type ? type.replace(/_/g, ' ') : '-';
+}
+
 function setupStickyHeader() {
     const container = document.querySelector('.parts-table-container');
     const table = document.querySelector('.parts-table');
@@ -671,7 +687,7 @@ function showQplDetailsModal(partIndex) {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td>${escapeHtml(row.manufacturer_name || '-')}</td>
-                    <td>${escapeHtml(row.approval_list_type ? row.approval_list_type.replace(/_/g, ' ') : '-')}</td>
+                    <td>${getQplListBadge(row.approval_list_type)} <span>${escapeHtml(getQplListLabel(row.approval_list_type))}</span></td>
                     <td>${escapeHtml(row.cage_code || '-')}</td>
                     <td>${escapeHtml(row.location || '-')}</td>
                 `;

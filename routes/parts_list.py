@@ -4209,7 +4209,8 @@ def table_view(list_id):
                 ma.manufacturer_name,
                 ma.cage_code,
                 ma.approval_status,
-                ma.location
+                ma.location,
+                ma.approval_list_type
             FROM manufacturer_approvals ma
             WHERE ma.airbus_material_base IN ({placeholders})
                OR ma.manufacturer_part_number_base IN ({placeholders})
@@ -4234,6 +4235,7 @@ def table_view(list_id):
                 'cage_code': _safe_row_get(qpl, 'cage_code'),
                 'approval_status': _safe_row_get(qpl, 'approval_status'),
                 'location': _safe_row_get(qpl, 'location'),
+                'approval_list_type': _safe_row_get(qpl, 'approval_list_type'),
             }
 
             entry['approvals'].append(approval)
@@ -4301,7 +4303,13 @@ def table_view(list_id):
             cage = (approval or {}).get('cage_code')
             status = (approval or {}).get('approval_status')
             location = (approval or {}).get('location')
-            parts = [p for p in [name, f"CAGE {cage}" if cage else None, status, location] if p]
+            approval_list_type = (approval or {}).get('approval_list_type')
+            type_label = (
+                'AQPL' if approval_list_type == 'airbus_fixed_wing'
+                else 'HQPL' if approval_list_type == 'airbus_rotary'
+                else None
+            )
+            parts = [p for p in [type_label, name, f"CAGE {cage}" if cage else None, status, location] if p]
             if parts:
                 formatted_approvals.append(" - ".join(parts))
         line['qpl_approvals_display'] = "; ".join(formatted_approvals)
@@ -7018,24 +7026,26 @@ def parts_list_sourcing(list_id):
                     if _safe_row_get(sup, 'supplier_id') is not None
                 }
 
-                qpl_names = []
-                qpl_display = (line.get('qpl_manufacturers_display') or '').strip()
-                if qpl_display:
-                    qpl_names = [name.strip() for name in qpl_display.split(',') if name.strip()]
-
                 qpl_manufacturers = []
-                if qpl_names:
-                    # Keep order stable and remove duplicates.
-                    seen_qpl_names = set()
-                    unique_qpl_names = []
-                    for qpl_name in qpl_names:
-                        qpl_key = qpl_name.strip().lower()
-                        if not qpl_key or qpl_key in seen_qpl_names:
+                qpl_approvals = line.get('qpl_approvals') or []
+                if qpl_approvals:
+                    seen_qpl_entries = set()
+                    unique_qpl_entries = []
+                    for approval in qpl_approvals:
+                        manufacturer_name = ((approval or {}).get('manufacturer_name') or '').strip()
+                        approval_list_type = ((approval or {}).get('approval_list_type') or '').strip() or None
+                        qpl_key = (manufacturer_name.lower(), approval_list_type)
+                        if not manufacturer_name or qpl_key in seen_qpl_entries:
                             continue
-                        seen_qpl_names.add(qpl_key)
-                        unique_qpl_names.append(qpl_name)
+                        seen_qpl_entries.add(qpl_key)
+                        unique_qpl_entries.append({
+                            'manufacturer_name': manufacturer_name,
+                            'approval_list_type': approval_list_type,
+                        })
 
-                    for qpl_name in unique_qpl_names:
+                    for qpl_entry in unique_qpl_entries:
+                        qpl_name = qpl_entry['manufacturer_name']
+                        approval_list_type = qpl_entry.get('approval_list_type')
                         normalized_qpl_name = _normalize_company_name_for_match(qpl_name)
                         saved_mapping = qpl_saved_mapping_map.get(normalized_qpl_name)
 
@@ -7067,11 +7077,67 @@ def parts_list_sourcing(list_id):
 
                         qpl_manufacturers.append({
                             'manufacturer_name': qpl_name,
+                            'approval_list_type': approval_list_type,
                             'matched_supplier_id': matched_supplier_id,
                             'matched_supplier_name': matched_supplier_name,
                             'already_suggested': already_suggested,
                             'mapping_source': mapping_source,
                         })
+                else:
+                    qpl_names = []
+                    qpl_display = (line.get('qpl_manufacturers_display') or '').strip()
+                    if qpl_display:
+                        qpl_names = [name.strip() for name in qpl_display.split(',') if name.strip()]
+
+                    if qpl_names:
+                    # Keep order stable and remove duplicates.
+                        seen_qpl_names = set()
+                        unique_qpl_names = []
+                        for qpl_name in qpl_names:
+                            qpl_key = qpl_name.strip().lower()
+                            if not qpl_key or qpl_key in seen_qpl_names:
+                                continue
+                            seen_qpl_names.add(qpl_key)
+                            unique_qpl_names.append(qpl_name)
+
+                        for qpl_name in unique_qpl_names:
+                            normalized_qpl_name = _normalize_company_name_for_match(qpl_name)
+                            saved_mapping = qpl_saved_mapping_map.get(normalized_qpl_name)
+
+                            matched_supplier = None
+                            mapping_source = None
+                            if saved_mapping:
+                                matched_supplier = {
+                                    'id': saved_mapping.get('supplier_id'),
+                                    'name': saved_mapping.get('supplier_name'),
+                                    'contact_name': saved_mapping.get('contact_name'),
+                                    'contact_email': saved_mapping.get('contact_email'),
+                                }
+                                mapping_source = 'saved_map'
+                            else:
+                                for supplier_row in qpl_supplier_rows:
+                                    supplier_name = _safe_row_get(supplier_row, 'name')
+                                    if not supplier_name:
+                                        continue
+                                    if _is_supplier_match_for_qpl(qpl_name, supplier_name):
+                                        matched_supplier = supplier_row
+                                        mapping_source = 'name_match'
+                                        break
+
+                            matched_supplier_id = _safe_row_get(matched_supplier, 'id') if matched_supplier else None
+                            matched_supplier_name = _safe_row_get(matched_supplier, 'name') if matched_supplier else None
+                            already_suggested = bool(
+                                matched_supplier_id and int(matched_supplier_id) in existing_suggested_supplier_ids
+                            )
+
+                            qpl_manufacturers.append({
+                                'manufacturer_name': qpl_name,
+                                'approval_list_type': None,
+                                'matched_supplier_id': matched_supplier_id,
+                                'matched_supplier_name': matched_supplier_name,
+                                'already_suggested': already_suggested,
+                                'mapping_source': mapping_source,
+                            })
 
                 # UPDATED: Get email history WITH quoted prices
                 email_history_rows = _execute_with_cursor(cur, """

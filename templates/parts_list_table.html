@@ -1020,6 +1020,16 @@ function showQplDetails(rowIndex) {
     const rowData = allPartsData[rowIndex];
     if (!rowData) return;
 
+    const getQplListBadge = (type) => {
+        if (type === 'airbus_fixed_wing') {
+            return '<span class="badge bg-primary-subtle text-primary border ms-1">AQPL</span>';
+        }
+        if (type === 'airbus_rotary') {
+            return '<span class="badge bg-success-subtle text-success border ms-1">HQPL</span>';
+        }
+        return '';
+    };
+
     const modalEl = document.getElementById('qplDetailsModal');
     const modal = new bootstrap.Modal(modalEl);
     const bodyEl = document.getElementById('qplDetailsBody');
@@ -1030,7 +1040,7 @@ function showQplDetails(rowIndex) {
         } else {
             const rows = approvals.map(a => `
                 <tr>
-                    <td>${a.manufacturer_name || '-'}</td>
+                    <td>${a.manufacturer_name || '-'} ${getQplListBadge(a.approval_list_type)}</td>
                     <td>${a.cage_code || '-'}</td>
                     <td>${a.approval_status || '-'}</td>
                     <td>${a.location || '-'}</td>
