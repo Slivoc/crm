@@ -106,7 +106,10 @@
             <h2>
                 <i class="bi bi-box-seam"></i> Airbus Marketplace Export
             </h2>
-            <p class="text-muted">Choose a parts source, then export current CRM stock and pricing into the Airbus Marketplace format.</p>
+            <p class="text-muted mb-1">Choose a parts source, then export current CRM stock and pricing into the Airbus Marketplace format.</p>
+            <p class="small text-warning mb-0">
+                Rotary HQPL only: the working set excludes any part not found on the Airbus rotary approved parts list. The alt field can be limited to rotary HQPL-approved alternatives or expanded to all CRM global alts using the option below.
+            </p>
         </div>
         <div class="col-auto align-self-center">
             <a class="btn btn-outline-secondary" href="/marketplace/categorization-tool">
@@ -445,7 +448,7 @@
 
     <div id="noPartsMessage" style="display: none; text-align: center; padding: 60px; color: #6c757d;">
         <i class="bi bi-inbox" style="font-size: 3rem;"></i>
-        <p class="mt-3">No parts found matching your filters. Try adjusting the filters above.</p>
+        <p class="mt-3">No rotary HQPL-approved parts found matching your filters. Try adjusting the filters above.</p>
     </div>
 
     <div class="card" id="uncategorizedCard" style="display: none;">
@@ -482,7 +485,7 @@
                 <div class="col-md-8">
                     <h5 class="mb-2">Ready to Export</h5>
                     <p class="mb-0 text-muted">
-                        <span id="readyCount">0</span> parts in the current working set have categories and will be exported.
+                        <span id="readyCount">0</span> rotary HQPL-approved parts in the current working set have categories and will be exported.
                         <span id="uncatWarning" class="text-warning" style="display: none;">
                             (<span id="uncatCount">0</span> parts missing categories will be skipped)
                         </span>
@@ -515,6 +518,12 @@
                             <input class="form-check-input" type="checkbox" id="excludeExistingMarketplaceProductIds">
                             <label class="form-check-label small text-muted" for="excludeExistingMarketplaceProductIds">
                                 For product export, skip parts that already have a marketplace product ID
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="includeNonHqplAlts">
+                            <label class="form-check-label small text-muted" for="includeNonHqplAlts">
+                                Alt field: include all global alts, not just rotary HQPL-approved alts
                             </label>
                         </div>
                         <button class="btn btn-lg btn-primary" id="pushToMarketplaceBtn">
@@ -1793,6 +1802,10 @@ function resolveDefaultDescription(part, defaults) {
     return '';
 }
 
+function includeNonHqplAltsEnabled() {
+    return $('#includeNonHqplAlts').is(':checked');
+}
+
 function buildProductPayload(part, defaultQuantity, defaults) {
     const partNumber = (part.part_number || part.base_part_number || '').trim();
     const stockQty = parseInt(part.stock_qty, 10);
@@ -1828,6 +1841,9 @@ function buildProductPayload(part, defaultQuantity, defaults) {
         mkp_easaf1: part.mkp_easaf1 !== null && part.mkp_easaf1 !== undefined
             ? coerceBool(part.mkp_easaf1, false)
             : defaults.mkp_easaf1,
+        include_non_hqpl_alts: includeNonHqplAltsEnabled(),
+        all_global_alt_part_numbers: Array.isArray(part.all_global_alt_part_numbers) ? part.all_global_alt_part_numbers : [],
+        rotary_hqpl_alt_part_numbers: Array.isArray(part.rotary_hqpl_alt_part_numbers) ? part.rotary_hqpl_alt_part_numbers : [],
         description: description,
         manufacturer: (part.manufacturer || '').trim(),
         quantity: quantity,
@@ -2192,6 +2208,7 @@ async function exportToCsv(mode) {
         base_part_numbers: exportParts.map(p => p.base_part_number),
         source_mode: partSourceMode,
         default_quantity: parseInt($('#defaultQuantity').val(), 10) || 1,
+        include_non_hqpl_alts: includeNonHqplAltsEnabled(),
         export_mode: exportMode,
         debug_offer_export: isDebugOfferExport,
         skip_invalid_mandatory: skipInvalidMandatory,

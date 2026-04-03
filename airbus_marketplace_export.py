@@ -115,6 +115,48 @@ def _get_baseline_header_map(baseline_row):
     return header_map
 
 
+def _split_alt_reference_values(value):
+    if value is None:
+        return []
+
+    text = str(value).strip()
+    if not text:
+        return []
+
+    if _normalize_header(text) in {'alternativepartreferences', 'alternativepartreflist'}:
+        return []
+
+    parts = [segment.strip() for segment in re.split(r'[\r\n,;|]+', text)]
+    return [segment for segment in parts if segment]
+
+
+def _build_alternative_part_reference_text(part, generated_payload, baseline_headers):
+    values = []
+    seen = set()
+
+    def add_many(items):
+        for item in items:
+            normalized = str(item or '').strip()
+            normalized_key = normalized.upper()
+            if not normalized or normalized_key in seen:
+                continue
+            seen.add(normalized_key)
+            values.append(normalized)
+
+    add_many(_split_alt_reference_values(baseline_headers.get('alternativepartreflist')))
+    add_many(_split_alt_reference_values(baseline_headers.get('alternativepartreferences')))
+    alt_values = (
+        part.get('all_global_alt_part_numbers')
+        if part.get('include_non_hqpl_alts')
+        else part.get('rotary_hqpl_alt_part_numbers')
+    ) or []
+    add_many(alt_values)
+
+    primary_part = str(generated_payload.get('Manufacturer Part Number') or '').strip().upper()
+    filtered = [value for value in values if value.strip().upper() != primary_part]
+    return ', '.join(filtered)
+
+
 def _build_generated_airbus_payload(part):
     part_number = part.get('part_number', '')
     mkp_category = part.get('mkp_category', '')
@@ -257,6 +299,11 @@ def _build_airbus_row(part):
     payload["product-id"] = generated_payload["product-id"]
     payload["product-id-type"] = generated_payload["product-id-type"]
     payload["commercial-on-collection"] = generated_payload["commercial-on-collection"]
+
+    alt_reference_text = _build_alternative_part_reference_text(part, generated_payload, baseline_headers)
+    if alt_reference_text:
+        payload["alternativePartRefList"] = alt_reference_text
+        payload["Alternative Part References"] = alt_reference_text
 
     if not payload["price"]:
         payload["price-additional-info"] = ""

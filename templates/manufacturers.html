@@ -87,7 +87,7 @@
                     <label for="mappedPrefixSupplier" class="form-label">Mapped Supplier Filter</label>
                     <select id="mappedPrefixSupplier" class="form-select form-select-sm">
                         <option value="">All mapped suppliers</option>
-                        {% for supplier in suppliers %}
+                        {% for supplier in qpl_mapped_suppliers %}
                             <option value="{{ supplier.id }}">{{ supplier.name }}</option>
                         {% endfor %}
                     </select>

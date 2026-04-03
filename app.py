@@ -85,6 +85,7 @@ scheduler = APScheduler()
 logging.basicConfig(level=logging.INFO)
 _SALESPEOPLE_CACHE = {'value': None, 'ts': 0.0}
 _SALESPEOPLE_CACHE_TTL_S = 60.0
+_SCHEMA_COLUMN_CACHE = {}
 
 # Initialize the Flask app
 app = Flask(__name__)
@@ -149,6 +150,44 @@ def is_mobile():
 def _is_static_request():
     path = request.path or ''
     return request.endpoint == 'static' or path.startswith('/static/') or path == '/favicon.ico'
+
+
+def _using_postgres():
+    return bool(os.getenv('DATABASE_URL', '').startswith(('postgres://', 'postgresql://')))
+
+
+def _table_has_column(table_name, column_name):
+    cache_key = (table_name, column_name, 'postgres' if _using_postgres() else 'sqlite')
+    if cache_key in _SCHEMA_COLUMN_CACHE:
+        return _SCHEMA_COLUMN_CACHE[cache_key]
+
+    try:
+        if _using_postgres():
+            row = db_execute(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = ?
+                  AND column_name = ?
+                LIMIT 1
+                """,
+                (table_name, column_name),
+                fetch='one',
+            )
+            exists = row is not None
+        else:
+            rows = db_execute(f"PRAGMA table_info({table_name})", fetch='all') or []
+            exists = any(
+                (row.get('name') if isinstance(row, dict) else (row[1] if len(row) > 1 else None)) == column_name
+                for row in rows
+            )
+    except Exception:
+        exists = False
+
+    _SCHEMA_COLUMN_CACHE[cache_key] = exists
+    return exists
+
 
 def _get_salespeople_cached():
     now = time.monotonic()
@@ -319,6 +358,8 @@ def inject_pinned_parts_lists():
 
     salesperson_id = getattr(g, 'current_salesperson_id', None)
     if not salesperson_id:
+        return {'pinned_parts_lists': []}
+    if not _table_has_column('parts_lists', 'is_pinned'):
         return {'pinned_parts_lists': []}
 
     rows = db_execute(

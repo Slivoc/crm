@@ -45,11 +45,11 @@ def _part_number_prefix_sql():
     if _using_postgres():
         return (
             "UPPER(SUBSTRING(TRIM(COALESCE(NULLIF(sql.quoted_part_number, ''), "
-            "NULLIF(pll.part_number, ''), NULLIF(pll.base_part_number, ''))) FROM 1 FOR ?))"
+            "NULLIF(pll.customer_part_number, ''), NULLIF(pll.base_part_number, ''))) FROM 1 FOR ?))"
         )
     return (
         "UPPER(SUBSTR(TRIM(COALESCE(NULLIF(sql.quoted_part_number, ''), "
-        "NULLIF(pll.part_number, ''), NULLIF(pll.base_part_number, ''))), 1, ?))"
+        "NULLIF(pll.customer_part_number, ''), NULLIF(pll.base_part_number, ''))), 1, ?))"
     )
 
 
@@ -125,6 +125,23 @@ def _load_qpl_manufacturer_rows():
     return results
 
 
+def _load_qpl_mapped_suppliers():
+    if not _qpl_mapping_table_exists():
+        return []
+
+    return db_execute(
+        """
+        SELECT DISTINCT s.id, s.name
+        FROM qpl_manufacturer_supplier_mappings m
+        JOIN suppliers s ON s.id = m.supplier_id
+        ORDER BY s.name
+        """,
+        fetch='all',
+    ) or []
+
+
+@manufacturers_bp.route('', methods=['GET', 'POST'])
+@manufacturers_bp.route('/', methods=['GET', 'POST'])
 @manufacturers_bp.route('/manufacturers', methods=['GET', 'POST'])
 def manufacturers():
     if request.method == 'POST':
@@ -137,15 +154,18 @@ def manufacturers():
     manufacturers = get_all_manufacturers(include_merged=True)
     suppliers = db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or []
     qpl_manufacturers = _load_qpl_manufacturer_rows()
+    qpl_mapped_suppliers = _load_qpl_mapped_suppliers()
     return render_template(
         'manufacturers.html',
         manufacturers=manufacturers,
         suppliers=suppliers,
+        qpl_mapped_suppliers=qpl_mapped_suppliers,
         qpl_manufacturers=qpl_manufacturers,
         has_qpl_mapping_table=_qpl_mapping_table_exists(),
     )
 
 
+@manufacturers_bp.route('/qpl-mappings/prefix-report', methods=['GET'])
 @manufacturers_bp.route('/manufacturers/qpl-mappings/prefix-report', methods=['GET'])
 def qpl_mapped_supplier_prefix_report():
     if not _qpl_mapping_table_exists():
@@ -187,7 +207,7 @@ def qpl_mapped_supplier_prefix_report():
             JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
             LEFT JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
             JOIN mapped_suppliers ms ON ms.supplier_id = sq.supplier_id
-            WHERE TRIM(COALESCE(NULLIF(sql.quoted_part_number, ''), NULLIF(pll.part_number, ''), NULLIF(pll.base_part_number, ''))) <> ''
+            WHERE TRIM(COALESCE(NULLIF(sql.quoted_part_number, ''), NULLIF(pll.customer_part_number, ''), NULLIF(pll.base_part_number, ''))) <> ''
               {supplier_filter_sql}
         )
         SELECT
@@ -215,6 +235,7 @@ def qpl_mapped_supplier_prefix_report():
     )
 
 
+@manufacturers_bp.route('/<int:manufacturer_id>/delete', methods=['POST'])
 @manufacturers_bp.route('/manufacturers/<int:manufacturer_id>/delete', methods=['POST'])
 def delete_manufacturer_route(manufacturer_id):
     delete_manufacturer(manufacturer_id)
@@ -246,6 +267,7 @@ def fetch_all_manufacturers():
     return jsonify(manufacturers)
 
 
+@manufacturers_bp.route('/merge', methods=['POST'])
 @manufacturers_bp.route('/manufacturers/merge', methods=['POST'])
 def merge_manufacturers():
     source_id = request.form.get('source_id', type=int)
@@ -279,6 +301,7 @@ def merge_manufacturers():
     return redirect(url_for('manufacturers.manufacturers'))
 
 
+@manufacturers_bp.route('/qpl-mappings', methods=['POST'])
 @manufacturers_bp.route('/manufacturers/qpl-mappings', methods=['POST'])
 def upsert_qpl_mapping():
     qpl_name = (request.form.get('qpl_name') or '').strip()

@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 marketplace_bp = Blueprint('marketplace', __name__)
 
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
+AIRBUS_ROTARY_APPROVAL_LIST_TYPE = 'airbus_rotary'
 
 
 def _months_ago(reference: date, months: int) -> date:
@@ -917,6 +918,73 @@ _MARKETPLACE_MANUFACTURER_JOIN = """
         GROUP BY pm.base_part_number
     ) marketplace_mfg ON marketplace_mfg.base_part_number = pn.base_part_number
 """
+
+
+def _build_rotary_hqpl_exists_clause(part_alias='pn'):
+    return f"""
+        EXISTS (
+            SELECT 1
+            FROM manufacturer_approvals ma
+            WHERE ma.approval_list_type = ?
+              AND (
+                  ma.airbus_material_base = {part_alias}.base_part_number
+                  OR ma.manufacturer_part_number_base = {part_alias}.base_part_number
+              )
+        )
+    """
+
+
+def _get_global_alternative_map(cursor, base_part_numbers, rotary_only=True):
+    cleaned = [str(value).strip() for value in (base_part_numbers or []) if str(value).strip()]
+    if not cleaned:
+        return {}
+
+    placeholders = ','.join('?' * len(cleaned))
+    query = f"""
+        SELECT DISTINCT
+            source.base_part_number AS source_base_part_number,
+            alt.base_part_number AS alt_base_part_number,
+            COALESCE(NULLIF(TRIM(pn_alt.part_number), ''), alt.base_part_number) AS alt_part_number
+        FROM part_alt_group_members source
+        JOIN part_alt_group_members alt
+          ON alt.group_id = source.group_id
+         AND alt.base_part_number <> source.base_part_number
+        LEFT JOIN part_numbers pn_alt ON pn_alt.base_part_number = alt.base_part_number
+        WHERE source.base_part_number IN ({placeholders})
+    """
+    params = list(cleaned)
+
+    if rotary_only:
+        query += """
+          AND EXISTS (
+              SELECT 1
+              FROM manufacturer_approvals ma
+              WHERE ma.approval_list_type = ?
+                AND (
+                    ma.airbus_material_base = alt.base_part_number
+                    OR ma.manufacturer_part_number_base = alt.base_part_number
+                )
+          )
+        """
+        params.append(AIRBUS_ROTARY_APPROVAL_LIST_TYPE)
+
+    query += """
+        ORDER BY source.base_part_number, COALESCE(NULLIF(TRIM(pn_alt.part_number), ''), alt.base_part_number)
+    """
+    cursor.execute(query, params)
+    rows = cursor.fetchall() or []
+
+    alt_map = {}
+    for row in rows:
+        source_base = str(row['source_base_part_number']).strip()
+        alt_number = str(row['alt_part_number'] or '').strip()
+        if not source_base or not alt_number:
+            continue
+        alt_map.setdefault(source_base, [])
+        if alt_number not in alt_map[source_base]:
+            alt_map[source_base].append(alt_number)
+
+    return alt_map
 
 
 def _build_offer_row_from_payload(offer):
@@ -2177,7 +2245,8 @@ def get_parts_for_export():
             WHERE 1=1
         """
 
-        params = []
+        params = [AIRBUS_ROTARY_APPROVAL_LIST_TYPE]
+        query += " AND " + _build_rotary_hqpl_exists_clause('pn')
 
         if selected_base_part_numbers:
             placeholders = ','.join('?' * len(selected_base_part_numbers))
@@ -2328,6 +2397,17 @@ def get_parts_for_export():
         rows = cursor.fetchall()
         logger.info("Marketplace export query returned %s parts", len(rows))
 
+        rotary_alt_map = _get_global_alternative_map(
+            cursor,
+            [row['base_part_number'] for row in rows],
+            rotary_only=True,
+        )
+        all_alt_map = _get_global_alternative_map(
+            cursor,
+            [row['base_part_number'] for row in rows],
+            rotary_only=False,
+        )
+
         parts_payload = [
             {'part_number': row['part_number'] or row['base_part_number'], 'quantity': 1}
             for row in rows
@@ -2381,6 +2461,8 @@ def get_parts_for_export():
                 'mkp_easaf1': row['mkp_easaf1'],
                 'mkp_offer_product_id': row['mkp_offer_product_id'],
                 'mkp_offer_product_id_type': row['mkp_offer_product_id_type'],
+                'all_global_alt_part_numbers': all_alt_map.get(base_part_number, []),
+                'rotary_hqpl_alt_part_numbers': rotary_alt_map.get(base_part_number, []),
                 'description': '',
                 'manufacturer': _coerce_text(row['manufacturer_name'], default=''),
                 'estimated_price': estimated_price,
@@ -2424,6 +2506,7 @@ def export_to_marketplace():
         base_part_numbers = export_data.get('base_part_numbers', [])
         default_quantity = int(export_data.get('default_quantity') or 1)
         skip_invalid_mandatory = _coerce_bool(export_data.get('skip_invalid_mandatory'), default=False)
+        include_non_hqpl_alts = _coerce_bool(export_data.get('include_non_hqpl_alts'), default=False)
         export_mode = _coerce_text(export_data.get('export_mode'), default='products')
         debug_offer_export = _coerce_bool(export_data.get('debug_offer_export'), default=False)
         if export_mode not in ('products', 'offers'):
@@ -2465,13 +2548,25 @@ def export_to_marketplace():
             FROM part_numbers pn
             {_MARKETPLACE_MANUFACTURER_JOIN}
             WHERE pn.base_part_number IN ({placeholders})
+              AND {_build_rotary_hqpl_exists_clause('pn')}
         """
 
-        cursor.execute(query, base_part_numbers)
+        cursor.execute(query, base_part_numbers + [AIRBUS_ROTARY_APPROVAL_LIST_TYPE])
         rows = cursor.fetchall()
 
         if not rows:
-            return jsonify({'error': 'No parts found to export'}), 404
+            return jsonify({'error': 'No rotary HQPL-approved parts found to export'}), 404
+
+        rotary_alt_map = _get_global_alternative_map(
+            cursor,
+            [row['base_part_number'] for row in rows],
+            rotary_only=True,
+        )
+        all_alt_map = _get_global_alternative_map(
+            cursor,
+            [row['base_part_number'] for row in rows],
+            rotary_only=False,
+        )
 
         customer_id = _get_marketplace_customer_id()
         parts_payload = [
@@ -2529,6 +2624,9 @@ def export_to_marketplace():
                 'mkp_easaf1': _coerce_bool(row['mkp_easaf1'], default=export_defaults['mkp_easaf1']),
                 'mkp_offer_product_id': _coerce_text(row['mkp_offer_product_id'], default=''),
                 'mkp_offer_product_id_type': _coerce_text(row['mkp_offer_product_id_type'], default='SKU'),
+                'include_non_hqpl_alts': include_non_hqpl_alts,
+                'all_global_alt_part_numbers': all_alt_map.get(row['base_part_number'], []),
+                'rotary_hqpl_alt_part_numbers': rotary_alt_map.get(row['base_part_number'], []),
                 'description': resolved_description,
                 'manufacturer': _coerce_text(row['manufacturer_name'], default=''),
                 'quantity': quantity,
