@@ -5290,20 +5290,6 @@ def _build_common_parts_report_rows(
                 LIMIT 1
             """).fetchone() is not None
 
-            if has_supplier_is_active:
-                supplier_rows = _execute_with_cursor(cur, """
-                    SELECT id, name
-                    FROM suppliers
-                    WHERE COALESCE(is_active, TRUE) = TRUE
-                    ORDER BY name
-                """).fetchall() or []
-            else:
-                supplier_rows = _execute_with_cursor(cur, """
-                    SELECT id, name
-                    FROM suppliers
-                    ORDER BY name
-                """).fetchall() or []
-
             qpl_saved_mapping_map = _load_qpl_mapping_supplier_map(cur)
 
         for qpl_row in qpl_rows:
@@ -5336,14 +5322,6 @@ def _build_common_parts_report_rows(
                     matched_supplier_id = saved_mapping.get('supplier_id')
                     matched_supplier_name = saved_mapping.get('supplier_name')
                     mapping_source = 'saved_map'
-                else:
-                    for supplier_row in supplier_rows:
-                        supplier_name = _safe_row_get(supplier_row, 'name')
-                        if supplier_name and _is_supplier_match_for_qpl(manufacturer_name, supplier_name):
-                            matched_supplier_id = _safe_row_get(supplier_row, 'id')
-                            matched_supplier_name = supplier_name
-                            mapping_source = 'name_match'
-                            break
 
                 mapped_suppliers.append({
                     'manufacturer_name': manufacturer_name,

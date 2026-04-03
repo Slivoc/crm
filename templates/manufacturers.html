@@ -18,9 +18,10 @@
             <span class="text-muted small">Showing {{ qpl_manufacturers|length }} of {{ qpl_manufacturer_total }}</span>
         </div>
         <div class="card-body">
-            <form method="GET" action="{{ url_for('manufacturers.manufacturers') }}" class="row g-2 align-items-end mb-3">
+            <form method="GET" action="{{ url_for('manufacturers.manufacturers') }}" class="row g-2 align-items-end mb-3" id="qplMappingsFilterForm">
                 <input type="hidden" name="search" value="{{ manufacturer_search }}">
                 <input type="hidden" name="limit" value="{{ manufacturer_limit }}">
+                <input type="hidden" name="qpl_mapped_only" value="{{ 1 if qpl_mapped_only else 0 }}" id="qplMappedOnlyHidden">
                 <div class="col-md-5">
                     <label for="qplSearch" class="form-label">Search QPL Manufacturers</label>
                     <input type="text" id="qplSearch" name="qpl_search" class="form-control" value="{{ qpl_search }}" placeholder="Search QPL manufacturer names">
@@ -35,7 +36,7 @@
                 </div>
                 <div class="col-md-3">
                     <div class="form-check mt-4 pt-2">
-                        <input class="form-check-input" type="checkbox" id="qplMappedOnly" name="qpl_mapped_only" value="1" {% if qpl_mapped_only %}checked{% endif %}>
+                        <input class="form-check-input" type="checkbox" id="qplMappedOnly" {% if qpl_mapped_only %}checked{% endif %}>
                         <label class="form-check-label" for="qplMappedOnly">Mapped only</label>
                     </div>
                 </div>
@@ -75,6 +76,7 @@
                                 <td>
                                     <form action="{{ url_for('manufacturers.upsert_qpl_mapping') }}" method="POST" class="d-flex gap-2">
                                         <input type="hidden" name="qpl_name" value="{{ qpl.qpl_name }}">
+                                        <input type="hidden" name="return_to" value="{{ request.full_path if request.query_string else request.path }}">
                                         <select class="form-select form-select-sm" name="supplier_id">
                                             <option value="">-- Unmapped --</option>
                                             {% for supplier in suppliers %}
@@ -104,6 +106,11 @@
             <span class="text-muted small">From parts list supplier quotes</span>
         </div>
         <div class="card-body">
+            {% if not has_qpl_prefix_instruction_table %}
+                <div class="alert alert-warning py-2">
+                    Prefix instructions are not persisted yet. Run migration <code>20260403_add_qpl_supplier_prefix_instructions.sql</code>.
+                </div>
+            {% endif %}
             <div class="row g-3 align-items-end">
                 <div class="col-md-3">
                     <label for="mappedPrefixLength" class="form-label">Prefix Group Length</label>
@@ -134,15 +141,18 @@
                 <table class="table table-sm align-middle" id="mappedPrefixReportTable">
                     <thead>
                         <tr>
+                            <th>Mapped Supplier</th>
+                            <th>Manufacturer</th>
                             <th>Prefix</th>
                             <th>Quote Lines</th>
                             <th>Quotes</th>
-                            <th>Suppliers</th>
+                            <th>Instruction</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td colspan="4" class="text-muted">No report loaded yet.</td>
+                            <td colspan="7" class="text-muted">No report loaded yet.</td>
                         </tr>
                     </tbody>
                 </table>
@@ -157,7 +167,10 @@
             <span class="text-muted small">Showing {{ manufacturers|length }} of {{ manufacturer_total }}</span>
         </div>
         <div class="card-body">
-            <form method="GET" action="{{ url_for('manufacturers.manufacturers') }}" class="row g-2 align-items-end mb-3">
+            <form method="GET" action="{{ url_for('manufacturers.manufacturers') }}" class="row g-2 align-items-end mb-3" id="manufacturersTableFilterForm">
+                <input type="hidden" name="qpl_search" value="{{ qpl_search }}">
+                <input type="hidden" name="qpl_limit" value="{{ qpl_limit }}">
+                <input type="hidden" name="qpl_mapped_only" value="{{ 1 if qpl_mapped_only else 0 }}">
                 <div class="col-md-8">
                     <label for="manufacturerSearch" class="form-label">Search Manufacturers</label>
                     <input type="text" id="manufacturerSearch" name="search" class="form-control" value="{{ manufacturer_search }}" placeholder="Search manufacturer names">
@@ -289,6 +302,80 @@ document.addEventListener('DOMContentLoaded', function() {
     const runBtn = document.getElementById('loadMappedPrefixReportBtn');
     const reportSummary = document.getElementById('mappedPrefixSummary');
     const reportTableBody = document.querySelector('#mappedPrefixReportTable tbody');
+    const qplMappingsFilterForm = document.getElementById('qplMappingsFilterForm');
+    const qplSearchInput = document.getElementById('qplSearch');
+    const qplLimitSelect = document.getElementById('qplLimit');
+    const qplMappedOnlyCheckbox = document.getElementById('qplMappedOnly');
+    const qplMappedOnlyHidden = document.getElementById('qplMappedOnlyHidden');
+    const manufacturersTableFilterForm = document.getElementById('manufacturersTableFilterForm');
+    const manufacturerSearchInput = document.getElementById('manufacturerSearch');
+    const manufacturerLimitSelect = document.getElementById('manufacturerLimit');
+    const hasInstructionTable = {{ 'true' if has_qpl_prefix_instruction_table else 'false' }};
+    let currentReportPrefixLength = Number.parseInt(prefixLengthInput?.value || '6', 10) || 6;
+    let qplSearchTimer = null;
+    let manufacturerSearchTimer = null;
+
+    function debounce(callback, delay, timerName) {
+        if (timerName === 'qpl') {
+            window.clearTimeout(qplSearchTimer);
+            qplSearchTimer = window.setTimeout(callback, delay);
+            return;
+        }
+        window.clearTimeout(manufacturerSearchTimer);
+        manufacturerSearchTimer = window.setTimeout(callback, delay);
+    }
+
+    function syncQplMappedOnlyValue() {
+        if (qplMappedOnlyHidden && qplMappedOnlyCheckbox) {
+            qplMappedOnlyHidden.value = qplMappedOnlyCheckbox.checked ? '1' : '0';
+        }
+        const mirroredQplMappedOnly = manufacturersTableFilterForm?.querySelector('input[name="qpl_mapped_only"]');
+        if (mirroredQplMappedOnly && qplMappedOnlyCheckbox) {
+            mirroredQplMappedOnly.value = qplMappedOnlyCheckbox.checked ? '1' : '0';
+        }
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function buildInstructionCell(row) {
+        const instruction = escapeHtml(row.instruction_text || '');
+        const supplierId = escapeHtml(row.supplier_id || '');
+        const supplierName = escapeHtml(row.supplier_name || '');
+        const manufacturerName = escapeHtml(row.manufacturer_name || '');
+        const prefix = escapeHtml(row.prefix || '');
+        const prefixLength = escapeHtml(row.prefix_length || currentReportPrefixLength || '');
+
+        return `
+            <tr data-supplier-id="${supplierId}" data-manufacturer-name="${manufacturerName}" data-prefix="${prefix}" data-prefix-length="${prefixLength}">
+                <td>${supplierName}</td>
+                <td>${manufacturerName}</td>
+                <td><code>${prefix}</code></td>
+                <td>${row.line_count || 0}</td>
+                <td>${row.quote_count || 0}</td>
+                <td style="min-width: 280px;">
+                    <textarea
+                        class="form-control form-control-sm prefix-instruction-input"
+                        rows="2"
+                        placeholder="Add purchasing instruction for this supplier/manufacturer/prefix"
+                        ${hasInstructionTable ? '' : 'disabled'}
+                    >${instruction}</textarea>
+                </td>
+                <td class="text-nowrap">
+                    <button type="button" class="btn btn-sm btn-outline-primary save-prefix-instruction-btn" ${hasInstructionTable ? '' : 'disabled'}>
+                        Save
+                    </button>
+                    <div class="small text-muted mt-1 prefix-instruction-status"></div>
+                </td>
+            </tr>
+        `;
+    }
 
     async function loadMappedSupplierPrefixReport() {
         if (!runBtn || !reportTableBody || !reportSummary) {
@@ -309,7 +396,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         runBtn.disabled = true;
         reportSummary.textContent = 'Loading prefix report...';
-        reportTableBody.innerHTML = '<tr><td colspan="4" class="text-muted">Loading...</td></tr>';
+        reportTableBody.innerHTML = '<tr><td colspan="7" class="text-muted">Loading...</td></tr>';
 
         try {
             const response = await fetch(`/manufacturers/qpl-mappings/prefix-report?${params.toString()}`);
@@ -322,28 +409,105 @@ document.addEventListener('DOMContentLoaded', function() {
             const rows = Array.isArray(data.rows) ? data.rows : [];
             if (!rows.length) {
                 reportSummary.textContent = `No prefixes found (length ${data.prefix_length}, min ${data.min_occurrences}).`;
-                reportTableBody.innerHTML = '<tr><td colspan="4" class="text-muted">No matching prefixes.</td></tr>';
+                reportTableBody.innerHTML = '<tr><td colspan="7" class="text-muted">No matching prefixes.</td></tr>';
                 return;
             }
 
-            reportSummary.textContent = `${rows.length} prefix group(s) returned at length ${data.prefix_length}.`;
-            reportTableBody.innerHTML = rows.map((row) => `
-                <tr>
-                    <td><code>${row.prefix || ''}</code></td>
-                    <td>${row.line_count || 0}</td>
-                    <td>${row.quote_count || 0}</td>
-                    <td>${row.supplier_count || 0}</td>
-                </tr>
-            `).join('');
+            currentReportPrefixLength = Number.parseInt(data.prefix_length, 10) || prefixLength;
+            reportSummary.textContent = `${rows.length} supplier/manufacturer prefix group(s) returned at length ${data.prefix_length}.`;
+            reportTableBody.innerHTML = rows.map((row) => buildInstructionCell({
+                ...row,
+                prefix_length: currentReportPrefixLength,
+            })).join('');
         } catch (error) {
             reportSummary.textContent = `Error: ${error.message}`;
-            reportTableBody.innerHTML = '<tr><td colspan="4" class="text-danger">Unable to load prefix report.</td></tr>';
+            reportTableBody.innerHTML = '<tr><td colspan="7" class="text-danger">Unable to load prefix report.</td></tr>';
         } finally {
             runBtn.disabled = false;
         }
     }
 
+    async function savePrefixInstruction(rowElement) {
+        if (!rowElement || !hasInstructionTable) {
+            return;
+        }
+
+        const supplierId = rowElement.getAttribute('data-supplier-id') || '';
+        const manufacturerName = rowElement.getAttribute('data-manufacturer-name') || '';
+        const prefix = rowElement.getAttribute('data-prefix') || '';
+        const instructionInput = rowElement.querySelector('.prefix-instruction-input');
+        const saveBtn = rowElement.querySelector('.save-prefix-instruction-btn');
+        const statusEl = rowElement.querySelector('.prefix-instruction-status');
+        const prefixLength = Math.min(25, Math.max(1, Number.parseInt(rowElement.getAttribute('data-prefix-length') || String(prefix.length || 1), 10) || prefix.length || 1));
+
+        if (!instructionInput || !saveBtn || !statusEl) {
+            return;
+        }
+
+        saveBtn.disabled = true;
+        statusEl.textContent = 'Saving...';
+        statusEl.className = 'small text-muted mt-1 prefix-instruction-status';
+
+        try {
+            const response = await fetch('/manufacturers/qpl-mappings/prefix-instructions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    supplier_id: supplierId,
+                    manufacturer_name: manufacturerName,
+                    prefix,
+                    prefix_length: prefixLength,
+                    instruction_text: instructionInput.value || '',
+                }),
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Failed to save instruction');
+            }
+
+            instructionInput.value = data.instruction_text || '';
+            statusEl.textContent = data.instruction_text ? 'Saved' : 'Cleared';
+            statusEl.className = 'small text-success mt-1 prefix-instruction-status';
+        } catch (error) {
+            statusEl.textContent = error.message;
+            statusEl.className = 'small text-danger mt-1 prefix-instruction-status';
+        } finally {
+            saveBtn.disabled = false;
+        }
+    }
+
+    syncQplMappedOnlyValue();
+
+    qplSearchInput?.addEventListener('input', () => {
+        syncQplMappedOnlyValue();
+        debounce(() => qplMappingsFilterForm?.requestSubmit(), 250, 'qpl');
+    });
+    qplLimitSelect?.addEventListener('change', () => {
+        syncQplMappedOnlyValue();
+        qplMappingsFilterForm?.requestSubmit();
+    });
+    qplMappedOnlyCheckbox?.addEventListener('change', () => {
+        syncQplMappedOnlyValue();
+        qplMappingsFilterForm?.requestSubmit();
+    });
+    manufacturerSearchInput?.addEventListener('input', () => {
+        debounce(() => manufacturersTableFilterForm?.requestSubmit(), 250, 'manufacturer');
+    });
+    manufacturerLimitSelect?.addEventListener('change', () => {
+        manufacturersTableFilterForm?.requestSubmit();
+    });
+
     runBtn?.addEventListener('click', loadMappedSupplierPrefixReport);
+    reportTableBody?.addEventListener('click', (event) => {
+        const saveBtn = event.target.closest('.save-prefix-instruction-btn');
+        if (!saveBtn) {
+            return;
+        }
+        const rowElement = saveBtn.closest('tr');
+        savePrefixInstruction(rowElement);
+    });
     prefixLengthInput?.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') {
             event.preventDefault();
@@ -354,6 +518,12 @@ document.addEventListener('DOMContentLoaded', function() {
         if (event.key === 'Enter') {
             event.preventDefault();
             loadMappedSupplierPrefixReport();
+        }
+    });
+    reportTableBody?.addEventListener('keydown', (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            const rowElement = event.target.closest('tr');
+            savePrefixInstruction(rowElement);
         }
     });
 });

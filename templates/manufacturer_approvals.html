@@ -49,10 +49,27 @@
         <div class="col-xl-4">
             <div class="card shadow-sm border-0 mb-4">
                 <div class="card-header bg-white py-3">
-                    <h5 class="mb-1">Upload Airbus Approval Workbooks</h5>
-                    <div class="text-muted small">Built for large monthly drops. Upload one or more workbooks and overwrite the selected Airbus list in one pass.</div>
+                    <h5 class="mb-1">Import Airbus Approval Files</h5>
+                    <div class="text-muted small">Built for large monthly drops. Upload one or more source files and overwrite the selected Airbus list in one pass.</div>
                 </div>
                 <div class="card-body">
+                    <form method="post" action="{{ url_for('manufacturer_approvals.import_airbus_fixed_wing_from_airbus') }}" class="border rounded p-3 bg-light-subtle mb-3">
+                        <div class="d-flex justify-content-between align-items-start gap-3">
+                            <div>
+                                <div class="fw-semibold">Fetch Airbus Fixed Wing AQPL</div>
+                                <div class="small text-muted">Downloads both Airbus Commercial Aircraft CSVs from the public AQPL page and imports them together as one overwrite.</div>
+                            </div>
+                            <span class="badge text-bg-primary">Fixed Wing</span>
+                        </div>
+                        <div class="mt-3">
+                            <label for="airbus-fetch-batch-size" class="form-label">Insert batch size</label>
+                            <input id="airbus-fetch-batch-size" name="batch_size" type="number" class="form-control" min="250" max="10000" step="250" value="5000">
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100 mt-3">
+                            <i class="bi bi-cloud-download me-1"></i>Fetch From Airbus and Import
+                        </button>
+                    </form>
+
                     <form method="post" action="{{ url_for('manufacturer_approvals.import_manufacturer_approvals') }}" enctype="multipart/form-data">
                         <div class="mb-3">
                             <label for="approval_list_type" class="form-label">Approval list</label>
@@ -65,9 +82,9 @@
                         </div>
 
                         <div class="mb-3">
-                            <label for="files" class="form-label">Workbook files</label>
+                            <label for="files" class="form-label">Source files</label>
                             <input id="files" name="files" type="file" class="form-control" accept="{{ allowed_extensions|join(',') }}" multiple required>
-                            <div class="form-text">Supported formats: {{ allowed_extensions|join(', ') }}. Select both fixed-wing workbooks together so the import runs as one overwrite.</div>
+                            <div class="form-text">Supported formats: {{ allowed_extensions|join(', ') }}. For fixed wing, select both Airbus source files together so the import runs as one overwrite.</div>
                         </div>
 
                         <div class="mb-3">

@@ -1,5 +1,6 @@
 import os
 import re
+from urllib.parse import urlparse
 
 from flask import jsonify, Blueprint, render_template, request, redirect, url_for, flash
 from db import db_cursor, execute as db_execute
@@ -41,6 +42,10 @@ def _normalize_qpl_manufacturer_name(name):
     return ''.join(tokens)
 
 
+def _normalize_prefix_report_manufacturer_name(name):
+    return ' '.join((str(name or '').strip().lower()).split())
+
+
 def _part_number_prefix_sql():
     if _using_postgres():
         return (
@@ -63,6 +68,21 @@ def _qpl_mapping_table_exists():
         LIMIT 1
         """,
         ('qpl_manufacturer_supplier_mappings',),
+        fetch='one',
+    )
+    return row is not None
+
+
+def _qpl_prefix_instruction_table_exists():
+    row = db_execute(
+        """
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name = ?
+        LIMIT 1
+        """,
+        ('qpl_supplier_prefix_instructions',),
         fetch='one',
     )
     return row is not None
@@ -187,6 +207,19 @@ def _load_manufacturers_page(search_term='', limit=10):
     return [dict(row) for row in rows], int(total_row.get('total_count', 0) or 0)
 
 
+def _redirect_to_manufacturers_return_target():
+    return_to = (request.form.get('return_to') or request.args.get('return_to') or '').strip()
+    if not return_to:
+        return redirect(url_for('manufacturers.manufacturers'))
+
+    parsed = urlparse(return_to)
+    if parsed.scheme or parsed.netloc:
+        return redirect(url_for('manufacturers.manufacturers'))
+    if not return_to.startswith('/manufacturers'):
+        return redirect(url_for('manufacturers.manufacturers'))
+    return redirect(return_to)
+
+
 @manufacturers_bp.route('', methods=['GET', 'POST'])
 @manufacturers_bp.route('/', methods=['GET', 'POST'])
 @manufacturers_bp.route('/manufacturers', methods=['GET', 'POST'])
@@ -201,7 +234,7 @@ def manufacturers():
     limit = request.args.get('limit', type=int) or 10
     qpl_search = (request.args.get('qpl_search') or '').strip()
     qpl_limit = request.args.get('qpl_limit', type=int) or 10
-    qpl_mapped_only = str(request.args.get('qpl_mapped_only', '1')).lower() not in ('0', 'false', 'off', '')
+    qpl_mapped_only = str(request.args.get('qpl_mapped_only', '0')).lower() not in ('0', 'false', 'off', '')
     manufacturers, manufacturer_total = _load_manufacturers_page(search, limit)
     active_manufacturers = get_all_manufacturers(include_merged=False)
     suppliers = db_execute('SELECT id, name FROM suppliers ORDER BY name', fetch='all') or []
@@ -222,6 +255,7 @@ def manufacturers():
         qpl_limit=min(max(qpl_limit, 1), 100),
         qpl_mapped_only=qpl_mapped_only,
         has_qpl_mapping_table=_qpl_mapping_table_exists(),
+        has_qpl_prefix_instruction_table=_qpl_prefix_instruction_table_exists(),
     )
 
 
@@ -231,6 +265,7 @@ def qpl_mapped_supplier_prefix_report():
     if not _qpl_mapping_table_exists():
         return jsonify(success=False, message='QPL mapping table is missing.'), 400
 
+    has_instruction_table = _qpl_prefix_instruction_table_exists()
     prefix_length = request.args.get('prefix_length', type=int) or 6
     prefix_length = min(max(prefix_length, 1), 25)
 
@@ -243,6 +278,7 @@ def qpl_mapped_supplier_prefix_report():
     supplier_id = request.args.get('supplier_id', type=int)
 
     prefix_sql = _part_number_prefix_sql()
+    instruction_join_sql = ''
     supplier_filter_sql = ''
     params = [prefix_length]
 
@@ -251,36 +287,76 @@ def qpl_mapped_supplier_prefix_report():
         params.append(supplier_id)
 
     params.extend([prefix_length, min_occurrences, limit])
+    if has_instruction_table:
+        instruction_join_sql = """
+        LEFT JOIN qpl_supplier_prefix_instructions instr
+            ON instr.supplier_id = grouped.supplier_id
+           AND instr.manufacturer_name_normalized = grouped.manufacturer_name_normalized
+           AND instr.prefix = grouped.prefix
+           AND instr.prefix_length = ?
+        """
+        params.append(prefix_length)
 
     rows = db_execute(
         f"""
         WITH mapped_suppliers AS (
-            SELECT DISTINCT supplier_id
+            SELECT DISTINCT
+                supplier_id,
+                manufacturer_name,
+                manufacturer_name_normalized
             FROM qpl_manufacturer_supplier_mappings
         ),
         source_lines AS (
             SELECT
                 sq.id AS supplier_quote_id,
                 sq.supplier_id,
+                s.name AS supplier_name,
+                TRIM(COALESCE(NULLIF(sql.manufacturer, ''), '')) AS manufacturer_name,
+                LOWER(TRIM(COALESCE(NULLIF(sql.manufacturer, ''), ''))) AS manufacturer_name_normalized,
                 {prefix_sql} AS pn_prefix
             FROM parts_list_supplier_quote_lines sql
             JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            JOIN suppliers s ON s.id = sq.supplier_id
             LEFT JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
-            JOIN mapped_suppliers ms ON ms.supplier_id = sq.supplier_id
+            JOIN mapped_suppliers ms
+                ON ms.supplier_id = sq.supplier_id
+               AND LOWER(TRIM(ms.manufacturer_name)) = LOWER(TRIM(COALESCE(NULLIF(sql.manufacturer, ''), '')))
             WHERE TRIM(COALESCE(NULLIF(sql.quoted_part_number, ''), NULLIF(pll.customer_part_number, ''), NULLIF(pll.base_part_number, ''))) <> ''
+              AND TRIM(COALESCE(NULLIF(sql.manufacturer, ''), '')) <> ''
               {supplier_filter_sql}
+        ),
+        grouped AS (
+            SELECT
+                supplier_id,
+                supplier_name,
+                manufacturer_name,
+                manufacturer_name_normalized,
+                pn_prefix AS prefix,
+                COUNT(*) AS line_count,
+                COUNT(DISTINCT supplier_quote_id) AS quote_count
+            FROM source_lines
+            WHERE LENGTH(pn_prefix) = ?
+            GROUP BY
+                supplier_id,
+                supplier_name,
+                manufacturer_name,
+                manufacturer_name_normalized,
+                pn_prefix
+            HAVING COUNT(*) >= ?
+            ORDER BY supplier_name ASC, manufacturer_name ASC, line_count DESC, pn_prefix ASC
+            LIMIT ?
         )
         SELECT
-            pn_prefix AS prefix,
-            COUNT(*) AS line_count,
-            COUNT(DISTINCT supplier_quote_id) AS quote_count,
-            COUNT(DISTINCT supplier_id) AS supplier_count
-        FROM source_lines
-        WHERE LENGTH(pn_prefix) = ?
-        GROUP BY pn_prefix
-        HAVING COUNT(*) >= ?
-        ORDER BY line_count DESC, prefix ASC
-        LIMIT ?
+            grouped.supplier_id,
+            grouped.supplier_name,
+            grouped.manufacturer_name,
+            grouped.prefix,
+            grouped.line_count,
+            grouped.quote_count
+            {", COALESCE(instr.instruction_text, '') AS instruction_text" if has_instruction_table else ", '' AS instruction_text"}
+        FROM grouped
+        {instruction_join_sql}
+        ORDER BY grouped.supplier_name ASC, grouped.manufacturer_name ASC, grouped.line_count DESC, grouped.prefix ASC
         """,
         tuple(params),
         fetch='all',
@@ -288,10 +364,100 @@ def qpl_mapped_supplier_prefix_report():
 
     return jsonify(
         success=True,
+        has_instruction_table=has_instruction_table,
         prefix_length=prefix_length,
         min_occurrences=min_occurrences,
         supplier_id=supplier_id,
         rows=rows,
+    )
+
+
+@manufacturers_bp.route('/qpl-mappings/prefix-instructions', methods=['POST'])
+@manufacturers_bp.route('/manufacturers/qpl-mappings/prefix-instructions', methods=['POST'])
+def upsert_qpl_prefix_instruction():
+    if not _qpl_prefix_instruction_table_exists():
+        return jsonify(
+            success=False,
+            message='Prefix instruction table is missing. Run migration 20260403_add_qpl_supplier_prefix_instructions.sql.',
+        ), 400
+
+    payload = request.get_json(silent=True) or {}
+    supplier_id = payload.get('supplier_id')
+    prefix = (payload.get('prefix') or '').strip().upper()
+    manufacturer_name = (payload.get('manufacturer_name') or '').strip()
+    instruction_text = (payload.get('instruction_text') or '').strip()
+
+    try:
+        supplier_id = int(supplier_id)
+    except (TypeError, ValueError):
+        supplier_id = None
+
+    prefix_length = payload.get('prefix_length')
+    try:
+        prefix_length = min(max(int(prefix_length), 1), 25)
+    except (TypeError, ValueError):
+        prefix_length = None
+
+    manufacturer_name_normalized = _normalize_prefix_report_manufacturer_name(manufacturer_name)
+
+    if not supplier_id or not prefix or not prefix_length or not manufacturer_name_normalized:
+        return jsonify(success=False, message='Supplier, manufacturer, prefix, and prefix length are required.'), 400
+
+    if len(prefix) != prefix_length:
+        return jsonify(success=False, message='Prefix length does not match the supplied prefix.'), 400
+
+    try:
+        with db_cursor(commit=True) as cur:
+            if instruction_text:
+                _execute_with_cursor(
+                    cur,
+                    """
+                    INSERT INTO qpl_supplier_prefix_instructions (
+                        supplier_id,
+                        manufacturer_name,
+                        manufacturer_name_normalized,
+                        prefix,
+                        prefix_length,
+                        instruction_text
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (supplier_id, manufacturer_name_normalized, prefix, prefix_length)
+                    DO UPDATE SET
+                        manufacturer_name = EXCLUDED.manufacturer_name,
+                        instruction_text = EXCLUDED.instruction_text,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (
+                        supplier_id,
+                        manufacturer_name,
+                        manufacturer_name_normalized,
+                        prefix,
+                        prefix_length,
+                        instruction_text,
+                    ),
+                )
+            else:
+                _execute_with_cursor(
+                    cur,
+                    """
+                    DELETE FROM qpl_supplier_prefix_instructions
+                    WHERE supplier_id = ?
+                      AND manufacturer_name_normalized = ?
+                      AND prefix = ?
+                      AND prefix_length = ?
+                    """,
+                    (supplier_id, manufacturer_name_normalized, prefix, prefix_length),
+                )
+    except Exception as exc:
+        return jsonify(success=False, message=f'Unable to save instruction: {exc}'), 500
+
+    return jsonify(
+        success=True,
+        supplier_id=supplier_id,
+        manufacturer_name=manufacturer_name,
+        prefix=prefix,
+        prefix_length=prefix_length,
+        instruction_text=instruction_text,
     )
 
 
@@ -370,11 +536,11 @@ def upsert_qpl_mapping():
 
     if not _qpl_mapping_table_exists():
         flash('QPL mapping table is missing. Run migration 20260307_add_qpl_manufacturer_supplier_mappings.sql.', 'warning')
-        return redirect(url_for('manufacturers.manufacturers'))
+        return _redirect_to_manufacturers_return_target()
 
     if not qpl_name_normalized:
         flash('QPL manufacturer name is required.', 'error')
-        return redirect(url_for('manufacturers.manufacturers'))
+        return _redirect_to_manufacturers_return_target()
 
     try:
         with db_cursor(commit=True) as cur:
@@ -407,7 +573,7 @@ def upsert_qpl_mapping():
     except Exception as exc:
         flash(f'Unable to save QPL mapping: {exc}', 'error')
 
-    return redirect(url_for('manufacturers.manufacturers'))
+    return _redirect_to_manufacturers_return_target()
 
 
 @manufacturers_bp.route('/import-qpl-manufacturers', methods=['POST'])

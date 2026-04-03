@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import re
@@ -15,6 +16,7 @@ RAW_COLUMN_MAP = {
     'Manufacturer Text': 'manufacturer_name',
     'Location': 'location',
     'Country': 'country',
+    'Country/Region': 'country',
     'CAGE Co': 'cage_code',
     'Approval Status Text': 'approval_status',
     'Type of Data Text': 'data_type',
@@ -28,6 +30,7 @@ RAW_COLUMN_MAP = {
     'P Status Text': 'p_status_text',
     'Change date Status P': 'status_change_date',
     'Counter of QIR': 'qir_count',
+    'P5 - Regulated Substances Flag': 'regulated_substances_flag',
     'Manufacturer Part Number (MPN)': 'manufacturer_part_number',
     'Manufacturer name': 'manufacturer_name',
     'AH Manufacturer code': 'manufacturer_code',
@@ -121,10 +124,27 @@ def parse_int(value: Any) -> Optional[int]:
         return None
 
 
-def iter_records(xlsx_path: str, limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
+def _normalize_row_map(row_map: Dict[str, Any]) -> Dict[str, Any]:
+    normalized: Dict[str, Any] = {}
+    normalized_row_map = {}
+    for key, value in row_map.items():
+        normalized_key = normalize_header(key)
+        normalized_row_map[normalized_key] = value
+        if normalized_key.startswith('Counter of QIR'):
+            normalized_row_map['Counter of QIR'] = value
+
+    for raw_key, normalized_key in RAW_COLUMN_MAP.items():
+        value = normalized_row_map.get(raw_key)
+        if value in (None, '') and normalized_key in normalized:
+            continue
+        normalized[normalized_key] = value
+    return normalized
+
+
+def iter_excel_records(workbook_path: str, limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
     from openpyxl import load_workbook
 
-    workbook = load_workbook(xlsx_path, read_only=True, data_only=True)
+    workbook = load_workbook(workbook_path, read_only=True, data_only=True)
     try:
         sheet = workbook.active
         header_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
@@ -133,15 +153,49 @@ def iter_records(xlsx_path: str, limit: Optional[int] = None) -> Iterator[Dict[s
         yielded = 0
         for row in sheet.iter_rows(min_row=2, values_only=True):
             row_map = dict(zip(headers, row))
-            normalized: Dict[str, Any] = {}
-            for raw_key, normalized_key in RAW_COLUMN_MAP.items():
-                normalized[normalized_key] = row_map.get(raw_key)
-            yield normalized
+            yield _normalize_row_map(row_map)
             yielded += 1
             if limit and yielded >= limit:
                 break
     finally:
         workbook.close()
+
+
+def iter_csv_records(csv_path: str, limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
+    with open(csv_path, 'r', encoding='utf-8-sig', newline='', errors='replace') as handle:
+        sample = handle.read(4096)
+        handle.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=';,')
+        except csv.Error:
+            dialect = csv.excel
+            dialect.delimiter = ';'
+
+        reader = csv.DictReader(handle, dialect=dialect)
+        raw_headers = reader.fieldnames or []
+        if not raw_headers:
+            return
+
+        normalized_headers = [normalize_header(col) for col in raw_headers]
+        yielded = 0
+        for row in reader:
+            row_map = {
+                normalized_headers[index]: value
+                for index, value in enumerate(row.values())
+                if index < len(normalized_headers)
+            }
+            yield _normalize_row_map(row_map)
+            yielded += 1
+            if limit and yielded >= limit:
+                break
+
+
+def iter_records(workbook_path: str, limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
+    suffix = os.path.splitext(workbook_path)[1].lower()
+    if suffix == '.csv':
+        yield from iter_csv_records(workbook_path, limit=limit)
+        return
+    yield from iter_excel_records(workbook_path, limit=limit)
 
 
 def build_payload(
