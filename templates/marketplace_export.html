@@ -108,7 +108,7 @@
             </h2>
             <p class="text-muted mb-1">Choose a parts source, then export current CRM stock and pricing into the Airbus Marketplace format.</p>
             <p class="small text-warning mb-0">
-                Rotary HQPL only: the working set excludes any part not found on the Airbus rotary approved parts list. The alt field can be limited to rotary HQPL-approved alternatives or expanded to all CRM global alts using the option below.
+                Rotary HQPL only: the working set excludes any part not found on the Airbus rotary approved parts list. Use the options below to control whether the alt field includes only rotary-approved alternatives or all CRM global alts, and whether marketplace quantity/pricing should reflect stock held under those alternates.
             </p>
         </div>
         <div class="col-auto align-self-center">
@@ -526,6 +526,12 @@
                                 Alt field: include all global alts, not just rotary HQPL-approved alts
                             </label>
                         </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="includeAltStockRollup">
+                            <label class="form-check-label small text-muted" for="includeAltStockRollup">
+                                Quantity/pricing: include stock held under selected alternate part numbers and use the highest in-stock estimate
+                            </label>
+                        </div>
                         <button class="btn btn-lg btn-primary" id="pushToMarketplaceBtn">
                             <i class="bi bi-cloud-upload"></i> Push to Marketplace
                         </button>
@@ -845,6 +851,15 @@ $(document).ready(function() {
         saveMarketplaceDefaults();
     });
 
+    $('#includeNonHqplAlts, #includeAltStockRollup').change(function() {
+        if (allParts.length > 0) {
+            loadParts();
+            return;
+        }
+        updateSummaryStats();
+        renderUncategorizedParts();
+    });
+
     // Auto-categorize missing
     $('#autoCategorizeMissingBtn').click(function() {
         autoCategorizeMissing();
@@ -921,6 +936,8 @@ function loadParts() {
         stock_filter: $('input[name="stockFilter"]:checked').val(),
         category_filter: $('input[name="categoryFilter"]:checked').val(),
         pricing_only: $('#pricingOnly').prop('checked'),
+        include_non_hqpl_alts: includeNonHqplAltsEnabled(),
+        include_alt_stock_rollup: includeAltStockRollupEnabled(),
         part_number_search: $('#partNumberSearch').val().trim(),
         max_results: $('#maxResults').val().trim(),
         selected_base_part_numbers: partSourceMode === 'baseline' ? baselinePartNumbers : []
@@ -1116,7 +1133,7 @@ function renderBaselineSourceSummary(summary) {
 function updateSummaryStats() {
     const categorized = allParts.filter(p => p.mkp_category).length;
     const uncategorized = allParts.length - categorized;
-    const inStock = allParts.filter(p => p.in_stock).length;
+    const inStock = allParts.filter(p => getEffectiveMarketplaceState(p).inStock).length;
 
     // Count parts with portal pricing data
     let withPrice = 0;
@@ -1193,13 +1210,12 @@ function renderUncategorizedParts() {
 }
 
 function getPortalPrice(part) {
-    const value = parseFloat(part.estimated_price);
-    return Number.isFinite(value) ? value : null;
+    return getEffectiveMarketplaceState(part).price;
 }
 
 function getExportQuantity(part) {
     const defaultQty = parseInt($('#defaultQuantity').val(), 10) || 1;
-    const stockQty = parseInt(part.stock_qty, 10);
+    const stockQty = getEffectiveMarketplaceState(part).stockQty;
     return Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQty;
 }
 
@@ -1255,10 +1271,11 @@ function resolveOfferProductIdType(part, baselineRow) {
 }
 
 function formatStockDisplay(part) {
-    if (part.stock_qty && part.stock_qty > 0) {
-        return part.stock_qty;
+    const effectiveState = getEffectiveMarketplaceState(part);
+    if (effectiveState.stockQty && effectiveState.stockQty > 0) {
+        return effectiveState.stockQty;
     }
-    return part.in_stock ? 'In stock' : '0';
+    return effectiveState.inStock ? 'In stock' : '0';
 }
 
 function storeExportUncategorizedParts(parts, filters) {
@@ -1806,16 +1823,86 @@ function includeNonHqplAltsEnabled() {
     return $('#includeNonHqplAlts').is(':checked');
 }
 
+function includeAltStockRollupEnabled() {
+    return $('#includeAltStockRollup').is(':checked');
+}
+
+function getSelectedAltStockRollup(part) {
+    if (!part || !includeAltStockRollupEnabled()) {
+        return null;
+    }
+    return includeNonHqplAltsEnabled()
+        ? (part.all_alt_stock_rollup || null)
+        : (part.rotary_alt_stock_rollup || null);
+}
+
+function getAltStockNote(part) {
+    const rollup = getSelectedAltStockRollup(part);
+    if (!rollup) {
+        return '';
+    }
+    const altStockQty = parseInt(rollup.stock_qty, 10) || 0;
+    const altParts = Array.isArray(rollup.stock_part_numbers) ? rollup.stock_part_numbers.filter(Boolean) : [];
+    if (altStockQty <= 0 || altParts.length === 0) {
+        return '';
+    }
+
+    const shownParts = altParts.slice(0, 3).join(', ');
+    const suffix = altParts.length > 3 ? ` (+${altParts.length - 3} more)` : '';
+    const primaryStockQty = parseInt(part && part.stock_qty, 10) || 0;
+    return primaryStockQty > 0
+        ? `Additional stock available via alternate PN(s): ${shownParts}${suffix}.`
+        : `Stock held under alternate PN(s): ${shownParts}${suffix}.`;
+}
+
+function getEffectiveMarketplaceState(part) {
+    const basePrice = parseFloat(part && part.estimated_price);
+    const primaryPrice = Number.isFinite(basePrice) ? basePrice : null;
+    const primaryStockQty = parseInt(part && part.stock_qty, 10) || 0;
+    const primaryInStock = !!(part && part.in_stock) && primaryStockQty > 0;
+    const rollup = getSelectedAltStockRollup(part);
+
+    if (!rollup) {
+        return {
+            price: primaryPrice,
+            stockQty: primaryStockQty,
+            inStock: !!(part && part.in_stock),
+            note: ''
+        };
+    }
+
+    const altStockQty = parseInt(rollup.stock_qty, 10) || 0;
+    const altPriceRaw = parseFloat(rollup.highest_stock_price);
+    const altPrice = Number.isFinite(altPriceRaw) ? altPriceRaw : null;
+    const totalStockQty = primaryStockQty + altStockQty;
+    let effectivePrice = primaryPrice;
+
+    if (altPrice !== null && (effectivePrice === null || altPrice > effectivePrice)) {
+        effectivePrice = altPrice;
+    }
+
+    return {
+        price: effectivePrice,
+        stockQty: totalStockQty,
+        inStock: totalStockQty > 0 ? true : !!(part && part.in_stock),
+        note: getAltStockNote(part)
+    };
+}
+
 function buildProductPayload(part, defaultQuantity, defaults) {
     const partNumber = (part.part_number || part.base_part_number || '').trim();
-    const stockQty = parseInt(part.stock_qty, 10);
+    const effectiveState = getEffectiveMarketplaceState(part);
+    const stockQty = effectiveState.stockQty;
     const quantity = Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
-    const leadTime = part.estimated_lead_days ?? 7;
-    const description = resolveDefaultDescription(part, defaults);
+    const leadTime = quantity > 0 ? 0 : (part.estimated_lead_days ?? 7);
+    let description = resolveDefaultDescription(part, defaults);
     const baselineRow = getImportedAirbusBaselineRow(part);
-    const rawPrice = part.estimated_price ?? '';
+    const rawPrice = effectiveState.price ?? '';
     const price = coerceNumber(rawPrice) === null ? '0.00' : rawPrice;
     const isOnDemandWithoutPrice = coerceNumber(rawPrice) === null;
+    if (effectiveState.note) {
+        description = [description, effectiveState.note].filter(Boolean).join(' ');
+    }
 
     return {
         part_number: partNumber,
@@ -1842,8 +1929,11 @@ function buildProductPayload(part, defaultQuantity, defaults) {
             ? coerceBool(part.mkp_easaf1, false)
             : defaults.mkp_easaf1,
         include_non_hqpl_alts: includeNonHqplAltsEnabled(),
+        include_alt_stock_rollup: includeAltStockRollupEnabled(),
         all_global_alt_part_numbers: Array.isArray(part.all_global_alt_part_numbers) ? part.all_global_alt_part_numbers : [],
         rotary_hqpl_alt_part_numbers: Array.isArray(part.rotary_hqpl_alt_part_numbers) ? part.rotary_hqpl_alt_part_numbers : [],
+        all_alt_stock_rollup: part.all_alt_stock_rollup || {},
+        rotary_alt_stock_rollup: part.rotary_alt_stock_rollup || {},
         description: description,
         manufacturer: (part.manufacturer || '').trim(),
         quantity: quantity,
@@ -1857,15 +1947,17 @@ function buildProductPayload(part, defaultQuantity, defaults) {
 
 function buildOfferPayload(part, defaultQuantity, defaults) {
     const partNumber = (part.part_number || part.base_part_number || '').trim();
-    const stockQty = parseInt(part.stock_qty, 10);
+    const effectiveState = getEffectiveMarketplaceState(part);
+    const stockQty = effectiveState.stockQty;
     const quantity = Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
-    const leadTime = part.estimated_lead_days ?? 7;
+    const leadTime = quantity > 0 ? 0 : (part.estimated_lead_days ?? 7);
     const baselineRow = getImportedAirbusBaselineRow(part);
-    const rawPrice = part.estimated_price ?? '';
+    const rawPrice = effectiveState.price ?? '';
     const price = coerceNumber(rawPrice) === null ? '0.00' : rawPrice;
     const isOnDemandWithoutPrice = coerceNumber(rawPrice) === null;
     const productId = resolveOfferProductId(part, baselineRow);
     const productIdType = resolveOfferProductIdType(part, baselineRow);
+    const description = [resolveDefaultDescription(part, defaults), effectiveState.note].filter(Boolean).join(' ');
 
     return {
         'sku': partNumber,
@@ -1875,7 +1967,7 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
         'quantity': quantity,
         'state': '1',
         'leadtime-to-ship': leadTime,
-        'description': resolveDefaultDescription(part, defaults),
+        'description': description,
         'internal-description': '',
         'price-additional-info': '',
         'min-quantity-alert': '',
@@ -2209,6 +2301,7 @@ async function exportToCsv(mode) {
         source_mode: partSourceMode,
         default_quantity: parseInt($('#defaultQuantity').val(), 10) || 1,
         include_non_hqpl_alts: includeNonHqplAltsEnabled(),
+        include_alt_stock_rollup: includeAltStockRollupEnabled(),
         export_mode: exportMode,
         debug_offer_export: isDebugOfferExport,
         skip_invalid_mandatory: skipInvalidMandatory,

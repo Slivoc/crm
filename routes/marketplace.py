@@ -935,6 +935,19 @@ def _build_rotary_hqpl_exists_clause(part_alias='pn'):
 
 
 def _get_global_alternative_map(cursor, base_part_numbers, rotary_only=True):
+    entries_map = _get_global_alternative_entries_map(
+        cursor,
+        base_part_numbers,
+        rotary_only=rotary_only,
+    )
+
+    return {
+        source_base: [entry['part_number'] for entry in entries]
+        for source_base, entries in entries_map.items()
+    }
+
+
+def _get_global_alternative_entries_map(cursor, base_part_numbers, rotary_only=True):
     cleaned = [str(value).strip() for value in (base_part_numbers or []) if str(value).strip()]
     if not cleaned:
         return {}
@@ -977,14 +990,118 @@ def _get_global_alternative_map(cursor, base_part_numbers, rotary_only=True):
     alt_map = {}
     for row in rows:
         source_base = str(row['source_base_part_number']).strip()
+        alt_base = str(row['alt_base_part_number'] or '').strip()
         alt_number = str(row['alt_part_number'] or '').strip()
-        if not source_base or not alt_number:
+        if not source_base or not alt_base or not alt_number:
             continue
         alt_map.setdefault(source_base, [])
-        if alt_number not in alt_map[source_base]:
-            alt_map[source_base].append(alt_number)
+        if not any(existing['base_part_number'] == alt_base for existing in alt_map[source_base]):
+            alt_map[source_base].append({
+                'base_part_number': alt_base,
+                'part_number': alt_number,
+            })
 
     return alt_map
+
+
+def _get_alt_stock_rollup_map(customer_id, alt_entries_map):
+    flat_requests = []
+    for entries in (alt_entries_map or {}).values():
+        for entry in entries:
+            part_number = _coerce_text(entry.get('part_number'), default='')
+            if not part_number:
+                continue
+            flat_requests.append({'part_number': part_number, 'quantity': 1})
+
+    estimates = _get_portal_estimates(flat_requests, customer_id)
+    rollup_map = {}
+
+    for source_base_part_number, entries in (alt_entries_map or {}).items():
+        total_stock_qty = 0
+        highest_stock_price = None
+        highest_stock_price_part_number = ''
+        parts_with_stock = []
+
+        for entry in entries:
+            alt_base = _coerce_text(entry.get('base_part_number'), default='')
+            alt_part_number = _coerce_text(entry.get('part_number'), default='')
+            estimate = estimates.get(alt_base) or estimates.get(alt_part_number) or {}
+            stock_qty = _coerce_int(estimate.get('stock_quantity'), default=0)
+            in_stock = bool(estimate.get('in_stock')) and stock_qty > 0
+            estimated_price = _coerce_numeric_number(estimate.get('estimated_price'))
+
+            if not in_stock:
+                continue
+
+            total_stock_qty += stock_qty
+            parts_with_stock.append(alt_part_number)
+
+            if estimated_price is not None and (
+                highest_stock_price is None or estimated_price > highest_stock_price
+            ):
+                highest_stock_price = estimated_price
+                highest_stock_price_part_number = alt_part_number
+
+        rollup_map[source_base_part_number] = {
+            'has_alt_stock': total_stock_qty > 0,
+            'stock_qty': total_stock_qty,
+            'highest_stock_price': highest_stock_price,
+            'highest_stock_price_part_number': highest_stock_price_part_number,
+            'stock_part_numbers': parts_with_stock,
+        }
+
+    return rollup_map
+
+
+def _select_alt_stock_rollup(include_non_hqpl_alts, rotary_rollup, all_rollup):
+    return (all_rollup if include_non_hqpl_alts else rotary_rollup) or {}
+
+
+def _apply_alt_stock_rollup_to_estimate(primary_estimate, alt_rollup):
+    estimate = dict(primary_estimate or {})
+    primary_stock_qty = _coerce_int(estimate.get('stock_quantity'), default=0)
+    primary_in_stock = bool(estimate.get('in_stock')) and primary_stock_qty > 0
+    primary_price = _coerce_numeric_number(estimate.get('estimated_price'))
+    total_stock_qty = primary_stock_qty
+    effective_price = primary_price
+    price_source = estimate.get('price_source')
+
+    alt_stock_qty = _coerce_int((alt_rollup or {}).get('stock_qty'), default=0)
+    alt_highest_stock_price = _coerce_numeric_number((alt_rollup or {}).get('highest_stock_price'))
+    if alt_stock_qty > 0:
+        total_stock_qty += alt_stock_qty
+        if alt_highest_stock_price is not None and (
+            effective_price is None or alt_highest_stock_price > effective_price
+        ):
+            effective_price = alt_highest_stock_price
+            price_source = 'alt_stock_rollup'
+
+    if total_stock_qty > 0:
+        estimate['in_stock'] = True
+        estimate['stock_quantity'] = total_stock_qty
+        estimate['estimated_lead_days'] = 0
+        if effective_price is not None:
+            estimate['estimated_price'] = effective_price
+            estimate['price_source'] = price_source or estimate.get('price_source')
+
+    return estimate
+
+
+def _build_alt_stock_note(primary_stock_qty, alt_rollup):
+    alt_rollup = alt_rollup or {}
+    alt_stock_qty = _coerce_int(alt_rollup.get('stock_qty'), default=0)
+    if alt_stock_qty <= 0:
+        return ''
+
+    alt_parts = [str(part).strip() for part in (alt_rollup.get('stock_part_numbers') or []) if str(part).strip()]
+    if not alt_parts:
+        return ''
+
+    shown_parts = ', '.join(alt_parts[:3])
+    suffix = f" (+{len(alt_parts) - 3} more)" if len(alt_parts) > 3 else ''
+    if _coerce_int(primary_stock_qty, default=0) > 0:
+        return f"Additional stock available via alternate PN(s): {shown_parts}{suffix}."
+    return f"Stock held under alternate PN(s): {shown_parts}{suffix}."
 
 
 def _build_offer_row_from_payload(offer):
@@ -2190,6 +2307,8 @@ def get_parts_for_export():
         category_filter = data.get('category_filter', 'all')
         pricing_only = data.get('pricing_only', False)
         part_number_search = data.get('part_number_search', '').strip()
+        include_non_hqpl_alts = _coerce_bool(data.get('include_non_hqpl_alts'), default=False)
+        include_alt_stock_rollup = _coerce_bool(data.get('include_alt_stock_rollup'), default=False)
         source_mode = _coerce_text(data.get('source_mode'), default='filters')
         if source_mode not in ('filters', 'baseline'):
             source_mode = 'filters'
@@ -2397,16 +2516,24 @@ def get_parts_for_export():
         rows = cursor.fetchall()
         logger.info("Marketplace export query returned %s parts", len(rows))
 
-        rotary_alt_map = _get_global_alternative_map(
+        rotary_alt_entries_map = _get_global_alternative_entries_map(
             cursor,
             [row['base_part_number'] for row in rows],
             rotary_only=True,
         )
-        all_alt_map = _get_global_alternative_map(
+        all_alt_entries_map = _get_global_alternative_entries_map(
             cursor,
             [row['base_part_number'] for row in rows],
             rotary_only=False,
         )
+        rotary_alt_map = {
+            source_base: [entry['part_number'] for entry in entries]
+            for source_base, entries in rotary_alt_entries_map.items()
+        }
+        all_alt_map = {
+            source_base: [entry['part_number'] for entry in entries]
+            for source_base, entries in all_alt_entries_map.items()
+        }
 
         parts_payload = [
             {'part_number': row['part_number'] or row['base_part_number'], 'quantity': 1}
@@ -2420,6 +2547,8 @@ def get_parts_for_export():
             len(estimates),
             time.monotonic() - estimates_start,
         )
+        rotary_alt_stock_rollup_map = _get_alt_stock_rollup_map(customer_id, rotary_alt_entries_map)
+        all_alt_stock_rollup_map = _get_alt_stock_rollup_map(customer_id, all_alt_entries_map)
 
         parts = []
         filtered_stock = 0
@@ -2428,9 +2557,19 @@ def get_parts_for_export():
         for row in rows:
             base_part_number = row['base_part_number']
             estimate = estimates.get(base_part_number) or estimates.get(row['part_number'])
-            estimated_price = estimate.get('estimated_price') if estimate else None
-            in_stock = bool(estimate.get('in_stock')) if estimate else False
-            stock_qty = estimate.get('stock_quantity') if estimate else None
+            selected_alt_rollup = _select_alt_stock_rollup(
+                include_non_hqpl_alts,
+                rotary_alt_stock_rollup_map.get(base_part_number),
+                all_alt_stock_rollup_map.get(base_part_number),
+            )
+            effective_estimate = (
+                _apply_alt_stock_rollup_to_estimate(estimate, selected_alt_rollup)
+                if include_alt_stock_rollup
+                else (estimate or {})
+            )
+            estimated_price = effective_estimate.get('estimated_price')
+            in_stock = bool(effective_estimate.get('in_stock')) if effective_estimate else False
+            stock_qty = effective_estimate.get('stock_quantity') if effective_estimate else None
 
             if stock_filter == 'stock_only' and not in_stock:
                 filtered_stock += 1
@@ -2463,9 +2602,11 @@ def get_parts_for_export():
                 'mkp_offer_product_id_type': row['mkp_offer_product_id_type'],
                 'all_global_alt_part_numbers': all_alt_map.get(base_part_number, []),
                 'rotary_hqpl_alt_part_numbers': rotary_alt_map.get(base_part_number, []),
+                'all_alt_stock_rollup': all_alt_stock_rollup_map.get(base_part_number, {}),
+                'rotary_alt_stock_rollup': rotary_alt_stock_rollup_map.get(base_part_number, {}),
                 'description': '',
                 'manufacturer': _coerce_text(row['manufacturer_name'], default=''),
-                'estimated_price': estimated_price,
+                'estimated_price': estimate.get('estimated_price') if estimate else None,
                 'price_source': estimate.get('price_source') if estimate else None,
                 'estimated_lead_days': estimate.get('estimated_lead_days') if estimate else None,
                 'currency': estimate.get('currency') if estimate else None,
@@ -2507,6 +2648,7 @@ def export_to_marketplace():
         default_quantity = int(export_data.get('default_quantity') or 1)
         skip_invalid_mandatory = _coerce_bool(export_data.get('skip_invalid_mandatory'), default=False)
         include_non_hqpl_alts = _coerce_bool(export_data.get('include_non_hqpl_alts'), default=False)
+        include_alt_stock_rollup = _coerce_bool(export_data.get('include_alt_stock_rollup'), default=False)
         export_mode = _coerce_text(export_data.get('export_mode'), default='products')
         debug_offer_export = _coerce_bool(export_data.get('debug_offer_export'), default=False)
         if export_mode not in ('products', 'offers'):
@@ -2557,16 +2699,24 @@ def export_to_marketplace():
         if not rows:
             return jsonify({'error': 'No rotary HQPL-approved parts found to export'}), 404
 
-        rotary_alt_map = _get_global_alternative_map(
+        rotary_alt_entries_map = _get_global_alternative_entries_map(
             cursor,
             [row['base_part_number'] for row in rows],
             rotary_only=True,
         )
-        all_alt_map = _get_global_alternative_map(
+        all_alt_entries_map = _get_global_alternative_entries_map(
             cursor,
             [row['base_part_number'] for row in rows],
             rotary_only=False,
         )
+        rotary_alt_map = {
+            source_base: [entry['part_number'] for entry in entries]
+            for source_base, entries in rotary_alt_entries_map.items()
+        }
+        all_alt_map = {
+            source_base: [entry['part_number'] for entry in entries]
+            for source_base, entries in all_alt_entries_map.items()
+        }
 
         customer_id = _get_marketplace_customer_id()
         parts_payload = [
@@ -2574,6 +2724,8 @@ def export_to_marketplace():
             for row in rows
         ]
         estimates = _get_portal_estimates(parts_payload, customer_id)
+        rotary_alt_stock_rollup_map = _get_alt_stock_rollup_map(customer_id, rotary_alt_entries_map)
+        all_alt_stock_rollup_map = _get_alt_stock_rollup_map(customer_id, all_alt_entries_map)
 
         default_lead_days = _coerce_int(get_portal_setting('default_lead_time_days', 7), default=7)
 
@@ -2581,10 +2733,21 @@ def export_to_marketplace():
         parts_data = []
         for row in rows:
             estimate = estimates.get(row['base_part_number']) or estimates.get(row['part_number'])
-            price = estimate.get('estimated_price') if estimate else None
-            lead_time = estimate.get('estimated_lead_days') if estimate else None
-            in_stock = bool(estimate.get('in_stock')) if estimate else False
-            stock_qty = estimate.get('stock_quantity') if estimate else None
+            primary_stock_qty = estimate.get('stock_quantity') if estimate else None
+            selected_alt_rollup = _select_alt_stock_rollup(
+                include_non_hqpl_alts,
+                rotary_alt_stock_rollup_map.get(row['base_part_number']),
+                all_alt_stock_rollup_map.get(row['base_part_number']),
+            )
+            effective_estimate = (
+                _apply_alt_stock_rollup_to_estimate(estimate, selected_alt_rollup)
+                if include_alt_stock_rollup
+                else (estimate or {})
+            )
+            price = effective_estimate.get('estimated_price')
+            lead_time = effective_estimate.get('estimated_lead_days')
+            in_stock = bool(effective_estimate.get('in_stock'))
+            stock_qty = effective_estimate.get('stock_quantity')
 
             quantity = default_quantity
             stock_qty_value = _coerce_int(stock_qty, default=0)
@@ -2599,6 +2762,15 @@ def export_to_marketplace():
             resolved_description = _coerce_text(row['mkp_description'], default='')
             if not resolved_description and export_defaults['description_mode'] == 'part_number':
                 resolved_description = part_number or ''
+            alt_stock_note = (
+                _build_alt_stock_note(primary_stock_qty, selected_alt_rollup)
+                if include_alt_stock_rollup
+                else ''
+            )
+            if alt_stock_note:
+                resolved_description = ' '.join(
+                    segment for segment in [resolved_description, alt_stock_note] if segment
+                )
             baseline_row = (
                 baseline_rows.get(row['base_part_number'])
                 or baseline_rows.get(part_number)
@@ -2625,16 +2797,18 @@ def export_to_marketplace():
                 'mkp_offer_product_id': _coerce_text(row['mkp_offer_product_id'], default=''),
                 'mkp_offer_product_id_type': _coerce_text(row['mkp_offer_product_id_type'], default='SKU'),
                 'include_non_hqpl_alts': include_non_hqpl_alts,
+                'include_alt_stock_rollup': include_alt_stock_rollup,
                 'all_global_alt_part_numbers': all_alt_map.get(row['base_part_number'], []),
                 'rotary_hqpl_alt_part_numbers': rotary_alt_map.get(row['base_part_number'], []),
+                'selected_alt_stock_rollup': selected_alt_rollup,
                 'description': resolved_description,
                 'manufacturer': _coerce_text(row['manufacturer_name'], default=''),
                 'quantity': quantity,
                 'source_cost': price,
-                'source_currency': estimate.get('currency') if estimate else None,
-                'price_source': estimate.get('price_source') if estimate else None,
-                'pricing_debug': estimate.get('debug_info') if estimate else None,
-                'source_lead_days': estimate.get('estimated_lead_days') if estimate else None,
+                'source_currency': effective_estimate.get('currency') if effective_estimate else None,
+                'price_source': effective_estimate.get('price_source') if effective_estimate else None,
+                'pricing_debug': effective_estimate.get('debug_info') if effective_estimate else None,
+                'source_lead_days': effective_estimate.get('estimated_lead_days') if effective_estimate else None,
                 'source_in_stock': in_stock,
                 'source_stock_qty': stock_qty_value,
                 'price': _convert_marketplace_price_to_eur(price) if price is not None else 0.0,
