@@ -57,6 +57,33 @@ def _normalize_prefix_report_manufacturer_name(name):
     return ' '.join((str(name or '').strip().lower()).split())
 
 
+def _manufacturer_name_normalized_sql(column_sql):
+    if _using_postgres():
+        cleaned_sql = f"REGEXP_REPLACE(LOWER(TRIM(COALESCE(NULLIF({column_sql}, ''), ''))), '[^a-z0-9 ]+', ' ', 'g')"
+    else:
+        cleaned_sql = f"LOWER(TRIM(COALESCE(NULLIF({column_sql}, ''), '')))"
+        for old, new in (
+            ('-', ' '),
+            ('/', ' '),
+            ('.', ' '),
+            (',', ' '),
+            ('(', ' '),
+            (')', ' '),
+            ('&', ' '),
+            ("'", ' '),
+        ):
+            cleaned_sql = f"REPLACE({cleaned_sql}, '{old}', '{new}')"
+
+    padded_sql = f"(' ' || {cleaned_sql} || ' ')"
+    for stopword in (
+        'ltd', 'limited', 'inc', 'llc', 'plc', 'corp', 'corporation',
+        'co', 'company', 'gmbh', 'sa', 'bv', 'ag', 'srl', 'pte', 'group'
+    ):
+        padded_sql = f"REPLACE({padded_sql}, ' {stopword} ', ' ')"
+
+    return f"REPLACE(TRIM({padded_sql}), ' ', '')"
+
+
 def _part_number_prefix_sql():
     if _using_postgres():
         return (
@@ -371,6 +398,8 @@ def qpl_mapped_supplier_prefix_report():
         final_limit_sql = 'LIMIT ?'
         params.append(limit)
 
+    manufacturer_name_normalized_sql = _manufacturer_name_normalized_sql('ma.manufacturer_name')
+
     rows = db_execute(
         f"""
         WITH mapped_suppliers AS (
@@ -384,12 +413,12 @@ def qpl_mapped_supplier_prefix_report():
                 ms.supplier_id,
                 s.name AS supplier_name,
                 TRIM(ma.manufacturer_name) AS manufacturer_name,
-                LOWER(TRIM(ma.manufacturer_name)) AS manufacturer_name_normalized,
+                {manufacturer_name_normalized_sql} AS manufacturer_name_normalized,
                 {prefix_sql} AS pn_prefix,
                 COALESCE(NULLIF(TRIM(ma.manufacturer_part_number_base), ''), NULLIF(TRIM(ma.airbus_material_base), '')) AS normalized_part_number
             FROM manufacturer_approvals ma
             JOIN mapped_suppliers ms
-                ON ms.manufacturer_name_normalized = LOWER(TRIM(ma.manufacturer_name))
+                ON ms.manufacturer_name_normalized = {manufacturer_name_normalized_sql}
             JOIN suppliers s ON s.id = ms.supplier_id
             WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
               AND TRIM(COALESCE(NULLIF(ma.manufacturer_part_number_base, ''), NULLIF(ma.airbus_material_base, ''))) <> ''
