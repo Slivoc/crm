@@ -28,6 +28,33 @@ def _prepare_query(query):
     return query.replace('?', '%s') if _using_postgres() else query
 
 
+def _manufacturer_name_normalized_sql(column_sql):
+    if _using_postgres():
+        cleaned_sql = f"REGEXP_REPLACE(LOWER(TRIM(COALESCE(NULLIF({column_sql}, ''), ''))), '[^a-z0-9 ]+', ' ', 'g')"
+    else:
+        cleaned_sql = f"LOWER(TRIM(COALESCE(NULLIF({column_sql}, ''), '')))"
+        for old, new in (
+            ('-', ' '),
+            ('/', ' '),
+            ('.', ' '),
+            (',', ' '),
+            ('(', ' '),
+            (')', ' '),
+            ('&', ' '),
+            ("'", ' '),
+        ):
+            cleaned_sql = f"REPLACE({cleaned_sql}, '{old}', '{new}')"
+
+    padded_sql = f"(' ' || {cleaned_sql} || ' ')"
+    for stopword in (
+        'ltd', 'limited', 'inc', 'llc', 'plc', 'corp', 'corporation',
+        'co', 'company', 'gmbh', 'sa', 'bv', 'ag', 'srl', 'pte', 'group'
+    ):
+        padded_sql = f"REPLACE({padded_sql}, ' {stopword} ', ' ')"
+
+    return f"REPLACE(TRIM({padded_sql}), ' ', '')"
+
+
 def _execute_with_cursor(cur, query, params=None, fetch=None):
     cur.execute(_prepare_query(query), params or [])
     if fetch == 'one':
@@ -257,8 +284,10 @@ def _fetch_project_qpl_mapped_rows(project_id):
     if not _qpl_supplier_mapping_table_exists():
         return []
 
+    manufacturer_name_normalized_sql = _manufacturer_name_normalized_sql('ma.manufacturer_name')
+
     rows = db_execute(
-        """
+        f"""
         WITH project_lines AS (
             SELECT
                 pl.id AS parts_list_id,
@@ -283,7 +312,7 @@ def _fetch_project_qpl_mapped_rows(project_id):
                 s.name AS mapped_supplier_name
             FROM manufacturer_approvals ma
             JOIN qpl_manufacturer_supplier_mappings map
-                ON LOWER(TRIM(map.manufacturer_name_normalized)) = LOWER(TRIM(ma.manufacturer_name))
+                ON map.manufacturer_name_normalized = {manufacturer_name_normalized_sql}
             LEFT JOIN suppliers s ON s.id = map.supplier_id
             WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
               AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''))) <> ''
