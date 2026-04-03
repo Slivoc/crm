@@ -242,7 +242,7 @@ def _load_qpl_mapped_suppliers():
 def _load_manufacturers_page(search_term='', limit=10):
     limit = min(max(int(limit or 10), 1), 100)
     search_term = (search_term or '').strip()
-    params = []
+    params = [prefix_length]
     where_clause = ''
 
     if search_term:
@@ -349,7 +349,7 @@ def qpl_mapped_supplier_prefix_report():
     prefix_sql = _approval_part_number_prefix_sql()
     instruction_join_sql = ''
     supplier_filter_sql = ''
-    params = []
+    params = [prefix_length]
 
     if supplier_id:
         supplier_filter_sql = 'AND ms.supplier_id = ?'
