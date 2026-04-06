@@ -79,6 +79,57 @@
 .handsontable th.supplier-col-group {
     border-right: 4px solid #495057 !important;
 }
+
+.stock-total-badge {
+    display: inline-block;
+    min-width: 42px;
+    padding: 0.2rem 0.45rem;
+    border-radius: 999px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.stock-total-badge.stock-ok {
+    background: #d1e7dd;
+    color: #0f5132;
+}
+
+.stock-total-badge.stock-partial {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.stock-total-badge.stock-none {
+    background: #f8f9fa;
+    color: #6c757d;
+}
+
+.stock-lot-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+
+.stock-lot-choice-btn {
+    border: 1px solid #0d6efd;
+    background: #fff;
+    color: #0d6efd;
+    border-radius: 999px;
+    padding: 0.1rem 0.45rem;
+    font-size: 0.75rem;
+    line-height: 1.3;
+    cursor: pointer;
+}
+
+.stock-lot-choice-btn.is-selected {
+    background: #0d6efd;
+    color: #fff;
+}
+
+.stock-lot-empty {
+    color: #adb5bd;
+    font-size: 0.8rem;
+}
 </style>
 {% endblock %}
 {% block content %}
@@ -349,6 +400,62 @@ function qplRenderer(instance, td, row, col, prop, value, cellProperties) {
     `;
 }
 
+function stockSummaryRenderer(instance, td, row, col, prop, value) {
+    Handsontable.dom.empty(td);
+    const rowData = instance.getSourceDataAtRow(row) || {};
+    const requestedQty = parseFloat(rowData.quantity) || 0;
+    const availableQty = parseFloat(rowData.total_available_stock) || 0;
+    let badgeClass = 'stock-none';
+
+    if (availableQty >= requestedQty && availableQty > 0) {
+        badgeClass = 'stock-ok';
+    } else if (availableQty > 0) {
+        badgeClass = 'stock-partial';
+    }
+
+    td.classList.add('htCenter');
+    td.innerHTML = `<span class="stock-total-badge ${badgeClass}">${availableQty || 0}</span>`;
+}
+
+function stockLotsRenderer(instance, td, row, col, prop, value) {
+    Handsontable.dom.empty(td);
+    const rowData = instance.getSourceDataAtRow(row) || {};
+    const stockDetails = Array.isArray(rowData.stock_details) ? rowData.stock_details : [];
+
+    if (stockDetails.length === 0) {
+        td.innerHTML = '<span class="stock-lot-empty">-</span>';
+        return;
+    }
+
+    const physicalRow = instance.toPhysicalRow(row);
+    const selectedRef = rowData.chosen_source_type === 'stock'
+        ? String(rowData.chosen_source_reference || '')
+        : '';
+
+    td.innerHTML = `
+        <div class="stock-lot-list">
+            ${stockDetails.map(stock => {
+                const movementId = String(stock.movement_id || '');
+                const cost = parseFloat(stock.cost_per_unit);
+                const qty = parseFloat(stock.available_quantity) || 0;
+                if (!Number.isFinite(cost) || cost <= 0) {
+                    return '';
+                }
+                const selectedClass = selectedRef && selectedRef === movementId ? 'is-selected' : '';
+                return `
+                    <button type="button"
+                            class="stock-lot-choice-btn ${selectedClass}"
+                            data-physical-row="${physicalRow}"
+                            data-movement-id="${movementId}"
+                            title="${qty} available at £${cost.toFixed(2)}">
+                        ${qty} @ £${cost.toFixed(2)}
+                    </button>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
 function isBestPrice(rowData, currentProp, currentValue) {
     if (!currentValue) return false;
 
@@ -387,7 +494,9 @@ function buildColumns() {
         { data: 'qpl_approvals_display', type: 'text', width: 260, readOnly: true },
         { data: 'contacted_suppliers_display', type: 'text', width: 200, readOnly: true },
         { data: 'no_bid_suppliers_display', type: 'text', width: 180, readOnly: true },
-        { data: 'quantity', type: 'numeric', width: 80, className: 'htCenter' }
+        { data: 'quantity', type: 'numeric', width: 80, className: 'htCenter' },
+        { data: 'total_available_stock', width: 85, readOnly: true, renderer: stockSummaryRenderer },
+        { data: 'stock_details', width: 260, readOnly: true, renderer: stockLotsRenderer }
     ];
 
     const supplierCols = [];
@@ -437,7 +546,7 @@ function buildColumns() {
 
 function buildNestedHeaders() {
     const topHeaders = [
-        { label: '', colspan: 9 }
+        { label: '', colspan: 11 }
     ];
 
     supplierColumns.forEach(supplier => {
@@ -459,7 +568,9 @@ function buildNestedHeaders() {
         'QPL Approvals',
         'Contacted',
         'No Bid',
-        'Qty'
+        'Qty',
+        'Stock',
+        'Stock Lots'
     ];
 
     supplierColumns.forEach(supplier => {
@@ -551,8 +662,16 @@ document.addEventListener('DOMContentLoaded', function() {
         contacted_suppliers_display: line.contacted_suppliers_display || '',
         no_bid_suppliers_display: line.no_bid_suppliers_display || '',
         quantity: line.quantity || 1,
+        total_available_stock: line.total_available_stock || 0,
+        stock_details: Array.isArray(line.stock_details) ? line.stock_details : [],
         chosen_cost: line.chosen_cost || null,
+        chosen_supplier_id: line.chosen_supplier_id || null,
         chosen_supplier_name: line.chosen_supplier_name || (line.chosen_source_type === 'stock' ? 'Stock' : ''),
+        chosen_currency_id: line.chosen_currency_id || 3,
+        chosen_lead_days: line.chosen_lead_days || null,
+        chosen_qty: line.chosen_qty || line.quantity || 1,
+        chosen_source_type: line.chosen_source_type || '',
+        chosen_source_reference: line.chosen_source_reference || '',
         notes: line.customer_notes || ''
     }));
 
@@ -815,7 +934,52 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('saveAllBtn').addEventListener('click', function() {
         saveAllChanges();
     });
+
+    document.getElementById('partsListHandsontableGrid').addEventListener('click', function(event) {
+        const button = event.target.closest('.stock-lot-choice-btn');
+        if (!button) return;
+
+        const physicalRow = parseInt(button.dataset.physicalRow, 10);
+        const movementId = button.dataset.movementId;
+        applyStockSelection(physicalRow, movementId);
+    });
 });
+
+function applyStockSelection(rowIndex, movementId) {
+    const rowData = allPartsData[rowIndex];
+    if (!rowData || !Array.isArray(rowData.stock_details)) {
+        return;
+    }
+
+    const stockLot = rowData.stock_details.find(stock => String(stock.movement_id || '') === String(movementId || ''));
+    if (!stockLot) {
+        return;
+    }
+
+    const cost = parseFloat(stockLot.cost_per_unit);
+    const availableQty = parseFloat(stockLot.available_quantity) || 0;
+    const requiredQty = parseFloat(rowData.quantity) || 0;
+
+    if (!Number.isFinite(cost) || cost <= 0) {
+        showPartsListAlert('Selected stock lot has no usable cost.', 'warning');
+        return;
+    }
+
+    rowData.chosen_cost = cost;
+    rowData.chosen_supplier_id = null;
+    rowData.chosen_supplier_name = availableQty >= requiredQty ? 'Stock' : 'Stock (partial)';
+    rowData.chosen_currency_id = 3;
+    rowData.chosen_lead_days = null;
+    rowData.chosen_qty = requiredQty > 0 ? Math.min(requiredQty, availableQty || requiredQty) : availableQty;
+    rowData.chosen_source_type = 'stock';
+    rowData.chosen_source_reference = String(stockLot.movement_id || '');
+
+    partsListHot.render();
+    updateStats();
+
+    const qtyLabel = rowData.chosen_qty ? ` for qty ${rowData.chosen_qty}` : '';
+    showPartsListAlert(`Applied stock lot at £${cost.toFixed(2)}${qtyLabel}`, 'info');
+}
 
 async function loadExistingSupplierQuotes() {
     try {
@@ -1146,6 +1310,13 @@ function saveAllChanges() {
                     quantity: row.quantity,
                     customer_part_number: row.part_number,
                     base_part_number: row.base_part_number,
+                    chosen_supplier_id: row.chosen_supplier_id,
+                    chosen_cost: row.chosen_cost,
+                    chosen_currency_id: row.chosen_currency_id,
+                    chosen_lead_days: row.chosen_lead_days,
+                    chosen_qty: row.chosen_qty,
+                    chosen_source_type: row.chosen_source_type,
+                    chosen_source_reference: row.chosen_source_reference,
                     customer_notes: row.notes
                 })
             })

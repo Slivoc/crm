@@ -496,6 +496,102 @@ Mirakl explicitly recommends using Postman for early integration testing. Config
 
 3) Add background polling jobs + persistence for import IDs if you want full OF01/OF02/OF03 tracking.
 
+---
+
+## 14) CRM Airbus Marketplace Notes (Apr 2026)
+
+These notes are repo-specific and capture what was learned while debugging the
+current Airbus marketplace uploads.
+
+### Environment constraints
+
+- The app currently has Mirakl API access to dev/pre-prod only.
+- Production uploads are being done manually through Airbus file uploads.
+- Because prod API access is not available, prod product IDs cannot be fetched
+  on demand.
+- That means prod offer uploads must usually rely on `mpnTitle` matching unless
+  a product ID was learned from a previously exported Airbus file.
+
+### Local files that matter
+
+- `docs/export-products-20260403203228.xlsx`
+  - Airbus product export.
+  - Uses the Airbus product template format and includes a mapping row on row 2.
+  - Has an `id` column, but many rows have blank `id`.
+- `docs/product-import-errors-file-20260403190000.csv`
+  - Product import error report.
+  - 627 failed rows collapsed into two repeated errors:
+    - `MCM-04031|The product identifiers match multiple products from the same provider.`
+    - `MCM-04000|MPN Title with multiple values : [NAS9305B-4-02 NSA53114-32ADL]`
+- `docs/offers-import-error-report-1162-9931.csv`
+  - Offer import error report.
+  - Main failure classes:
+    - `The product does not exist`
+    - `This product is not available for sale`
+    - invalid `leadtime-to-ship`
+    - `The product linked to the new offer is different from the product linked to the existing offer.`
+- `docs/Copy of All Hardware References sept 2025.xlsx`
+  - Airbus hardware reference dictionary with:
+    - `mpnTitle`
+    - `alternativePartRefList`
+  - Useful for canonicalizing aliases.
+  - Does not contain Airbus product IDs.
+
+### What was confirmed
+
+- The current product import problem is mostly identifier matching, not missing
+  fields.
+- Many aerospace hardware rows are ambiguous when matched directly by
+  `mpnTitle`.
+- Some offer upload failures happen because the CRM part number is an Airbus
+  alternate reference rather than the canonical `mpnTitle`.
+- Example:
+  - `ASNA0045BC100L` appears in the Airbus hardware references workbook as an
+    alternate reference for canonical `ASNA0045-100BCL`.
+
+### Current code behavior
+
+- `routes/marketplace.py`
+  - Offer export prefers stored marketplace product IDs when they exist.
+  - If no stored product ID exists, offer export falls back to `mpnTitle`.
+  - A local canonicalization layer now resolves `mpnTitle` from
+    `docs/Copy of All Hardware References sept 2025.xlsx`:
+    - exact `mpnTitle` match -> use as-is
+    - alternate reference match -> rewrite to canonical `mpnTitle`
+    - no match -> keep raw part number and mark unresolved
+  - Product/detail imports store Airbus `id` into
+    `part_numbers.mkp_offer_product_id` when the imported file contains it.
+  - Offer imports submitted through the app also persist resolved product IDs
+    back into `part_numbers` for future use.
+  - `leadtime-to-ship` is now clamped to a positive integer (minimum `1`).
+- `templates/marketplace_export.html`
+  - Preview/export now uses the same canonicalized `mpnTitle` logic as the
+    backend.
+  - Load status summarizes how many parts are exact matches, rewritten from alt
+    refs, or unresolved.
+
+### Practical workflow for now
+
+1. Load parts in the export page.
+2. Check the load status summary for:
+   - exact `mpnTitle`
+   - rewritten from alternate refs
+   - unresolved
+3. For offer uploads:
+   - if a stored marketplace product ID exists, use it
+   - otherwise use canonicalized `mpnTitle`
+4. For product uploads:
+   - use them only for parts that appear genuinely new or unresolved in prod
+5. After any manual prod product creation, pull a fresh Airbus product export
+   if possible and import it locally so learned IDs are stored in CRM.
+
+### Known limitation
+
+- Without prod API access or a prod export with populated product IDs, existing
+  no-offer products still cannot be resolved perfectly.
+- `mpnTitle` remains the only practical matching key for those rows, so alias
+  normalization is the main mitigation rather than a full fix.
+
 
 
 ---

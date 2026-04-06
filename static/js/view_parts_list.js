@@ -28,6 +28,49 @@ function escapeHtml(text) {
     return text.toString().replace(/[&<>"']/g, m => map[m]);
 }
 
+function getStockLots(part) {
+    if (!part || !Array.isArray(part.stock_details)) {
+        return [];
+    }
+
+    return part.stock_details
+        .map(stock => {
+            const cost = parseFloat(stock.cost_per_unit);
+            const qty = parseFloat(stock.available_quantity);
+            if (!Number.isFinite(cost) || cost <= 0 || !Number.isFinite(qty) || qty <= 0) {
+                return null;
+            }
+            return {
+                movement_id: stock.movement_id,
+                cost,
+                qty
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.cost - b.cost || b.qty - a.qty);
+}
+
+function renderStockLotSummary(part, maxLots = 3) {
+    const stockLots = getStockLots(part);
+    if (stockLots.length === 0) {
+        return '<div style="font-weight: 600; color: #adb5bd; font-size: 0.8rem;">-</div>';
+    }
+
+    const visibleLots = stockLots.slice(0, maxLots);
+    const extraCount = stockLots.length - visibleLots.length;
+
+    return `
+        <div style="display: flex; flex-wrap: wrap; gap: 0.25rem;">
+            ${visibleLots.map(stock => `
+                <span class="badge border text-primary bg-white" title="${stock.qty} available at ${formatCurrency(stock.cost)}">
+                    ${stock.qty} @ ${formatCurrency(stock.cost)}
+                </span>
+            `).join('')}
+            ${extraCount > 0 ? `<span class="badge bg-light text-muted">+${extraCount} more</span>` : ''}
+        </div>
+    `;
+}
+
 function showToast(message, type) {
     const alertDiv = document.createElement('div');
     alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
@@ -146,15 +189,10 @@ function showPartDetailsModal(part) {
     // STOCK DETAILS - PURCHASING
     if (part.stock_movement_count > 0 && part.stock_details && part.stock_details.length > 0) {
         const stockToShow = [...part.stock_details];
-        const validStockCosts = stockToShow
-            .map(stock => parseFloat(stock.cost_per_unit))
-            .filter(cost => !Number.isNaN(cost) && cost > 0);
-        const uniqueCosts = [...new Set(validStockCosts.map(cost => cost.toFixed(6)))].map(Number).sort((a, b) => a - b);
-        const stockCostSummary = uniqueCosts.length === 0
+        const stockLots = getStockLots(part);
+        const stockCostSummary = stockLots.length === 0
             ? 'Cost unavailable'
-            : uniqueCosts.length === 1
-                ? `Unit Cost: ${formatCurrency(uniqueCosts[0])}`
-                : `Unit Cost Range: ${formatCurrency(uniqueCosts[0])} - ${formatCurrency(uniqueCosts[uniqueCosts.length - 1])}`;
+            : `${stockLots.length} stock lot${stockLots.length !== 1 ? 's' : ''}`;
 
         detailsHtml += `
             <div class="modal-section purchasing">
@@ -196,6 +234,7 @@ function showPartDetailsModal(part) {
                                         <button class="btn btn-sm btn-success use-cost-btn"
                                                 data-cost="${stock.cost_per_unit}"
                                                 data-currency="3"
+                                                data-chosen-qty="${Math.min(part.quantity || 0, stock.available_quantity || 0) || ''}"
                                                 data-source-type="stock"
                                                 data-source-ref="${stock.movement_id}">
                                             <i class="bi bi-check-circle me-1"></i>Use Cost
@@ -653,6 +692,7 @@ function showPartDetailsModal(part) {
                     cost: parseFloat(this.getAttribute('data-cost')),
                     currency_id: parseInt(this.getAttribute('data-currency')),
                     lead_days: this.getAttribute('data-lead-days') ? parseInt(this.getAttribute('data-lead-days')) : null,
+                    chosen_qty: this.getAttribute('data-chosen-qty') ? parseInt(this.getAttribute('data-chosen-qty'), 10) : null,
                     source_type: this.getAttribute('data-source-type'),
                     source_reference: this.getAttribute('data-source-ref') || null
                 };
@@ -899,15 +939,10 @@ function showPartDetailsModal(part) {
     // STOCK DETAILS - PURCHASING
     if (part.stock_movement_count > 0 && part.stock_details && part.stock_details.length > 0) {
         const stockToShow = [...part.stock_details];
-        const validStockCosts = stockToShow
-            .map(stock => parseFloat(stock.cost_per_unit))
-            .filter(cost => !Number.isNaN(cost) && cost > 0);
-        const uniqueCosts = [...new Set(validStockCosts.map(cost => cost.toFixed(6)))].map(Number).sort((a, b) => a - b);
-        const stockCostSummary = uniqueCosts.length === 0
+        const stockLots = getStockLots(part);
+        const stockCostSummary = stockLots.length === 0
             ? 'Cost unavailable'
-            : uniqueCosts.length === 1
-                ? `Unit Cost: ${formatCurrency(uniqueCosts[0])}`
-                : `Unit Cost Range: ${formatCurrency(uniqueCosts[0])} - ${formatCurrency(uniqueCosts[uniqueCosts.length - 1])}`;
+            : `${stockLots.length} stock lot${stockLots.length !== 1 ? 's' : ''}`;
 
         detailsHtml += `
             <div class="modal-section purchasing">
@@ -949,6 +984,7 @@ function showPartDetailsModal(part) {
                                         <button class="btn btn-sm btn-success use-cost-btn"
                                                 data-cost="${stock.cost_per_unit}"
                                                 data-currency="3"
+                                                data-chosen-qty="${Math.min(part.quantity || 0, stock.available_quantity || 0) || ''}"
                                                 data-source-type="stock"
                                                 data-source-ref="${stock.movement_id}">
                                             <i class="bi bi-check-circle me-1"></i>Use Cost
@@ -1264,6 +1300,7 @@ function showPartDetailsModal(part) {
                     cost: parseFloat(this.getAttribute('data-cost')),
                     currency_id: parseInt(this.getAttribute('data-currency')),
                     lead_days: this.getAttribute('data-lead-days') ? parseInt(this.getAttribute('data-lead-days')) : null,
+                    chosen_qty: this.getAttribute('data-chosen-qty') ? parseInt(this.getAttribute('data-chosen-qty'), 10) : null,
                     source_type: this.getAttribute('data-source-type'),
                     source_reference: this.getAttribute('data-source-ref') || null
                 };
@@ -1507,26 +1544,7 @@ document.addEventListener('DOMContentLoaded', function() {
             latestVqDate = formatDate(latestVq.entry_date);
         }
 
-        let stockCostDisplay = '-';
-        let stockCostTitle = '';
-        if (part.stock_details && part.stock_details.length > 0) {
-            const validStock = part.stock_details.map(s => ({
-                cost: parseFloat(s.cost_per_unit),
-                qty: parseFloat(s.available_quantity)
-            })).filter(item => !isNaN(item.cost) && item.cost > 0 && !isNaN(item.qty) && item.qty > 0);
-
-            if (validStock.length > 0) {
-                const uniqueCosts = [...new Set(validStock.map(s => s.cost.toFixed(6)))].map(Number).sort((a, b) => a - b);
-                if (uniqueCosts.length === 1) {
-                    stockCostDisplay = formatCurrency(uniqueCosts[0]);
-                } else {
-                    const minCost = uniqueCosts[0];
-                    const maxCost = uniqueCosts[uniqueCosts.length - 1];
-                    stockCostDisplay = `${formatCurrency(minCost)} - ${formatCurrency(maxCost)}`;
-                    stockCostTitle = `Mixed stock lots: ${uniqueCosts.length} prices`;
-                }
-            }
-        }
+        const stockCostDisplay = renderStockLotSummary(part);
 
         let stockDisplay = '0';
         let stockClasses = 'stock-badge badge-muted';
@@ -1551,7 +1569,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     ${stockIcon}
                     <span>${stockDisplay}</span>
                 </span>
-                <div style="font-weight: 600; color: ${stockCostDisplay !== '-' ? '#0d6efd' : '#adb5bd'}; font-size: 0.8rem;" title="${stockCostTitle}">
+                <div style="font-size: 0.8rem;">
                     ${stockCostDisplay}
                 </div>
             </div>

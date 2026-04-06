@@ -32,6 +32,8 @@ marketplace_bp = Blueprint('marketplace', __name__)
 
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 AIRBUS_ROTARY_APPROVAL_LIST_TYPE = 'airbus_rotary'
+_AIRBUS_HARDWARE_REFERENCE_CACHE = None
+_AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME = None
 
 
 def _months_ago(reference: date, months: int) -> date:
@@ -69,6 +71,14 @@ def _mask_api_key(value):
     if len(text) <= 8:
         return '*' * len(text)
     return f"{text[:4]}...{text[-4:]}"
+
+
+def _get_airbus_hardware_reference_workbook_path():
+    docs_dir = os.path.join(os.getcwd(), 'docs')
+    preferred = os.path.join(docs_dir, 'Copy of All Hardware References sept 2025.xlsx')
+    if os.path.exists(preferred):
+        return preferred
+    return ''
 
 
 def _upsert_portal_setting(cursor, key, value):
@@ -698,6 +708,7 @@ def _build_marketplace_updates_from_row(row_data, valid_categories):
         'serialized': 'mkp_serialized',
         'logcard': 'mkp_log_card',
         'easaf1': 'mkp_easaf1',
+        'id': 'mkp_offer_product_id',
     }
 
     extracted = {}
@@ -778,6 +789,13 @@ def _build_marketplace_updates_from_row(row_data, valid_categories):
         value_text = str(value).strip()
         if value_text:
             updates[field] = value_text
+
+    offer_product_id_value = extracted.get('mkp_offer_product_id')
+    if offer_product_id_value is not None:
+        offer_product_id_text = str(offer_product_id_value).strip()
+        if offer_product_id_text:
+            updates['mkp_offer_product_id'] = offer_product_id_text
+            updates['mkp_offer_product_id_type'] = 'SKU'
 
     package_content_value = extracted.get('mkp_package_content')
     if package_content_value is not None:
@@ -882,7 +900,26 @@ def _extract_offer_product_identity(row_data):
 
 def _normalize_offer_product_id_type(product_id_type, product_id, part_number):
     normalized_type = _coerce_text(product_id_type, default='').strip()
-    return normalized_type or 'mpnTitle'
+    if normalized_type:
+        return normalized_type
+
+    product_id_text = _coerce_text(product_id, default='').strip()
+    part_number_text = _coerce_text(part_number, default='').strip()
+    if product_id_text and part_number_text and product_id_text == part_number_text:
+        return 'mpnTitle'
+    return 'SKU'
+
+
+def _extract_product_identity(row_data):
+    found_product_id, product_id = _get_import_row_value(row_data, 'id')
+    product_id_text = _coerce_optional_text(product_id) if found_product_id else None
+    if not product_id_text:
+        return None
+
+    return {
+        'product_id': product_id_text,
+        'product_id_type': 'SKU',
+    }
 
 
 def _resolve_offer_identity(part, source_mode):
@@ -902,9 +939,148 @@ def _resolve_offer_identity(part, source_mode):
                         part_number,
                     ),
                 )
-        return ('', '')
 
-    return (part_number, 'mpnTitle')
+    stored_product_id = _coerce_text(part.get('mkp_offer_product_id'), default='').strip()
+    if stored_product_id:
+        stored_product_id_type = _normalize_offer_product_id_type(
+            part.get('mkp_offer_product_id_type'),
+            stored_product_id,
+            part_number,
+        )
+        return (stored_product_id, stored_product_id_type)
+
+    resolved_mpn_title = _coerce_text(part.get('resolved_mpn_title'), default='').strip() or part_number
+    return (resolved_mpn_title, 'mpnTitle')
+
+
+def _sanitize_marketplace_lead_time_days(value, *, default=7):
+    parsed = _coerce_int(value, default=default)
+    if parsed is None:
+        parsed = default
+    return max(parsed, 1)
+
+
+def _get_airbus_hardware_reference_maps():
+    global _AIRBUS_HARDWARE_REFERENCE_CACHE, _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME
+
+    workbook_path = _get_airbus_hardware_reference_workbook_path()
+    if not workbook_path or not os.path.exists(workbook_path):
+        return {
+            'exact_titles': set(),
+            'normalized_titles': set(),
+            'alias_exact': {},
+            'alias_normalized': {},
+        }
+
+    mtime = os.path.getmtime(workbook_path)
+    if _AIRBUS_HARDWARE_REFERENCE_CACHE is not None and _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME == mtime:
+        return _AIRBUS_HARDWARE_REFERENCE_CACHE
+
+    exact_titles = set()
+    normalized_titles = set()
+    alias_exact_candidates = {}
+    alias_normalized_candidates = {}
+
+    wb = load_workbook(workbook_path, read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        rows = ws.iter_rows(values_only=True)
+        next(rows, None)
+
+        for row in rows:
+            raw_title = row[0] if len(row) > 0 else None
+            raw_alts = row[1] if len(row) > 1 else None
+            mpn_title = str(raw_title or '').strip()
+            if not mpn_title:
+                continue
+
+            exact_titles.add(mpn_title.upper())
+            normalized_title = _normalize_part_reference(mpn_title)
+            if normalized_title:
+                normalized_titles.add(normalized_title)
+
+            alt_tokens = [
+                token.strip()
+                for token in str(raw_alts or '').split('|')
+                if token and str(token).strip()
+            ]
+            for token in alt_tokens:
+                token_upper = token.upper()
+                alias_exact_candidates.setdefault(token_upper, set()).add(mpn_title)
+                normalized_token = _normalize_part_reference(token)
+                if normalized_token:
+                    alias_normalized_candidates.setdefault(normalized_token, set()).add(mpn_title)
+    finally:
+        wb.close()
+
+    alias_exact = {
+        key: next(iter(values))
+        for key, values in alias_exact_candidates.items()
+        if len(values) == 1
+    }
+    alias_normalized = {
+        key: next(iter(values))
+        for key, values in alias_normalized_candidates.items()
+        if len(values) == 1
+    }
+
+    _AIRBUS_HARDWARE_REFERENCE_CACHE = {
+        'exact_titles': exact_titles,
+        'normalized_titles': normalized_titles,
+        'alias_exact': alias_exact,
+        'alias_normalized': alias_normalized,
+    }
+    _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME = mtime
+    return _AIRBUS_HARDWARE_REFERENCE_CACHE
+
+
+def _resolve_airbus_mpn_title(part_number):
+    part_text = _coerce_text(part_number, default='').strip()
+    if not part_text:
+        return {
+            'resolved_mpn_title': '',
+            'reference_status': 'missing',
+            'reference_source': '',
+        }
+
+    maps = _get_airbus_hardware_reference_maps()
+    part_upper = part_text.upper()
+    normalized_part = _normalize_part_reference(part_text)
+
+    if part_upper in maps['exact_titles']:
+        return {
+            'resolved_mpn_title': part_text,
+            'reference_status': 'exact',
+            'reference_source': 'hardware_refs_mpn_title',
+        }
+    if normalized_part and normalized_part in maps['normalized_titles']:
+        return {
+            'resolved_mpn_title': part_text,
+            'reference_status': 'exact_normalized',
+            'reference_source': 'hardware_refs_mpn_title',
+        }
+
+    alias_match = maps['alias_exact'].get(part_upper)
+    if alias_match:
+        return {
+            'resolved_mpn_title': alias_match,
+            'reference_status': 'alias',
+            'reference_source': 'hardware_refs_alt_ref',
+        }
+
+    alias_normalized_match = maps['alias_normalized'].get(normalized_part) if normalized_part else None
+    if alias_normalized_match:
+        return {
+            'resolved_mpn_title': alias_normalized_match,
+            'reference_status': 'alias_normalized',
+            'reference_source': 'hardware_refs_alt_ref',
+        }
+
+    return {
+        'resolved_mpn_title': part_text,
+        'reference_status': 'unknown',
+        'reference_source': 'raw_part_number',
+    }
 
 
 _MARKETPLACE_MANUFACTURER_JOIN = """
@@ -1292,6 +1468,102 @@ def _fetch_marketplace_parts_by_references(references):
     return ordered
 
 
+def _store_offer_identity_updates_from_rows(rows):
+    identity_by_reference = {}
+    for row in rows or []:
+        sku = _coerce_text(row.get('sku'), default='').strip()
+        product_id = _coerce_text(row.get('product-id'), default='').strip()
+        product_id_type = _coerce_text(row.get('product-id-type'), default='').strip()
+        if not sku or not product_id or not product_id_type:
+            continue
+        identity_by_reference[sku.upper()] = {
+            'normalized_reference': _normalize_part_reference(sku),
+            'product_id': product_id,
+            'product_id_type': product_id_type,
+        }
+
+    if not identity_by_reference:
+        return 0
+
+    exact_references = list(identity_by_reference.keys())
+    normalized_references = list({
+        payload['normalized_reference']
+        for payload in identity_by_reference.values()
+        if payload.get('normalized_reference')
+    })
+    exact_placeholders = ','.join(['?'] * len(exact_references)) if exact_references else ''
+    normalized_placeholders = ','.join(['?'] * len(normalized_references)) if normalized_references else ''
+    where_clauses = []
+    params = []
+
+    if exact_references:
+        where_clauses.append(f"UPPER(base_part_number) IN ({exact_placeholders})")
+        params.extend(exact_references)
+        where_clauses.append(f"UPPER(part_number) IN ({exact_placeholders})")
+        params.extend(exact_references)
+
+    if normalized_references:
+        where_clauses.append(
+            f"REGEXP_REPLACE(UPPER(COALESCE(base_part_number, '')), '[^A-Z0-9]+', '', 'g') IN ({normalized_placeholders})"
+        )
+        params.extend(normalized_references)
+        where_clauses.append(
+            f"REGEXP_REPLACE(UPPER(COALESCE(part_number, '')), '[^A-Z0-9]+', '', 'g') IN ({normalized_placeholders})"
+        )
+        params.extend(normalized_references)
+
+    if not where_clauses:
+        return 0
+
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute(
+        f"""
+        SELECT base_part_number, part_number
+        FROM part_numbers
+        WHERE {' OR '.join(where_clauses)}
+        """,
+        params,
+    )
+    matches = cursor.fetchall()
+
+    updates = {}
+    for match in matches:
+        base_part_number = match['base_part_number']
+        part_number = match['part_number']
+        for value in (base_part_number, part_number):
+            if not value:
+                continue
+            payload = identity_by_reference.get(str(value).strip().upper())
+            if not payload:
+                normalized_value = _normalize_part_reference(value)
+                for candidate in identity_by_reference.values():
+                    if normalized_value and candidate.get('normalized_reference') == normalized_value:
+                        payload = candidate
+                        break
+            if payload:
+                updates[str(base_part_number)] = (
+                    payload['product_id'],
+                    payload['product_id_type'],
+                    base_part_number,
+                )
+                break
+
+    if not updates:
+        return 0
+
+    cursor.executemany(
+        """
+        UPDATE part_numbers
+        SET mkp_offer_product_id = ?, mkp_offer_product_id_type = ?
+        WHERE base_part_number = ?
+        """,
+        list(updates.values()),
+    )
+    db.commit()
+    return len(updates)
+
+
 @marketplace_bp.route('/import-details-file', methods=['POST'])
 def import_marketplace_details_file():
     """
@@ -1539,9 +1811,14 @@ def import_marketplace_stock_price_file():
                 if offer_identity:
                     offer_identity_updates[str(base_part_number)] = offer_identity
                     matched_offer_identity_count += 1
+            elif template_kind == 'products':
+                product_identity = _extract_product_identity(baseline_row)
+                if product_identity:
+                    offer_identity_updates[str(base_part_number)] = product_identity
+                    matched_offer_identity_count += 1
 
         stored_offer_product_ids_count = 0
-        if template_kind == 'offers' and offer_identity_updates:
+        if offer_identity_updates:
             cursor.executemany(
                 """
                 UPDATE part_numbers
@@ -2554,8 +2831,17 @@ def get_parts_for_export():
         filtered_stock = 0
         filtered_no_stock = 0
         filtered_pricing = 0
+        reference_summary = {
+            'exact': 0,
+            'exact_normalized': 0,
+            'alias': 0,
+            'alias_normalized': 0,
+            'unknown': 0,
+            'missing': 0,
+        }
         for row in rows:
             base_part_number = row['base_part_number']
+            part_number = row['part_number'] or base_part_number
             estimate = estimates.get(base_part_number) or estimates.get(row['part_number'])
             selected_alt_rollup = _select_alt_stock_rollup(
                 include_non_hqpl_alts,
@@ -2580,6 +2866,11 @@ def get_parts_for_export():
             if pricing_only and estimated_price is None:
                 filtered_pricing += 1
                 continue
+
+            reference_resolution = _resolve_airbus_mpn_title(part_number)
+            reference_summary[reference_resolution['reference_status']] = (
+                reference_summary.get(reference_resolution['reference_status'], 0) + 1
+            )
 
             parts.append({
                 'base_part_number': base_part_number,
@@ -2612,6 +2903,9 @@ def get_parts_for_export():
                 'currency': estimate.get('currency') if estimate else None,
                 'in_stock': in_stock,
                 'stock_qty': stock_qty if stock_qty is not None else 0,
+                'resolved_mpn_title': reference_resolution['resolved_mpn_title'],
+                'reference_status': reference_resolution['reference_status'],
+                'reference_source': reference_resolution['reference_source'],
             })
 
         logger.info(
@@ -2623,7 +2917,11 @@ def get_parts_for_export():
             filtered_no_stock,
             filtered_pricing,
         )
-        return jsonify({'success': True, 'parts': parts}), 200
+        return jsonify({
+            'success': True,
+            'parts': parts,
+            'reference_summary': reference_summary,
+        }), 200
 
     except Exception as e:
         logger.exception("Error getting parts for export")
@@ -2755,8 +3053,11 @@ def export_to_marketplace():
                 quantity = stock_qty_value
 
             if lead_time is None:
-                lead_time = 0 if in_stock else default_lead_days
-            lead_time_value = _coerce_int(lead_time, default=default_lead_days)
+                lead_time = 1 if in_stock else default_lead_days
+            lead_time_value = _sanitize_marketplace_lead_time_days(
+                lead_time,
+                default=default_lead_days,
+            )
 
             part_number = row['part_number'] or row['base_part_number']
             resolved_description = _coerce_text(row['mkp_description'], default='')
@@ -2815,6 +3116,7 @@ def export_to_marketplace():
                 'condition': 'New',
                 'lead_time_days': lead_time_value,
                 'baseline_row': baseline_row,
+                **_resolve_airbus_mpn_title(part_number),
             })
 
         if export_mode == 'offers':
@@ -3148,9 +3450,11 @@ def mirakl_import_offers():
     try:
         result = client.import_offers(csv_bytes, import_mode=import_mode)
         logger.info("Mirakl offer import result: %s", result)
+        stored_offer_product_ids_count = _store_offer_identity_updates_from_rows(offers)
         return jsonify({
             'success': True,
             'result': result,
+            'stored_offer_product_ids_count': stored_offer_product_ids_count,
             'skipped_invalid_count': len(skipped_invalid),
             'skipped_invalid_preview': skipped_invalid[:20],
         }), 200

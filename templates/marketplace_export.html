@@ -778,6 +778,7 @@ let loadStatusTimer = null;
 let importedAirbusBaselineRows = {};
 let importedAirbusBaselineTemplateKind = null;
 let partSourceMode = 'filters';
+let referenceSummary = {};
 
 $(document).ready(function() {
     applySavedMarketplaceDefaults();
@@ -957,16 +958,25 @@ function loadParts() {
 
             if (response.success && response.parts && response.parts.length > 0) {
                 allParts = response.parts;
+                referenceSummary = response.reference_summary || {};
                 storeExportUncategorizedParts(response.parts, filters);
                 updateSummaryStats();
                 renderUncategorizedParts();
                 $('#statsRow').show();
                 $('#exportCard').show();
                 const sourceLabel = partSourceMode === 'baseline' ? 'uploaded Airbus list' : 'CRM filters';
-                setLoadStatus(`Loaded ${response.parts.length} parts from ${sourceLabel} in ${elapsedSeconds}s.`, 'text-success');
+                const aliasCount = (referenceSummary.alias || 0) + (referenceSummary.alias_normalized || 0);
+                const unknownCount = referenceSummary.unknown || 0;
+                const exactCount = (referenceSummary.exact || 0) + (referenceSummary.exact_normalized || 0);
+                setLoadStatus(
+                    `Loaded ${response.parts.length} parts from ${sourceLabel} in ${elapsedSeconds}s. ` +
+                    `MPN refs: ${exactCount} exact, ${aliasCount} rewritten from alt refs, ${unknownCount} unresolved.`,
+                    'text-success'
+                );
             } else {
                 $('#noPartsMessage').show();
                 allParts = [];
+                referenceSummary = {};
                 if (partSourceMode === 'baseline') {
                     setLoadStatus(`No CRM parts found for the uploaded Airbus list (${elapsedSeconds}s).`, 'text-muted');
                 } else {
@@ -1247,27 +1257,47 @@ function getBaselineRowValue(baselineRow, targetHeader) {
 function resolveOfferProductId(part, baselineRow) {
     if (partSourceMode === 'baseline') {
         const baselineValue = String(getBaselineRowValue(baselineRow, 'product-id') || '').trim();
-        return baselineValue;
+        if (baselineValue) {
+            return baselineValue;
+        }
+    }
+    const storedValue = String((part && part.mkp_offer_product_id) || '').trim();
+    if (storedValue) {
+        return storedValue;
+    }
+    const resolvedTitle = String((part && part.resolved_mpn_title) || '').trim();
+    if (resolvedTitle) {
+        return resolvedTitle;
     }
     return String((part && (part.part_number || part.base_part_number)) || '').trim();
 }
 
 function normalizeOfferProductIdType(productIdType, productId, part) {
-    if (partSourceMode === 'baseline') {
-        const normalizedType = String(productIdType || '').trim();
-        if (normalizedType) {
-            return normalizedType;
-        }
+    const normalizedType = String(productIdType || '').trim();
+    if (normalizedType) {
+        return normalizedType;
     }
-    return 'mpnTitle';
+    const storedId = String((part && part.mkp_offer_product_id) || '').trim();
+    if (storedId && productId === storedId) {
+        return String((part && part.mkp_offer_product_id_type) || 'SKU').trim() || 'SKU';
+    }
+    const partNumber = String((part && (part.part_number || part.base_part_number)) || '').trim();
+    if (productId && partNumber && productId === partNumber) {
+        return 'mpnTitle';
+    }
+    return 'SKU';
 }
 
 function resolveOfferProductIdType(part, baselineRow) {
+    const productId = resolveOfferProductId(part, baselineRow);
     if (partSourceMode === 'baseline') {
-        return String(getBaselineRowValue(baselineRow, 'product-id-type') || '').trim();
+        const baselineType = String(getBaselineRowValue(baselineRow, 'product-id-type') || '').trim();
+        if (baselineType) {
+            return baselineType;
+        }
     }
     const baselineValue = String(getBaselineRowValue(baselineRow, 'product-id-type') || '').trim();
-    return normalizeOfferProductIdType(baselineValue, '', part);
+    return normalizeOfferProductIdType(baselineValue, productId, part);
 }
 
 function formatStockDisplay(part) {
@@ -1894,7 +1924,8 @@ function buildProductPayload(part, defaultQuantity, defaults) {
     const effectiveState = getEffectiveMarketplaceState(part);
     const stockQty = effectiveState.stockQty;
     const quantity = Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
-    const leadTime = quantity > 0 ? 0 : (part.estimated_lead_days ?? 7);
+    const rawLeadTime = quantity > 0 ? 1 : (part.estimated_lead_days ?? 7);
+    const leadTime = Math.max(Number.parseInt(rawLeadTime, 10) || 1, 1);
     let description = resolveDefaultDescription(part, defaults);
     const baselineRow = getImportedAirbusBaselineRow(part);
     const rawPrice = effectiveState.price ?? '';
@@ -1950,7 +1981,8 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
     const effectiveState = getEffectiveMarketplaceState(part);
     const stockQty = effectiveState.stockQty;
     const quantity = Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
-    const leadTime = quantity > 0 ? 0 : (part.estimated_lead_days ?? 7);
+    const rawLeadTime = quantity > 0 ? 1 : (part.estimated_lead_days ?? 7);
+    const leadTime = Math.max(Number.parseInt(rawLeadTime, 10) || 1, 1);
     const baselineRow = getImportedAirbusBaselineRow(part);
     const rawPrice = effectiveState.price ?? '';
     const price = coerceNumber(rawPrice) === null ? '0.00' : rawPrice;

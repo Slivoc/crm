@@ -4197,6 +4197,45 @@ def table_view(list_id):
 
     lines = [dict(line) for line in lines]
 
+    stock_lookup = {}
+    stock_base_part_numbers = sorted({line.get('base_part_number') for line in lines if line.get('base_part_number')})
+    if stock_base_part_numbers:
+        placeholders = ','.join(['?'] * len(stock_base_part_numbers))
+        stock_rows = db_execute(
+            f"""
+            SELECT
+                sm.base_part_number,
+                sm.movement_id,
+                sm.movement_date,
+                sm.datecode,
+                sm.reference,
+                sm.quantity,
+                sm.available_quantity,
+                sm.cost_per_unit
+            FROM stock_movements sm
+            WHERE sm.base_part_number IN ({placeholders})
+              AND sm.movement_type = 'IN'
+              AND sm.available_quantity > 0
+            ORDER BY sm.base_part_number ASC, sm.movement_date ASC, sm.movement_id ASC
+            """,
+            tuple(stock_base_part_numbers),
+            fetch='all',
+        ) or []
+
+        for row in stock_rows:
+            base_part_number = row.get('base_part_number')
+            if not base_part_number:
+                continue
+            stock_lookup.setdefault(base_part_number, []).append({
+                'movement_id': row.get('movement_id'),
+                'receipt_date': row.get('movement_date'),
+                'datecode': row.get('datecode'),
+                'reference': row.get('reference'),
+                'original_quantity': row.get('quantity'),
+                'available_quantity': row.get('available_quantity'),
+                'cost_per_unit': row.get('cost_per_unit'),
+            })
+
     # Bulk fetch QPL approvals for all base part numbers in this list
     base_part_numbers = sorted({line.get('base_part_number') for line in lines if line.get('base_part_number')})
     qpl_lookup = {}
@@ -4292,6 +4331,9 @@ def table_view(list_id):
 
     for line in lines:
         base_key = line.get('base_part_number')
+        stock_details = stock_lookup.get(base_key, [])
+        line['stock_details'] = stock_details
+        line['total_available_stock'] = sum((row.get('available_quantity') or 0) for row in stock_details)
         qpl_summary = qpl_lookup.get(base_key, {})
         line['qpl_approval_count'] = qpl_summary.get('approval_count', 0)
         line['qpl_manufacturers'] = qpl_summary.get('manufacturer_names', [])
@@ -4360,7 +4402,7 @@ def update_line(list_id, line_id):
         allowed = {
             'line_number', 'customer_part_number', 'base_part_number', 'quantity',
             'chosen_supplier_id', 'chosen_cost', 'chosen_price', 'chosen_currency_id', 'chosen_lead_days', 'chosen_qty',
-            'customer_notes', 'internal_notes'
+            'chosen_source_type', 'chosen_source_reference', 'customer_notes', 'internal_notes'
         }
         fields = []
         params = []
