@@ -34,6 +34,11 @@ PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 AIRBUS_ROTARY_APPROVAL_LIST_TYPE = 'airbus_rotary'
 _AIRBUS_HARDWARE_REFERENCE_CACHE = None
 _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME = None
+_MASTER_LIST_TEST_REFERENCE_MAP = {
+    '21215DC2405J': 'MKP-H-57077',
+    'MS20470AD4-8': 'MKP-H-45486',
+    'ASNA0045BC100L': 'MKP-H-59400',
+}
 
 
 def _months_ago(reference: date, months: int) -> date:
@@ -1562,6 +1567,80 @@ def _store_offer_identity_updates_from_rows(rows):
     )
     db.commit()
     return len(updates)
+
+
+def _build_master_list_test_offers():
+    ordered_refs = list(_MASTER_LIST_TEST_REFERENCE_MAP.keys())
+    crm_rows = _fetch_marketplace_parts_by_references(ordered_refs)
+    crm_lookup = {
+        row['requested_reference']: row.get('crm_part')
+        for row in crm_rows
+    }
+
+    offers = []
+    skipped = []
+    for reference in ordered_refs:
+        crm_part = crm_lookup.get(reference)
+        if not crm_part:
+            skipped.append({'reference': reference, 'reason': 'CRM part not found'})
+            continue
+
+        price = crm_part.get('estimated_price_eur')
+        quantity = crm_part.get('stock_qty') if crm_part.get('in_stock') else 1
+        offer = _build_offer_row_from_payload({
+            'sku': crm_part.get('part_number') or crm_part.get('base_part_number') or reference,
+            'product-id': _MASTER_LIST_TEST_REFERENCE_MAP[reference],
+            'product-id-type': 'SKU',
+            'description': crm_part.get('mkp_description') or crm_part.get('part_number') or reference,
+            'internal-description': '',
+            'price': price,
+            'price-additional-info': '',
+            'quantity': quantity,
+            'min-quantity-alert': '',
+            'state': '1',
+            'available-start-date': '',
+            'available-end-date': '',
+            'logistic-class': '',
+            'favorite-rank': '',
+            'discount-start-date': '',
+            'discount-end-date': '',
+            'discount-price': '',
+            'update-delete': 'update',
+            'allow-quote-requests': 'true',
+            'leadtime-to-ship': _sanitize_marketplace_lead_time_days(
+                crm_part.get('estimated_lead_days'),
+                default=7,
+            ),
+            'min-order-quantity': '',
+            'max-order-quantity': '',
+            'package-quantity': '',
+            'commercial-on-collection': 'ON_DEMAND',
+            'plt': '',
+            'plt-unit': '',
+            'shelflife': '',
+            'shelflife-unit': '',
+            'warranty': '',
+            'warranty-unit': '',
+            'up-sell': '',
+            'cross-sell': '',
+            'vendor-reference': 'master-list-test',
+        })
+        missing = _get_offer_missing_required_fields(offer)
+        if missing:
+            skipped.append({
+                'reference': reference,
+                'reason': f"Missing required fields: {', '.join(missing)}",
+            })
+            continue
+        offers.append(offer)
+
+    if not offers:
+        raise ValueError(
+            'No valid master-list test offers could be built. '
+            + '; '.join(f"{item['reference']}: {item['reason']}" for item in skipped[:10])
+        )
+
+    return offers, skipped
 
 
 @marketplace_bp.route('/import-details-file', methods=['POST'])
@@ -3461,6 +3540,29 @@ def mirakl_import_offers():
     except MiraklError as exc:
         logger.exception("Mirakl offer import failed")
         return jsonify({'success': False, 'error': str(exc)}), 502
+
+
+@marketplace_bp.route('/master-list-test-offers', methods=['GET'])
+def download_master_list_test_offers():
+    try:
+        offers, skipped = _build_master_list_test_offers()
+        csv_bytes = build_offers_csv(offers)
+        csv_file = io.BytesIO(csv_bytes)
+        csv_file.seek(0)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"AH_Master_List_Test_Offers_{timestamp}.csv"
+        response = send_file(
+            csv_file,
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=filename
+        )
+        if skipped:
+            response.headers['X-Master-List-Test-Skipped'] = str(len(skipped))
+        return response
+    except Exception as exc:
+        logger.exception("Error building master-list test offers CSV")
+        return jsonify({'success': False, 'error': str(exc)}), 500
 
 
 @marketplace_bp.route('/mirakl/products/import', methods=['POST'])

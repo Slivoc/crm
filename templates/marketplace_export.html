@@ -503,6 +503,9 @@
                             <button class="btn btn-lg btn-outline-secondary w-100" id="exportOffersDebugCsvBtn">
                                 <i class="bi bi-bug"></i> Download Debug Offers CSV
                             </button>
+                            <button class="btn btn-lg btn-outline-warning w-100" id="masterListTestOffersBtn">
+                                <i class="bi bi-flask"></i> Hard Coded Master List Test
+                            </button>
                         </div>
                         <select class="form-select form-select-sm" id="miraklPushMode">
                             <option value="products">Push full Airbus template</option>
@@ -826,6 +829,9 @@ $(document).ready(function() {
     });
     $('#exportOffersDebugCsvBtn').click(function() {
         exportToCsv('offers_debug');
+    });
+    $('#masterListTestOffersBtn').click(function() {
+        window.location.href = '/marketplace/master-list-test-offers';
     });
 
     $('#pushToMarketplaceBtn').click(function() {
