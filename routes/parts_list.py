@@ -3417,6 +3417,12 @@ def email_suppliers():
                     reverse=True
                 )
 
+        currencies = _execute_with_cursor(cursor, """
+            SELECT id, currency_code
+            FROM currencies
+            ORDER BY id ASC
+        """).fetchall()
+
     # Convert to list and sort by number of parts
     if mode == 'ils':
         suppliers_list = sorted(
@@ -3469,7 +3475,8 @@ def email_suppliers():
                            project_id=list_header.get('project_id') if list_header else None,
                            project_name=list_header.get('project_name') if list_header else None,
                            status_id=list_header['status_id'] if list_header else None,
-                           status_name=list_header['status_name'] if list_header else None)
+                           status_name=list_header['status_name'] if list_header else None,
+                           currencies=[dict(c) for c in currencies])
 
 
 @parts_list_bp.route('/parts-lists/<int:list_id>/suppliers/<int:supplier_id>/mark-customer-uses', methods=['POST'])

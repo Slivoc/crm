@@ -469,6 +469,10 @@
                                 data-contact-email="{{ supplier.contact_email }}">
                             Email Supplier
                         </button>
+                        <button class="btn btn-outline-info ms-2 supplier-quotes-btn"
+                                data-supplier-id="{{ supplier.supplier_id }}">
+                            Supplier Quotes
+                        </button>
                     {% endif %}
                     {% if customer_id and not supplier.used_by_customer %}
                         <button class="btn btn-sm btn-outline-danger ms-2 mark-used-by-customer-btn"
@@ -499,6 +503,9 @@
                     <div>
                         <button class="btn btn-sm btn-outline-primary select-all-btn" data-supplier-id="{{ supplier.supplier_id }}">
                             Select All
+                        </button>
+                        <button class="btn btn-sm btn-outline-success copy-part-qty-btn" data-supplier-id="{{ supplier.supplier_id }}">
+                            Copy PN, Qty
                         </button>
                         <button class="btn btn-sm btn-outline-secondary deselect-all-btn" data-supplier-id="{{ supplier.supplier_id }}">
                             Deselect All
@@ -744,6 +751,103 @@
     </div>
 </div>
 
+<!-- Supplier Quotes Modal -->
+<div class="modal fade" id="supplierQuotesModal" tabindex="-1">
+    <div class="modal-dialog modal-fullscreen-xl-down modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Supplier Quotes</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="quotes-list-view">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="mb-0">All Quotes</h6>
+                        <button class="btn btn-primary btn-sm" id="create-new-quote-btn">
+                            <i class="bi bi-plus-lg me-1"></i>New Quote
+                        </button>
+                    </div>
+                    <div id="quotes-list-container"></div>
+                </div>
+
+                <div id="quote-input-view" style="display: none;">
+                    <button class="btn btn-sm btn-outline-secondary mb-3" id="back-to-quotes-list">
+                        <i class="bi bi-arrow-left me-1"></i>Back to Quotes
+                    </button>
+
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">Supplier</label>
+                                    <select class="form-select" id="quote-supplier-select" required>
+                                        <option value="">Select supplier...</option>
+                                    </select>
+                                    <select class="form-select form-select-sm mt-2" id="emailed-supplier-select" style="display: none;">
+                                        <option value="">Emailed suppliers...</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Quote Reference</label>
+                                    <input type="text" class="form-control" id="quote-reference-input" placeholder="Supplier quote number">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">Quote Date</label>
+                                    <input type="date" class="form-control" id="quote-date-input">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">Currency</label>
+                                    <select class="form-select" id="quote-currency-select">
+                                        {% for currency in currencies %}
+                                        <option value="{{ currency.id }}" {{ 'selected' if currency.id == 3 }}>
+                                            {{ currency.currency_code }}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <label class="form-label">Notes</label>
+                                <textarea class="form-control" id="quote-notes-input" rows="2"></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header bg-light">
+                            <h6 class="mb-0"><i class="bi bi-magic me-2"></i>AI Extract from Supplier Response</h6>
+                        </div>
+                        <div class="card-body">
+                            <textarea class="form-control mb-2" id="supplier-response-text" rows="6"
+                                      placeholder="Paste supplier email or portal response here..."></textarea>
+                            <button class="btn btn-success btn-sm" id="extract-quote-btn">
+                                <i class="bi bi-stars me-1"></i>Extract Quote Data
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">Quote Lines</h6>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-success" id="save-quote-btn">
+                                    <i class="bi bi-save me-1"></i>Save Quote
+                                </button>
+                                <button class="btn btn-outline-danger" id="delete-quote-btn" style="display: none;">
+                                    <i class="bi bi-trash me-1"></i>Delete Quote
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div id="quote-lines-table-container"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- ILS Chunks Modal -->
 <div class="modal fade" id="ilsChunksModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
@@ -861,6 +965,14 @@
         </div>
     </div>
 </div>
+
+<link href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+<script>
+    window.PARTS_LIST_ID = {{ list_id | tojson }};
+    window.PRESELECTED_SUPPLIER_ID = null;
+</script>
+<script src="{{ url_for('static', filename='js/supplier_quotes.js') }}"></script>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -1157,6 +1269,51 @@ document.addEventListener('DOMContentLoaded', function() {
         btn.addEventListener('click', function() {
             const sid = this.dataset.supplierId;
             document.querySelectorAll(`.part-checkbox[data-supplier-id="${sid}"]`).forEach(cb => cb.checked = false);
+        });
+    });
+
+    document.querySelectorAll('.copy-part-qty-btn').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const supplierId = this.dataset.supplierId;
+            const selected = getVisibleSelectedPartsForSupplier(supplierId);
+            if (!selected.length) {
+                alert('No visible selected parts to copy for this supplier.');
+                return;
+            }
+
+            const output = selected
+                .map(part => `${part.part_number}, ${part.quantity}`)
+                .join('\n');
+
+            try {
+                await navigator.clipboard.writeText(output);
+                const originalHtml = this.innerHTML;
+                this.innerHTML = 'Copied!';
+                this.classList.remove('btn-outline-success');
+                this.classList.add('btn-success');
+                setTimeout(() => {
+                    this.innerHTML = originalHtml;
+                    this.classList.remove('btn-success');
+                    this.classList.add('btn-outline-success');
+                }, 1200);
+            } catch (error) {
+                console.error('Copy failed', error);
+                alert('Failed to copy the selected parts.');
+            }
+        });
+    });
+
+    document.querySelectorAll('.supplier-quotes-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const supplierId = parseInt(this.dataset.supplierId, 10);
+            if (!Number.isFinite(supplierId)) {
+                alert('Invalid supplier selected.');
+                return;
+            }
+
+            window.PRESELECTED_SUPPLIER_ID = supplierId;
+            openSupplierQuotesModal();
+            setTimeout(() => showQuoteInputView(null), 150);
         });
     });
 
