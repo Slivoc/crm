@@ -2,6 +2,30 @@
 
 {% block title %}Project Parts Lists{% endblock %}
 
+{% block head %}
+<style>
+    .project-parts-lists-wrap {
+        max-height: calc(100vh - 220px);
+        overflow: auto;
+    }
+
+    .project-parts-lists-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: #f8f9fa;
+        vertical-align: middle;
+    }
+
+    .project-parts-lists-table thead tr.filter-row th {
+        top: 43px;
+        z-index: 21;
+        background: #ffffff;
+        border-top: 1px solid #dee2e6;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-3">
@@ -29,8 +53,8 @@
                 <span class="badge bg-secondary bg-opacity-10 text-secondary">{{ parts_lists|length }} lists</span>
             </div>
             <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover align-middle mb-0">
+                <div class="table-responsive project-parts-lists-wrap">
+                    <table class="table table-hover align-middle mb-0 project-parts-lists-table" id="projectPartsListsTable">
                         <thead>
                             <tr>
                                 <th>Parts List</th>
@@ -45,10 +69,37 @@
                                 <th>Modified</th>
                                 <th class="text-end">Open</th>
                             </tr>
+                            <tr class="filter-row">
+                                <th>
+                                    <input type="text" class="form-control form-control-sm" id="partsListNameFilter" placeholder="Filter list/name...">
+                                </th>
+                                <th>
+                                    <select class="form-select form-select-sm" id="partsListStatusFilter">
+                                        <option value="">All statuses</option>
+                                        {% for status_name in parts_lists|map(attribute='status_name')|reject('none')|unique|sort %}
+                                            <option value="{{ status_name }}">{{ status_name }}</option>
+                                        {% endfor %}
+                                        <option value="No status">No status</option>
+                                    </select>
+                                </th>
+                                <th></th>
+                                <th></th>
+                                <th></th>
+                                <th></th>
+                                <th></th>
+                                <th>
+                                    <input type="text" class="form-control form-control-sm" id="partsListCommentsFilter" placeholder="Filter comments...">
+                                </th>
+                                <th></th>
+                                <th></th>
+                                <th class="text-end">
+                                    <button class="btn btn-sm btn-outline-secondary" type="button" id="clearPartsListFilters">Clear</button>
+                                </th>
+                            </tr>
                         </thead>
                         <tbody>
                             {% for parts_list in parts_lists %}
-                                <tr>
+                                <tr data-status="{{ parts_list.status_name or 'No status' }}">
                                     <td>
                                         <div class="fw-semibold">PL #{{ parts_list.id }}</div>
                                         <a href="{{ url_for('parts_list.view_parts_list', list_id=parts_list.id) }}"
@@ -102,8 +153,41 @@ document.addEventListener('DOMContentLoaded', function() {
     const offerCells = document.querySelectorAll('.supplier-offers-cell');
     const requestedCells = document.querySelectorAll('.requested-cell');
     const commentInputs = document.querySelectorAll('.parts-list-comments-input');
+    const tableRows = document.querySelectorAll('#projectPartsListsTable tbody tr');
+    const nameFilterInput = document.getElementById('partsListNameFilter');
+    const statusFilterSelect = document.getElementById('partsListStatusFilter');
+    const commentsFilterInput = document.getElementById('partsListCommentsFilter');
+    const clearFiltersBtn = document.getElementById('clearPartsListFilters');
     const saveStatusByListId = new Map();
     if (offerCells.length === 0) return;
+
+    function applyTableFilters() {
+        const nameFilter = (nameFilterInput?.value || '').trim().toLowerCase();
+        const statusFilter = (statusFilterSelect?.value || '').trim();
+        const commentsFilter = (commentsFilterInput?.value || '').trim().toLowerCase();
+
+        tableRows.forEach(row => {
+            const nameText = row.cells[0]?.innerText.toLowerCase() || '';
+            const rowStatus = row.dataset.status || 'No status';
+            const commentsText = row.querySelector('.parts-list-comments-input')?.value.toLowerCase() || '';
+
+            const matchesName = !nameFilter || nameText.includes(nameFilter);
+            const matchesStatus = !statusFilter || rowStatus === statusFilter;
+            const matchesComments = !commentsFilter || commentsText.includes(commentsFilter);
+
+            row.style.display = (matchesName && matchesStatus && matchesComments) ? '' : 'none';
+        });
+    }
+
+    nameFilterInput?.addEventListener('input', applyTableFilters);
+    statusFilterSelect?.addEventListener('change', applyTableFilters);
+    commentsFilterInput?.addEventListener('input', applyTableFilters);
+    clearFiltersBtn?.addEventListener('click', () => {
+        if (nameFilterInput) nameFilterInput.value = '';
+        if (statusFilterSelect) statusFilterSelect.value = '';
+        if (commentsFilterInput) commentsFilterInput.value = '';
+        applyTableFilters();
+    });
 
     document.querySelectorAll('.comments-save-status').forEach(el => {
         saveStatusByListId.set(el.dataset.partsListId, el);
@@ -146,6 +230,11 @@ document.addEventListener('DOMContentLoaded', function() {
     commentInputs.forEach(input => {
         input.dataset.lastSavedValue = input.value;
         input.addEventListener('blur', () => saveComments(input));
+        input.addEventListener('input', () => {
+            if ((commentsFilterInput?.value || '').trim()) {
+                applyTableFilters();
+            }
+        });
         input.addEventListener('keydown', event => {
             if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                 event.preventDefault();
