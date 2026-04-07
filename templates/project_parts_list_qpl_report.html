@@ -53,14 +53,23 @@
     </div>
 
     <div class="card border-0 shadow-sm">
-        <div class="card-header bg-white">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
             <strong>Parts with QPL Approved Manufacturer Mapped to Supplier</strong>
+            <div class="d-flex align-items-center gap-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="qplSelectAllBtn">Select All</button>
+                <button type="button" class="btn btn-sm btn-success" id="qplEmailSelectedBtn">
+                    <i class="bi bi-envelope-at me-1"></i>Email Selected (System)
+                </button>
+            </div>
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
                 <table class="table table-sm table-striped mb-0">
                     <thead class="table-light">
                         <tr>
+                            <th class="text-center" style="width: 40px;">
+                                <input type="checkbox" id="qplSelectAllCheckbox" />
+                            </th>
                             <th>PL</th>
                             <th>List Name</th>
                             <th>Line #</th>
@@ -76,6 +85,22 @@
                         {% if rows %}
                             {% for row in rows %}
                                 <tr>
+                                    <td class="text-center">
+                                        {% if row.mapped_supplier_id and row.mapped_supplier_contact_email and row.parts_list_line_id %}
+                                            <input
+                                                type="checkbox"
+                                                class="form-check-input qpl-email-checkbox"
+                                                data-parts-list-id="{{ row.parts_list_id }}"
+                                                data-parts-list-line-id="{{ row.parts_list_line_id }}"
+                                                data-supplier-id="{{ row.mapped_supplier_id }}"
+                                                data-supplier-name="{{ row.mapped_supplier_name or '' }}"
+                                                data-contact-name="{{ row.mapped_supplier_contact_name or '' }}"
+                                                data-contact-email="{{ row.mapped_supplier_contact_email or '' }}"
+                                                data-part-number="{{ row.base_part_number or row.customer_part_number or '' }}"
+                                                data-quantity="{{ row.requested_qty or 1 }}"
+                                            />
+                                        {% endif %}
+                                    </td>
                                     <td>
                                         <a href="{{ url_for('parts_list.view_parts_list', list_id=row.parts_list_id) }}">
                                             {{ row.parts_list_id }}
@@ -93,6 +118,9 @@
                                             <a href="{{ url_for('suppliers.edit_supplier', supplier_id=row.mapped_supplier_id) }}">
                                                 {{ row.mapped_supplier_name }}
                                             </a>
+                                            {% if row.mapped_supplier_contact_email %}
+                                                <div class="small text-muted">{{ row.mapped_supplier_contact_email }}</div>
+                                            {% endif %}
                                         {% else %}
                                             {{ row.mapped_supplier_name or '' }}
                                         {% endif %}
@@ -101,7 +129,7 @@
                             {% endfor %}
                         {% else %}
                             <tr>
-                                <td colspan="9" class="text-center text-muted py-4">No mapped QPL manufacturer matches found for this project.</td>
+                                <td colspan="10" class="text-center text-muted py-4">No mapped QPL manufacturer matches found for this project.</td>
                             </tr>
                         {% endif %}
                     </tbody>
@@ -110,4 +138,165 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    const selectAllCheckbox = document.getElementById('qplSelectAllCheckbox');
+    const selectAllBtn = document.getElementById('qplSelectAllBtn');
+    const emailSelectedBtn = document.getElementById('qplEmailSelectedBtn');
+
+    const getEligibleCheckboxes = () => Array.from(document.querySelectorAll('.qpl-email-checkbox'));
+
+    const syncSelectAll = () => {
+        const checkboxes = getEligibleCheckboxes();
+        if (!checkboxes.length || !selectAllCheckbox) return;
+        const checkedCount = checkboxes.filter(cb => cb.checked).length;
+        selectAllCheckbox.checked = checkedCount > 0 && checkedCount === checkboxes.length;
+        selectAllCheckbox.indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+    };
+
+    if (selectAllCheckbox) {
+        selectAllCheckbox.addEventListener('change', function() {
+            getEligibleCheckboxes().forEach(cb => { cb.checked = this.checked; });
+            syncSelectAll();
+        });
+    }
+
+    if (selectAllBtn) {
+        selectAllBtn.addEventListener('click', () => {
+            const checkboxes = getEligibleCheckboxes();
+            if (!checkboxes.length) return;
+            const shouldCheck = checkboxes.some(cb => !cb.checked);
+            checkboxes.forEach(cb => { cb.checked = shouldCheck; });
+            syncSelectAll();
+        });
+    }
+
+    document.querySelectorAll('.qpl-email-checkbox').forEach(cb => {
+        cb.addEventListener('change', syncSelectAll);
+    });
+    syncSelectAll();
+
+    async function generateSupplierEmailPayload(supplierData) {
+        const resp = await fetch('{{ url_for("parts_list.generate_supplier_email") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(supplierData)
+        });
+        return resp.json();
+    }
+
+    async function sendSupplierEmailPayload(emailData) {
+        const resp = await fetch('/parts_list/send-supplier-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                recipient_email: emailData.recipient_email,
+                subject: emailData.subject,
+                body_html: emailData.body_html
+            })
+        });
+        return resp.json();
+    }
+
+    async function recordEmailSent(partsListId, emailData) {
+        const partsToRecord = (emailData.parts || []).filter(p => p.line_id);
+        if (!partsToRecord.length) return;
+
+        await Promise.all(partsToRecord.map(part =>
+            fetch(`/parts_list/parts-lists/${partsListId}/lines/${part.line_id}/supplier-emails/add`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    supplier_id: emailData.supplier_id,
+                    email_subject: emailData.subject,
+                    email_body: emailData.body_html,
+                    recipient_email: emailData.recipient_email,
+                    recipient_name: emailData.recipient_name || '',
+                    notes: 'Sent via Project QPL Mapped Report'
+                })
+            })
+        ));
+    }
+
+    if (emailSelectedBtn) {
+        emailSelectedBtn.addEventListener('click', async function() {
+            const selectedRows = getEligibleCheckboxes().filter(cb => cb.checked);
+            if (!selectedRows.length) {
+                alert('Please select at least one line with a mapped supplier email.');
+                return;
+            }
+
+            const grouped = {};
+            selectedRows.forEach(cb => {
+                const partsListId = Number(cb.dataset.partsListId);
+                const supplierId = Number(cb.dataset.supplierId);
+                const key = `${partsListId}:${supplierId}`;
+                if (!grouped[key]) {
+                    grouped[key] = {
+                        list_id: partsListId,
+                        supplier_id: supplierId,
+                        supplier_name: cb.dataset.supplierName || '',
+                        contact_name: cb.dataset.contactName || '',
+                        contact_email: cb.dataset.contactEmail || '',
+                        parts: []
+                    };
+                }
+                grouped[key].parts.push({
+                    line_id: Number(cb.dataset.partsListLineId),
+                    part_number: cb.dataset.partNumber || '',
+                    quantity: Number(cb.dataset.quantity || '1') || 1
+                });
+            });
+
+            const groups = Object.values(grouped);
+            const confirmSend = confirm(
+                `Send ${groups.length} system email${groups.length === 1 ? '' : 's'}? ` +
+                'Emails are batched by Parts List + Supplier.'
+            );
+            if (!confirmSend) return;
+
+            const btn = this;
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+
+            let sentCount = 0;
+            let failedCount = 0;
+
+            for (let i = 0; i < groups.length; i++) {
+                const group = groups[i];
+                btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Sending ${i + 1}/${groups.length}...`;
+                try {
+                    const emailData = await generateSupplierEmailPayload(group);
+                    if (!emailData.success) {
+                        throw new Error(emailData.error || 'Failed to generate email');
+                    }
+
+                    const sendResult = await sendSupplierEmailPayload(emailData);
+                    if (!sendResult.success) {
+                        throw new Error(sendResult.error || 'Failed to send email');
+                    }
+
+                    await recordEmailSent(group.list_id, emailData);
+                    sentCount += 1;
+                } catch (error) {
+                    failedCount += 1;
+                    console.error('Failed to email QPL group:', group, error);
+                }
+            }
+
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+
+            if (failedCount > 0) {
+                alert(`Sent ${sentCount} of ${groups.length}. ${failedCount} failed.`);
+            } else {
+                alert(`Sent ${sentCount} email${sentCount === 1 ? '' : 's'} and recorded successfully.`);
+            }
+        });
+    }
+})();
+</script>
 {% endblock %}

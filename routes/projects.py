@@ -309,7 +309,9 @@ def _fetch_project_qpl_mapped_rows(project_id):
                 UPPER(TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, '')))) AS normalized_base_part_number,
                 TRIM(ma.manufacturer_name) AS qpl_manufacturer_name,
                 map.supplier_id,
-                s.name AS mapped_supplier_name
+                s.name AS mapped_supplier_name,
+                s.contact_name AS mapped_supplier_contact_name,
+                s.contact_email AS mapped_supplier_contact_email
             FROM manufacturer_approvals ma
             JOIN qpl_manufacturer_supplier_mappings map
                 ON map.manufacturer_name_normalized = {manufacturer_name_normalized_sql}
@@ -328,7 +330,9 @@ def _fetch_project_qpl_mapped_rows(project_id):
             pl.requested_qty,
             qm.qpl_manufacturer_name,
             qm.supplier_id AS mapped_supplier_id,
-            qm.mapped_supplier_name
+            qm.mapped_supplier_name,
+            qm.mapped_supplier_contact_name,
+            qm.mapped_supplier_contact_email
         FROM project_lines pl
         JOIN qpl_mapped qm ON qm.normalized_base_part_number = pl.normalized_base_part_number
         ORDER BY pl.parts_list_id, pl.line_number, pl.parts_list_line_id, qm.qpl_manufacturer_name
