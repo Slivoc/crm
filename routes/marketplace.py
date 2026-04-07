@@ -1421,9 +1421,10 @@ def _fetch_marketplace_parts_by_references(references):
         FROM part_numbers pn
         {_MARKETPLACE_MANUFACTURER_JOIN}
         WHERE {' OR '.join(where_clauses)}
+          AND {_build_rotary_hqpl_exists_clause('pn')}
         ORDER BY pn.part_number
         """,
-        params,
+        params + [AIRBUS_ROTARY_APPROVAL_LIST_TYPE],
     )
     rows = cursor.fetchall()
 
