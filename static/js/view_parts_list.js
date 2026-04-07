@@ -50,25 +50,90 @@ function getStockLots(part) {
         .sort((a, b) => a.cost - b.cost || b.qty - a.qty);
 }
 
-function renderStockLotSummary(part, maxLots = 3) {
+function renderStockLotSummary(part) {
     const stockLots = getStockLots(part);
     if (stockLots.length === 0) {
         return '<div style="font-weight: 600; color: #adb5bd; font-size: 0.8rem;">-</div>';
     }
 
-    const visibleLots = stockLots.slice(0, maxLots);
-    const extraCount = stockLots.length - visibleLots.length;
+    const requestedQty = parseFloat(part?.quantity) || 0;
 
     return `
         <div style="display: flex; flex-wrap: wrap; gap: 0.25rem;">
-            ${visibleLots.map(stock => `
-                <span class="badge border text-primary bg-white" title="${stock.qty} available at ${formatCurrency(stock.cost)}">
-                    ${stock.qty} @ ${formatCurrency(stock.cost)}
-                </span>
-            `).join('')}
-            ${extraCount > 0 ? `<span class="badge bg-light text-muted">+${extraCount} more</span>` : ''}
+            ${stockLots.map(stock => {
+                const selected = String(part.chosen_source_type || '').toLowerCase() === 'stock'
+                    && String(part.chosen_source_reference || '') === String(stock.movement_id);
+                const chosenQty = requestedQty > 0 ? Math.min(requestedQty, stock.qty) : '';
+                return `
+                    <button type="button"
+                            class="btn btn-sm ${selected ? 'btn-primary' : 'btn-outline-primary'} stock-lot-choice-btn"
+                            data-line-id="${part.line_id || ''}"
+                            data-cost="${stock.cost}"
+                            data-chosen-qty="${chosenQty}"
+                            data-source-type="stock"
+                            data-source-ref="${stock.movement_id}"
+                            title="Use exact stock lot cost ${formatCurrency(stock.cost)} for ${stock.qty} available"
+                            onclick="event.stopPropagation();">
+                        ${stock.qty} @ ${formatCurrency(stock.cost)}${selected ? ' Selected' : ''}
+                    </button>
+                `;
+            }).join('')}
         </div>
     `;
+}
+
+function applyChosenCostState(lineId, costData) {
+    const part = allResults.find(item => String(item.line_id) === String(lineId));
+    if (!part) return;
+
+    part.chosen_cost = costData.cost;
+    part.has_chosen_cost = costData.cost !== null && costData.cost !== undefined;
+    part.chosen_qty = costData.chosen_qty ?? null;
+    part.chosen_source_type = costData.source_type || null;
+    part.chosen_source_reference = costData.source_reference || null;
+}
+
+function refreshPartRow(lineId) {
+    const tbody = document.getElementById('parts-table-body');
+    if (!tbody) return;
+
+    const index = allResults.findIndex(item => String(item.line_id) === String(lineId));
+    if (index === -1) return;
+
+    const existingRow = tbody.querySelector(`tr[data-line-id="${String(lineId)}"]`);
+    if (!existingRow) {
+        displayResults(allResults);
+        return;
+    }
+
+    const replacementRow = createPartRow(allResults[index], index + 1);
+    tbody.replaceChild(replacementRow, existingRow);
+    bindStockLotActions(replacementRow);
+}
+
+function bindStockLotActions(scope = document) {
+    scope.querySelectorAll('.stock-lot-choice-btn').forEach(btn => {
+        if (btn.dataset.boundStockLot === '1') {
+            return;
+        }
+        btn.dataset.boundStockLot = '1';
+        btn.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const lineId = this.getAttribute('data-line-id');
+            if (!lineId) return;
+
+            const costData = {
+                cost: parseFloat(this.getAttribute('data-cost')),
+                currency_id: 3,
+                chosen_qty: this.getAttribute('data-chosen-qty') ? parseFloat(this.getAttribute('data-chosen-qty')) : null,
+                source_type: this.getAttribute('data-source-type'),
+                source_reference: this.getAttribute('data-source-ref') || null
+            };
+            useCost(lineId, costData, this);
+        });
+    });
 }
 
 function showToast(message, type) {
@@ -153,6 +218,8 @@ function useCost(lineId, costData, buttonElement) {
             buttonElement.innerHTML = '<i class="bi bi-check-circle-fill"></i> Applied';
             buttonElement.classList.remove('btn-success');
             buttonElement.classList.add('btn-primary');
+            applyChosenCostState(lineId, costData);
+            refreshPartRow(lineId);
             showToast(`Cost updated: ${formatCurrency(costData.cost)}`, 'success');
         } else {
             buttonElement.innerHTML = originalHtml;
@@ -1499,6 +1566,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const row = createPartRow(part, index + 1);
             tbody.appendChild(row);
         });
+        bindStockLotActions(tbody);
 
         const hasILSData = results.some(r => r.ils_total_suppliers > 0);
         if (emailBtn) {
@@ -1512,6 +1580,9 @@ document.addEventListener('DOMContentLoaded', function() {
         // [Copy the createPartRow function from parts_list.js]
         // This is the same function - creates the table row HTML
         const tr = document.createElement('tr');
+        if (part.line_id) {
+            tr.dataset.lineId = String(part.line_id);
+        }
         if (!part.found) tr.style.background = '#fff3cd';
         tr.addEventListener('mouseenter', function() { this.style.background = part.found ? '#f8f9fa' : '#fff3cd'; });
         tr.addEventListener('mouseleave', function() { this.style.background = part.found ? '' : '#fff3cd'; });
@@ -1572,6 +1643,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div style="font-size: 0.8rem;">
                     ${stockCostDisplay}
                 </div>
+                ${part.stock_movement_count > 0 ? '<div class="text-muted" style="font-size: 0.72rem;">Pick exact stock lot cost</div>' : ''}
             </div>
         `;
 
@@ -1690,7 +1762,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <td style="width: 80px; min-width: 80px; text-align: center; font-weight: 600; color: #495057;">
         ${part.quantity || 1}
     </td>
-    <td style="width: 170px; min-width: 170px;" class="purchasing-col">
+    <td style="width: 220px; min-width: 220px;" class="purchasing-col">
         ${stockSummaryDisplay}
     </td>
     <td style="width: 100px; min-width: 100px;" class="purchasing-col">

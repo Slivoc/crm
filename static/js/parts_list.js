@@ -97,6 +97,7 @@ function displayResults(results) {
             displayIndex++;
         }
     });
+    bindStockLotActions(tbody);
 
     const resultsSection = document.getElementById('results-section');
     if (resultsSection) {
@@ -160,6 +161,9 @@ function showDeferredAnalysisBanner(lineCount, onRun) {
 
 function createPartRow(part, displayIndex, isAlt, actualIndex) {
     const tr = document.createElement('tr');
+    if (part.line_id) {
+        tr.dataset.lineId = String(part.line_id);
+    }
 
     if (isAlt) {
         tr.style.cssText = 'background: #e0f2fe !important; border-left: 4px solid #0ea5e9 !important; height: 38px !important; font-size: 0.82rem !important;';
@@ -400,6 +404,7 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
                 <div style="font-size: 0.8rem;">
                     ${stockCostDisplay}
                 </div>
+                ${part.stock_movement_count > 0 ? '<div class="text-muted" style="font-size: 0.72rem;">Pick exact stock lot cost</div>' : ''}
         </div>
     `;
 
@@ -458,7 +463,7 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         <td style="width: 220px; min-width: 220px;">
             ${buildStatusDisplay(part)}
         </td>
-        <td style="width: 170px; min-width: 170px; cursor: ${part.stock_movement_count > 0 ? 'pointer' : 'default'};"
+        <td style="width: 220px; min-width: 220px; cursor: ${part.stock_movement_count > 0 ? 'pointer' : 'default'};"
             class="purchasing-col ${part.stock_movement_count > 0 ? 'clickable-cell' : ''}"
             ${part.stock_movement_count > 0 ? `onclick="showPartDetailsModal(window.allResults[${actualIndex}], 'stock')"` : ''}>
             ${stockSummaryDisplay}
@@ -1040,25 +1045,72 @@ function getStockLots(part) {
         .sort((a, b) => a.cost - b.cost || b.qty - a.qty);
 }
 
-function renderStockLotSummary(part, maxLots = 3) {
+function renderStockLotSummary(part) {
     const stockLots = getStockLots(part);
     if (stockLots.length === 0) {
         return '<div style="font-weight: 600; color: #adb5bd; font-size: 0.8rem;">-</div>';
     }
 
-    const visibleLots = stockLots.slice(0, maxLots);
-    const extraCount = stockLots.length - visibleLots.length;
+    const requestedQty = parseFloat(part?.quantity) || 0;
 
     return `
         <div style="display: flex; flex-wrap: wrap; gap: 0.25rem;">
-            ${visibleLots.map(stock => `
-                <span class="badge border text-primary bg-white" title="${stock.qty} available at ${formatCurrency(stock.cost)}">
-                    ${stock.qty} @ ${formatCurrency(stock.cost)}
-                </span>
-            `).join('')}
-            ${extraCount > 0 ? `<span class="badge bg-light text-muted">+${extraCount} more</span>` : ''}
+            ${stockLots.map(stock => {
+                const selected = String(part.chosen_source_type || '').toLowerCase() === 'stock'
+                    && String(part.chosen_source_reference || '') === String(stock.movement_id);
+                const chosenQty = requestedQty > 0 ? Math.min(requestedQty, stock.qty) : '';
+                return `
+                    <button type="button"
+                            class="btn btn-sm ${selected ? 'btn-primary' : 'btn-outline-primary'} stock-lot-choice-btn"
+                            data-line-id="${part.line_id || ''}"
+                            data-cost="${stock.cost}"
+                            data-chosen-qty="${chosenQty}"
+                            data-source-type="stock"
+                            data-source-ref="${stock.movement_id}"
+                            title="Use exact stock lot cost ${formatCurrency(stock.cost)} for ${stock.qty} available"
+                            onclick="event.stopPropagation();">
+                        ${stock.qty} @ ${formatCurrency(stock.cost)}${selected ? ' Selected' : ''}
+                    </button>
+                `;
+            }).join('')}
         </div>
     `;
+}
+
+function applyChosenCostState(lineId, costData) {
+    const part = window.allResults.find(item => String(item.line_id) === String(lineId));
+    if (!part) return;
+
+    part.chosen_cost = costData.cost;
+    part.has_chosen_cost = costData.cost !== null && costData.cost !== undefined;
+    part.chosen_qty = costData.chosen_qty ?? null;
+    part.chosen_source_type = costData.source_type || null;
+    part.chosen_source_reference = costData.source_reference || null;
+}
+
+function bindStockLotActions(scope = document) {
+    scope.querySelectorAll('.stock-lot-choice-btn').forEach(btn => {
+        if (btn.dataset.boundStockLot === '1') {
+            return;
+        }
+        btn.dataset.boundStockLot = '1';
+        btn.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const lineId = this.getAttribute('data-line-id');
+            if (!lineId) return;
+
+            const costData = {
+                cost: parseFloat(this.getAttribute('data-cost')),
+                currency_id: 3,
+                chosen_qty: this.getAttribute('data-chosen-qty') ? parseFloat(this.getAttribute('data-chosen-qty')) : null,
+                source_type: this.getAttribute('data-source-type'),
+                source_reference: this.getAttribute('data-source-ref') || null
+            };
+            useCost(lineId, costData, this);
+        });
+    });
 }
 
 function useCost(lineId, costData, buttonElement) {
@@ -1082,6 +1134,8 @@ function useCost(lineId, costData, buttonElement) {
             buttonElement.innerHTML = '<i class="bi bi-check-circle-fill"></i> Applied';
             buttonElement.classList.remove('btn-success');
             buttonElement.classList.add('btn-primary');
+            applyChosenCostState(lineId, costData);
+            displayResults(window.allResults);
             showToast(`Cost updated: ${formatCurrency(costData.cost)}`, 'success');
         } else {
             buttonElement.innerHTML = originalHtml;

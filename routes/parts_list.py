@@ -2362,6 +2362,9 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         chosen_supplier_name = None
         chosen_currency_code = None
         chosen_currency_symbol = None
+        chosen_qty = None
+        chosen_source_type = None
+        chosen_source_reference = None
         suggested_suppliers_count = 0
         emails_sent_count = 0
         quoted_price = None
@@ -2378,6 +2381,9 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
                 chosen_supplier_name,
                 chosen_currency_code,
                 chosen_currency_symbol,
+                chosen_qty,
+                chosen_source_type,
+                chosen_source_reference,
                 suggested_suppliers_count,
                 emails_sent_count,
                 quoted_price,
@@ -2394,6 +2400,9 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
                 pll.chosen_cost,
                 pll.chosen_currency_id,
                 pll.chosen_supplier_id,
+                pll.chosen_qty,
+                pll.chosen_source_type,
+                pll.chosen_source_reference,
                 s.name as supplier_name,
                 c.currency_code,
                 c.symbol
@@ -2408,6 +2417,9 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
             chosen_supplier_name = chosen_info['supplier_name']
             chosen_currency_code = chosen_info['currency_code']
             chosen_currency_symbol = chosen_info['symbol']
+            chosen_qty = chosen_info['chosen_qty']
+            chosen_source_type = chosen_info['chosen_source_type']
+            chosen_source_reference = chosen_info['chosen_source_reference']
 
         suggested_count = _execute_with_cursor(cursor, '''
             SELECT COUNT(*) as count
@@ -2474,6 +2486,9 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
             chosen_supplier_name,
             chosen_currency_code,
             chosen_currency_symbol,
+            chosen_qty,
+            chosen_source_type,
+            chosen_source_reference,
             suggested_suppliers_count,
             emails_sent_count,
             quoted_price,
@@ -2501,12 +2516,15 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         else:
             cached_result.pop('wildcard_pattern', None)
 
-        chosen_cost, chosen_supplier_name, chosen_currency_code, chosen_currency_symbol, suggested_suppliers_count, emails_sent_count, quoted_price, quoted_supplier_name, quoted_currency_code, quoted_currency_symbol, contacted_suppliers, contacted_suppliers_count, supplier_quote_count = _get_line_specific(line_id)
+        chosen_cost, chosen_supplier_name, chosen_currency_code, chosen_currency_symbol, chosen_qty, chosen_source_type, chosen_source_reference, suggested_suppliers_count, emails_sent_count, quoted_price, quoted_supplier_name, quoted_currency_code, quoted_currency_symbol, contacted_suppliers, contacted_suppliers_count, supplier_quote_count = _get_line_specific(line_id)
         cached_result['chosen_cost'] = chosen_cost
         cached_result['has_chosen_cost'] = bool(chosen_cost is not None)
         cached_result['chosen_supplier_name'] = chosen_supplier_name
         cached_result['chosen_currency_code'] = chosen_currency_code
         cached_result['chosen_currency_symbol'] = chosen_currency_symbol
+        cached_result['chosen_qty'] = chosen_qty
+        cached_result['chosen_source_type'] = chosen_source_type
+        cached_result['chosen_source_reference'] = chosen_source_reference
         cached_result['suggested_suppliers_count'] = suggested_suppliers_count
         cached_result['emails_sent_count'] = emails_sent_count
         cached_result['line_quote_price'] = quoted_price
@@ -2895,7 +2913,7 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
     qpl_count = qpl_row['count'] if qpl_row else 0
 
     # Chosen cost & email/suggested supplier counts
-    chosen_cost, chosen_supplier_name, chosen_currency_code, chosen_currency_symbol, suggested_suppliers_count, emails_sent_count, quoted_price, quoted_supplier_name, quoted_currency_code, quoted_currency_symbol, contacted_suppliers, contacted_suppliers_count, supplier_quote_count = _get_line_specific(line_id)
+    chosen_cost, chosen_supplier_name, chosen_currency_code, chosen_currency_symbol, chosen_qty, chosen_source_type, chosen_source_reference, suggested_suppliers_count, emails_sent_count, quoted_price, quoted_supplier_name, quoted_currency_code, quoted_currency_symbol, contacted_suppliers, contacted_suppliers_count, supplier_quote_count = _get_line_specific(line_id)
 
     # Build main result
     result = {
@@ -2992,6 +3010,9 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
         'chosen_supplier_name': chosen_supplier_name,
         'chosen_currency_code': chosen_currency_code,
         'chosen_currency_symbol': chosen_currency_symbol,
+        'chosen_qty': chosen_qty,
+        'chosen_source_type': chosen_source_type,
+        'chosen_source_reference': chosen_source_reference,
         'suggested_suppliers_count': suggested_suppliers_count,
         'emails_sent_count': emails_sent_count,
         'line_quote_price': quoted_price,

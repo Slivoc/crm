@@ -1124,8 +1124,9 @@ def process_stock_levels_upload():
             missing_list = ", ".join(missing_cols)
             return jsonify(success=False, message=f"Required column(s) '{missing_list}' not found in file"), 400
 
-        # First pass: collapse duplicate part numbers by normalized base part number.
-        aggregated_stock = {}
+        # First pass: preserve each uploaded row as a distinct stock lot.
+        imported_rows = []
+        stock_totals = {}
         for idx, row in df.iterrows():
             raw_part_number = str(row.get(part_col, '')).strip()
             if not raw_part_number or raw_part_number.lower() in ['nan', 'none']:
@@ -1145,6 +1146,9 @@ def process_stock_levels_upload():
                 results['errors'].append(f"Row {idx + 1}: Quantity cannot be negative")
                 continue
 
+            if quantity == 0:
+                continue
+
             unit_price = None
             if cost_col in df.columns:
                 try:
@@ -1155,19 +1159,14 @@ def process_stock_levels_upload():
                 except (ValueError, TypeError):
                     unit_price = None
 
-            entry = aggregated_stock.setdefault(
-                base_part_number,
-                {
-                    'quantity': 0.0,
-                    'sample_part_number': raw_part_number,
-                    'cost_quantity': 0.0,
-                    'cost_total': 0.0,
-                }
-            )
-            entry['quantity'] += quantity
-            if unit_price is not None and quantity > 0:
-                entry['cost_quantity'] += quantity
-                entry['cost_total'] += unit_price * quantity
+            imported_rows.append({
+                'base_part_number': base_part_number,
+                'sample_part_number': raw_part_number,
+                'quantity': quantity,
+                'unit_price': unit_price,
+                'row_number': idx + 2,
+            })
+            stock_totals[base_part_number] = stock_totals.get(base_part_number, 0.0) + quantity
             results['processed'] += 1
 
         # Run destructive reset inside a transaction
@@ -1190,35 +1189,24 @@ def process_stock_levels_upload():
             print("Reset all stock levels to 0")
             conn.commit()
 
-            # Rebuild stock totals by base part number from collapsed import values.
-            for base_part_number, values in aggregated_stock.items():
-                quantity = values['quantity']
-                sample_part_number = values['sample_part_number']
-                if quantity <= 0:
-                    continue
+            known_parts = set()
 
+            # Rebuild stock movements exactly as uploaded rows so per-lot costs remain distinct.
+            for imported_row in imported_rows:
+                base_part_number = imported_row['base_part_number']
+                sample_part_number = imported_row['sample_part_number']
                 try:
-                    _execute_with_cursor(
-                        cur,
-                        "SELECT base_part_number FROM part_numbers WHERE base_part_number = ?",
-                        (base_part_number,),
-                    )
-                    part_row = cur.fetchone()
-
-                    if not part_row:
-                        create_part_on_demand(cur, sample_part_number, sample_part_number)
-                        results['not_found'] += 1
-
-                    _execute_with_cursor(
-                        cur,
-                        "UPDATE part_numbers SET stock = ? WHERE base_part_number = ?",
-                        (quantity, base_part_number),
-                    )
-
-                    # Keep one synthetic stock movement per base part for legacy stock views.
-                    average_cost = None
-                    if values['cost_quantity'] > 0:
-                        average_cost = values['cost_total'] / values['cost_quantity']
+                    if base_part_number not in known_parts:
+                        _execute_with_cursor(
+                            cur,
+                            "SELECT base_part_number FROM part_numbers WHERE base_part_number = ?",
+                            (base_part_number,),
+                        )
+                        part_row = cur.fetchone()
+                        if not part_row:
+                            create_part_on_demand(cur, sample_part_number, sample_part_number)
+                            results['not_found'] += 1
+                        known_parts.add(base_part_number)
 
                     _execute_with_cursor(
                         cur,
@@ -1231,15 +1219,32 @@ def process_stock_levels_upload():
                         (
                             base_part_number,
                             'IN',
-                            quantity,
-                            quantity,
-                            average_cost,
-                            f"STOCK-IMPORT-{file_id}",
-                            "Collapsed stock import total",
+                            imported_row['quantity'],
+                            imported_row['quantity'],
+                            imported_row['unit_price'],
+                            f"STOCK-IMPORT-{file_id}-ROW-{imported_row['row_number']}",
+                            "Imported stock level row",
                         ),
                     )
 
                     results['created'] += 1
+                except Exception as e:
+                    results['errors'].append(f"Base {base_part_number}: {str(e)}")
+                    conn.rollback()
+                    try:
+                        cur.close()
+                    except Exception:
+                        pass
+                    cur = conn.cursor()
+                    continue
+
+            for base_part_number, quantity in stock_totals.items():
+                try:
+                    _execute_with_cursor(
+                        cur,
+                        "UPDATE part_numbers SET stock = ? WHERE base_part_number = ?",
+                        (quantity, base_part_number),
+                    )
                 except Exception as e:
                     results['errors'].append(f"Base {base_part_number}: {str(e)}")
                     conn.rollback()
