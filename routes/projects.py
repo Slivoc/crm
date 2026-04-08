@@ -469,6 +469,21 @@ def _fetch_project_parts_list_max_usage_years(project_id):
     return max_years or 1
 
 
+def _fetch_project_parts_list_line_count(project_id):
+    row = db_execute(
+        """
+        SELECT COUNT(*) AS line_count
+        FROM project_parts_list_lines
+        WHERE project_id = ?
+        """,
+        (project_id,),
+        fetch='one',
+    )
+    if not row:
+        return 0
+    return int(dict(row).get('line_count') or 0)
+
+
 def _fetch_project_parts_lists_summary(project_id, limit=None):
     sql = """
         SELECT
@@ -682,14 +697,14 @@ def project_parts_list_overview(project_id):
         flash('Project not found', 'error')
         return redirect(url_for('projects.list_projects'))
 
-    rows = _fetch_project_parts_list_status_overview(project_id)
     max_usage_years = _fetch_project_parts_list_max_usage_years(project_id)
+    line_count = _fetch_project_parts_list_line_count(project_id)
 
     return render_template(
         'project_parts_list.html',
         project=project,
-        rows=rows,
         max_usage_years=max_usage_years,
+        line_count=line_count,
     )
 
 

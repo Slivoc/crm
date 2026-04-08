@@ -74,6 +74,11 @@
     .prefix-group-item code {
         font-size: 0.9rem;
     }
+    .project-parts-list-gate {
+        border: 1px dashed #ced4da;
+        border-radius: 0.75rem;
+        background: #f8f9fa;
+    }
 </style>
 {% endblock %}
 
@@ -275,7 +280,25 @@
     </div>
 
     <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <strong>Project Parts</strong>
+                <div class="text-muted small">
+                    {{ line_count }} line{{ '' if line_count == 1 else 's' }} available. Load on demand for large projects.
+                </div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="loadProjectLinesBtn" type="button" {% if line_count == 0 %}disabled{% endif %}>
+                Load lines
+            </button>
+        </div>
         <div class="card-body p-0">
+            <div class="p-4 text-center project-parts-list-gate m-3" id="projectLinesGate"{% if line_count == 0 %} hidden{% endif %}>
+                <div class="fw-semibold mb-2">Large lists stay unloaded by default</div>
+                <div class="text-muted mb-3">
+                    This project has {{ line_count }} line{{ '' if line_count == 1 else 's' }}. Click below to fetch and render the table.
+                </div>
+                <button class="btn btn-outline-primary" id="loadProjectLinesGateBtn" type="button">Load project lines</button>
+            </div>
             <div class="table-responsive">
                 <table class="table table-sm table-striped mb-0">
                     <thead class="table-light">
@@ -297,55 +320,16 @@
                             <th scope="col">Linked List</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        {% if rows %}
-                            {% for row in rows %}
-                                {% set row_status = row.status or 'pending' %}
-                                <tr data-line-row
-                                    data-line-id="{{ row.project_line_id }}"
-                                    data-status="{{ row_status }}"
-                                    data-quoted="{{ 1 if row.is_quoted else 0 }}"
-                                    data-costed="{{ 1 if row.is_costed else 0 }}"
-                                    class="table-row-{{ row_status }}"
-                                    data-search="{{ (row.customer_part_number or '')|lower }}">
-                                    <td>
-                                        <input class="form-check-input project-line-checkbox" type="checkbox" value="{{ row.project_line_id }}">
-                                    </td>
-                                    <td>{{ row.line_number }}</td>
-                                    <td data-field="customer_part_number">
-                                        {{ row.customer_part_number or '-' }}
-                                    </td>
-                                    <td data-field="description"><span class="text-muted">-</span></td>
-                                    <td data-field="category"><span class="text-muted">-</span></td>
-                                    <td class="editable-cell" data-field="comment" data-line-id="{{ row.project_line_id }}"><span class="text-muted">-</span></td>
-                                    <td data-field="line_type"><span class="text-muted">-</span></td>
-                                    <td data-field="total_quantity"><span class="text-muted">-</span></td>
-                                    {% for year_index in range(1, max_usage_years + 1) %}
-                                        <td data-field="usage_year" data-year-index="{{ year_index }}"><span class="text-muted">-</span></td>
-                                    {% endfor %}
-                                    <td>
-                                        <span class="status-badge status-{{ 'yes' if row.is_quoted else 'no' }}" data-field="quoted_badge">
-                                            {{ 'Yes' if row.is_quoted else 'No' }}
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <span class="status-badge status-{{ 'yes' if row.is_costed else 'no' }}" data-field="costed_badge">
-                                            {{ 'Yes' if row.is_costed else 'No' }}
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <span class="status-badge status-{{ row_status }}" data-field="status_badge">{{ row_status|replace('_', ' ')|title }}</span>
-                                    </td>
-                                    <td data-field="linked_list">
-                                        <span class="text-muted">-</span>
-                                    </td>
-                                </tr>
-                            {% endfor %}
-                        {% else %}
-                            <tr>
-                                <td colspan="{{ 12 + max_usage_years }}" class="text-center text-muted py-4">No project parts added yet.</td>
-                            </tr>
-                        {% endif %}
+                    <tbody id="projectPartsTableBody">
+                        <tr id="projectPartsEmptyState">
+                            <td colspan="{{ 12 + max_usage_years }}" class="text-center text-muted py-4">
+                                {% if line_count == 0 %}
+                                    No project parts added yet.
+                                {% else %}
+                                    Lines are not loaded yet.
+                                {% endif %}
+                            </td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -397,12 +381,7 @@
                 <div class="mb-3">
                     <label for="categoryInput" class="form-label">Category</label>
                     <input type="text" id="categoryInput" class="form-control" list="categoryList" placeholder="Enter or select a category">
-                    <datalist id="categoryList">
-                        {% set categories = rows|map(attribute='category')|select|unique|sort %}
-                        {% for cat in categories %}
-                            <option value="{{ cat }}">
-                        {% endfor %}
-                    </datalist>
+                    <datalist id="categoryList"></datalist>
                     <div class="text-muted small mt-1">Type a new category or select from existing ones used in this project.</div>
                 </div>
                 <div class="text-muted small" id="setCategoryCount">0 lines will be updated.</div>
@@ -419,11 +398,11 @@
 {% block scripts %}
 <script>
     const searchInput = document.getElementById('projectPartsSearch');
-    const lineCheckboxes = Array.from(document.querySelectorAll('.project-line-checkbox'));
-    const rows = Array.from(document.querySelectorAll('[data-line-row]'));
-    const rowById = new Map(
-        rows.map((row) => [Number.parseInt(row.dataset.lineId, 10), row])
-    );
+    const projectPartsTableBody = document.getElementById('projectPartsTableBody');
+    const loadProjectLinesBtn = document.getElementById('loadProjectLinesBtn');
+    const loadProjectLinesGateBtn = document.getElementById('loadProjectLinesGateBtn');
+    const projectLinesGate = document.getElementById('projectLinesGate');
+    const categoryList = document.getElementById('categoryList');
     const selectedCount = document.getElementById('selectedPartsCount');
     const createBtn = document.getElementById('createPartsListBtn');
     const markNoBidBtn = document.getElementById('markNoBidBtn');
@@ -464,9 +443,133 @@
     const bulkPartsInput = document.getElementById('bulkPartsInput');
     const bulkAddBtn = document.getElementById('bulkAddBtn');
 
+    let lineCheckboxes = [];
+    let rows = [];
+    let rowById = new Map();
     let usageYearCount = Number.parseInt('{{ max_usage_years }}', 10) || 1;
     let currentStatusFilter = 'all';
     let activePrefixFilter = '';
+    let linesLoaded = {{ 'true' if line_count == 0 else 'false' }};
+
+    function refreshRowCollections() {
+        rows = Array.from(document.querySelectorAll('[data-line-row]'));
+        lineCheckboxes = Array.from(document.querySelectorAll('.project-line-checkbox'));
+        rowById = new Map(
+            rows.map((row) => [Number.parseInt(row.dataset.lineId, 10), row])
+        );
+        lineCheckboxes.forEach((checkbox) => {
+            checkbox.addEventListener('change', () => {
+                updateSelectedCount();
+                applyFilters();
+            });
+        });
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        }[char] || char));
+    }
+
+    function formatStatusLabel(status) {
+        return String(status || 'pending')
+            .replace('_', ' ')
+            .replace(/\b\w/g, (char) => char.toUpperCase());
+    }
+
+    function updateCategoryOptions() {
+        if (!categoryList) {
+            return;
+        }
+        const categories = Array.from(new Set(
+            rows
+                .map((row) => {
+                    const cell = row.querySelector('[data-field="category"]');
+                    return ((cell ? cell.textContent : '') || '').trim();
+                })
+                .filter(Boolean)
+        )).sort((a, b) => a.localeCompare(b));
+        categoryList.innerHTML = categories
+            .map((category) => `<option value="${escapeHtml(category)}"></option>`)
+            .join('');
+    }
+
+    function buildUsageCells(usage) {
+        const cells = [];
+        for (let yearIndex = 1; yearIndex <= usageYearCount; yearIndex += 1) {
+            const usageValue = usage.length >= yearIndex ? usage[yearIndex - 1] : '';
+            cells.push(`<td data-field="usage_year" data-year-index="${yearIndex}">${escapeHtml(usageValue ?? '')}</td>`);
+        }
+        return cells.join('');
+    }
+
+    function buildRowHtml(rowData) {
+        const rowStatus = rowData.status || 'pending';
+        const quoted = !!rowData.is_quoted;
+        const costed = !!rowData.is_costed;
+        const linkedCell = rowData.parts_list_id
+            ? `<a href="/parts-lists/${rowData.parts_list_id}" class="text-decoration-none">${escapeHtml(rowData.parts_list_name || `List #${rowData.parts_list_id}`)}</a>`
+            : '<span class="text-muted">-</span>';
+        const totalValue = rowData.total_quantity !== null && rowData.total_quantity !== undefined
+            ? rowData.total_quantity
+            : rowData.usage_total;
+        const searchValue = [
+            rowData.customer_part_number || '',
+            rowData.description || '',
+            rowData.category || '',
+            rowData.comment || '',
+            rowData.line_type || ''
+        ].join(' ').toLowerCase();
+
+        return `
+            <tr data-line-row
+                data-line-id="${rowData.project_line_id}"
+                data-status="${escapeHtml(rowStatus)}"
+                data-quoted="${quoted ? '1' : '0'}"
+                data-costed="${costed ? '1' : '0'}"
+                class="table-row-${escapeHtml(rowStatus)}"
+                data-search="${escapeHtml(searchValue)}">
+                <td><input class="form-check-input project-line-checkbox" type="checkbox" value="${rowData.project_line_id}"></td>
+                <td>${escapeHtml(rowData.line_number ?? '')}</td>
+                <td data-field="customer_part_number">${escapeHtml(rowData.customer_part_number || '')}</td>
+                <td data-field="description">${escapeHtml(rowData.description || '')}</td>
+                <td data-field="category">${escapeHtml(rowData.category || '')}</td>
+                <td class="editable-cell" data-field="comment" data-line-id="${rowData.project_line_id}">${escapeHtml(rowData.comment || '')}</td>
+                <td data-field="line_type">${escapeHtml(rowData.line_type || '')}</td>
+                <td data-field="total_quantity">${escapeHtml(totalValue ?? '')}</td>
+                ${buildUsageCells(rowData.usage_by_year || [])}
+                <td><span class="status-badge status-${quoted ? 'yes' : 'no'}" data-field="quoted_badge">${quoted ? 'Yes' : 'No'}</span></td>
+                <td><span class="status-badge status-${costed ? 'yes' : 'no'}" data-field="costed_badge">${costed ? 'Yes' : 'No'}</span></td>
+                <td><span class="status-badge status-${escapeHtml(rowStatus)}" data-field="status_badge">${escapeHtml(formatStatusLabel(rowStatus))}</span></td>
+                <td data-field="linked_list">${linkedCell}</td>
+            </tr>
+        `;
+    }
+
+    function renderTableRows(rowDataList) {
+        if (!projectPartsTableBody) {
+            return;
+        }
+
+        if (!rowDataList.length) {
+            projectPartsTableBody.innerHTML = `
+                <tr>
+                    <td colspan="{{ 12 + max_usage_years }}" class="text-center text-muted py-4">No project parts added yet.</td>
+                </tr>
+            `;
+        } else {
+            projectPartsTableBody.innerHTML = rowDataList.map((rowData) => buildRowHtml(rowData)).join('');
+        }
+
+        refreshRowCollections();
+        updateCategoryOptions();
+        updateSelectedCount();
+        applyFilters();
+    }
 
     function getVisibleRows() {
         return rows.filter((row) => !row.classList.contains('d-none'));
@@ -556,6 +659,14 @@
             return;
         }
 
+        if (!linesLoaded) {
+            prefixGroupSummary.textContent = 'Load the lines to calculate repeated part-number prefixes.';
+            activePrefixLabel.textContent = 'No prefix group selected';
+            clearPrefixFilterBtn.disabled = true;
+            prefixGroupList.innerHTML = '<div class="text-muted small">Prefix groups appear after the table is loaded.</div>';
+            return;
+        }
+
         const prefixLength = getPrefixLength();
         const matchingRows = getRowsMatchingBaseFilters();
         const groups = new Map();
@@ -612,6 +723,11 @@
     }
 
     function applyFilters() {
+        if (!linesLoaded) {
+            updateCreateButtonState();
+            renderPrefixGroups();
+            return;
+        }
         const prefixLength = getPrefixLength();
         const baseRows = new Set(getRowsMatchingBaseFilters());
 
@@ -728,47 +844,52 @@
     }
 
     // Editable comment cells
-    document.querySelectorAll('.editable-cell').forEach((cell) => {
-        cell.addEventListener('dblclick', function() {
-            if (cell.querySelector('input, textarea')) return;
+    document.addEventListener('dblclick', function(event) {
+        const cell = event.target.closest('.editable-cell');
+        if (!cell || cell.querySelector('input, textarea')) {
+            return;
+        }
 
-            const lineId = cell.dataset.lineId;
-            const field = cell.dataset.field;
-            const currentValue = cell.textContent.trim();
+        const lineId = cell.dataset.lineId;
+        const field = cell.dataset.field;
+        const currentValue = cell.textContent.trim();
 
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.value = currentValue;
-            input.className = 'form-control form-control-sm';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = currentValue;
+        input.className = 'form-control form-control-sm';
 
-            const originalContent = cell.innerHTML;
-            cell.innerHTML = '';
-            cell.appendChild(input);
-            input.focus();
-            input.select();
+        const originalContent = cell.innerHTML;
+        cell.innerHTML = '';
+        cell.appendChild(input);
+        input.focus();
+        input.select();
 
-            const save = async () => {
-                const newValue = input.value.trim();
-                cell.innerHTML = newValue || '';
-                if (newValue !== currentValue) {
-                    try {
-                        await updateLineField(lineId, field, newValue);
-                    } catch (err) {
-                        alert('Failed to save: ' + err.message);
-                        cell.innerHTML = originalContent;
+        const save = async () => {
+            const newValue = input.value.trim();
+            cell.textContent = newValue || '';
+            if (newValue !== currentValue) {
+                try {
+                    await updateLineField(lineId, field, newValue);
+                    const rowEl = cell.closest('[data-line-row]');
+                    if (rowEl) {
+                        updateRowSearch(rowEl);
                     }
-                }
-            };
-
-            input.addEventListener('blur', save);
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    input.blur();
-                } else if (e.key === 'Escape') {
+                } catch (err) {
+                    alert('Failed to save: ' + err.message);
                     cell.innerHTML = originalContent;
                 }
-            });
+            }
+        };
+
+        input.addEventListener('blur', save);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                input.blur();
+            } else if (e.key === 'Escape') {
+                cell.innerHTML = originalContent;
+            }
         });
     });
 
@@ -877,6 +998,7 @@
                     checkbox.checked = false;
                 }
             });
+            updateCategoryOptions();
             updateSelectedCount();
             applyFilters();
 
@@ -936,13 +1058,6 @@
             applyFilters();
         });
     }
-
-    lineCheckboxes.forEach((checkbox) => {
-        checkbox.addEventListener('change', () => {
-            updateSelectedCount();
-            applyFilters();
-        });
-    });
 
     if (selectVisibleBtn) {
         selectVisibleBtn.addEventListener('click', () => {
@@ -1189,99 +1304,54 @@
     }
 
     renderUsageInputs();
+    refreshRowCollections();
     updateSelectedCount();
     applyFilters();
 
     async function loadRowDetails() {
         try {
+            if (loadProjectLinesBtn) {
+                loadProjectLinesBtn.disabled = true;
+                loadProjectLinesBtn.textContent = 'Loading...';
+            }
+            if (loadProjectLinesGateBtn) {
+                loadProjectLinesGateBtn.disabled = true;
+                loadProjectLinesGateBtn.textContent = 'Loading...';
+            }
             const response = await fetch(`/projects/${projectId}/project-parts-list/lines/overview-data`);
             const data = await response.json();
             if (!response.ok || !data.success) {
                 throw new Error(data.message || 'Failed to load details');
             }
-
-            data.rows.forEach((rowData) => {
-                const rowEl = rowById.get(rowData.project_line_id);
-                if (!rowEl) {
-                    return;
-                }
-
-                const setCellText = (selector, value) => {
-                    const cell = rowEl.querySelector(selector);
-                    if (cell) {
-                        cell.textContent = value ?? '';
-                    }
-                };
-
-                setCellText('[data-field="customer_part_number"]', rowData.customer_part_number || '');
-                setCellText('[data-field="description"]', rowData.description || '');
-                setCellText('[data-field="category"]', rowData.category || '');
-                setCellText('[data-field="line_type"]', rowData.line_type || '');
-
-                const commentCell = rowEl.querySelector('[data-field="comment"]');
-                if (commentCell) {
-                    commentCell.textContent = rowData.comment || '';
-                }
-
-                const totalValue = rowData.total_quantity !== null && rowData.total_quantity !== undefined
-                    ? rowData.total_quantity
-                    : rowData.usage_total;
-                setCellText('[data-field="total_quantity"]', totalValue ?? '');
-
-                const usage = rowData.usage_by_year || [];
-                rowEl.querySelectorAll('[data-field="usage_year"]').forEach((cell) => {
-                    const yearIndex = Number.parseInt(cell.dataset.yearIndex, 10);
-                    const usageValue = usage.length >= yearIndex ? usage[yearIndex - 1] : '';
-                    cell.textContent = usageValue ?? '';
-                });
-
-                const quotedBadge = rowEl.querySelector('[data-field="quoted_badge"]');
-                if (quotedBadge) {
-                    const quoted = !!rowData.is_quoted;
-                    quotedBadge.textContent = quoted ? 'Yes' : 'No';
-                    quotedBadge.className = `status-badge status-${quoted ? 'yes' : 'no'}`;
-                }
-
-                const costedBadge = rowEl.querySelector('[data-field="costed_badge"]');
-                if (costedBadge) {
-                    const costed = !!rowData.is_costed;
-                    costedBadge.textContent = costed ? 'Yes' : 'No';
-                    costedBadge.className = `status-badge status-${costed ? 'yes' : 'no'}`;
-                }
-
-                const linkedCell = rowEl.querySelector('[data-field="linked_list"]');
-                if (linkedCell) {
-                    if (rowData.parts_list_id) {
-                        linkedCell.innerHTML = `<a href="/parts-lists/${rowData.parts_list_id}" class="text-decoration-none">${rowData.parts_list_name || `List #${rowData.parts_list_id}`}</a>`;
-                    } else {
-                        linkedCell.innerHTML = '<span class="text-muted">-</span>';
-                    }
-                }
-
-                rowEl.dataset.status = rowData.status || 'pending';
-                rowEl.dataset.quoted = rowData.is_quoted ? '1' : '0';
-                rowEl.dataset.costed = rowData.is_costed ? '1' : '0';
-                updateRowSearch(rowEl);
-                rowEl.classList.remove('table-row-pending', 'table-row-linked', 'table-row-no_bid', 'table-row-ignore');
-                rowEl.classList.add(`table-row-${rowEl.dataset.status}`);
-
-                const statusBadge = rowEl.querySelector('[data-field="status_badge"]');
-                if (statusBadge) {
-                    const statusLabel = (rowEl.dataset.status || 'pending').replace('_', ' ');
-                    statusBadge.textContent = statusLabel.charAt(0).toUpperCase() + statusLabel.slice(1);
-                    statusBadge.className = `status-badge status-${rowEl.dataset.status}`;
-                }
-            });
-
-            applyFilters();
+            linesLoaded = true;
+            renderTableRows(data.rows || []);
+            if (projectLinesGate) {
+                projectLinesGate.hidden = true;
+            }
         } catch (error) {
             console.error('Failed to load project parts list details:', error);
+            alert(error.message || 'Failed to load project parts.');
+        } finally {
+            if (loadProjectLinesBtn) {
+                loadProjectLinesBtn.disabled = linesLoaded || {{ 'true' if line_count == 0 else 'false' }};
+                loadProjectLinesBtn.textContent = linesLoaded ? 'Lines loaded' : 'Load lines';
+            }
+            if (loadProjectLinesGateBtn) {
+                loadProjectLinesGateBtn.disabled = linesLoaded;
+                loadProjectLinesGateBtn.textContent = linesLoaded ? 'Lines loaded' : 'Load project lines';
+            }
         }
     }
 
-    if (rows.length) {
-        loadRowDetails();
-    }
+    [loadProjectLinesBtn, loadProjectLinesGateBtn].forEach((button) => {
+        if (button) {
+            button.addEventListener('click', () => {
+                if (!linesLoaded) {
+                    loadRowDetails();
+                }
+            });
+        }
+    });
 
     const addPartsToggle = document.querySelector('[data-bs-target="#addProjectPartsBody"]');
     const addPartsBody = document.getElementById('addProjectPartsBody');
