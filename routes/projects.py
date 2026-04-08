@@ -280,11 +280,43 @@ def _qpl_supplier_mapping_table_exists():
     return row is not None
 
 
+def _qpl_prefix_instruction_table_exists():
+    row = db_execute(
+        """
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name = ?
+        LIMIT 1
+        """,
+        ('qpl_supplier_prefix_instructions',),
+        fetch='one',
+    )
+    return row is not None
+
+
 def _fetch_project_qpl_mapped_rows(project_id):
     if not _qpl_supplier_mapping_table_exists():
         return []
 
     manufacturer_name_normalized_sql = _manufacturer_name_normalized_sql('ma.manufacturer_name')
+
+    has_instruction_table = _qpl_prefix_instruction_table_exists()
+    instruction_join_sql = ''
+    instruction_select_sql = ", '' AS instruction_text"
+    instruction_prefix_sql = ''
+    params = [project_id]
+
+    if has_instruction_table:
+        instruction_select_sql = ", COALESCE(instr.instruction_text, '') AS instruction_text"
+        instruction_prefix_sql = "AND instr.prefix_length = 6"
+        instruction_join_sql = f"""
+        LEFT JOIN qpl_supplier_prefix_instructions instr
+            ON instr.supplier_id = qm.supplier_id
+           AND instr.manufacturer_name_normalized = {manufacturer_name_normalized_sql.replace('ma.manufacturer_name', 'qm.qpl_manufacturer_name')}
+           AND instr.prefix = SUBSTR(UPPER(TRIM(COALESCE(pl.base_part_number, ''))), 1, 6)
+           {instruction_prefix_sql}
+        """
 
     rows = db_execute(
         f"""
@@ -332,12 +364,25 @@ def _fetch_project_qpl_mapped_rows(project_id):
             qm.supplier_id AS mapped_supplier_id,
             qm.mapped_supplier_name,
             qm.mapped_supplier_contact_name,
-            qm.mapped_supplier_contact_email
+            qm.mapped_supplier_contact_email,
+            COALESCE(stock.total_available_stock, 0) AS total_available_stock
+            {instruction_select_sql}
         FROM project_lines pl
         JOIN qpl_mapped qm ON qm.normalized_base_part_number = pl.normalized_base_part_number
+        LEFT JOIN (
+            SELECT
+                UPPER(TRIM(base_part_number)) AS normalized_base_part_number,
+                SUM(COALESCE(available_quantity, 0)) AS total_available_stock
+            FROM stock_movements
+            WHERE movement_type = 'IN'
+              AND COALESCE(available_quantity, 0) > 0
+              AND TRIM(COALESCE(base_part_number, '')) <> ''
+            GROUP BY UPPER(TRIM(base_part_number))
+        ) stock ON stock.normalized_base_part_number = pl.normalized_base_part_number
+        {instruction_join_sql}
         ORDER BY pl.parts_list_id, pl.line_number, pl.parts_list_line_id, qm.qpl_manufacturer_name
         """,
-        (project_id,),
+        tuple(params),
         fetch='all',
     ) or []
     return [dict(row) for row in rows]
