@@ -123,6 +123,7 @@ function buildBasicResultsFromLines(lines) {
         line_id: line.id || line.line_id || null,
         line_number: line.line_number || index + 1,
         input_part_number: line.customer_part_number || line.part_number || '',
+        revision: line.revision || '',
         base_part_number: line.base_part_number || null,
         quantity: line.quantity || 1,
         found: true,
@@ -451,6 +452,9 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
                     ${deleteLineButton}
                 </div>
             </div>
+        </td>
+        <td style="width: 90px; min-width: 90px; text-align: center;">
+            ${escapeHtml(part.revision || '-')}
         </td>
         <td style="width: 110px; min-width: 110px; text-align: center; cursor: ${!isSubLine && alternativesDisplay !== '-' ? 'pointer' : 'default'};"
             class="${!isSubLine && alternativesDisplay !== '-' ? 'clickable-cell' : ''}"

@@ -1911,6 +1911,7 @@ def customer_quote_simple(list_id):
                       pll.parent_line_id,
                       pll.line_type,
                       pll.customer_part_number,
+                      pll.revision,
                       parent.customer_part_number as parent_customer_part_number,
                       pll.base_part_number,
                       pll.quantity,

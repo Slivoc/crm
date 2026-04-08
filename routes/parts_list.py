@@ -640,6 +640,7 @@ def get_supplier_quote_details(list_id, quote_id):
                 sql.line_notes,
                 pll.customer_part_number,
                 pll.base_part_number,
+                pll.revision,
                 pll.quantity as requested_quantity,
                 pll.line_number,
                 -- Check if this line has other quotes
@@ -810,15 +811,16 @@ def save_supplier_quote_lines(list_id, quote_id):
 
                             new_row = _execute_with_cursor(cur, """
                                 INSERT INTO parts_list_lines
-                                (parts_list_id, line_number, customer_part_number, base_part_number, description, quantity,
+                                (parts_list_id, line_number, customer_part_number, base_part_number, revision, description, quantity,
                                  parent_line_id, line_type, customer_notes, internal_notes)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 RETURNING id
                             """, (
                                 list_id,
                                 next_line_number,
                                 original_line['customer_part_number'],
                                 original_line['base_part_number'],
+                                original_line.get('revision'),
                                 original_line['description'],
                                 new_qty,
                                 parent_line_id,
@@ -4430,7 +4432,7 @@ def update_line(list_id, line_id):
         allowed = {
             'line_number', 'customer_part_number', 'base_part_number', 'quantity',
             'chosen_supplier_id', 'chosen_cost', 'chosen_price', 'chosen_currency_id', 'chosen_lead_days', 'chosen_qty',
-            'chosen_source_type', 'chosen_source_reference', 'customer_notes', 'internal_notes'
+            'chosen_source_type', 'chosen_source_reference', 'customer_notes', 'internal_notes', 'revision'
         }
         fields = []
         params = []
@@ -5831,7 +5833,7 @@ def duplicate_parts_list(list_id):
 
             # Copy lines (preserve parent/child links)
             lines = _execute_with_cursor(cur, """
-                SELECT id, line_number, customer_part_number, base_part_number, description, quantity,
+                SELECT id, line_number, customer_part_number, base_part_number, revision, description, quantity,
                        chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days,
                        customer_notes, internal_notes, parent_line_id, line_type
                 FROM parts_list_lines
@@ -5845,13 +5847,13 @@ def duplicate_parts_list(list_id):
             for ln in lines:
                 new_line_row = _execute_with_cursor(cur, """
                     INSERT INTO parts_list_lines
-                    (parts_list_id, line_number, customer_part_number, base_part_number, description, quantity,
+                    (parts_list_id, line_number, customer_part_number, base_part_number, revision, description, quantity,
                      chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days,
                      customer_notes, internal_notes, parent_line_id, line_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                     RETURNING id
                 """, (
-                    new_id, ln['line_number'], ln['customer_part_number'], ln['base_part_number'], ln['description'],
+                    new_id, ln['line_number'], ln['customer_part_number'], ln['base_part_number'], ln.get('revision'), ln['description'],
                     ln['quantity'],
                     ln['chosen_supplier_id'], ln['chosen_cost'], ln['chosen_price'], ln['chosen_currency_id'],
                     ln['chosen_lead_days'], ln['customer_notes'], ln['internal_notes'],
@@ -5957,13 +5959,14 @@ def add_lines(list_id):
                     next_line_number = int(last) + 1
 
                 description = (item.get('description') or '').strip() or None
+                revision = (item.get('revision') or '').strip() or None
                 row = _execute_with_cursor(cur, """
                     INSERT INTO parts_list_lines
-                    (parts_list_id, line_number, customer_part_number, base_part_number, description, quantity,
+                    (parts_list_id, line_number, customer_part_number, base_part_number, revision, description, quantity,
                      parent_line_id, line_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING id
-                """, (list_id, next_line_number, cpn, bpn, description, qty, parent_line_id, line_type)).fetchone()
+                """, (list_id, next_line_number, cpn, bpn, revision, description, qty, parent_line_id, line_type)).fetchone()
 
                 if row:
                     created_line_ids.append(row['id'] if isinstance(row, dict) else row[0])
@@ -6062,15 +6065,16 @@ def duplicate_line(list_id, line_id):
 
             new_row = _execute_with_cursor(cur, """
                 INSERT INTO parts_list_lines
-                (parts_list_id, line_number, customer_part_number, base_part_number, description, quantity,
+                (parts_list_id, line_number, customer_part_number, base_part_number, revision, description, quantity,
                  parent_line_id, line_type, customer_notes, internal_notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
             """, (
                 list_id,
                 next_line_number,
                 line['customer_part_number'],
                 line['base_part_number'],
+                line.get('revision'),
                 line['description'],
                 line['quantity'],
                 parent_line_id,
@@ -6169,11 +6173,12 @@ def replace_all_lines(list_id):
                 qty = int(item.get('quantity') or 1)
                 bpn = item.get('base_part_number') or create_base_part_number(cpn)
                 description = (item.get('description') or '').strip() or None
+                revision = (item.get('revision') or '').strip() or None
                 _execute_with_cursor(cur, """
                     INSERT INTO parts_list_lines
-                    (parts_list_id, line_number, customer_part_number, base_part_number, description, quantity)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (list_id, ln, cpn, bpn, description, qty))
+                    (parts_list_id, line_number, customer_part_number, base_part_number, revision, description, quantity)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (list_id, ln, cpn, bpn, revision, description, qty))
                 ln += 1
 
         return jsonify(success=True, count=ln - 1)
@@ -6230,11 +6235,11 @@ def save_parts_list():
             created_line_ids = []
             insert_sql = """
                 INSERT INTO parts_list_lines (
-                    parts_list_id, line_number, customer_part_number, base_part_number, description, quantity,
+                    parts_list_id, line_number, customer_part_number, base_part_number, revision, description, quantity,
                     chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days, chosen_qty,
                     customer_notes, internal_notes, date_created, date_modified
                 )
-                VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 RETURNING id
             """
             for line in lines:
@@ -6250,6 +6255,7 @@ def save_parts_list():
 
                 quantity = int(line.get('quantity') or 1)
                 description = (line.get('description') or '').strip() or None
+                revision = (line.get('revision') or '').strip() or None
 
                 # Prepopulate chosen_qty with quantity if chosen_qty is not provided
                 chosen_qty = line.get('chosen_qty')
@@ -6257,7 +6263,7 @@ def save_parts_list():
                     chosen_qty = quantity
 
                 row = _execute_with_cursor(cur, insert_sql, (
-                    parts_list_id, line_number, customer_part_number, base_part_number, description, quantity, chosen_qty
+                    parts_list_id, line_number, customer_part_number, base_part_number, revision, description, quantity, chosen_qty
                 )).fetchone()
 
                 if row:
@@ -7704,6 +7710,7 @@ def get_parts_list_lines(list_id):
                     pll.line_number,
                     pll.customer_part_number,
                     pll.base_part_number,
+                    pll.revision,
                     pll.quantity,
                     COALESCE((
                         SELECT 1 FROM parts_list_line_supplier_emails plse
@@ -7726,6 +7733,7 @@ def get_parts_list_lines(list_id):
                     pll.line_number,
                     pll.customer_part_number,
                     pll.base_part_number,
+                    pll.revision,
                     pll.quantity,
                     pll.chosen_cost,
                     s.name as chosen_supplier_name,
@@ -7768,6 +7776,7 @@ def get_parts_list_lines(list_id):
                     pll.line_number,
                     pll.customer_part_number,
                     pll.base_part_number,
+                    pll.revision,
                     pll.quantity,
                     0 AS quote_requested
                 FROM parts_list_lines pll
