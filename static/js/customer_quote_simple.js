@@ -479,6 +479,7 @@ document.addEventListener('DOMContentLoaded', function() {
             displayInput.classList.add('changed-input');
             cached.lineData.display_part_number = supplierPN;
             markUnsaved();
+            updateEmailQuoteWarnings();
             return;
         }
 
@@ -1317,9 +1318,26 @@ document.addEventListener('DOMContentLoaded', function() {
         return lineData?.chosen_source_type === 'stock';
     }
 
+    function hasPendingSupplierPartNumberAction(lineData, elements) {
+        const supplierQuotedPartNumber = (lineData?.supplier_quoted_part_number || '').toString().trim();
+        if (!supplierQuotedPartNumber) return false;
+
+        const requestedPartNumber = getRequestedPartNumber(lineData);
+        if (!requestedPartNumber || supplierQuotedPartNumber === requestedPartNumber) return false;
+
+        const displayPartNumber = (
+            elements?.displayPartNumber?.value ||
+            lineData?.display_part_number ||
+            requestedPartNumber
+        ).toString().trim();
+
+        return displayPartNumber !== supplierQuotedPartNumber;
+    }
+
     function getEmailQuoteMissingFields() {
         const missingMarginLines = [];
         const missingShippingLines = [];
+        const pendingSupplierPnLines = [];
 
         document.querySelectorAll('.quote-row').forEach(row => {
             const cached = rowCache.get(row);
@@ -1338,11 +1356,15 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!isStockLine(lineData) && isMissingPositiveValue(elements.deliveryPerLine?.value)) {
                 missingShippingLines.push(lineNumber);
             }
+            if (hasPendingSupplierPartNumberAction(lineData, elements)) {
+                pendingSupplierPnLines.push(lineNumber);
+            }
         });
 
         return {
             missingMarginLines,
-            missingShippingLines
+            missingShippingLines,
+            pendingSupplierPnLines
         };
     }
 
@@ -1364,9 +1386,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const ackRow = document.getElementById('emailQuoteWarningAckRow');
         const ackCheckbox = document.getElementById('emailQuoteWarningAck');
 
-        const { missingMarginLines, missingShippingLines } = getEmailQuoteMissingFields();
-        const warningsKey = `${missingMarginLines.join(',')}|${missingShippingLines.join(',')}`;
-        if (missingMarginLines.length === 0 && missingShippingLines.length === 0) {
+        const { missingMarginLines, missingShippingLines, pendingSupplierPnLines } = getEmailQuoteMissingFields();
+        const warningsKey = `${missingMarginLines.join(',')}|${missingShippingLines.join(',')}|${pendingSupplierPnLines.join(',')}`;
+        if (missingMarginLines.length === 0 && missingShippingLines.length === 0 && pendingSupplierPnLines.length === 0) {
             warningBox.classList.add('d-none');
             warningBox.innerHTML = '';
             if (ackRow) ackRow.classList.add('d-none');
@@ -1389,6 +1411,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (missingShippingLines.length) {
             html += `<li>Shipping missing on line(s): ${missingShippingLines.join(', ')}</li>`;
+        }
+        if (pendingSupplierPnLines.length) {
+            html += `<li>Use supplier P/N pending on line(s): ${pendingSupplierPnLines.join(', ')}</li>`;
         }
         html += '</ul>';
         warningBox.innerHTML = html;
