@@ -56,6 +56,12 @@
         <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
             <strong>Parts with QPL Approved Manufacturer Mapped to Supplier</strong>
             <div class="d-flex align-items-center gap-2">
+                <select id="qplSupplierFilter" class="form-select form-select-sm">
+                    <option value="">All suppliers</option>
+                    {% for supplier_name in rows|map(attribute='mapped_supplier_name')|select|unique|sort %}
+                        <option value="{{ supplier_name }}">{{ supplier_name }}</option>
+                    {% endfor %}
+                </select>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="qplSelectAllBtn">Select All</button>
                 <button type="button" class="btn btn-sm btn-success" id="qplEmailSelectedBtn">
                     <i class="bi bi-envelope-at me-1"></i>Email Selected (System)
@@ -76,20 +82,26 @@
                             <th>Customer PN</th>
                             <th>Base PN</th>
                             <th>Description</th>
-                            <th>Qty</th>
+                            <th style="min-width: 100px;">Qty to Email</th>
+                            <th>In Stock</th>
                             <th>QPL Manufacturer</th>
+                            <th>Instruction</th>
                             <th>Mapped Supplier</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% if rows %}
                             {% for row in rows %}
-                                <tr>
+                                <tr
+                                    data-row-supplier="{{ row.mapped_supplier_name or '' }}"
+                                    data-row-id="qpl-row-{{ row.parts_list_line_id }}-{{ loop.index }}"
+                                >
                                     <td class="text-center">
                                         {% if row.mapped_supplier_id and row.mapped_supplier_contact_email and row.parts_list_line_id %}
                                             <input
                                                 type="checkbox"
                                                 class="form-check-input qpl-email-checkbox"
+                                                data-row-id="qpl-row-{{ row.parts_list_line_id }}-{{ loop.index }}"
                                                 data-parts-list-id="{{ row.parts_list_id }}"
                                                 data-parts-list-line-id="{{ row.parts_list_line_id }}"
                                                 data-supplier-id="{{ row.mapped_supplier_id }}"
@@ -111,8 +123,18 @@
                                     <td>{{ row.customer_part_number }}</td>
                                     <td>{{ row.base_part_number }}</td>
                                     <td>{{ row.description }}</td>
-                                    <td>{{ row.requested_qty }}</td>
+                                    <td>
+                                        <input
+                                            type="number"
+                                            class="form-control form-control-sm qpl-qty-input"
+                                            min="1"
+                                            step="1"
+                                            value="{{ row.requested_qty or 1 }}"
+                                        />
+                                    </td>
+                                    <td>{{ row.total_available_stock or 0 }}</td>
                                     <td>{{ row.qpl_manufacturer_name }}</td>
+                                    <td class="small">{{ row.instruction_text or '' }}</td>
                                     <td>
                                         {% if row.mapped_supplier_id %}
                                             <a href="{{ url_for('suppliers.edit_supplier', supplier_id=row.mapped_supplier_id) }}">
@@ -129,7 +151,7 @@
                             {% endfor %}
                         {% else %}
                             <tr>
-                                <td colspan="10" class="text-center text-muted py-4">No mapped QPL manufacturer matches found for this project.</td>
+                                <td colspan="12" class="text-center text-muted py-4">No mapped QPL manufacturer matches found for this project.</td>
                             </tr>
                         {% endif %}
                     </tbody>
@@ -146,8 +168,21 @@
     const selectAllCheckbox = document.getElementById('qplSelectAllCheckbox');
     const selectAllBtn = document.getElementById('qplSelectAllBtn');
     const emailSelectedBtn = document.getElementById('qplEmailSelectedBtn');
+    const supplierFilter = document.getElementById('qplSupplierFilter');
 
-    const getEligibleCheckboxes = () => Array.from(document.querySelectorAll('.qpl-email-checkbox'));
+    const getEligibleCheckboxes = () => Array.from(document.querySelectorAll('.qpl-email-checkbox')).filter(cb => {
+        const row = cb.closest('tr');
+        return row && row.style.display !== 'none';
+    });
+
+    function applySupplierFilter() {
+        const selected = (supplierFilter?.value || '').trim();
+        document.querySelectorAll('tbody tr[data-row-supplier]').forEach(row => {
+            const rowSupplier = (row.dataset.rowSupplier || '').trim();
+            row.style.display = (!selected || rowSupplier === selected) ? '' : 'none';
+        });
+        syncSelectAll();
+    }
 
     const syncSelectAll = () => {
         const checkboxes = getEligibleCheckboxes();
@@ -177,6 +212,11 @@
     document.querySelectorAll('.qpl-email-checkbox').forEach(cb => {
         cb.addEventListener('change', syncSelectAll);
     });
+
+    if (supplierFilter) {
+        supplierFilter.addEventListener('change', applySupplierFilter);
+    }
+    applySupplierFilter();
     syncSelectAll();
 
     async function generateSupplierEmailPayload(supplierData) {
@@ -247,7 +287,12 @@
                 grouped[key].parts.push({
                     line_id: Number(cb.dataset.partsListLineId),
                     part_number: cb.dataset.partNumber || '',
-                    quantity: Number(cb.dataset.quantity || '1') || 1
+                    quantity: (() => {
+                        const row = document.querySelector(`tr[data-row-id="${cb.dataset.rowId}"]`);
+                        const qtyInput = row ? row.querySelector('.qpl-qty-input') : null;
+                        const parsed = Number(qtyInput?.value || cb.dataset.quantity || '1');
+                        return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+                    })()
                 });
             });
 

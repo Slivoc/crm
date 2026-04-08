@@ -921,6 +921,7 @@ function initializeEmptyQuoteLines(supplierId = null) {
                     parts_list_line_id: line.id,
                     line_number: line.line_number,
                     customer_part_number: line.customer_part_number,
+                    revision: line.revision || '',
                     requested_quantity: line.quantity,
                     quoted_part_number: line.customer_part_number,
                     quantity_quoted: line.quantity,
@@ -956,6 +957,7 @@ function initializeQuoteLinesTable(lines) {
     const tableData = quoteLinesData.map(line => [
         line.line_number,
         line.customer_part_number,
+        line.revision || '',
         line.requested_quantity,
         line.quoted_part_number || line.customer_part_number,
         line.manufacturer || '',
@@ -971,7 +973,7 @@ function initializeQuoteLinesTable(lines) {
         line.line_notes,
         line.other_quotes_count || 0,
         !!line.quote_requested,
-        false  // split_line - column 17
+        false  // split_line - column 18
     ]);
 
     quoteLinesTable = new Handsontable(container, {
@@ -979,6 +981,7 @@ function initializeQuoteLinesTable(lines) {
         colHeaders: [
             '#',
             'Our Part #',
+            'Rev',
             'Req Qty',
             'Quoted Part #',
             'Manufacturer',
@@ -999,29 +1002,33 @@ function initializeQuoteLinesTable(lines) {
         columns: [
             { data: 0, type: 'numeric', readOnly: true, className: 'htCenter htMiddle' },
             { data: 1, type: 'text', readOnly: true },
-            { data: 2, type: 'numeric', readOnly: true, className: 'htCenter' },
-            { data: 3, type: 'text' },
+            { data: 2, type: 'text', readOnly: true, className: 'htCenter' },
+            { data: 3, type: 'numeric', readOnly: true, className: 'htCenter' },
             { data: 4, type: 'text' },
-            { data: 5, type: 'numeric' },
+            { data: 5, type: 'text' },
             { data: 6, type: 'numeric' },
             { data: 7, type: 'numeric' },
             { data: 8, type: 'numeric' },
-            { data: 9, type: 'numeric', numericFormat: { pattern: '0,0.00' } },
-            { data: 10, type: 'numeric' },
-            { data: 11, type: 'text' },
+            { data: 9, type: 'numeric' },
+            { data: 10, type: 'numeric', numericFormat: { pattern: '0,0.00' } },
+            { data: 11, type: 'numeric' },
             { data: 12, type: 'text' },
             {
                 data: 13,
+                type: 'text'
+            },
+            {
+                data: 14,
                 type: 'text',
                 renderer: noBidCheckboxRenderer,
                 readOnly: false,
                 className: 'htCenter'
             },
-            { data: 14, type: 'text' },
-            { data: 15, type: 'numeric', readOnly: true, className: 'htCenter' },
-            { data: 16, type: 'checkbox', readOnly: true },
+            { data: 15, type: 'text' },
+            { data: 16, type: 'numeric', readOnly: true, className: 'htCenter' },
+            { data: 17, type: 'checkbox', readOnly: true },
             {
-                data: 17,
+                data: 18,
                 type: 'text',
                 renderer: splitLineCheckboxRenderer,
                 readOnly: false,
@@ -1037,7 +1044,7 @@ function initializeQuoteLinesTable(lines) {
         filters: true,
         dropdownMenu: true,
         hiddenColumns: {
-            columns: [16],
+            columns: [17],
             indicators: false
         },
         hiddenRows: {
@@ -1210,18 +1217,18 @@ function applyExtractedDataToTable(extractedLines) {
             );
 
             quoteLinesTable.setDataAtCell([
-                [bestIndex, 3, extracted.part_number],
-                [bestIndex, 4, extracted.manufacturer || ''],
-                [bestIndex, 5, extracted.quantity],
-                [bestIndex, 6, extracted.qty_available],
-                [bestIndex, 7, extracted.purchase_increment],
-                [bestIndex, 8, extracted.moq],
-                [bestIndex, 9, extracted.price],
-                [bestIndex, 10, extracted.lead_time_days],
-                [bestIndex, 11, extracted.condition],
-                [bestIndex, 12, extracted.certifications],
-                [bestIndex, 13, !!extracted.is_no_bid],
-                [bestIndex, 14, extracted.notes]
+                [bestIndex, 4, extracted.part_number],
+                [bestIndex, 5, extracted.manufacturer || ''],
+                [bestIndex, 6, extracted.quantity],
+                [bestIndex, 7, extracted.qty_available],
+                [bestIndex, 8, extracted.purchase_increment],
+                [bestIndex, 9, extracted.moq],
+                [bestIndex, 10, extracted.price],
+                [bestIndex, 11, extracted.lead_time_days],
+                [bestIndex, 12, extracted.condition],
+                [bestIndex, 13, extracted.certifications],
+                [bestIndex, 14, !!extracted.is_no_bid],
+                [bestIndex, 15, extracted.notes]
             ]);
         } else {
             console.warn(`No strong match for extracted PN "${matchPN}", bestScore=${bestScore.toFixed(2)}`);
@@ -1337,19 +1344,19 @@ function saveQuoteLines(quoteId) {
 
     const lines = quoteLinesData.map((line, index) => ({
         parts_list_line_id: line.parts_list_line_id,
-        quoted_part_number: tableData[index][3],
-        manufacturer: tableData[index][4],
-        quantity_quoted: tableData[index][5],
-        qty_available: tableData[index][6],
-        purchase_increment: tableData[index][7],
-        moq: tableData[index][8],
-        unit_price: tableData[index][9],
-        lead_time_days: tableData[index][10],
-        condition_code: tableData[index][11],
-        certifications: tableData[index][12],
-        is_no_bid: !!tableData[index][13],
-        line_notes: tableData[index][14],
-        split_line: !!tableData[index][17]  // New: split line flag
+        quoted_part_number: tableData[index][4],
+        manufacturer: tableData[index][5],
+        quantity_quoted: tableData[index][6],
+        qty_available: tableData[index][7],
+        purchase_increment: tableData[index][8],
+        moq: tableData[index][9],
+        unit_price: tableData[index][10],
+        lead_time_days: tableData[index][11],
+        condition_code: tableData[index][12],
+        certifications: tableData[index][13],
+        is_no_bid: !!tableData[index][14],
+        line_notes: tableData[index][15],
+        split_line: !!tableData[index][18]  // New: split line flag
     }));
 
     return fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/supplier-quotes/${quoteId}/lines/save`, {

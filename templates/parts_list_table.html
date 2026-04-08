@@ -483,6 +483,7 @@ function buildColumns() {
         { data: 'selected', type: 'checkbox', width: 40, className: 'htCenter htMiddle' },
         { data: 'line_number', type: 'numeric', width: 70, readOnly: true, className: 'htCenter' },
         { data: 'part_number', type: 'text', width: 180, readOnly: false },
+        { data: 'revision', type: 'text', width: 90, readOnly: false },
         { data: 'base_part_number', type: 'text', width: 180, readOnly: false },
         {
             data: 'qpl_approval_count',
@@ -546,7 +547,7 @@ function buildColumns() {
 
 function buildNestedHeaders() {
     const topHeaders = [
-        { label: '', colspan: 11 }
+        { label: '', colspan: 12 }
     ];
 
     supplierColumns.forEach(supplier => {
@@ -563,6 +564,7 @@ function buildNestedHeaders() {
         '<input type="checkbox" id="partsListSelectAll">',
         'Line #',
         'Part Number',
+        'Revision',
         'Base Part',
         'QPL',
         'QPL Approvals',
@@ -654,6 +656,7 @@ document.addEventListener('DOMContentLoaded', function() {
         line_number: line.line_number,
         selected: false,
         part_number: line.customer_part_number || '',
+        revision: line.revision || '',
         base_part_number: line.base_part_number || '',
         qpl_approval_count: line.qpl_approval_count || 0,
         qpl_manufacturers: line.qpl_manufacturers || [],
@@ -766,6 +769,7 @@ document.addEventListener('DOMContentLoaded', function() {
             line_number: currentRowCount + 1,
             selected: false,
             part_number: '',
+            revision: '',
             base_part_number: '',
             qpl_approval_count: 0,
             qpl_manufacturers: [],
@@ -1309,6 +1313,7 @@ function saveAllChanges() {
                 body: JSON.stringify({
                     quantity: row.quantity,
                     customer_part_number: row.part_number,
+                    revision: row.revision,
                     base_part_number: row.base_part_number,
                     chosen_supplier_id: row.chosen_supplier_id,
                     chosen_cost: row.chosen_cost,
@@ -1340,6 +1345,7 @@ function saveAllChanges() {
                 body: JSON.stringify({
                     lines: [{
                         customer_part_number: row.part_number,
+                        revision: row.revision,
                         base_part_number: row.base_part_number,
                         quantity: row.quantity
                     }]
