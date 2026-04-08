@@ -957,10 +957,10 @@ function initializeQuoteLinesTable(lines) {
     const tableData = quoteLinesData.map(line => [
         line.line_number,
         line.customer_part_number,
-        line.revision || '',
         line.requested_quantity,
         line.quoted_part_number || line.customer_part_number,
         line.manufacturer || '',
+        line.revision || '',
         line.quantity_quoted,
         line.qty_available,
         line.purchase_increment,
@@ -981,10 +981,10 @@ function initializeQuoteLinesTable(lines) {
         colHeaders: [
             '#',
             'Our Part #',
-            'Rev',
             'Req Qty',
             'Quoted Part #',
             'Manufacturer',
+            'Rev',
             'Qty Quoted',
             'Qty Avail',
             'Increment',
@@ -1002,10 +1002,10 @@ function initializeQuoteLinesTable(lines) {
         columns: [
             { data: 0, type: 'numeric', readOnly: true, className: 'htCenter htMiddle' },
             { data: 1, type: 'text', readOnly: true },
-            { data: 2, type: 'text', readOnly: true, className: 'htCenter' },
-            { data: 3, type: 'numeric', readOnly: true, className: 'htCenter' },
+            { data: 2, type: 'numeric', readOnly: true, className: 'htCenter' },
+            { data: 3, type: 'text' },
             { data: 4, type: 'text' },
-            { data: 5, type: 'text' },
+            { data: 5, type: 'text', readOnly: true, className: 'htCenter' },
             { data: 6, type: 'numeric' },
             { data: 7, type: 'numeric' },
             { data: 8, type: 'numeric' },
@@ -1075,7 +1075,7 @@ function initializeQuoteLinesTable(lines) {
                 }
             }
             // Add tooltip to Split column header
-            if (col === 17) {
+            if (col === 18) {
                 TH.title = 'Check to create a new line (e.g., 1.1, 1.2) for this partial quote';
             }
         },
@@ -1088,17 +1088,17 @@ function initializeQuoteLinesTable(lines) {
             }
 
             // Other quotes warning
-            if (col === 15 && this.instance.getDataAtCell(row, col) > 0) {
+            if (col === 16 && this.instance.getDataAtCell(row, col) > 0) {
                 cellProperties.className = ((cellProperties.className || '') + ' bg-warning').trim();
             }
 
             // Split line indicator - highlight the row if split is checked
-            if (this.instance.getDataAtCell(row, 17) === true) {
+            if (this.instance.getDataAtCell(row, 18) === true) {
                 cellProperties.className = ((cellProperties.className || '') + ' bg-success bg-opacity-25').trim();
             }
 
             // No-bid styling (takes precedence)
-            if (this.instance.getDataAtCell(row, 13) === true) {
+            if (this.instance.getDataAtCell(row, 14) === true) {
                 cellProperties.className = 'bg-secondary text-white';
             }
 
@@ -1217,8 +1217,8 @@ function applyExtractedDataToTable(extractedLines) {
             );
 
             quoteLinesTable.setDataAtCell([
-                [bestIndex, 4, extracted.part_number],
-                [bestIndex, 5, extracted.manufacturer || ''],
+                [bestIndex, 3, extracted.part_number],
+                [bestIndex, 4, extracted.manufacturer || ''],
                 [bestIndex, 6, extracted.quantity],
                 [bestIndex, 7, extracted.qty_available],
                 [bestIndex, 8, extracted.purchase_increment],
@@ -1344,8 +1344,8 @@ function saveQuoteLines(quoteId) {
 
     const lines = quoteLinesData.map((line, index) => ({
         parts_list_line_id: line.parts_list_line_id,
-        quoted_part_number: tableData[index][4],
-        manufacturer: tableData[index][5],
+        quoted_part_number: tableData[index][3],
+        manufacturer: tableData[index][4],
         quantity_quoted: tableData[index][6],
         qty_available: tableData[index][7],
         purchase_increment: tableData[index][8],
