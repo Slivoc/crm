@@ -1203,8 +1203,13 @@ input:-webkit-autofill {
                                         <li>
                                             <a class="dropdown-item d-flex align-items-center justify-content-between"
                                                href="{{ url_for('parts_list.view_parts_list', list_id=pinned_list.id) }}">
-                                                <span class="text-truncate me-2" style="max-width: 240px;">
-                                                    {{ pinned_list.name }}
+                                                <span class="me-2" style="max-width: 280px;">
+                                                    <span class="d-block text-truncate" style="max-width: 280px;">
+                                                        {{ pinned_list.name }}
+                                                    </span>
+                                                    <small class="text-muted d-block">
+                                                        {{ pinned_list.status_name }} • £{{ "{:,.2f}".format((pinned_list.quoted_value_gbp or 0)|float) }}
+                                                    </small>
                                                 </span>
                                                 <small class="text-muted">#{{ pinned_list.id }}</small>
                                             </a>

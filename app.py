@@ -366,9 +366,25 @@ def inject_pinned_parts_lists():
         """
         SELECT pl.id,
                pl.name,
-               COALESCE(c.name, 'Unassigned Customer') AS customer_name
+               COALESCE(c.name, 'Unassigned Customer') AS customer_name,
+               COALESCE(pls.name, 'Unknown') AS status_name,
+               (
+                   SELECT COALESCE(SUM(
+                       CASE
+                           WHEN cql.quoted_status = 'quoted'
+                                AND COALESCE(cql.is_no_bid::int, 0) = 0
+                                AND cql.quote_price_gbp > 0
+                           THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                           ELSE 0
+                       END
+                   ), 0)
+                   FROM parts_list_lines pll
+                   LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                   WHERE pll.parts_list_id = pl.id
+               ) AS quoted_value_gbp
         FROM parts_lists pl
         LEFT JOIN customers c ON c.id = pl.customer_id
+        LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
         WHERE COALESCE(pl.is_pinned, FALSE) = TRUE
           AND pl.salesperson_id = ?
         ORDER BY COALESCE(c.name, 'Unassigned Customer') ASC, pl.date_modified DESC, pl.id DESC
