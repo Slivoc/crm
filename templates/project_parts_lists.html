@@ -3,30 +3,22 @@
 {% block title %}Project Parts Lists{% endblock %}
 
 {% block head %}
+{{ super() }}
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
 <style>
-    .project-parts-lists-scroll {
-        position: relative;
-        max-height: calc(100vh - 230px);
-        overflow: auto;
-    }
-
     .project-parts-lists-table {
         min-width: 1320px;
     }
 
-    .project-parts-lists-table thead th {
-        position: sticky;
-        top: 0;
-        z-index: 20;
-        background: #f8f9fa;
+    .project-parts-lists-table thead th,
+    .dataTables_scrollHead .project-parts-lists-table thead th {
+        background: #f8f9fa !important;
         vertical-align: middle;
-        box-shadow: inset 0 -1px 0 #dee2e6;
     }
 
-    .project-parts-lists-table thead tr.filter-row th {
-        top: 47px;
-        z-index: 21;
-        background: #ffffff;
+    .project-parts-lists-table thead tr.filter-row th,
+    .dataTables_scrollHead .project-parts-lists-table thead tr.filter-row th {
+        background: #ffffff !important;
         border-top: 1px solid #dee2e6;
     }
 
@@ -36,6 +28,37 @@
 
     .priority-summary {
         line-height: 1.2;
+    }
+
+    .dataTables_wrapper .dataTables_filter,
+    .dataTables_wrapper .dataTables_length {
+        margin-bottom: 0.75rem;
+    }
+
+    .dataTables_wrapper .dataTables_scrollHead {
+        position: sticky;
+        top: 50px;
+        z-index: 30;
+        background: #fff;
+    }
+
+    .dataTables_wrapper .dataTables_scrollBody {
+        max-height: calc(100vh - 290px) !important;
+        border-top: 0;
+    }
+
+    .dataTables_wrapper table.dataTable {
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+    }
+
+    .dataTables_wrapper .dataTables_scrollHead table.dataTable thead th {
+        box-shadow: inset 0 -1px 0 #dee2e6;
+    }
+
+    .dataTables_wrapper .dataTables_scrollHead .form-control,
+    .dataTables_wrapper .dataTables_scrollHead .form-select {
+        min-width: 100%;
     }
 </style>
 {% endblock %}
@@ -73,150 +96,174 @@
                 </div>
             </div>
             <div class="card-body p-0">
-                <div class="project-parts-lists-scroll">
-                    <table class="table table-hover align-middle mb-0 project-parts-lists-table" id="projectPartsListsTable">
-                        <thead>
-                            <tr>
-                                <th>Parts List</th>
-                                <th>Status</th>
-                                <th class="text-center">Lines</th>
-                                <th class="text-center">Costed</th>
-                                <th class="text-center">Quoted</th>
-                                <th class="text-center">Requested</th>
-                                <th class="text-center">Supplier Offers</th>
-                                <th class="text-center">Priority</th>
-                                <th style="min-width: 280px;">Comments</th>
-                                <th>Created</th>
-                                <th>Modified</th>
-                                <th class="text-end">Open</th>
+                <table class="table table-hover align-middle mb-0 project-parts-lists-table" id="projectPartsListsTable">
+                    <thead>
+                        <tr>
+                            <th>Parts List</th>
+                            <th>Status</th>
+                            <th class="text-center">Lines</th>
+                            <th class="text-center">Costed</th>
+                            <th class="text-center">Quoted</th>
+                            <th class="text-center">Requested</th>
+                            <th class="text-center">Supplier Offers</th>
+                            <th class="text-center">Priority</th>
+                            <th style="min-width: 280px;">Comments</th>
+                            <th>Created</th>
+                            <th>Modified</th>
+                            <th class="text-end">Open</th>
+                        </tr>
+                        <tr class="filter-row">
+                            <th>
+                                <input type="text" class="form-control form-control-sm column-filter" data-column="0" placeholder="Filter list/name...">
+                            </th>
+                            <th>
+                                <select class="form-select form-select-sm column-filter" data-column="1">
+                                    <option value="">All statuses</option>
+                                    {% for status_name in parts_lists|map(attribute='status_name')|reject('none')|unique|sort %}
+                                        <option value="{{ status_name }}">{{ status_name }}</option>
+                                    {% endfor %}
+                                    <option value="No status">No status</option>
+                                </select>
+                            </th>
+                            <th></th>
+                            <th></th>
+                            <th></th>
+                            <th></th>
+                            <th></th>
+                            <th></th>
+                            <th>
+                                <input type="text" class="form-control form-control-sm column-filter" data-column="8" placeholder="Filter comments...">
+                            </th>
+                            <th></th>
+                            <th></th>
+                            <th class="text-end">
+                                <button class="btn btn-sm btn-outline-secondary clear-parts-list-filters" type="button">Clear</button>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for parts_list in parts_lists %}
+                            <tr data-status="{{ parts_list.status_name or 'No status' }}">
+                                <td>
+                                    <div class="fw-semibold">PL #{{ parts_list.id }}</div>
+                                    <a href="{{ url_for('parts_list.view_parts_list', list_id=parts_list.id) }}"
+                                       target="_blank" rel="noopener" class="text-decoration-none">
+                                        {{ parts_list.name }}
+                                    </a>
+                                </td>
+                                <td>
+                                    <span class="badge bg-secondary">{{ parts_list.status_name or 'No status' }}</span>
+                                </td>
+                                <td class="text-center">{{ parts_list.line_count or 0 }}</td>
+                                <td class="text-center">{{ parts_list.costed_line_count or 0 }}</td>
+                                <td class="text-center">{{ parts_list.quoted_line_count or 0 }}</td>
+                                <td class="text-center requested-cell" data-parts-list-id="{{ parts_list.id }}" data-order="0">
+                                    <span class="spinner-border spinner-border-sm text-muted" role="status"></span>
+                                </td>
+                                <td class="text-center supplier-offers-cell" data-parts-list-id="{{ parts_list.id }}" data-order="0">
+                                    <span class="spinner-border spinner-border-sm text-muted" role="status"></span>
+                                </td>
+                                <td class="text-center priority-cell" data-parts-list-id="{{ parts_list.id }}" data-priority-score="" data-order="-1">
+                                    <span class="text-muted small">Run scan</span>
+                                </td>
+                                <td>
+                                    <div class="d-flex align-items-start gap-2">
+                                        <textarea
+                                            class="form-control form-control-sm parts-list-comments-input"
+                                            data-parts-list-id="{{ parts_list.id }}"
+                                            rows="2"
+                                            placeholder="Add comments..."
+                                        >{{ parts_list.notes or '' }}</textarea>
+                                        <span class="small text-muted mt-1 comments-save-status" data-parts-list-id="{{ parts_list.id }}"></span>
+                                    </div>
+                                </td>
+                                <td data-order="{{ parts_list.date_created.strftime('%Y-%m-%d') if parts_list.date_created else '' }}">{{ parts_list.date_created.strftime('%Y-%m-%d') if parts_list.date_created else '-' }}</td>
+                                <td data-order="{{ parts_list.date_modified.strftime('%Y-%m-%d') if parts_list.date_modified else '' }}">{{ parts_list.date_modified.strftime('%Y-%m-%d') if parts_list.date_modified else '-' }}</td>
+                                <td class="text-end">
+                                    <a href="{{ url_for('parts_list.view_parts_list', list_id=parts_list.id) }}"
+                                       target="_blank" rel="noopener" class="btn btn-link btn-sm">
+                                        <i class="bi bi-box-arrow-up-right"></i>
+                                    </a>
+                                </td>
                             </tr>
-                            <tr class="filter-row">
-                                <th>
-                                    <input type="text" class="form-control form-control-sm" id="partsListNameFilter" placeholder="Filter list/name...">
-                                </th>
-                                <th>
-                                    <select class="form-select form-select-sm" id="partsListStatusFilter">
-                                        <option value="">All statuses</option>
-                                        {% for status_name in parts_lists|map(attribute='status_name')|reject('none')|unique|sort %}
-                                            <option value="{{ status_name }}">{{ status_name }}</option>
-                                        {% endfor %}
-                                        <option value="No status">No status</option>
-                                    </select>
-                                </th>
-                                <th></th>
-                                <th></th>
-                                <th></th>
-                                <th></th>
-                                <th></th>
-                                <th></th>
-                                <th>
-                                    <input type="text" class="form-control form-control-sm" id="partsListCommentsFilter" placeholder="Filter comments...">
-                                </th>
-                                <th></th>
-                                <th></th>
-                                <th class="text-end">
-                                    <button class="btn btn-sm btn-outline-secondary" type="button" id="clearPartsListFilters">Clear</button>
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for parts_list in parts_lists %}
-                                <tr data-status="{{ parts_list.status_name or 'No status' }}">
-                                    <td>
-                                        <div class="fw-semibold">PL #{{ parts_list.id }}</div>
-                                        <a href="{{ url_for('parts_list.view_parts_list', list_id=parts_list.id) }}"
-                                           target="_blank" rel="noopener" class="text-decoration-none">
-                                            {{ parts_list.name }}
-                                        </a>
-                                    </td>
-                                    <td>
-                                        <span class="badge bg-secondary">{{ parts_list.status_name or 'No status' }}</span>
-                                    </td>
-                                    <td class="text-center">{{ parts_list.line_count or 0 }}</td>
-                                    <td class="text-center">{{ parts_list.costed_line_count or 0 }}</td>
-                                    <td class="text-center">{{ parts_list.quoted_line_count or 0 }}</td>
-                                    <td class="text-center requested-cell" data-parts-list-id="{{ parts_list.id }}">
-                                        <span class="spinner-border spinner-border-sm text-muted" role="status"></span>
-                                    </td>
-                                    <td class="text-center supplier-offers-cell" data-parts-list-id="{{ parts_list.id }}">
-                                        <span class="spinner-border spinner-border-sm text-muted" role="status"></span>
-                                    </td>
-                                    <td class="text-center priority-cell" data-parts-list-id="{{ parts_list.id }}" data-priority-score="">
-                                        <span class="text-muted small">Run scan</span>
-                                    </td>
-                                    <td>
-                                        <div class="d-flex align-items-start gap-2">
-                                            <textarea
-                                                class="form-control form-control-sm parts-list-comments-input"
-                                                data-parts-list-id="{{ parts_list.id }}"
-                                                rows="2"
-                                                placeholder="Add comments..."
-                                            >{{ parts_list.notes or '' }}</textarea>
-                                            <span class="small text-muted mt-1 comments-save-status" data-parts-list-id="{{ parts_list.id }}"></span>
-                                        </div>
-                                    </td>
-                                    <td>{{ parts_list.date_created.strftime('%Y-%m-%d') if parts_list.date_created else '-' }}</td>
-                                    <td>{{ parts_list.date_modified.strftime('%Y-%m-%d') if parts_list.date_modified else '-' }}</td>
-                                    <td class="text-end">
-                                        <a href="{{ url_for('parts_list.view_parts_list', list_id=parts_list.id) }}"
-                                           target="_blank" rel="noopener" class="btn btn-link btn-sm">
-                                            <i class="bi bi-box-arrow-up-right"></i>
-                                        </a>
-                                    </td>
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
     {% endif %}
 </div>
+{% endblock %}
 
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    const tableElement = document.getElementById('projectPartsListsTable');
     const offerCells = document.querySelectorAll('.supplier-offers-cell');
     const requestedCells = document.querySelectorAll('.requested-cell');
     const priorityCells = document.querySelectorAll('.priority-cell');
     const commentInputs = document.querySelectorAll('.parts-list-comments-input');
-    const tableRows = document.querySelectorAll('#projectPartsListsTable tbody tr');
-    const tableBody = document.querySelector('#projectPartsListsTable tbody');
-    const nameFilterInput = document.getElementById('partsListNameFilter');
-    const statusFilterSelect = document.getElementById('partsListStatusFilter');
-    const commentsFilterInput = document.getElementById('partsListCommentsFilter');
-    const clearFiltersBtn = document.getElementById('clearPartsListFilters');
     const runPriorityScanBtn = document.getElementById('runPriorityScanBtn');
     const priorityScanStatus = document.getElementById('priorityScanStatus');
     const saveStatusByListId = new Map();
-    if (offerCells.length === 0) return;
+    if (!tableElement || offerCells.length === 0 || typeof $ === 'undefined' || typeof $.fn.DataTable === 'undefined') return;
 
-    function applyTableFilters() {
-        const nameFilter = (nameFilterInput?.value || '').trim().toLowerCase();
-        const statusFilter = (statusFilterSelect?.value || '').trim();
-        const commentsFilter = (commentsFilterInput?.value || '').trim().toLowerCase();
+    const dataTable = $(tableElement).DataTable({
+        orderCellsTop: true,
+        paging: false,
+        info: false,
+        scrollY: 'calc(100vh - 290px)',
+        scrollCollapse: true,
+        scrollX: true,
+        order: [[10, 'desc']],
+        columnDefs: [
+            { orderable: false, targets: [8, 11] }
+        ],
+        language: {
+            search: 'Search lists:'
+        }
+    });
 
-        tableRows.forEach(row => {
-            const nameText = row.cells[0]?.innerText.toLowerCase() || '';
-            const rowStatus = row.dataset.status || 'No status';
-            const commentsText = row.querySelector('.parts-list-comments-input')?.value.toLowerCase() || '';
+    function bindHeaderFilters() {
+        document.querySelectorAll('.column-filter').forEach(input => {
+            if (input.dataset.bound === 'true') {
+                return;
+            }
+            input.dataset.bound = 'true';
+            input.addEventListener(input.tagName === 'SELECT' ? 'change' : 'input', function() {
+                const columnIndex = parseInt(this.dataset.column, 10);
+                if (Number.isNaN(columnIndex)) return;
 
-            const matchesName = !nameFilter || nameText.includes(nameFilter);
-            const matchesStatus = !statusFilter || rowStatus === statusFilter;
-            const matchesComments = !commentsFilter || commentsText.includes(commentsFilter);
+                document.querySelectorAll(`.column-filter[data-column="${columnIndex}"]`).forEach(peer => {
+                    if (peer !== this) {
+                        peer.value = this.value;
+                    }
+                });
 
-            row.style.display = (matchesName && matchesStatus && matchesComments) ? '' : 'none';
+                dataTable.column(columnIndex).search(this.value || '').draw();
+            });
+        });
+
+        document.querySelectorAll('.clear-parts-list-filters').forEach(button => {
+            if (button.dataset.bound === 'true') {
+                return;
+            }
+            button.dataset.bound = 'true';
+            button.addEventListener('click', () => {
+                document.querySelectorAll('.column-filter').forEach(input => {
+                    input.value = '';
+                });
+                dataTable.columns().search('');
+                dataTable.search('').draw();
+            });
         });
     }
 
-    nameFilterInput?.addEventListener('input', applyTableFilters);
-    statusFilterSelect?.addEventListener('change', applyTableFilters);
-    commentsFilterInput?.addEventListener('input', applyTableFilters);
-    clearFiltersBtn?.addEventListener('click', () => {
-        if (nameFilterInput) nameFilterInput.value = '';
-        if (statusFilterSelect) statusFilterSelect.value = '';
-        if (commentsFilterInput) commentsFilterInput.value = '';
-        applyTableFilters();
-    });
+    bindHeaderFilters();
+    dataTable.on('draw', bindHeaderFilters);
 
     document.querySelectorAll('.comments-save-status').forEach(el => {
         saveStatusByListId.set(el.dataset.partsListId, el);
@@ -233,6 +280,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const totalBaseLines = scoreData.total_base_lines || 0;
         const score = scoreData.score || 0;
         cell.dataset.priorityScore = String(score);
+        cell.setAttribute('data-order', String(score));
 
         if (totalBaseLines <= 0) {
             cell.innerHTML = `
@@ -250,31 +298,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="small text-muted mt-1">
                     ${scoreData.quoted_before_count || 0}/${totalBaseLines} quoted before
                     <br>
-                    ${scoreData.qpl_match_count || 0}/${totalBaseLines} on QPL
+                    ${scoreData.activity_before_count || 0}/${totalBaseLines} touched before
+                    <br>
+                    ${scoreData.no_bid_or_requested_only_count || 0}/${totalBaseLines} request-only / no-bid
                 </div>
             </div>
         `;
-    }
-
-    function sortRowsByPriority() {
-        if (!tableBody) return;
-        const rows = Array.from(tableBody.querySelectorAll('tr'));
-        rows.sort((a, b) => {
-            const scoreA = parseInt(a.querySelector('.priority-cell')?.dataset.priorityScore || '-1', 10);
-            const scoreB = parseInt(b.querySelector('.priority-cell')?.dataset.priorityScore || '-1', 10);
-            if (scoreA !== scoreB) return scoreB - scoreA;
-
-            const quotedA = parseInt(a.cells[4]?.innerText || '0', 10);
-            const quotedB = parseInt(b.cells[4]?.innerText || '0', 10);
-            if (quotedA !== quotedB) return quotedB - quotedA;
-
-            const linesA = parseInt(a.cells[2]?.innerText || '0', 10);
-            const linesB = parseInt(b.cells[2]?.innerText || '0', 10);
-            return linesB - linesA;
-        });
-
-        rows.forEach(row => tableBody.appendChild(row));
-        applyTableFilters();
     }
 
     function setCommentStatus(listId, message, isError = false) {
@@ -303,6 +332,7 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 if (!data.success) throw new Error(data.message || 'Unable to save comments');
                 inputEl.dataset.lastSavedValue = value;
+                dataTable.row(inputEl.closest('tr')).invalidate('dom');
                 setCommentStatus(listId, 'Saved');
                 setTimeout(() => setCommentStatus(listId, ''), 1000);
             })
@@ -315,9 +345,7 @@ document.addEventListener('DOMContentLoaded', function() {
         input.dataset.lastSavedValue = input.value;
         input.addEventListener('blur', () => saveComments(input));
         input.addEventListener('input', () => {
-            if ((commentsFilterInput?.value || '').trim()) {
-                applyTableFilters();
-            }
+            dataTable.row(input.closest('tr')).invalidate('dom');
         });
         input.addEventListener('keydown', event => {
             if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
@@ -329,10 +357,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     runPriorityScanBtn?.addEventListener('click', () => {
         runPriorityScanBtn.disabled = true;
-        priorityScanStatus.textContent = 'Scanning quote history and QPL matches...';
+        priorityScanStatus.textContent = 'Scanning past quote and sourcing activity on the parts in each list...';
         priorityCells.forEach(cell => {
+            cell.setAttribute('data-order', '-1');
             cell.innerHTML = '<span class="spinner-border spinner-border-sm text-muted" role="status"></span>';
         });
+        dataTable.rows().invalidate('dom').draw(false);
 
         fetch('{{ url_for("projects.project_parts_lists_priority_scores", project_id=project.id) }}')
             .then(response => response.json())
@@ -347,19 +377,23 @@ document.addEventListener('DOMContentLoaded', function() {
                         score: 0,
                         total_base_lines: 0,
                         quoted_before_count: 0,
-                        qpl_match_count: 0
+                        activity_before_count: 0,
+                        no_bid_or_requested_only_count: 0
                     };
                     renderPriorityCell(cell, scoreData);
                 });
 
-                sortRowsByPriority();
+                dataTable.rows().invalidate('dom');
+                dataTable.order([[7, 'desc'], [4, 'desc'], [2, 'desc']]).draw();
                 priorityScanStatus.textContent = 'Priority scan complete. Sorted highest score first.';
             })
             .catch(() => {
                 priorityCells.forEach(cell => {
                     cell.dataset.priorityScore = '';
+                    cell.setAttribute('data-order', '-1');
                     cell.innerHTML = '<span class="text-danger small">Scan failed</span>';
                 });
+                dataTable.rows().invalidate('dom').draw(false);
                 priorityScanStatus.textContent = 'Priority scan failed.';
             })
             .finally(() => {
@@ -374,6 +408,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 offerCells.forEach(cell => {
                     const plId = parseInt(cell.dataset.partsListId);
                     const count = data.counts[plId] || 0;
+                    cell.setAttribute('data-order', String(count));
                     cell.innerHTML = count > 0
                         ? `<span class="badge bg-info">${count}</span>`
                         : '<span class="text-muted">0</span>';
@@ -381,26 +416,34 @@ document.addEventListener('DOMContentLoaded', function() {
                 requestedCells.forEach(cell => {
                     const plId = parseInt(cell.dataset.partsListId);
                     const count = data.requested[plId] || 0;
+                    cell.setAttribute('data-order', String(count));
                     cell.innerHTML = count > 0
                         ? `<span class="badge bg-warning text-dark">${count}</span>`
                         : '<span class="text-muted">0</span>';
                 });
+                dataTable.rows().invalidate('dom').draw(false);
             } else {
                 offerCells.forEach(cell => {
+                    cell.setAttribute('data-order', '0');
                     cell.innerHTML = '<span class="text-muted">-</span>';
                 });
                 requestedCells.forEach(cell => {
+                    cell.setAttribute('data-order', '0');
                     cell.innerHTML = '<span class="text-muted">-</span>';
                 });
+                dataTable.rows().invalidate('dom').draw(false);
             }
         })
         .catch(() => {
             offerCells.forEach(cell => {
+                cell.setAttribute('data-order', '0');
                 cell.innerHTML = '<span class="text-muted">-</span>';
             });
             requestedCells.forEach(cell => {
+                cell.setAttribute('data-order', '0');
                 cell.innerHTML = '<span class="text-muted">-</span>';
             });
+            dataTable.rows().invalidate('dom').draw(false);
         });
 });
 </script>

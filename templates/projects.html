@@ -86,7 +86,7 @@
         <thead>
             <tr>
                         <th>Project ID</th>
-                        <th>Customer</th>
+                        <th>Account</th>
         <th>Project Name</th>
         <th>Description</th>
 
@@ -105,7 +105,7 @@
         {% if project.status_id != 3 %}
             <tr>
                 <td>{{ project.id }}</td>
-                <td><strong>{{ project.customer_name }}</strong></td>
+                <td><strong>{{ project.account_name or project.customer_name or project.supplier_name or 'Unassigned' }}</strong></td>
                 <td>{{ project.name }}</td>
                 <td>{{ project.description or "No description provided" }}</td>
 

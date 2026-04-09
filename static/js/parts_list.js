@@ -3,6 +3,10 @@ window.allResults = [];
 let currentListId = null;
 let selectedContact = null;
 let selectedCustomer = null;
+let projectPartsImportHot = null;
+let projectPartsImportSelectedParty = null;
+let projectPartsImportPendingFileData = null;
+let projectPartsImportPendingFileHeaders = null;
 const VIEW_ANALYSIS_AUTO_LIMIT = 40;
 
 function getQplListBadge(type) {
@@ -2807,6 +2811,537 @@ document.addEventListener('click', function(e) {
 });
 
 // ==================== MAIN INITIALIZATION ====================
+function createProjectImportEmptyRows(count, columns) {
+    const rows = [];
+    for (let i = 0; i < count; i++) {
+        const row = {};
+        columns.forEach(col => {
+            row[col.key] = col.key === 'line_type' ? 'normal' : '';
+        });
+        rows.push(row);
+    }
+    return rows;
+}
+
+function getProjectImportColumns() {
+    const baseColumns = [
+        { key: 'customer_part_number', title: 'Customer PN', width: 150 },
+        { key: 'description', title: 'Description', width: 200 },
+        { key: 'category', title: 'Category', width: 120 },
+        { key: 'comment', title: 'Comment', width: 150 },
+        { key: 'line_type', title: 'Type', width: 100, type: 'dropdown', source: ['normal', 'alternate', 'price_break'] },
+        { key: 'total_quantity', title: 'Total Qty', width: 90, type: 'numeric' }
+    ];
+
+    for (let i = 1; i <= 5; i++) {
+        baseColumns.push({ key: `year_${i}`, title: `Yr ${i}`, width: 70, type: 'numeric' });
+    }
+
+    return baseColumns;
+}
+
+function getProjectImportValidRows() {
+    if (!projectPartsImportHot) return [];
+    return projectPartsImportHot.getSourceData().filter(row => {
+        const pn = (row.customer_part_number || '').toString().trim();
+        return pn.length > 0;
+    });
+}
+
+function updateProjectImportRowCount() {
+    const rowCount = getProjectImportValidRows().length;
+    const rowCountEl = document.getElementById('project-import-row-count');
+    if (rowCountEl) {
+        rowCountEl.textContent = `${rowCount} row${rowCount === 1 ? '' : 's'}`;
+    }
+}
+
+function updateProjectImportSelectedPartyDisplay() {
+    const display = document.getElementById('project-selected-party-display');
+    if (!display) return;
+
+    if (!projectPartsImportSelectedParty) {
+        display.classList.remove('has-customer');
+        display.innerHTML = '';
+        return;
+    }
+
+    const icon = projectPartsImportSelectedParty.type === 'supplier' ? 'truck' : 'building';
+    display.classList.add('has-customer');
+    display.innerHTML = `
+        <div class="selected-customer-info">
+            <div class="customer-name">
+                <i class="bi bi-${icon} me-2"></i>${escapeHtml(projectPartsImportSelectedParty.name)}
+            </div>
+            <button class="remove-customer-btn" type="button" id="project-remove-party-btn" title="Remove selection">×</button>
+        </div>
+    `;
+
+    const removeBtn = document.getElementById('project-remove-party-btn');
+    if (removeBtn) {
+        removeBtn.addEventListener('click', () => {
+            projectPartsImportSelectedParty = null;
+            updateProjectImportSelectedPartyDisplay();
+        });
+    }
+}
+
+function updateProjectImportStatus(message) {
+    const statusEl = document.getElementById('project-import-status');
+    if (statusEl) {
+        statusEl.textContent = message;
+    }
+}
+
+function autoDetectProjectImportMappings(headers, columns) {
+    const mappings = {};
+    const patterns = {
+        customer_part_number: /^(customer\s*)?p(art)?\s*(n(o|um(ber)?)?|#)|^pn$|^part$|^mpn$/i,
+        description: /^desc(ription)?$/i,
+        category: /^cat(egory)?$/i,
+        comment: /^comment|^note|^remarks?$/i,
+        line_type: /^type$|^line\s*type$/i,
+        total_quantity: /^total|^qty|^quantity$/i,
+        year_1: /^(y(ea)?r?\s*)?1$|^yr1$|^2025$/i,
+        year_2: /^(y(ea)?r?\s*)?2$|^yr2$|^2026$/i,
+        year_3: /^(y(ea)?r?\s*)?3$|^yr3$|^2027$/i,
+        year_4: /^(y(ea)?r?\s*)?4$|^yr4$|^2028$/i,
+        year_5: /^(y(ea)?r?\s*)?5$|^yr5$|^2029$/i
+    };
+
+    headers.forEach((header, idx) => {
+        const name = (header.name || '').toLowerCase();
+        for (const col of columns) {
+            const pattern = patterns[col.key];
+            if (pattern && pattern.test(name) && !Object.values(mappings).includes(col.key)) {
+                mappings[idx] = col.key;
+                break;
+            }
+        }
+    });
+
+    return mappings;
+}
+
+function showProjectImportMappingModal(columns) {
+    const container = document.getElementById('project-import-column-mappings');
+    if (!container || !projectPartsImportPendingFileHeaders) return;
+
+    const autoMappings = autoDetectProjectImportMappings(projectPartsImportPendingFileHeaders, columns);
+    container.innerHTML = '';
+
+    projectPartsImportPendingFileHeaders.forEach((header, idx) => {
+        const row = document.createElement('div');
+        row.className = 'column-mapping-row';
+
+        const nameEl = document.createElement('div');
+        nameEl.className = 'file-column-name';
+        nameEl.textContent = header.name;
+
+        const arrowEl = document.createElement('div');
+        arrowEl.className = 'mapping-arrow';
+        arrowEl.innerHTML = '&rarr;';
+
+        const select = document.createElement('select');
+        select.className = 'form-select mapping-select';
+        select.dataset.fileIndex = idx;
+        select.innerHTML = `
+            <option value="">-- Skip this column --</option>
+            ${columns.map(col => `
+                <option value="${col.key}" ${autoMappings[idx] === col.key ? 'selected' : ''}>${col.title}</option>
+            `).join('')}
+        `;
+
+        const previewEl = document.createElement('div');
+        previewEl.className = 'preview-value';
+        previewEl.title = header.sample || '';
+        previewEl.textContent = header.sample || '(empty)';
+
+        row.appendChild(nameEl);
+        row.appendChild(arrowEl);
+        row.appendChild(select);
+        row.appendChild(previewEl);
+        container.appendChild(row);
+    });
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('projectImportColumnMappingModal')).show();
+}
+
+function loadProjectImportRows(rows, columns) {
+    if (!projectPartsImportHot) return;
+    projectPartsImportHot.loadData(rows.length ? rows : createProjectImportEmptyRows(20, columns));
+    updateProjectImportRowCount();
+    updateProjectImportStatus(`Loaded ${getProjectImportValidRows().length} row${getProjectImportValidRows().length === 1 ? '' : 's'}.`);
+}
+
+function buildProjectImportRowsFromCurrentContext(columns) {
+    if (window.allResults && window.allResults.length > 0) {
+        return window.allResults.map(result => {
+            const row = {};
+            columns.forEach(col => {
+                row[col.key] = col.key === 'line_type' ? 'normal' : '';
+            });
+            row.customer_part_number = result.input_part_number || '';
+            row.description = result.description || '';
+            row.total_quantity = result.quantity || 1;
+            return row;
+        });
+    }
+
+    const partsInput = document.getElementById('parts-input');
+    const parsedParts = parsePartNumbers(partsInput ? partsInput.value : '');
+    return parsedParts.map(part => {
+        const row = {};
+        columns.forEach(col => {
+            row[col.key] = col.key === 'line_type' ? 'normal' : '';
+        });
+        row.customer_part_number = part.customer_part_number || part.part_number || '';
+        row.total_quantity = part.quantity || 1;
+        return row;
+    });
+}
+
+function initializeProjectPartsListModal() {
+    const modalEl = document.getElementById('projectPartsListModal');
+    const sheetEl = document.getElementById('project-import-sheet');
+    if (!modalEl || !sheetEl || typeof Handsontable === 'undefined') return;
+
+    const columns = getProjectImportColumns();
+    const dropZone = document.getElementById('project-import-drop-zone');
+    const fileInput = document.getElementById('project-import-file-input');
+    const prefillBtn = document.getElementById('project-import-prefill-btn');
+    const clearBtn = document.getElementById('project-import-clear-btn');
+    const createBtn = document.getElementById('create-project-parts-list-btn');
+    const partyTypeSelect = document.getElementById('project-party-type');
+    const partySearchInput = document.getElementById('project-party-search-input');
+    const partySearchResults = document.getElementById('project-party-search-results');
+    const applyMappingBtn = document.getElementById('project-import-apply-mapping-btn');
+    const projectNameInput = document.getElementById('project-modal-name-input');
+    const projectDescriptionInput = document.getElementById('project-modal-description-input');
+
+    projectPartsImportHot = new Handsontable(sheetEl, {
+        data: createProjectImportEmptyRows(20, columns),
+        colHeaders: columns.map(col => col.title),
+        columns: columns.map(col => ({
+            data: col.key,
+            type: col.type || 'text',
+            source: col.source,
+            width: col.width,
+            allowInvalid: true,
+            className: col.type === 'numeric' ? 'htRight' : ''
+        })),
+        rowHeaders: true,
+        stretchH: 'all',
+        height: '100%',
+        manualColumnResize: true,
+        contextMenu: true,
+        minSpareRows: 1,
+        licenseKey: 'non-commercial-and-evaluation',
+        afterChange(changes, source) {
+            if (source !== 'loadData') {
+                updateProjectImportRowCount();
+            }
+        },
+        afterRemoveRow() {
+            updateProjectImportRowCount();
+        }
+    });
+
+    updateProjectImportRowCount();
+
+    modalEl.addEventListener('show.bs.modal', () => {
+        projectPartsImportSelectedParty = selectedCustomer
+            ? { id: Number(selectedCustomer.id), name: selectedCustomer.name, type: 'customer' }
+            : null;
+        updateProjectImportSelectedPartyDisplay();
+        if (projectNameInput && !projectNameInput.value.trim()) {
+            const listName = document.getElementById('list-name-input');
+            projectNameInput.value = (listName && listName.value.trim()) || '';
+        }
+        if (getProjectImportValidRows().length === 0) {
+            const rows = buildProjectImportRowsFromCurrentContext(columns);
+            if (rows.length) {
+                loadProjectImportRows(rows, columns);
+            }
+        }
+        setTimeout(() => projectPartsImportHot.render(), 0);
+    });
+
+    if (prefillBtn) {
+        prefillBtn.addEventListener('click', () => {
+            const rows = buildProjectImportRowsFromCurrentContext(columns);
+            if (!rows.length) {
+                alert('No current parts were found to load.');
+                return;
+            }
+            loadProjectImportRows(rows, columns);
+        });
+    }
+
+    if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+            if (!confirm('Clear the project parts spreadsheet?')) return;
+            loadProjectImportRows([], columns);
+        });
+    }
+
+    if (dropZone && fileInput) {
+        dropZone.addEventListener('click', () => fileInput.click());
+        ['dragover', 'dragenter'].forEach(eventName => {
+            dropZone.addEventListener(eventName, event => {
+                event.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+        });
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, event => {
+                event.preventDefault();
+                dropZone.classList.remove('drag-over');
+            });
+        });
+        dropZone.addEventListener('drop', event => {
+            const files = event.dataTransfer?.files;
+            if (files && files.length > 0) {
+                processProjectImportFile(files[0], columns);
+            }
+        });
+        fileInput.addEventListener('change', event => {
+            if (event.target.files.length > 0) {
+                processProjectImportFile(event.target.files[0], columns);
+                fileInput.value = '';
+            }
+        });
+    }
+
+    if (applyMappingBtn) {
+        applyMappingBtn.addEventListener('click', () => {
+            const selects = document.querySelectorAll('#project-import-column-mappings .mapping-select');
+            const mappings = {};
+            selects.forEach(select => {
+                const fileIdx = parseInt(select.dataset.fileIndex, 10);
+                if (select.value) {
+                    mappings[fileIdx] = select.value;
+                }
+            });
+
+            if (!Object.values(mappings).includes('customer_part_number')) {
+                alert('Please map at least the "Customer PN" column.');
+                return;
+            }
+
+            const hasHeader = document.getElementById('project-import-has-header-row').checked;
+            const startRow = hasHeader ? 1 : 0;
+            const rows = [];
+
+            for (let i = startRow; i < projectPartsImportPendingFileData.length; i++) {
+                const fileRow = projectPartsImportPendingFileData[i];
+                const row = {};
+                columns.forEach(col => {
+                    row[col.key] = col.key === 'line_type' ? 'normal' : '';
+                });
+                for (const [fileIdx, targetKey] of Object.entries(mappings)) {
+                    let value = fileRow[parseInt(fileIdx, 10)];
+                    if (value !== undefined && value !== null) {
+                        value = String(value).trim();
+                        if (targetKey === 'line_type' && !['normal', 'alternate', 'price_break'].includes(value)) {
+                            value = 'normal';
+                        }
+                        row[targetKey] = value;
+                    }
+                }
+                rows.push(row);
+            }
+
+            loadProjectImportRows(rows, columns);
+            bootstrap.Modal.getInstance(document.getElementById('projectImportColumnMappingModal')).hide();
+        });
+    }
+
+    if (partySearchInput && partySearchResults && partyTypeSelect) {
+        let searchTimeout;
+        partySearchInput.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            const query = partySearchInput.value.trim();
+            if (query.length < 2) {
+                partySearchResults.innerHTML = '';
+                return;
+            }
+
+            searchTimeout = setTimeout(async () => {
+                try {
+                    if (partyTypeSelect.value === 'supplier') {
+                        const response = await fetch(`/ils/suppliers/search?q=${encodeURIComponent(query)}&limit=15`);
+                        const data = await response.json();
+                        const suppliers = Array.isArray(data.suppliers) ? data.suppliers : [];
+                        renderProjectPartyResults(suppliers.map(item => ({ id: item.id, name: item.name, type: 'supplier' })));
+                    } else {
+                        const response = await fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=15`);
+                        const customers = await response.json();
+                        renderProjectPartyResults((Array.isArray(customers) ? customers : []).map(item => ({ id: item.id, name: item.name, type: 'customer' })));
+                    }
+                } catch (error) {
+                    console.error('Project party search failed', error);
+                    partySearchResults.innerHTML = '<div style="padding: 0.75rem 1rem; color: #dc3545;">Search failed</div>';
+                }
+            }, 250);
+        });
+
+        partyTypeSelect.addEventListener('change', () => {
+            projectPartsImportSelectedParty = null;
+            partySearchInput.value = '';
+            partySearchResults.innerHTML = '';
+            updateProjectImportSelectedPartyDisplay();
+        });
+
+        document.addEventListener('click', event => {
+            if (!partySearchInput.contains(event.target) && !partySearchResults.contains(event.target)) {
+                partySearchResults.innerHTML = '';
+            }
+        });
+    }
+
+    if (createBtn) {
+        createBtn.addEventListener('click', async () => {
+            const rows = getProjectImportValidRows();
+            const projectName = (projectNameInput?.value || '').trim();
+            const description = (projectDescriptionInput?.value || '').trim();
+            const accountType = partyTypeSelect ? partyTypeSelect.value : 'customer';
+
+            if (!projectName) {
+                alert('Project name is required.');
+                return;
+            }
+            if (!projectPartsImportSelectedParty || projectPartsImportSelectedParty.type !== accountType) {
+                alert(`Select a ${accountType} for the project.`);
+                return;
+            }
+            if (!rows.length) {
+                alert('Add at least one project parts line.');
+                return;
+            }
+
+            const lines = rows.map(row => {
+                const usageByYear = [];
+                for (let i = 1; i <= 5; i++) {
+                    const value = row[`year_${i}`];
+                    if (value !== undefined && value !== '') {
+                        usageByYear.push(value);
+                    }
+                }
+                return {
+                    customer_part_number: (row.customer_part_number || '').toString().trim(),
+                    description: (row.description || '').toString().trim(),
+                    category: (row.category || '').toString().trim(),
+                    comment: (row.comment || '').toString().trim(),
+                    line_type: row.line_type || 'normal',
+                    total_quantity: row.total_quantity || '',
+                    usage_by_year: usageByYear
+                };
+            });
+
+            const payload = {
+                project_name: projectName,
+                description,
+                account_type: accountType,
+                lines
+            };
+            if (accountType === 'supplier') {
+                payload.supplier_id = projectPartsImportSelectedParty.id;
+            } else {
+                payload.customer_id = projectPartsImportSelectedParty.id;
+            }
+
+            createBtn.disabled = true;
+            createBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creating...';
+            updateProjectImportStatus('Creating project and importing lines...');
+
+            try {
+                const response = await fetch('/projects/create-with-parts-list', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || 'Unable to create project parts list');
+                }
+                if (data.redirect) {
+                    window.location.href = data.redirect;
+                }
+            } catch (error) {
+                console.error(error);
+                updateProjectImportStatus(error.message || 'Unable to create project parts list.');
+                alert(`Create failed: ${error.message}`);
+                createBtn.disabled = false;
+                createBtn.innerHTML = 'Create Project Parts List';
+            }
+        });
+    }
+
+    function renderProjectPartyResults(items) {
+        if (!partySearchResults) return;
+        if (!items.length) {
+            partySearchResults.innerHTML = '<div style="padding: 0.75rem 1rem; color: #6c757d;">No matches found</div>';
+            return;
+        }
+
+        partySearchResults.innerHTML = '';
+        items.forEach(item => {
+            const row = document.createElement('div');
+            row.className = 'project-party-result';
+
+            const icon = document.createElement('i');
+            icon.className = `bi bi-${item.type === 'supplier' ? 'truck' : 'building'}`;
+            icon.style.color = '#6c757d';
+
+            const nameEl = document.createElement('div');
+            nameEl.textContent = item.name;
+
+            row.appendChild(icon);
+            row.appendChild(nameEl);
+            row.addEventListener('click', () => {
+                projectPartsImportSelectedParty = {
+                    id: Number(item.id),
+                    name: item.name,
+                    type: item.type
+                };
+                updateProjectImportSelectedPartyDisplay();
+                partySearchInput.value = '';
+                partySearchResults.innerHTML = '';
+            });
+            partySearchResults.appendChild(row);
+        });
+    }
+
+    function processProjectImportFile(file, columns) {
+        const reader = new FileReader();
+        reader.onload = event => {
+            try {
+                const data = new Uint8Array(event.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
+
+                if (!jsonData.length) {
+                    alert('The file appears to be empty.');
+                    return;
+                }
+
+                projectPartsImportPendingFileData = jsonData;
+                projectPartsImportPendingFileHeaders = jsonData[0].map((header, index) => ({
+                    index,
+                    name: header ? String(header).trim() : `Column ${index + 1}`,
+                    sample: jsonData.length > 1 ? String(jsonData[1][index] || '').substring(0, 50) : ''
+                }));
+                showProjectImportMappingModal(columns);
+            } catch (error) {
+                alert(`Error reading file: ${error.message}`);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const partsInput = document.getElementById('parts-input');
     const partsCount = document.getElementById('parts-count');
@@ -2896,6 +3431,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 250);
         });
     }
+
+    initializeProjectPartsListModal();
 
     document.addEventListener('click', function(event) {
         if (!quickSupplierMatches) return;

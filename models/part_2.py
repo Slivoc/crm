@@ -540,10 +540,14 @@ def generate_breadcrumbs(*crumbs):
         breadcrumbs.append((crumb, path))
     return breadcrumbs
 
-def insert_project(customer_id, salesperson_id, name, description, status_id=1):
+def insert_project(customer_id, salesperson_id, name, description, status_id=1, supplier_id=None):
     row = db_execute(
-        'INSERT INTO projects (customer_id, salesperson_id, name, description, status_id) VALUES (?, ?, ?, ?, ?) RETURNING id',
-        (customer_id, salesperson_id, name, description, status_id),
+        '''
+        INSERT INTO projects (customer_id, supplier_id, salesperson_id, name, description, status_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+        RETURNING id
+        ''',
+        (customer_id, supplier_id, salesperson_id, name, description, status_id),
         fetch='one',
         commit=True,
     )
@@ -552,25 +556,33 @@ def insert_project(customer_id, salesperson_id, name, description, status_id=1):
     return row.get('id', list(row.values())[0])
 
 
-def update_project(project_id, customer_id, salesperson_id, name, description, status_id):
+def update_project(project_id, customer_id, salesperson_id, name, description, status_id, supplier_id=None):
     db_execute(
         '''
         UPDATE projects
-        SET name = ?, description = ?, customer_id = ?, salesperson_id = ?, status_id = ?
+        SET name = ?, description = ?, customer_id = ?, supplier_id = ?, salesperson_id = ?, status_id = ?
         WHERE id = ?
         ''',
-        (name, description, customer_id, salesperson_id, status_id, project_id),
+        (name, description, customer_id, supplier_id, salesperson_id, status_id, project_id),
         commit=True,
     )
 
 def get_project_by_id(project_id):
     project = query_one('''
-        SELECT p.id, p.name, p.description, p.customer_id, c.name AS customer_name, 
+        SELECT p.id, p.name, p.description, p.customer_id, c.name AS customer_name,
+               p.supplier_id, sup.name AS supplier_name,
+               COALESCE(c.name, sup.name) AS account_name,
+               CASE
+                   WHEN p.customer_id IS NOT NULL THEN 'customer'
+                   WHEN p.supplier_id IS NOT NULL THEN 'supplier'
+                   ELSE NULL
+               END AS account_type,
                p.salesperson_id, s.name AS salesperson_name, 
                p.status_id, ps.status AS status_name
         FROM projects p
-        JOIN customers c ON p.customer_id = c.id
-        JOIN salespeople s ON p.salesperson_id = s.id
+        LEFT JOIN customers c ON p.customer_id = c.id
+        LEFT JOIN suppliers sup ON p.supplier_id = sup.id
+        LEFT JOIN salespeople s ON p.salesperson_id = s.id
         JOIN project_statuses ps ON p.status_id = ps.id
         WHERE p.id = ?
     ''', (project_id,))
@@ -578,14 +590,22 @@ def get_project_by_id(project_id):
 
 def get_projects(salesperson_id=None):
     query = '''
-        SELECT p.id, p.name, p.customer_id, c.name AS customer_name, 
+        SELECT p.id, p.name, p.customer_id, c.name AS customer_name,
+               p.supplier_id, sup.name AS supplier_name,
+               COALESCE(c.name, sup.name) AS account_name,
+               CASE
+                   WHEN p.customer_id IS NOT NULL THEN 'customer'
+                   WHEN p.supplier_id IS NOT NULL THEN 'supplier'
+                   ELSE NULL
+               END AS account_type,
                p.salesperson_id, s.name AS salesperson_name, 
                p.status_id, ps.status AS status_name,
                p.next_stage_id, stage.name AS next_stage_name,
                p.next_stage_deadline, p.estimated_value,
                p.description
         FROM projects p
-        JOIN customers c ON p.customer_id = c.id
+        LEFT JOIN customers c ON p.customer_id = c.id
+        LEFT JOIN suppliers sup ON p.supplier_id = sup.id
         LEFT JOIN salespeople s ON p.salesperson_id = s.id
         JOIN project_statuses ps ON p.status_id = ps.id
         LEFT JOIN project_stages stage ON p.next_stage_id = stage.id

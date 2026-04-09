@@ -117,6 +117,75 @@ def _coerce_usage_list(values):
     return usage
 
 
+def _clean_project_parts_lines(raw_lines):
+    if isinstance(raw_lines, dict):
+        raw_lines = [raw_lines]
+
+    cleaned_lines = []
+    for entry in raw_lines or []:
+        if not isinstance(entry, dict):
+            continue
+        customer_part_number = (entry.get('customer_part_number') or '').strip()
+        if not customer_part_number:
+            continue
+        cleaned_lines.append({
+            'customer_part_number': customer_part_number,
+            'description': (entry.get('description') or '').strip() or None,
+            'category': (entry.get('category') or '').strip() or None,
+            'comment': (entry.get('comment') or '').strip() or None,
+            'line_type': (entry.get('line_type') or 'normal').strip() or 'normal',
+            'total_quantity': entry.get('total_quantity'),
+            'usage_by_year': _coerce_usage_list(entry.get('usage_by_year') or []),
+        })
+    return cleaned_lines
+
+
+def _insert_project_parts_list_lines(cur, project_id, cleaned_lines):
+    max_row = _execute_with_cursor(
+        cur,
+        """
+        SELECT COALESCE(MAX(line_number), 0) AS max_line
+        FROM project_parts_list_lines
+        WHERE project_id = ?
+        """,
+        (project_id,),
+        fetch='one',
+    ) or {}
+    next_line = max_row.get('max_line') or 0
+
+    for line in cleaned_lines:
+        total_quantity = line['total_quantity']
+        if total_quantity in ('', None):
+            total_quantity = None
+        else:
+            try:
+                total_quantity = int(float(total_quantity))
+            except (TypeError, ValueError):
+                total_quantity = None
+
+        next_line += 1
+        _execute_with_cursor(
+            cur,
+            """
+            INSERT INTO project_parts_list_lines
+                (project_id, line_number, customer_part_number, description, category, comment,
+                 line_type, total_quantity, usage_by_year, date_created, date_modified)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (
+                project_id,
+                next_line,
+                line['customer_part_number'],
+                line['description'],
+                line['category'],
+                line['comment'],
+                line['line_type'],
+                total_quantity,
+                json.dumps(line['usage_by_year']) if line['usage_by_year'] else None,
+            ),
+        )
+
+
 def _fetch_project_parts_list_rows(project_id):
     rows = db_execute(
         """
@@ -314,9 +383,22 @@ def _fetch_project_qpl_mapped_rows(project_id):
     if not _qpl_supplier_mapping_table_exists():
         return []
 
-    manufacturer_name_normalized_sql = _manufacturer_name_normalized_sql('ma.manufacturer_name')
-    params = [project_id]
+    has_project_lines = db_execute(
+        """
+        SELECT 1
+        FROM parts_lists pl
+        JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+        WHERE pl.project_id = ?
+          AND TRIM(COALESCE(pll.base_part_number, '')) <> ''
+        LIMIT 1
+        """,
+        (project_id,),
+        fetch='one',
+    )
+    if not has_project_lines:
+        return []
 
+    manufacturer_name_normalized_sql = _manufacturer_name_normalized_sql('ma.manufacturer_name')
     rows = db_execute(
         f"""
         WITH project_lines AS (
@@ -335,41 +417,7 @@ def _fetch_project_qpl_mapped_rows(project_id):
             WHERE pl.project_id = ?
               AND TRIM(COALESCE(pll.base_part_number, '')) <> ''
         ),
-        qpl_mapped AS (
-            SELECT DISTINCT
-                UPPER(TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, '')))) AS normalized_base_part_number,
-                TRIM(ma.manufacturer_name) AS qpl_manufacturer_name,
-                map.supplier_id,
-                s.name AS mapped_supplier_name,
-                s.contact_name AS mapped_supplier_contact_name,
-                s.contact_email AS mapped_supplier_contact_email
-            FROM manufacturer_approvals ma
-            JOIN qpl_manufacturer_supplier_mappings map
-                ON map.manufacturer_name_normalized = {manufacturer_name_normalized_sql}
-            LEFT JOIN suppliers s ON s.id = map.supplier_id
-            WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
-              AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''))) <> ''
-        )
-        SELECT
-            pl.parts_list_id,
-            pl.parts_list_name,
-            pl.parts_list_line_id,
-            pl.line_number,
-            pl.customer_part_number,
-            pl.base_part_number,
-            pl.description,
-            pl.requested_qty,
-            qm.qpl_manufacturer_name,
-            qm.supplier_id AS mapped_supplier_id,
-            qm.mapped_supplier_name,
-            qm.mapped_supplier_contact_name,
-            qm.mapped_supplier_contact_email,
-            COALESCE(stock.total_available_stock, 0) AS total_available_stock,
-            '' AS instruction_text
-        FROM project_lines pl
-        JOIN qpl_mapped qm
-            ON pl.normalized_base_part_number LIKE (qm.normalized_base_part_number || '%%')
-        LEFT JOIN (
+        stock AS (
             SELECT
                 UPPER(TRIM(base_part_number)) AS normalized_base_part_number,
                 SUM(COALESCE(available_quantity, 0)) AS total_available_stock
@@ -378,10 +426,55 @@ def _fetch_project_qpl_mapped_rows(project_id):
               AND COALESCE(available_quantity, 0) > 0
               AND TRIM(COALESCE(base_part_number, '')) <> ''
             GROUP BY UPPER(TRIM(base_part_number))
-        ) stock ON stock.normalized_base_part_number = pl.normalized_base_part_number
-        ORDER BY pl.parts_list_id, pl.line_number, pl.parts_list_line_id, qm.qpl_manufacturer_name
+        ),
+        matched_rows AS (
+            SELECT DISTINCT
+                pl.parts_list_id,
+                pl.parts_list_name,
+                pl.parts_list_line_id,
+                pl.line_number,
+                pl.customer_part_number,
+                pl.base_part_number,
+                pl.description,
+                pl.requested_qty,
+                pl.normalized_base_part_number,
+                TRIM(ma.manufacturer_name) AS qpl_manufacturer_name,
+                map.supplier_id,
+                s.name AS mapped_supplier_name,
+                s.contact_name AS mapped_supplier_contact_name,
+                s.contact_email AS mapped_supplier_contact_email
+            FROM project_lines pl
+            JOIN manufacturer_approvals ma
+                ON pl.normalized_base_part_number LIKE (
+                    UPPER(TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, '')))) || '%%'
+                )
+            JOIN qpl_manufacturer_supplier_mappings map
+                ON map.manufacturer_name_normalized = {manufacturer_name_normalized_sql}
+            LEFT JOIN suppliers s ON s.id = map.supplier_id
+            WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
+              AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''))) <> ''
+        )
+        SELECT
+            mr.parts_list_id,
+            mr.parts_list_name,
+            mr.parts_list_line_id,
+            mr.line_number,
+            mr.customer_part_number,
+            mr.base_part_number,
+            mr.description,
+            mr.requested_qty,
+            mr.qpl_manufacturer_name,
+            mr.supplier_id AS mapped_supplier_id,
+            mr.mapped_supplier_name,
+            mr.mapped_supplier_contact_name,
+            mr.mapped_supplier_contact_email,
+            COALESCE(stock.total_available_stock, 0) AS total_available_stock,
+            '' AS instruction_text
+        FROM matched_rows mr
+        LEFT JOIN stock ON stock.normalized_base_part_number = mr.normalized_base_part_number
+        ORDER BY mr.parts_list_id, mr.line_number, mr.parts_list_line_id, mr.qpl_manufacturer_name
         """,
-        tuple(params),
+        (project_id,),
         fetch='all',
     ) or []
     return [dict(row) for row in rows]
@@ -892,7 +985,7 @@ def project_parts_lists_supplier_quote_counts(project_id):
 
 @projects_bp.route('/<int:project_id>/parts-lists/priority-scores', methods=['GET'])
 def project_parts_lists_priority_scores(project_id):
-    """Return quick-and-dirty prioritisation scores for all parts lists in a project."""
+    """Return past-activity prioritisation scores for all parts lists in a project."""
     project = get_project_by_id(project_id)
     if not project:
         return jsonify(success=False, message='Project not found'), 404
@@ -901,53 +994,93 @@ def project_parts_lists_priority_scores(project_id):
         rows = db_execute(
             """
             WITH project_lists AS (
-                SELECT id
+                SELECT
+                    id,
+                    COALESCE(date_created, date_modified, CURRENT_TIMESTAMP) AS cutoff_at
                 FROM parts_lists
                 WHERE project_id = ?
             ),
-            project_lines AS (
+            list_lines AS (
                 SELECT
                     pll.parts_list_id,
                     pll.id AS parts_list_line_id,
+                    pl.cutoff_at,
                     UPPER(TRIM(pll.base_part_number)) AS normalized_base_part_number
                 FROM parts_list_lines pll
                 JOIN project_lists pl ON pl.id = pll.parts_list_id
                 WHERE TRIM(COALESCE(pll.base_part_number, '')) <> ''
+                  AND COALESCE(pll.line_type, 'normal') <> 'alternate'
             ),
-            quoted_bases AS (
-                SELECT DISTINCT
-                    UPPER(TRIM(src.base_part_number)) AS normalized_base_part_number
+            past_positive_events AS (
+                SELECT
+                    UPPER(TRIM(src.base_part_number)) AS normalized_base_part_number,
+                    COALESCE(sq.quote_date, sql.date_created, sq.date_created) AS event_at
                 FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
                 JOIN parts_list_lines src ON src.id = sql.parts_list_line_id
                 WHERE TRIM(COALESCE(src.base_part_number, '')) <> ''
                   AND COALESCE(sql.is_no_bid, FALSE) = FALSE
 
                 UNION
 
-                SELECT DISTINCT
-                    UPPER(TRIM(src.base_part_number)) AS normalized_base_part_number
+                SELECT
+                    UPPER(TRIM(src.base_part_number)) AS normalized_base_part_number,
+                    COALESCE(cql.date_created, cql.date_modified, CURRENT_TIMESTAMP) AS event_at
                 FROM customer_quote_lines cql
                 JOIN parts_list_lines src ON src.id = cql.parts_list_line_id
                 WHERE TRIM(COALESCE(src.base_part_number, '')) <> ''
                   AND cql.quoted_status = 'quoted'
             ),
-            qpl_bases AS (
-                SELECT DISTINCT
-                    UPPER(TRIM(COALESCE(NULLIF(airbus_material_base, ''), NULLIF(manufacturer_part_number_base, '')))) AS normalized_base_part_number
-                FROM manufacturer_approvals
-                WHERE TRIM(COALESCE(NULLIF(airbus_material_base, ''), NULLIF(manufacturer_part_number_base, ''))) <> ''
+            past_activity_events AS (
+                SELECT
+                    UPPER(TRIM(src.base_part_number)) AS normalized_base_part_number,
+                    COALESCE(se.date_sent, CURRENT_TIMESTAMP) AS event_at
+                FROM parts_list_line_supplier_emails se
+                JOIN parts_list_lines src ON src.id = se.parts_list_line_id
+                WHERE TRIM(COALESCE(src.base_part_number, '')) <> ''
+
+                UNION
+
+                SELECT
+                    UPPER(TRIM(src.base_part_number)) AS normalized_base_part_number,
+                    COALESCE(sq.quote_date, sql.date_created, sq.date_created) AS event_at
+                FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                JOIN parts_list_lines src ON src.id = sql.parts_list_line_id
+                WHERE TRIM(COALESCE(src.base_part_number, '')) <> ''
+
+                UNION
+
+                SELECT
+                    UPPER(TRIM(src.base_part_number)) AS normalized_base_part_number,
+                    COALESCE(cql.date_created, cql.date_modified, CURRENT_TIMESTAMP) AS event_at
+                FROM customer_quote_lines cql
+                JOIN parts_list_lines src ON src.id = cql.parts_list_line_id
+                WHERE TRIM(COALESCE(src.base_part_number, '')) <> ''
+            ),
+            line_history AS (
+                SELECT
+                    ll.parts_list_id,
+                    ll.parts_list_line_id,
+                    MAX(CASE WHEN ppe.normalized_base_part_number IS NOT NULL THEN 1 ELSE 0 END) AS has_past_quoteable,
+                    MAX(CASE WHEN pae.normalized_base_part_number IS NOT NULL THEN 1 ELSE 0 END) AS has_past_activity
+                FROM list_lines ll
+                LEFT JOIN past_positive_events ppe
+                    ON ppe.normalized_base_part_number = ll.normalized_base_part_number
+                   AND ppe.event_at < ll.cutoff_at
+                LEFT JOIN past_activity_events pae
+                    ON pae.normalized_base_part_number = ll.normalized_base_part_number
+                   AND pae.event_at < ll.cutoff_at
+                GROUP BY ll.parts_list_id, ll.parts_list_line_id
             )
             SELECT
                 pl.id AS parts_list_id,
-                COUNT(DISTINCT project_lines.parts_list_line_id) AS total_base_lines,
-                SUM(CASE WHEN quoted_bases.normalized_base_part_number IS NOT NULL THEN 1 ELSE 0 END) AS quoted_before_count,
-                SUM(CASE WHEN qpl_bases.normalized_base_part_number IS NOT NULL THEN 1 ELSE 0 END) AS qpl_match_count
+                COUNT(DISTINCT lh.parts_list_line_id) AS total_base_lines,
+                COALESCE(SUM(lh.has_past_quoteable), 0) AS quoted_before_count,
+                COALESCE(SUM(lh.has_past_activity), 0) AS activity_before_count,
+                COALESCE(SUM(CASE WHEN lh.has_past_activity = 1 AND lh.has_past_quoteable = 0 THEN 1 ELSE 0 END), 0) AS no_bid_or_requested_only_count
             FROM project_lists pl
-            LEFT JOIN project_lines ON project_lines.parts_list_id = pl.id
-            LEFT JOIN quoted_bases
-                ON quoted_bases.normalized_base_part_number = project_lines.normalized_base_part_number
-            LEFT JOIN qpl_bases
-                ON qpl_bases.normalized_base_part_number = project_lines.normalized_base_part_number
+            LEFT JOIN line_history lh ON lh.parts_list_id = pl.id
             GROUP BY pl.id
             """,
             (project_id,),
@@ -960,20 +1093,23 @@ def project_parts_lists_priority_scores(project_id):
             parts_list_id = data.get('parts_list_id')
             total_base_lines = int(data.get('total_base_lines') or 0)
             quoted_before_count = int(data.get('quoted_before_count') or 0)
-            qpl_match_count = int(data.get('qpl_match_count') or 0)
+            activity_before_count = int(data.get('activity_before_count') or 0)
+            no_bid_or_requested_only_count = int(data.get('no_bid_or_requested_only_count') or 0)
 
             if total_base_lines <= 0:
                 score = 0
             else:
                 quoted_ratio = quoted_before_count / total_base_lines
-                qpl_ratio = qpl_match_count / total_base_lines
-                score = int(round((quoted_ratio * 0.7 + qpl_ratio * 0.3) * 100))
+                activity_ratio = activity_before_count / total_base_lines
+                no_bid_only_ratio = no_bid_or_requested_only_count / total_base_lines
+                score = int(round((quoted_ratio * 0.85 + activity_ratio * 0.15 - no_bid_only_ratio * 0.2) * 100))
 
             scores[parts_list_id] = {
                 'score': max(0, min(100, score)),
                 'total_base_lines': total_base_lines,
                 'quoted_before_count': quoted_before_count,
-                'qpl_match_count': qpl_match_count,
+                'activity_before_count': activity_before_count,
+                'no_bid_or_requested_only_count': no_bid_or_requested_only_count,
             }
 
         return jsonify(success=True, scores=scores)
@@ -1039,79 +1175,74 @@ def project_parts_list_import(project_id):
 def project_parts_list_add_lines(project_id):
     data = request.get_json(force=True) or {}
     raw_lines = data.get('lines') or []
-    if isinstance(raw_lines, dict):
-        raw_lines = [raw_lines]
 
     project = get_project_by_id(project_id)
     if not project:
         return jsonify(success=False, message='Project not found'), 404
 
-    cleaned_lines = []
-    for entry in raw_lines:
-        if not isinstance(entry, dict):
-            continue
-        customer_part_number = (entry.get('customer_part_number') or '').strip()
-        if not customer_part_number:
-            continue
-        cleaned_lines.append({
-            'customer_part_number': customer_part_number,
-            'description': (entry.get('description') or '').strip() or None,
-            'category': (entry.get('category') or '').strip() or None,
-            'comment': (entry.get('comment') or '').strip() or None,
-            'line_type': (entry.get('line_type') or 'normal').strip() or 'normal',
-            'total_quantity': entry.get('total_quantity'),
-            'usage_by_year': _coerce_usage_list(entry.get('usage_by_year') or []),
-        })
-
+    cleaned_lines = _clean_project_parts_lines(raw_lines)
     if not cleaned_lines:
         return jsonify(success=False, message='No valid lines provided'), 400
 
     with db_cursor(commit=True) as cur:
-        max_row = _execute_with_cursor(
-            cur,
-            """
-            SELECT COALESCE(MAX(line_number), 0) AS max_line
-            FROM project_parts_list_lines
-            WHERE project_id = ?
-            """,
-            (project_id,),
-            fetch='one',
-        ) or {}
-        next_line = max_row.get('max_line') or 0
-
-        for line in cleaned_lines:
-            total_quantity = line['total_quantity']
-            if total_quantity in ('', None):
-                total_quantity = None
-            else:
-                try:
-                    total_quantity = int(float(total_quantity))
-                except (TypeError, ValueError):
-                    total_quantity = None
-
-            next_line += 1
-            _execute_with_cursor(
-                cur,
-                """
-                INSERT INTO project_parts_list_lines
-                    (project_id, line_number, customer_part_number, description, category, comment,
-                     line_type, total_quantity, usage_by_year, date_created, date_modified)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """,
-                (
-                    project_id,
-                    next_line,
-                    line['customer_part_number'],
-                    line['description'],
-                    line['category'],
-                    line['comment'],
-                    line['line_type'],
-                    total_quantity,
-                    json.dumps(line['usage_by_year']) if line['usage_by_year'] else None,
-                ),
-            )
+        _insert_project_parts_list_lines(cur, project_id, cleaned_lines)
 
     return jsonify(success=True)
+
+
+@projects_bp.route('/create-with-parts-list', methods=['POST'])
+def create_project_with_parts_list():
+    data = request.get_json(force=True) or {}
+
+    project_name = (data.get('project_name') or data.get('name') or '').strip()
+    description = (data.get('description') or '').strip() or None
+    account_type = (data.get('account_type') or '').strip().lower()
+    customer_id = data.get('customer_id')
+    supplier_id = data.get('supplier_id')
+    cleaned_lines = _clean_project_parts_lines(data.get('lines') or [])
+
+    if not project_name:
+        return jsonify(success=False, message='Project name is required'), 400
+    if account_type not in {'customer', 'supplier'}:
+        return jsonify(success=False, message='Choose a customer or supplier'), 400
+    if account_type == 'customer':
+        supplier_id = None
+        if not customer_id:
+            return jsonify(success=False, message='Customer is required'), 400
+    else:
+        customer_id = None
+        if not supplier_id:
+            return jsonify(success=False, message='Supplier is required'), 400
+    if not cleaned_lines:
+        return jsonify(success=False, message='Add at least one valid project parts line'), 400
+
+    try:
+        customer_id = int(customer_id) if customer_id is not None else None
+        supplier_id = int(supplier_id) if supplier_id is not None else None
+    except (TypeError, ValueError):
+        return jsonify(success=False, message='Invalid customer or supplier selection'), 400
+
+    salesperson_id = current_user.get_salesperson_id() if current_user.is_authenticated else None
+
+    with db_cursor(commit=True) as cur:
+        project_row = _execute_with_cursor(
+            cur,
+            """
+            INSERT INTO projects (customer_id, supplier_id, salesperson_id, name, description, status_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            RETURNING id
+            """,
+            (customer_id, supplier_id, salesperson_id, project_name, description, 1),
+            fetch='one',
+        )
+        project_id = project_row['id'] if project_row else getattr(cur, 'lastrowid', None)
+        _insert_project_parts_list_lines(cur, project_id, cleaned_lines)
+
+    return jsonify(
+        success=True,
+        project_id=project_id,
+        redirect=url_for('projects.project_parts_list_overview', project_id=project_id),
+    )
 
 
 @projects_bp.route('/<int:project_id>/project-parts-list/lines/bulk-update', methods=['POST'])
