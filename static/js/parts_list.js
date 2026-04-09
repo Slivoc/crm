@@ -3460,60 +3460,57 @@ document.addEventListener('DOMContentLoaded', function() {
 
     initializeEscapedRowActionsDropdowns();
 
-    const partsTableBody = document.getElementById('parts-table-body');
-    if (partsTableBody) {
-        partsTableBody.addEventListener('click', function(event) {
-            const copyButton = event.target.closest('.copy-part-number-btn');
-            if (copyButton) {
-                const encodedPartNumber = copyButton.getAttribute('data-part-number') || '';
-                const partNumber = decodeURIComponent(encodedPartNumber);
-                copyTextToClipboard(partNumber);
-                return;
-            }
+    document.addEventListener('click', function(event) {
+        const copyButton = event.target.closest('.copy-part-number-btn');
+        if (copyButton) {
+            const encodedPartNumber = copyButton.getAttribute('data-part-number') || '';
+            const partNumber = decodeURIComponent(encodedPartNumber);
+            copyTextToClipboard(partNumber);
+            return;
+        }
 
-            const suggestAltButton = event.target.closest('.suggest-alt-btn');
-            if (suggestAltButton) {
-                const partIndex = parseInt(suggestAltButton.getAttribute('data-part-index'), 10);
-                if (!Number.isNaN(partIndex)) {
-                    suggestAlternativeForLine(partIndex, suggestAltButton);
-                }
-                return;
+        const suggestAltButton = event.target.closest('.suggest-alt-btn');
+        if (suggestAltButton) {
+            const partIndex = parseInt(suggestAltButton.getAttribute('data-part-index'), 10);
+            if (!Number.isNaN(partIndex)) {
+                suggestAlternativeForLine(partIndex, suggestAltButton);
             }
+            return;
+        }
 
-            const editLinePartButton = event.target.closest('.edit-line-part-btn');
-            if (editLinePartButton) {
-                const partIndex = parseInt(editLinePartButton.getAttribute('data-part-index'), 10);
-                if (!Number.isNaN(partIndex)) {
-                    updateLinePartNumber(partIndex, editLinePartButton);
-                }
-                return;
+        const editLinePartButton = event.target.closest('.edit-line-part-btn');
+        if (editLinePartButton) {
+            const partIndex = parseInt(editLinePartButton.getAttribute('data-part-index'), 10);
+            if (!Number.isNaN(partIndex)) {
+                updateLinePartNumber(partIndex, editLinePartButton);
             }
+            return;
+        }
 
-            const editLineQtyButton = event.target.closest('.edit-line-qty-btn');
-            if (editLineQtyButton) {
-                const partIndex = parseInt(editLineQtyButton.getAttribute('data-part-index'), 10);
-                if (!Number.isNaN(partIndex)) {
-                    updateLineQuantity(partIndex, editLineQtyButton);
-                }
-                return;
+        const editLineQtyButton = event.target.closest('.edit-line-qty-btn');
+        if (editLineQtyButton) {
+            const partIndex = parseInt(editLineQtyButton.getAttribute('data-part-index'), 10);
+            if (!Number.isNaN(partIndex)) {
+                updateLineQuantity(partIndex, editLineQtyButton);
             }
+            return;
+        }
 
-            const button = event.target.closest('.duplicate-line-btn');
-            if (button) {
-                const partIndex = parseInt(button.getAttribute('data-part-index'), 10);
-                if (!Number.isNaN(partIndex)) {
-                    duplicateLineForPriceBreak(partIndex, button);
-                }
-                return;
+        const button = event.target.closest('.duplicate-line-btn');
+        if (button) {
+            const partIndex = parseInt(button.getAttribute('data-part-index'), 10);
+            if (!Number.isNaN(partIndex)) {
+                duplicateLineForPriceBreak(partIndex, button);
             }
+            return;
+        }
 
-            const deleteButton = event.target.closest('.delete-line-btn');
-            if (!deleteButton) return;
-            const partIndex = parseInt(deleteButton.getAttribute('data-part-index'), 10);
-            if (Number.isNaN(partIndex)) return;
-            deleteLineFromPartsList(partIndex, deleteButton);
-        });
-    }
+        const deleteButton = event.target.closest('.delete-line-btn');
+        if (!deleteButton) return;
+        const partIndex = parseInt(deleteButton.getAttribute('data-part-index'), 10);
+        if (Number.isNaN(partIndex)) return;
+        deleteLineFromPartsList(partIndex, deleteButton);
+    });
 
     if (quickSupplierNameInput) {
         quickSupplierNameInput.addEventListener('input', function() {
