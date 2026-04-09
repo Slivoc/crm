@@ -329,51 +329,73 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         ? (part.input_part_number || part.alt_part_number || part.base_part_number || '')
         : (part.input_part_number || '');
     const copyPartNumberButton = partNumberForCopy
-        ? `<button class="btn btn-sm icon-action-btn copy-part-number-btn"
-                   data-part-number="${encodeURIComponent(partNumberForCopy)}"
-                   title="Copy part number">
-              <i class="bi bi-clipboard"></i>
+        ? `<button type="button"
+                   class="dropdown-item copy-part-number-btn"
+                   data-part-number="${encodeURIComponent(partNumberForCopy)}">
+              <i class="bi bi-clipboard me-2"></i>Copy part number
            </button>`
         : '';
     const duplicateButton = canDuplicate
-        ? `<button class="btn btn-sm icon-action-btn duplicate-line-btn"
+        ? `<button type="button"
+                   class="dropdown-item duplicate-line-btn"
                    data-part-index="${actualIndex}"
-                   data-line-id="${part.line_id}"
-                   title="Add price break">
-              <i class="bi bi-plus-square"></i>
+                   data-line-id="${part.line_id}">
+              <i class="bi bi-plus-square me-2"></i>Add price break
            </button>`
         : '';
     const canDeleteLine = !!(currentListId && part.line_id);
     const deleteLineButton = canDeleteLine
-        ? `<button class="btn btn-sm icon-action-btn text-danger delete-line-btn"
+        ? `<button type="button"
+                   class="dropdown-item text-danger delete-line-btn"
                    data-part-index="${actualIndex}"
-                   data-line-id="${part.line_id}"
-                   title="Delete this line">
-              <i class="bi bi-trash"></i>
+                   data-line-id="${part.line_id}">
+              <i class="bi bi-trash me-2"></i>Delete line
            </button>`
         : '';
     const canSuggestAlternative = !isSubLine && !!(part.base_part_number || part.input_part_number);
     const suggestAlternativeButton = canSuggestAlternative
-        ? `<button class="btn btn-sm icon-action-btn suggest-alt-btn"
-                   data-part-index="${actualIndex}"
-                   title="Suggest alternative for this part">
-              <i class="bi bi-arrow-left-right"></i>
+        ? `<button type="button"
+                   class="dropdown-item suggest-alt-btn"
+                   data-part-index="${actualIndex}">
+              <i class="bi bi-arrow-left-right me-2"></i>Suggest alternative
            </button>`
         : '';
     const canEditLinePart = !!(currentListId && part.line_id);
     const editLinePartButton = canEditLinePart
-        ? `<button class="btn btn-sm icon-action-btn edit-line-part-btn"
-                   data-part-index="${actualIndex}"
-                   title="Change this line's part number">
-              <i class="bi bi-pencil-square"></i>
+        ? `<button type="button"
+                   class="dropdown-item edit-line-part-btn"
+                   data-part-index="${actualIndex}">
+              <i class="bi bi-pencil-square me-2"></i>Edit part number
            </button>`
         : '';
     const editLineQtyButton = canEditLinePart
-        ? `<button class="btn btn-sm icon-action-btn edit-line-qty-btn"
-                   data-part-index="${actualIndex}"
-                   title="Change this line's quantity">
-              <i class="bi bi-123"></i>
+        ? `<button type="button"
+                   class="dropdown-item edit-line-qty-btn"
+                   data-part-index="${actualIndex}">
+              <i class="bi bi-123 me-2"></i>Edit quantity
            </button>`
+        : '';
+    const rowActionItems = [
+        copyPartNumberButton,
+        suggestAlternativeButton,
+        editLinePartButton,
+        editLineQtyButton,
+        duplicateButton,
+        deleteLineButton
+    ].filter(Boolean);
+    const rowActionsDropdown = rowActionItems.length > 0
+        ? `<div class="dropdown">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-1 dropdown-toggle"
+                      type="button"
+                      data-bs-toggle="dropdown"
+                      aria-expanded="false"
+                      title="Line actions">
+                  <i class="bi bi-three-dots"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                  ${rowActionItems.map(item => `<li>${item}</li>`).join('')}
+              </ul>
+           </div>`
         : '';
 
     let alternativesDisplay = '-';
@@ -444,12 +466,7 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
                     ${isAlt && part.parent_base_part_number ? `<br><small class="text-muted" style="font-size: 0.68rem; margin-left: 0.25rem;">For: ${escapeHtml(part.parent_base_part_number)}</small>` : ''}
                 </div>
                 <div class="d-flex align-items-center gap-1">
-                    ${copyPartNumberButton}
-                    ${suggestAlternativeButton}
-                    ${editLinePartButton}
-                    ${editLineQtyButton}
-                    ${duplicateButton}
-                    ${deleteLineButton}
+                    ${rowActionsDropdown}
                 </div>
             </div>
         </td>
