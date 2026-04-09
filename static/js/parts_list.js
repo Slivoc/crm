@@ -63,6 +63,109 @@ function setupStickyHeader() {
     container.addEventListener('scroll', scrollHandler);
 }
 
+let activeEscapedRowActionsDropdown = null;
+
+function positionEscapedRowActionsDropdown(dropdown) {
+    if (!dropdown) return;
+
+    const toggle = dropdown.querySelector('.parts-list-row-actions-toggle');
+    const menu = dropdown.querySelector('.parts-list-row-actions-menu');
+    if (!toggle || !menu || menu.parentElement !== document.body) return;
+
+    const rect = toggle.getBoundingClientRect();
+    const viewportPadding = 8;
+    const menuWidth = menu.offsetWidth || 180;
+    const menuHeight = menu.offsetHeight || 0;
+
+    let left = rect.right - menuWidth;
+    if (left < viewportPadding) {
+        left = viewportPadding;
+    }
+    if (left + menuWidth > window.innerWidth - viewportPadding) {
+        left = Math.max(viewportPadding, window.innerWidth - menuWidth - viewportPadding);
+    }
+
+    let top = rect.bottom + 4;
+    if (top + menuHeight > window.innerHeight - viewportPadding) {
+        top = Math.max(viewportPadding, rect.top - menuHeight - 4);
+    }
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+}
+
+function escapeRowActionsDropdown(dropdown) {
+    if (!dropdown) return;
+
+    const menu = dropdown.querySelector('.parts-list-row-actions-menu');
+    const toggle = dropdown.querySelector('.parts-list-row-actions-toggle');
+    if (!menu || !toggle) return;
+
+    if (!menu.__originalParent) {
+        menu.__originalParent = dropdown;
+        menu.__originalNextSibling = menu.nextSibling;
+    }
+
+    if (menu.parentElement !== document.body) {
+        document.body.appendChild(menu);
+    }
+
+    menu.style.position = 'fixed';
+    menu.style.minWidth = `${Math.max(toggle.offsetWidth, 180)}px`;
+    menu.style.zIndex = '2000';
+
+    activeEscapedRowActionsDropdown = dropdown;
+    positionEscapedRowActionsDropdown(dropdown);
+}
+
+function restoreRowActionsDropdown(dropdown) {
+    if (!dropdown) return;
+
+    const menu = dropdown.querySelector('.parts-list-row-actions-menu');
+    if (!menu || !menu.__originalParent) return;
+
+    if (menu.parentElement === document.body) {
+        menu.__originalParent.insertBefore(menu, menu.__originalNextSibling || null);
+    }
+
+    menu.style.position = '';
+    menu.style.top = '';
+    menu.style.left = '';
+    menu.style.minWidth = '';
+    menu.style.zIndex = '';
+
+    if (activeEscapedRowActionsDropdown === dropdown) {
+        activeEscapedRowActionsDropdown = null;
+    }
+}
+
+function initializeEscapedRowActionsDropdowns() {
+    if (document.body.dataset.partsListRowActionsDropdownInit === '1') {
+        return;
+    }
+    document.body.dataset.partsListRowActionsDropdownInit = '1';
+
+    document.addEventListener('shown.bs.dropdown', function(event) {
+        const dropdown = event.target.closest('.parts-list-row-actions-dropdown');
+        if (!dropdown) return;
+        escapeRowActionsDropdown(dropdown);
+    });
+
+    document.addEventListener('hidden.bs.dropdown', function(event) {
+        const dropdown = event.target.closest('.parts-list-row-actions-dropdown');
+        if (!dropdown) return;
+        restoreRowActionsDropdown(dropdown);
+    });
+
+    window.addEventListener('resize', function() {
+        positionEscapedRowActionsDropdown(activeEscapedRowActionsDropdown);
+    });
+
+    document.addEventListener('scroll', function() {
+        positionEscapedRowActionsDropdown(activeEscapedRowActionsDropdown);
+    }, true);
+}
+
 function displayResults(results) {
     window.allResults = results;
 
@@ -388,15 +491,15 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         deleteLineButton
     ].filter(Boolean);
     const rowActionsDropdown = rowActionItems.length > 0
-        ? `<div class="dropdown">
-              <button class="btn btn-sm btn-outline-secondary py-0 px-1 dropdown-toggle"
+        ? `<div class="dropdown parts-list-row-actions-dropdown">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-1 dropdown-toggle parts-list-row-actions-toggle"
                       type="button"
                       data-bs-toggle="dropdown"
                       aria-expanded="false"
                       title="Line actions">
                   <i class="bi bi-three-dots"></i>
               </button>
-              <ul class="dropdown-menu dropdown-menu-end">
+              <ul class="dropdown-menu dropdown-menu-end parts-list-row-actions-menu">
                   ${rowActionItems.map(item => `<li>${item}</li>`).join('')}
               </ul>
            </div>`
@@ -3354,6 +3457,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (window.LOADED_LIST_DATA && window.LOADED_LIST_DATA.header) {
         currentListId = window.LOADED_LIST_DATA.header.id;
     }
+
+    initializeEscapedRowActionsDropdowns();
 
     const partsTableBody = document.getElementById('parts-table-body');
     if (partsTableBody) {
