@@ -534,6 +534,12 @@ def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_sum
     supplier_names = []
 
     if include_summary:
+        current_app.logger.info(
+            "QPL mapped report summary query starting project_id=%s offset=%s limit=%s",
+            project_id,
+            debug['offset'],
+            debug['limit'],
+        )
         summary_started_at = perf_counter()
         summary_row = db_execute(
             f"""
@@ -553,6 +559,12 @@ def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_sum
             'mapping_count': summary_row.get('mapping_count') or 0,
             'supplier_count': summary_row.get('supplier_count') or 0,
         }
+        current_app.logger.info(
+            "QPL mapped report supplier_names query starting project_id=%s offset=%s limit=%s",
+            project_id,
+            debug['offset'],
+            debug['limit'],
+        )
         supplier_names_started_at = perf_counter()
         supplier_rows = db_execute(
             f"""
@@ -574,6 +586,13 @@ def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_sum
         limit_clause = "\n        LIMIT ? OFFSET ?"
         params.extend([limit, max(offset or 0, 0)])
 
+    current_app.logger.info(
+        "QPL mapped report rows query starting project_id=%s offset=%s limit=%s include_summary=%s",
+        project_id,
+        debug['offset'],
+        debug['limit'],
+        bool(include_summary),
+    )
     rows_started_at = perf_counter()
     rows = db_execute(
         f"""

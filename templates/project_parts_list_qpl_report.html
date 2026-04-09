@@ -149,6 +149,7 @@
     let nextOffset = 0;
     let hasMoreRows = false;
     let isLoadingRows = false;
+    let isLoadingSummary = false;
     let summaryLoaded = false;
     let loadWatchInterval = null;
 
@@ -259,6 +260,34 @@
         if (loadWatchInterval) {
             window.clearInterval(loadWatchInterval);
             loadWatchInterval = null;
+        }
+    }
+
+    async function loadSummary() {
+        if (summaryLoaded || isLoadingSummary) {
+            return;
+        }
+
+        isLoadingSummary = true;
+        try {
+            const startedAt = performance.now();
+            const response = await fetch(`{{ url_for("projects.project_parts_list_qpl_mapped_report_data", project_id=project.id) }}?limit=1&offset=0&include_summary=1`);
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Unable to load report summary');
+            }
+
+            updateSummary(data.summary || {});
+            populateSupplierOptions(data.supplier_names || []);
+            summaryLoaded = true;
+            renderDebugDetails(data.debug || {}, Math.round((performance.now() - startedAt) * 10) / 10);
+        } catch (error) {
+            console.error(error);
+            if (loadMetricsEl && !loadMetricsEl.textContent) {
+                loadMetricsEl.textContent = `Summary load failed: ${error.message}`;
+            }
+        } finally {
+            isLoadingSummary = false;
         }
     }
 
@@ -477,18 +506,12 @@
 
         try {
             const startedAt = performance.now();
-            const includeSummary = !summaryLoaded ? '1' : '0';
+            const includeSummary = '0';
             startLoadWatch(startedAt, includeSummary);
             const response = await fetch(`{{ url_for("projects.project_parts_list_qpl_mapped_report_data", project_id=project.id) }}?limit=${pageSize}&offset=${nextOffset}&include_summary=${includeSummary}`);
             const data = await response.json();
             if (!response.ok || !data.success) {
                 throw new Error(data.message || 'Unable to load report rows');
-            }
-
-            if (!summaryLoaded) {
-                updateSummary(data.summary || {});
-                populateSupplierOptions(data.supplier_names || []);
-                summaryLoaded = true;
             }
 
             const rows = Array.isArray(data.rows) ? data.rows : [];
@@ -503,7 +526,6 @@
             applySupplierFilter();
             updateRenderedCount();
             ensureEmptyState();
-            await loadInstructionTexts();
 
             nextOffset += rows.length;
             hasMoreRows = Boolean(data.pagination?.has_more);
@@ -513,6 +535,21 @@
                 : 'No more rows returned.';
             loadMetricsEl.textContent = `Server ${data.timings_ms?.query ?? data.timings_ms?.total ?? '?'} ms, browser ${browserMs} ms, next offset ${nextOffset}${hasMoreRows ? ', more rows available' : ''}.`;
             renderDebugDetails(data.debug || {}, browserMs);
+            loadSummary();
+            if (hasInstructionTable) {
+                loadStatusEl.textContent += ' Loading instruction text...';
+                loadInstructionTexts()
+                    .then(() => {
+                        if (loadStatusEl.textContent.includes('Loading instruction text...')) {
+                            loadStatusEl.textContent = rows.length
+                                ? `Loaded ${rows.length} row${rows.length === 1 ? '' : 's'} and instruction text.`
+                                : 'No more rows returned.';
+                        }
+                    })
+                    .catch((error) => {
+                        console.error(error);
+                    });
+            }
             if (loadMoreBtn) {
                 loadMoreBtn.style.display = hasMoreRows ? '' : 'none';
             }
