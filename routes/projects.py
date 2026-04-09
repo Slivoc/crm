@@ -399,10 +399,6 @@ def _build_project_qpl_mapped_ctes():
             WHERE pl.project_id = ?
               AND TRIM(COALESCE(pll.base_part_number, '')) <> ''
         ),
-        distinct_project_parts AS (
-            SELECT DISTINCT normalized_base_part_number
-            FROM project_lines
-        ),
         stock AS (
             SELECT
                 UPPER(TRIM(base_part_number)) AS normalized_base_part_number,
@@ -413,19 +409,15 @@ def _build_project_qpl_mapped_ctes():
               AND TRIM(COALESCE(base_part_number, '')) <> ''
             GROUP BY UPPER(TRIM(base_part_number))
         ),
-        matched_parts AS (
+        qpl_mapped AS (
             SELECT DISTINCT
-                dpp.normalized_base_part_number,
+                UPPER(TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, '')))) AS normalized_base_part_number,
                 TRIM(ma.manufacturer_name) AS qpl_manufacturer_name,
-                map.supplier_id,
+                map.supplier_id AS mapped_supplier_id,
                 s.name AS mapped_supplier_name,
                 s.contact_name AS mapped_supplier_contact_name,
                 s.contact_email AS mapped_supplier_contact_email
-            FROM distinct_project_parts dpp
-            JOIN manufacturer_approvals ma
-                ON dpp.normalized_base_part_number LIKE (
-                    UPPER(TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, '')))) || '%%'
-                )
+            FROM manufacturer_approvals ma
             JOIN qpl_manufacturer_supplier_mappings map
                 ON map.manufacturer_name_normalized = {manufacturer_name_normalized_sql}
             LEFT JOIN suppliers s ON s.id = map.supplier_id
@@ -444,13 +436,13 @@ def _build_project_qpl_mapped_ctes():
                 pl.description,
                 pl.requested_qty,
                 pl.normalized_base_part_number,
-                mp.qpl_manufacturer_name,
-                mp.supplier_id AS mapped_supplier_id,
-                mp.mapped_supplier_name,
-                mp.mapped_supplier_contact_name,
-                mp.mapped_supplier_contact_email
+                qm.qpl_manufacturer_name,
+                qm.mapped_supplier_id,
+                qm.mapped_supplier_name,
+                qm.mapped_supplier_contact_name,
+                qm.mapped_supplier_contact_email
             FROM project_lines pl
-            JOIN matched_parts mp ON mp.normalized_base_part_number = pl.normalized_base_part_number
+            JOIN qpl_mapped qm ON qm.normalized_base_part_number = pl.normalized_base_part_number
         )
     """
 
