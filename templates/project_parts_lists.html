@@ -7,7 +7,21 @@
 <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
 <style>
     .project-parts-lists-table {
+        width: max(100%, 1320px) !important;
         min-width: 1320px;
+    }
+
+    .dataTables_wrapper,
+    .dataTables_scroll,
+    .dataTables_scrollHead,
+    .dataTables_scrollHeadInner,
+    .dataTables_scrollBody {
+        width: 100% !important;
+    }
+
+    .dataTables_scrollHeadInner .project-parts-lists-table,
+    .dataTables_scrollBody .project-parts-lists-table {
+        width: max(100%, 1320px) !important;
     }
 
     .project-parts-lists-table thead th,
@@ -96,7 +110,7 @@
                 </div>
             </div>
             <div class="card-body p-0">
-                <table class="table table-hover align-middle mb-0 project-parts-lists-table" id="projectPartsListsTable">
+                <table class="table table-hover align-middle mb-0 project-parts-lists-table" id="projectPartsListsTable" style="width:100%">
                     <thead>
                         <tr>
                             <th>Parts List</th>
