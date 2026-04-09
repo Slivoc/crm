@@ -368,7 +368,8 @@ def _fetch_project_qpl_mapped_rows(project_id):
             COALESCE(stock.total_available_stock, 0) AS total_available_stock
             {instruction_select_sql}
         FROM project_lines pl
-        JOIN qpl_mapped qm ON qm.normalized_base_part_number = pl.normalized_base_part_number
+        JOIN qpl_mapped qm
+            ON pl.normalized_base_part_number LIKE (qm.normalized_base_part_number || '%')
         LEFT JOIN (
             SELECT
                 UPPER(TRIM(base_part_number)) AS normalized_base_part_number,

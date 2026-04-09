@@ -54,7 +54,7 @@ def _tokenize_qpl_manufacturer_name(name):
 
 
 def _normalize_prefix_report_manufacturer_name(name):
-    return ' '.join((str(name or '').strip().lower()).split())
+    return _normalize_qpl_manufacturer_name(name)
 
 
 def _manufacturer_name_normalized_sql(column_sql):
