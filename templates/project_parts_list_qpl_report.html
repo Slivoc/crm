@@ -92,6 +92,7 @@
                     <tbody>
                         {% if rows %}
                             {% for row in rows %}
+                                {% set instruction_prefix = ((row.base_part_number or '')|trim|upper)[:6] %}
                                 <tr
                                     data-row-supplier="{{ row.mapped_supplier_name or '' }}"
                                     data-row-id="qpl-row-{{ row.parts_list_line_id }}-{{ loop.index }}"
@@ -134,7 +135,12 @@
                                     </td>
                                     <td>{{ row.total_available_stock or 0 }}</td>
                                     <td>{{ row.qpl_manufacturer_name }}</td>
-                                    <td class="small">{{ row.instruction_text or '' }}</td>
+                                    <td
+                                        class="small qpl-instruction-cell text-muted"
+                                        data-supplier-id="{{ row.mapped_supplier_id or '' }}"
+                                        data-manufacturer-name="{{ row.qpl_manufacturer_name or '' }}"
+                                        data-prefix="{{ instruction_prefix }}"
+                                    >{{ row.instruction_text or '' }}</td>
                                     <td>
                                         {% if row.mapped_supplier_id %}
                                             <a href="{{ url_for('suppliers.edit_supplier', supplier_id=row.mapped_supplier_id) }}">
@@ -169,6 +175,20 @@
     const selectAllBtn = document.getElementById('qplSelectAllBtn');
     const emailSelectedBtn = document.getElementById('qplEmailSelectedBtn');
     const supplierFilter = document.getElementById('qplSupplierFilter');
+    const hasInstructionTable = {{ 'true' if has_instruction_table else 'false' }};
+    const instructionStopwords = new Set([
+        'ltd', 'limited', 'inc', 'llc', 'plc', 'corp', 'corporation',
+        'co', 'company', 'gmbh', 'sa', 'bv', 'ag', 'srl', 'pte', 'group'
+    ]);
+
+    function normalizeManufacturerName(value) {
+        return String(value || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9 ]+/g, ' ')
+            .split(/\s+/)
+            .filter((token) => token && !instructionStopwords.has(token))
+            .join('');
+    }
 
     const getEligibleCheckboxes = () => Array.from(document.querySelectorAll('.qpl-email-checkbox')).filter(cb => {
         const row = cb.closest('tr');
@@ -216,8 +236,81 @@
     if (supplierFilter) {
         supplierFilter.addEventListener('change', applySupplierFilter);
     }
+
     applySupplierFilter();
     syncSelectAll();
+
+    async function loadInstructionTexts() {
+        const instructionCells = Array.from(document.querySelectorAll('.qpl-instruction-cell'));
+        if (!instructionCells.length || !hasInstructionTable) {
+            return;
+        }
+
+        const items = [];
+        const seen = new Set();
+
+        instructionCells.forEach((cell) => {
+            const supplierId = Number.parseInt(cell.dataset.supplierId || '', 10);
+            const manufacturerName = (cell.dataset.manufacturerName || '').trim();
+            const prefix = (cell.dataset.prefix || '').trim().toUpperCase();
+
+            if (!supplierId || !manufacturerName || prefix.length !== 6) {
+                return;
+            }
+
+            const key = `${supplierId}::${manufacturerName}::${prefix}`;
+            if (seen.has(key)) {
+                return;
+            }
+
+            seen.add(key);
+            items.push({
+                supplier_id: supplierId,
+                manufacturer_name: manufacturerName,
+                prefix,
+            });
+        });
+
+        if (!items.length) {
+            return;
+        }
+
+        try {
+            const response = await fetch('{{ url_for("projects.project_parts_list_qpl_mapped_instructions", project_id=project.id) }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items }),
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Unable to load instructions');
+            }
+
+            const instructionMap = new Map(
+                (data.rows || []).map((row) => [
+                    `${row.supplier_id}::${row.manufacturer_name_normalized}::${row.prefix}`,
+                    row.instruction_text || '',
+                ])
+            );
+
+            instructionCells.forEach((cell) => {
+                const supplierId = Number.parseInt(cell.dataset.supplierId || '', 10);
+                const manufacturerName = normalizeManufacturerName(cell.dataset.manufacturerName || '');
+                const prefix = (cell.dataset.prefix || '').trim().toUpperCase();
+                if (!supplierId || !manufacturerName || prefix.length !== 6) {
+                    return;
+                }
+
+                const key = `${supplierId}::${manufacturerName}::${prefix}`;
+                cell.textContent = instructionMap.get(key) || '';
+                cell.classList.toggle('text-muted', !cell.textContent);
+            });
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
+    loadInstructionTexts();
 
     async function generateSupplierEmailPayload(supplierData) {
         const resp = await fetch('{{ url_for("parts_list.generate_supplier_email") }}', {

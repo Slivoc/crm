@@ -1,4 +1,5 @@
 import os
+import re
 import csv
 import io
 import json
@@ -53,6 +54,20 @@ def _manufacturer_name_normalized_sql(column_sql):
         padded_sql = f"REPLACE({padded_sql}, ' {stopword} ', ' ')"
 
     return f"REPLACE(TRIM({padded_sql}), ' ', '')"
+
+
+def _normalize_qpl_manufacturer_name(name):
+    if not name:
+        return ''
+    value = re.sub(r'[^a-z0-9 ]+', ' ', str(name).lower())
+    tokens = [
+        token for token in value.split()
+        if token not in {
+            'ltd', 'limited', 'inc', 'llc', 'plc', 'corp', 'corporation',
+            'co', 'company', 'gmbh', 'sa', 'bv', 'ag', 'srl', 'pte', 'group'
+        }
+    ]
+    return ''.join(tokens)
 
 
 def _execute_with_cursor(cur, query, params=None, fetch=None):
@@ -300,23 +315,7 @@ def _fetch_project_qpl_mapped_rows(project_id):
         return []
 
     manufacturer_name_normalized_sql = _manufacturer_name_normalized_sql('ma.manufacturer_name')
-
-    has_instruction_table = _qpl_prefix_instruction_table_exists()
-    instruction_join_sql = ''
-    instruction_select_sql = ", '' AS instruction_text"
-    instruction_prefix_sql = ''
     params = [project_id]
-
-    if has_instruction_table:
-        instruction_select_sql = ", COALESCE(instr.instruction_text, '') AS instruction_text"
-        instruction_prefix_sql = "AND instr.prefix_length = 6"
-        instruction_join_sql = f"""
-        LEFT JOIN qpl_supplier_prefix_instructions instr
-            ON instr.supplier_id = qm.supplier_id
-           AND instr.manufacturer_name_normalized = {manufacturer_name_normalized_sql.replace('ma.manufacturer_name', 'qm.qpl_manufacturer_name')}
-           AND instr.prefix = SUBSTR(UPPER(TRIM(COALESCE(pl.base_part_number, ''))), 1, 6)
-           {instruction_prefix_sql}
-        """
 
     rows = db_execute(
         f"""
@@ -365,8 +364,8 @@ def _fetch_project_qpl_mapped_rows(project_id):
             qm.mapped_supplier_name,
             qm.mapped_supplier_contact_name,
             qm.mapped_supplier_contact_email,
-            COALESCE(stock.total_available_stock, 0) AS total_available_stock
-            {instruction_select_sql}
+            COALESCE(stock.total_available_stock, 0) AS total_available_stock,
+            '' AS instruction_text
         FROM project_lines pl
         JOIN qpl_mapped qm
             ON pl.normalized_base_part_number LIKE (qm.normalized_base_part_number || '%%')
@@ -380,7 +379,6 @@ def _fetch_project_qpl_mapped_rows(project_id):
               AND TRIM(COALESCE(base_part_number, '')) <> ''
             GROUP BY UPPER(TRIM(base_part_number))
         ) stock ON stock.normalized_base_part_number = pl.normalized_base_part_number
-        {instruction_join_sql}
         ORDER BY pl.parts_list_id, pl.line_number, pl.parts_list_line_id, qm.qpl_manufacturer_name
         """,
         tuple(params),
@@ -731,9 +729,78 @@ def project_parts_list_qpl_mapped_report(project_id):
         'project_parts_list_qpl_report.html',
         project=project,
         has_mapping_table=has_mapping_table,
+        has_instruction_table=_qpl_prefix_instruction_table_exists(),
         summary=summary,
         rows=rows,
     )
+
+
+@projects_bp.route('/<int:project_id>/parts-lists/report/qpl-mapped/instructions', methods=['POST'])
+def project_parts_list_qpl_mapped_instructions(project_id):
+    project = get_project_by_id(project_id)
+    if not project:
+        return jsonify(success=False, message='Project not found.'), 404
+
+    if not _qpl_prefix_instruction_table_exists():
+        return jsonify(success=True, rows=[])
+
+    payload = request.get_json(silent=True) or {}
+    raw_items = payload.get('items') or []
+
+    normalized_items = []
+    seen = set()
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+
+        supplier_id = item.get('supplier_id')
+        manufacturer_name = item.get('manufacturer_name')
+        prefix = (item.get('prefix') or '').strip().upper()
+
+        try:
+            supplier_id = int(supplier_id)
+        except (TypeError, ValueError):
+            continue
+
+        manufacturer_name_normalized = _normalize_qpl_manufacturer_name(manufacturer_name)
+        if not manufacturer_name_normalized or len(prefix) != 6:
+            continue
+
+        key = (supplier_id, manufacturer_name_normalized, prefix)
+        if key in seen:
+            continue
+
+        seen.add(key)
+        normalized_items.append(key)
+
+    if not normalized_items:
+        return jsonify(success=True, rows=[])
+
+    where_clauses = []
+    params = [6]
+    for supplier_id, manufacturer_name_normalized, prefix in normalized_items:
+        where_clauses.append(
+            "(supplier_id = ? AND manufacturer_name_normalized = ? AND prefix = ?)"
+        )
+        params.extend([supplier_id, manufacturer_name_normalized, prefix])
+
+    rows = db_execute(
+        f"""
+        SELECT
+            supplier_id,
+            manufacturer_name_normalized,
+            prefix,
+            instruction_text
+        FROM qpl_supplier_prefix_instructions
+        WHERE prefix_length = ?
+          AND ({' OR '.join(where_clauses)})
+        """,
+        tuple(params),
+        fetch='all',
+    ) or []
+
+    return jsonify(success=True, rows=[dict(row) for row in rows])
 
 
 @projects_bp.route('/<int:project_id>/parts-lists/overview', methods=['GET'])
@@ -820,6 +887,98 @@ def project_parts_lists_supplier_quote_counts(project_id):
         requested = {row['parts_list_id']: row['requested_line_count'] for row in requested_counts}
         return jsonify(success=True, counts=offers, requested=requested)
     except Exception as e:
+        return jsonify(success=False, message=str(e)), 500
+
+
+@projects_bp.route('/<int:project_id>/parts-lists/priority-scores', methods=['GET'])
+def project_parts_lists_priority_scores(project_id):
+    """Return quick-and-dirty prioritisation scores for all parts lists in a project."""
+    project = get_project_by_id(project_id)
+    if not project:
+        return jsonify(success=False, message='Project not found'), 404
+
+    try:
+        rows = db_execute(
+            """
+            WITH project_lists AS (
+                SELECT id
+                FROM parts_lists
+                WHERE project_id = ?
+            ),
+            project_lines AS (
+                SELECT
+                    pll.parts_list_id,
+                    pll.id AS parts_list_line_id,
+                    UPPER(TRIM(pll.base_part_number)) AS normalized_base_part_number
+                FROM parts_list_lines pll
+                JOIN project_lists pl ON pl.id = pll.parts_list_id
+                WHERE TRIM(COALESCE(pll.base_part_number, '')) <> ''
+            ),
+            quoted_bases AS (
+                SELECT DISTINCT
+                    UPPER(TRIM(src.base_part_number)) AS normalized_base_part_number
+                FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_lines src ON src.id = sql.parts_list_line_id
+                WHERE TRIM(COALESCE(src.base_part_number, '')) <> ''
+                  AND COALESCE(sql.is_no_bid, 0) = 0
+
+                UNION
+
+                SELECT DISTINCT
+                    UPPER(TRIM(src.base_part_number)) AS normalized_base_part_number
+                FROM customer_quote_lines cql
+                JOIN parts_list_lines src ON src.id = cql.parts_list_line_id
+                WHERE TRIM(COALESCE(src.base_part_number, '')) <> ''
+                  AND cql.quoted_status = 'quoted'
+            ),
+            qpl_bases AS (
+                SELECT DISTINCT
+                    UPPER(TRIM(COALESCE(NULLIF(airbus_material_base, ''), NULLIF(manufacturer_part_number_base, '')))) AS normalized_base_part_number
+                FROM manufacturer_approvals
+                WHERE TRIM(COALESCE(NULLIF(airbus_material_base, ''), NULLIF(manufacturer_part_number_base, ''))) <> ''
+            )
+            SELECT
+                pl.id AS parts_list_id,
+                COUNT(DISTINCT project_lines.parts_list_line_id) AS total_base_lines,
+                SUM(CASE WHEN quoted_bases.normalized_base_part_number IS NOT NULL THEN 1 ELSE 0 END) AS quoted_before_count,
+                SUM(CASE WHEN qpl_bases.normalized_base_part_number IS NOT NULL THEN 1 ELSE 0 END) AS qpl_match_count
+            FROM project_lists pl
+            LEFT JOIN project_lines ON project_lines.parts_list_id = pl.id
+            LEFT JOIN quoted_bases
+                ON quoted_bases.normalized_base_part_number = project_lines.normalized_base_part_number
+            LEFT JOIN qpl_bases
+                ON qpl_bases.normalized_base_part_number = project_lines.normalized_base_part_number
+            GROUP BY pl.id
+            """,
+            (project_id,),
+            fetch='all'
+        ) or []
+
+        scores = {}
+        for row in rows:
+            data = dict(row)
+            parts_list_id = data.get('parts_list_id')
+            total_base_lines = int(data.get('total_base_lines') or 0)
+            quoted_before_count = int(data.get('quoted_before_count') or 0)
+            qpl_match_count = int(data.get('qpl_match_count') or 0)
+
+            if total_base_lines <= 0:
+                score = 0
+            else:
+                quoted_ratio = quoted_before_count / total_base_lines
+                qpl_ratio = qpl_match_count / total_base_lines
+                score = int(round((quoted_ratio * 0.7 + qpl_ratio * 0.3) * 100))
+
+            scores[parts_list_id] = {
+                'score': max(0, min(100, score)),
+                'total_base_lines': total_base_lines,
+                'quoted_before_count': quoted_before_count,
+                'qpl_match_count': qpl_match_count,
+            }
+
+        return jsonify(success=True, scores=scores)
+    except Exception as e:
+        current_app.logger.exception("Failed to calculate project parts list priority scores for project %s", project_id)
         return jsonify(success=False, message=str(e)), 500
 
 

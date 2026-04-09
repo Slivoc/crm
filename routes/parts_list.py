@@ -849,6 +849,7 @@ def save_supplier_quote_lines(list_id, quote_id):
             condition_code_raw = line.get('condition_code')
             certifications_raw = line.get('certifications')
             manufacturer_raw = line.get('manufacturer')
+            revision_raw = line.get('revision')
             is_no_bid = line.get('is_no_bid', False)
             line_notes_raw = line.get('line_notes')
 
@@ -861,6 +862,7 @@ def save_supplier_quote_lines(list_id, quote_id):
             condition_code = _normalize_optional_text(condition_code_raw)
             certifications = _normalize_optional_text(certifications_raw)
             manufacturer = _normalize_optional_text(manufacturer_raw)
+            revision = _normalize_optional_text(revision_raw)
             line_notes = _normalize_optional_text(line_notes_raw)
 
             if isinstance(is_no_bid, str):
@@ -878,8 +880,19 @@ def save_supplier_quote_lines(list_id, quote_id):
             logging.info(f"lead_time_days: '{lead_time_days}' (type: {type(lead_time_days).__name__})")
             logging.info(f"condition_code: '{condition_code}' (type: {type(condition_code).__name__})")
             logging.info(f"certifications: '{certifications}' (type: {type(certifications).__name__})")
+            logging.info(f"revision: '{revision}' (type: {type(revision).__name__})")
             logging.info(f"is_no_bid: {is_no_bid} (type: {type(is_no_bid).__name__})")
             logging.info(f"line_notes: '{line_notes}' (type: {type(line_notes).__name__})")
+
+            db_execute(
+                """
+                UPDATE parts_list_lines
+                SET revision = ?
+                WHERE id = ? AND parts_list_id = ?
+                """,
+                (revision, parts_list_line_id, list_id),
+                commit=True,
+            )
 
             # Skip if there's no meaningful data to save
             has_quote_data = (

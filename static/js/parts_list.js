@@ -470,9 +470,6 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
                 </div>
             </div>
         </td>
-        <td style="width: 90px; min-width: 90px; text-align: center;">
-            ${escapeHtml(part.revision || '-')}
-        </td>
         <td style="width: 110px; min-width: 110px; text-align: center; cursor: ${!isSubLine && alternativesDisplay !== '-' ? 'pointer' : 'default'};"
             class="${!isSubLine && alternativesDisplay !== '-' ? 'clickable-cell' : ''}"
             ${!isSubLine && alternativesDisplay !== '-' ? `onclick="showAlternativesModal(${actualIndex})"` : ''}>
