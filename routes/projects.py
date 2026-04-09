@@ -920,7 +920,7 @@ def project_parts_lists_priority_scores(project_id):
                 FROM parts_list_supplier_quote_lines sql
                 JOIN parts_list_lines src ON src.id = sql.parts_list_line_id
                 WHERE TRIM(COALESCE(src.base_part_number, '')) <> ''
-                  AND COALESCE(sql.is_no_bid, 0) = 0
+                  AND COALESCE(sql.is_no_bid, FALSE) = FALSE
 
                 UNION
 
