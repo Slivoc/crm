@@ -457,8 +457,36 @@ def _build_project_qpl_mapped_ctes():
 
 def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_summary=False):
     if not _qpl_supplier_mapping_table_exists():
-        return {'rows': [], 'summary': {'line_count': 0, 'mapping_count': 0, 'supplier_count': 0}, 'supplier_names': []}
+        return {
+            'rows': [],
+            'summary': {'line_count': 0, 'mapping_count': 0, 'supplier_count': 0},
+            'supplier_names': [],
+            'debug': {
+                'project_id': project_id,
+                'include_summary': bool(include_summary),
+                'offset': max(offset or 0, 0),
+                'limit': limit,
+                'has_mapping_table': False,
+                'has_project_lines': False,
+                'project_line_count': 0,
+                'returned_row_count': 0,
+                'steps_ms': {},
+            },
+        }
 
+    debug = {
+        'project_id': project_id,
+        'include_summary': bool(include_summary),
+        'offset': max(offset or 0, 0),
+        'limit': limit,
+        'has_mapping_table': True,
+        'has_project_lines': False,
+        'project_line_count': 0,
+        'returned_row_count': 0,
+        'steps_ms': {},
+    }
+
+    check_started_at = perf_counter()
     has_project_lines = db_execute(
         """
         SELECT 1
@@ -471,8 +499,30 @@ def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_sum
         (project_id,),
         fetch='one',
     )
+    debug['steps_ms']['project_line_exists'] = round((perf_counter() - check_started_at) * 1000, 1)
+    debug['has_project_lines'] = bool(has_project_lines)
     if not has_project_lines:
-        return {'rows': [], 'summary': {'line_count': 0, 'mapping_count': 0, 'supplier_count': 0}, 'supplier_names': []}
+        return {
+            'rows': [],
+            'summary': {'line_count': 0, 'mapping_count': 0, 'supplier_count': 0},
+            'supplier_names': [],
+            'debug': debug,
+        }
+
+    project_line_count_started_at = perf_counter()
+    project_line_count_row = db_execute(
+        """
+        SELECT COUNT(*) AS line_count
+        FROM parts_lists pl
+        JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+        WHERE pl.project_id = ?
+          AND TRIM(COALESCE(pll.base_part_number, '')) <> ''
+        """,
+        (project_id,),
+        fetch='one',
+    ) or {}
+    debug['steps_ms']['project_line_count'] = round((perf_counter() - project_line_count_started_at) * 1000, 1)
+    debug['project_line_count'] = int(project_line_count_row.get('line_count') or 0)
 
     ctes_sql = _build_project_qpl_mapped_ctes()
 
@@ -484,6 +534,7 @@ def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_sum
     supplier_names = []
 
     if include_summary:
+        summary_started_at = perf_counter()
         summary_row = db_execute(
             f"""
             {ctes_sql}
@@ -496,11 +547,13 @@ def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_sum
             (project_id,),
             fetch='one',
         ) or {}
+        debug['steps_ms']['summary'] = round((perf_counter() - summary_started_at) * 1000, 1)
         summary = {
             'line_count': summary_row.get('line_count') or 0,
             'mapping_count': summary_row.get('mapping_count') or 0,
             'supplier_count': summary_row.get('supplier_count') or 0,
         }
+        supplier_names_started_at = perf_counter()
         supplier_rows = db_execute(
             f"""
             {ctes_sql}
@@ -512,6 +565,7 @@ def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_sum
             (project_id,),
             fetch='all',
         ) or []
+        debug['steps_ms']['supplier_names'] = round((perf_counter() - supplier_names_started_at) * 1000, 1)
         supplier_names = [row.get('mapped_supplier_name') for row in supplier_rows if row.get('mapped_supplier_name')]
 
     limit_clause = ''
@@ -520,6 +574,7 @@ def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_sum
         limit_clause = "\n        LIMIT ? OFFSET ?"
         params.extend([limit, max(offset or 0, 0)])
 
+    rows_started_at = perf_counter()
     rows = db_execute(
         f"""
         {ctes_sql}
@@ -547,10 +602,13 @@ def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_sum
         params,
         fetch='all',
     ) or []
+    debug['steps_ms']['rows'] = round((perf_counter() - rows_started_at) * 1000, 1)
+    debug['returned_row_count'] = len(rows)
     return {
         'rows': [dict(row) for row in rows],
         'summary': summary,
         'supplier_names': supplier_names,
+        'debug': debug,
     }
 
 
@@ -921,6 +979,20 @@ def project_parts_list_qpl_mapped_report_data(project_id):
     total_ms = round((perf_counter() - started_at) * 1000, 1)
     returned = len(result['rows'])
     total_matches = result['summary']['mapping_count'] if include_summary else None
+    debug = dict(result.get('debug') or {})
+    debug['steps_ms'] = dict(debug.get('steps_ms') or {})
+    debug['steps_ms']['total'] = total_ms
+    current_app.logger.info(
+        "QPL mapped report data project_id=%s include_summary=%s offset=%s limit=%s "
+        "project_line_count=%s returned_row_count=%s timings_ms=%s",
+        project_id,
+        include_summary,
+        offset,
+        limit,
+        debug.get('project_line_count'),
+        debug.get('returned_row_count'),
+        json.dumps(debug['steps_ms'], sort_keys=True),
+    )
 
     return jsonify(
         success=True,
@@ -937,6 +1009,7 @@ def project_parts_list_qpl_mapped_report_data(project_id):
             'total': total_ms,
             'query': total_ms,
         },
+        debug=debug,
     )
 
 

@@ -59,6 +59,12 @@
         </div>
         <div class="small text-muted" id="qplLoadMetrics"></div>
     </div>
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body py-2">
+            <div class="small text-muted mb-1">Debug</div>
+            <pre class="small mb-0" id="qplDebugDetails" style="white-space: pre-wrap;">No debug data yet.</pre>
+        </div>
+    </div>
 
     <div class="card border-0 shadow-sm">
         <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -128,6 +134,7 @@
     const renderedCountEl = document.getElementById('qplRenderedCount');
     const loadStatusEl = document.getElementById('qplLoadStatus');
     const loadMetricsEl = document.getElementById('qplLoadMetrics');
+    const debugDetailsEl = document.getElementById('qplDebugDetails');
     const summaryLineCountEl = document.getElementById('qplSummaryLineCount');
     const summaryMappingCountEl = document.getElementById('qplSummaryMappingCount');
     const summarySupplierCountEl = document.getElementById('qplSummarySupplierCount');
@@ -143,6 +150,7 @@
     let hasMoreRows = false;
     let isLoadingRows = false;
     let summaryLoaded = false;
+    let loadWatchInterval = null;
 
     function escapeHtml(value) {
         return String(value || '')
@@ -200,6 +208,58 @@
         summaryLineCountEl.textContent = summary?.line_count ?? 0;
         summaryMappingCountEl.textContent = summary?.mapping_count ?? 0;
         summarySupplierCountEl.textContent = summary?.supplier_count ?? 0;
+    }
+
+    function renderDebugDetails(debug, browserMs) {
+        if (!debugDetailsEl) {
+            return;
+        }
+
+        const steps = debug?.steps_ms || {};
+        const orderedStepLabels = [
+            ['project_line_exists', 'project_line_exists'],
+            ['project_line_count', 'project_line_count'],
+            ['summary', 'summary'],
+            ['supplier_names', 'supplier_names'],
+            ['rows', 'rows'],
+            ['total', 'total'],
+        ];
+        const stepSummary = orderedStepLabels
+            .filter(([key]) => Object.prototype.hasOwnProperty.call(steps, key))
+            .map(([key, label]) => `${label}=${steps[key]} ms`)
+            .join(', ');
+
+        const lines = [
+            `project_id=${debug?.project_id ?? ''}`,
+            `include_summary=${debug?.include_summary ? 'true' : 'false'}`,
+            `offset=${debug?.offset ?? 0}, limit=${debug?.limit ?? ''}`,
+            `has_mapping_table=${debug?.has_mapping_table ? 'true' : 'false'}, has_project_lines=${debug?.has_project_lines ? 'true' : 'false'}`,
+            `project_line_count=${debug?.project_line_count ?? 0}, returned_row_count=${debug?.returned_row_count ?? 0}`,
+            `steps: ${stepSummary || 'n/a'}`,
+        ];
+
+        if (typeof browserMs === 'number') {
+            lines.push(`browser_total=${browserMs} ms`);
+        }
+
+        debugDetailsEl.textContent = lines.join('\n');
+    }
+
+    function startLoadWatch(startedAt, includeSummary) {
+        stopLoadWatch();
+        loadWatchInterval = window.setInterval(() => {
+            const elapsedMs = Math.round(performance.now() - startedAt);
+            const elapsedSeconds = (elapsedMs / 1000).toFixed(1);
+            loadStatusEl.textContent = `Waiting on server response for rows ${nextOffset + 1} to ${nextOffset + pageSize}...`;
+            loadMetricsEl.textContent = `Client has been waiting ${elapsedSeconds}s for ${includeSummary === '1' ? 'summary + rows' : 'rows'} from the server.`;
+        }, 500);
+    }
+
+    function stopLoadWatch() {
+        if (loadWatchInterval) {
+            window.clearInterval(loadWatchInterval);
+            loadWatchInterval = null;
+        }
     }
 
     function populateSupplierOptions(names) {
@@ -410,10 +470,15 @@
             loadMoreBtn.disabled = true;
         }
         loadStatusEl.textContent = `Loading rows ${nextOffset + 1} to ${nextOffset + pageSize}...`;
+        loadMetricsEl.textContent = '';
+        if (debugDetailsEl) {
+            debugDetailsEl.textContent = 'Waiting for server debug data...';
+        }
 
         try {
             const startedAt = performance.now();
             const includeSummary = !summaryLoaded ? '1' : '0';
+            startLoadWatch(startedAt, includeSummary);
             const response = await fetch(`{{ url_for("projects.project_parts_list_qpl_mapped_report_data", project_id=project.id) }}?limit=${pageSize}&offset=${nextOffset}&include_summary=${includeSummary}`);
             const data = await response.json();
             if (!response.ok || !data.success) {
@@ -447,6 +512,7 @@
                 ? `Loaded ${rows.length} row${rows.length === 1 ? '' : 's'}.`
                 : 'No more rows returned.';
             loadMetricsEl.textContent = `Server ${data.timings_ms?.query ?? data.timings_ms?.total ?? '?'} ms, browser ${browserMs} ms, next offset ${nextOffset}${hasMoreRows ? ', more rows available' : ''}.`;
+            renderDebugDetails(data.debug || {}, browserMs);
             if (loadMoreBtn) {
                 loadMoreBtn.style.display = hasMoreRows ? '' : 'none';
             }
@@ -454,9 +520,13 @@
             console.error(error);
             loadStatusEl.textContent = `Load failed: ${error.message}`;
             loadMetricsEl.textContent = '';
+            if (debugDetailsEl) {
+                debugDetailsEl.textContent = `Load failed before debug data was returned.\nerror=${error.message}`;
+            }
             ensureEmptyState();
         } finally {
             isLoadingRows = false;
+            stopLoadWatch();
             if (loadingRow) {
                 loadingRow.style.display = 'none';
             }
