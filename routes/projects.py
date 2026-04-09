@@ -607,7 +607,7 @@ def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_sum
             mr.description,
             mr.requested_qty,
             mr.qpl_manufacturer_name,
-            mr.supplier_id AS mapped_supplier_id,
+            mr.mapped_supplier_id,
             mr.mapped_supplier_name,
             mr.mapped_supplier_contact_name,
             mr.mapped_supplier_contact_email,
