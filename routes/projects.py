@@ -1045,7 +1045,7 @@ def project_parts_list_qpl_mapped_instructions(project_id):
 
         supplier_id = item.get('supplier_id')
         manufacturer_name = item.get('manufacturer_name')
-        prefix = (item.get('prefix') or '').strip().upper()
+        part_number = (item.get('part_number') or item.get('prefix') or '').strip().upper()
 
         try:
             supplier_id = int(supplier_id)
@@ -1053,10 +1053,10 @@ def project_parts_list_qpl_mapped_instructions(project_id):
             continue
 
         manufacturer_name_normalized = _normalize_qpl_manufacturer_name(manufacturer_name)
-        if not manufacturer_name_normalized or len(prefix) != 6:
+        if not manufacturer_name_normalized or not part_number:
             continue
 
-        key = (supplier_id, manufacturer_name_normalized, prefix)
+        key = (supplier_id, manufacturer_name_normalized, part_number)
         if key in seen:
             continue
 
@@ -1067,29 +1067,54 @@ def project_parts_list_qpl_mapped_instructions(project_id):
         return jsonify(success=True, rows=[])
 
     where_clauses = []
-    params = [6]
-    for supplier_id, manufacturer_name_normalized, prefix in normalized_items:
+    params = []
+    for supplier_id, manufacturer_name_normalized, _part_number in normalized_items:
         where_clauses.append(
-            "(supplier_id = ? AND manufacturer_name_normalized = ? AND prefix = ?)"
+            "(supplier_id = ? AND manufacturer_name_normalized = ?)"
         )
-        params.extend([supplier_id, manufacturer_name_normalized, prefix])
+        params.extend([supplier_id, manufacturer_name_normalized])
 
-    rows = db_execute(
+    instruction_rows = db_execute(
         f"""
         SELECT
             supplier_id,
             manufacturer_name_normalized,
             prefix,
+            prefix_length,
             instruction_text
         FROM qpl_supplier_prefix_instructions
-        WHERE prefix_length = ?
-          AND ({' OR '.join(where_clauses)})
+        WHERE ({' OR '.join(where_clauses)})
         """,
         tuple(params),
         fetch='all',
     ) or []
 
-    return jsonify(success=True, rows=[dict(row) for row in rows])
+    instructions_by_pair = {}
+    for row in instruction_rows:
+        pair_key = (row.get('supplier_id'), row.get('manufacturer_name_normalized'))
+        instructions_by_pair.setdefault(pair_key, []).append(dict(row))
+
+    matched_rows = []
+    for supplier_id, manufacturer_name_normalized, part_number in normalized_items:
+        candidates = instructions_by_pair.get((supplier_id, manufacturer_name_normalized), [])
+        match = None
+        for candidate in candidates:
+            candidate_prefix = (candidate.get('prefix') or '').strip().upper()
+            if candidate_prefix and part_number.startswith(candidate_prefix):
+                if match is None or (candidate.get('prefix_length') or 0) > (match.get('prefix_length') or 0):
+                    match = candidate
+        if not match:
+            continue
+        matched_rows.append({
+            'supplier_id': supplier_id,
+            'manufacturer_name_normalized': manufacturer_name_normalized,
+            'part_number': part_number,
+            'prefix': match.get('prefix') or '',
+            'prefix_length': match.get('prefix_length') or 0,
+            'instruction_text': match.get('instruction_text') or '',
+        })
+
+    return jsonify(success=True, rows=matched_rows)
 
 
 @projects_bp.route('/<int:project_id>/parts-lists/overview', methods=['GET'])

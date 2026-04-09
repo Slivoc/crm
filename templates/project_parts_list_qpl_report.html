@@ -318,7 +318,7 @@
 
     function renderRow(row, rowIndex) {
         const rowId = `qpl-row-${row.parts_list_line_id || 'x'}-${rowIndex}`;
-        const instructionPrefix = String(row.base_part_number || '').trim().toUpperCase().slice(0, 6);
+        const instructionPartNumber = String(row.base_part_number || '').trim().toUpperCase();
         const canEmail = row.mapped_supplier_id && row.mapped_supplier_contact_email && row.parts_list_line_id;
         const partsListUrl = partsListViewUrlTemplate.replace(/0$/, String(row.parts_list_id || 0));
         const supplierEditUrl = supplierEditUrlTemplate.replace(/0\/edit$/, `${row.mapped_supplier_id || 0}/edit`);
@@ -375,7 +375,7 @@
                     class="small qpl-instruction-cell text-muted"
                     data-supplier-id="${escapeHtml(row.mapped_supplier_id || '')}"
                     data-manufacturer-name="${escapeHtml(row.qpl_manufacturer_name || '')}"
-                    data-prefix="${escapeHtml(instructionPrefix)}"
+                    data-part-number="${escapeHtml(instructionPartNumber)}"
                 ></td>
                 <td>${supplierCell}</td>
             </tr>
@@ -433,13 +433,13 @@
         instructionCells.forEach((cell) => {
             const supplierId = Number.parseInt(cell.dataset.supplierId || '', 10);
             const manufacturerName = (cell.dataset.manufacturerName || '').trim();
-            const prefix = (cell.dataset.prefix || '').trim().toUpperCase();
+            const partNumber = (cell.dataset.partNumber || '').trim().toUpperCase();
 
-            if (!supplierId || !manufacturerName || prefix.length !== 6) {
+            if (!supplierId || !manufacturerName || !partNumber) {
                 return;
             }
 
-            const key = `${supplierId}::${manufacturerName}::${prefix}`;
+            const key = `${supplierId}::${manufacturerName}::${partNumber}`;
             if (seen.has(key)) {
                 return;
             }
@@ -448,7 +448,7 @@
             items.push({
                 supplier_id: supplierId,
                 manufacturer_name: manufacturerName,
-                prefix,
+                part_number: partNumber,
             });
         });
 
@@ -469,7 +469,7 @@
 
             const instructionMap = new Map(
                 (data.rows || []).map((row) => [
-                    `${row.supplier_id}::${row.manufacturer_name_normalized}::${row.prefix}`,
+                    `${row.supplier_id}::${row.manufacturer_name_normalized}::${row.part_number}`,
                     row.instruction_text || '',
                 ])
             );
@@ -477,12 +477,12 @@
             instructionCells.forEach((cell) => {
                 const supplierId = Number.parseInt(cell.dataset.supplierId || '', 10);
                 const manufacturerName = normalizeManufacturerName(cell.dataset.manufacturerName || '');
-                const prefix = (cell.dataset.prefix || '').trim().toUpperCase();
-                if (!supplierId || !manufacturerName || prefix.length !== 6) {
+                const partNumber = (cell.dataset.partNumber || '').trim().toUpperCase();
+                if (!supplierId || !manufacturerName || !partNumber) {
                     return;
                 }
 
-                const key = `${supplierId}::${manufacturerName}::${prefix}`;
+                const key = `${supplierId}::${manufacturerName}::${partNumber}`;
                 cell.textContent = instructionMap.get(key) || '';
                 cell.classList.toggle('text-muted', !cell.textContent);
                 cell.dataset.instructionLoaded = '1';
