@@ -369,7 +369,7 @@ def _fetch_project_qpl_mapped_rows(project_id):
             {instruction_select_sql}
         FROM project_lines pl
         JOIN qpl_mapped qm
-            ON pl.normalized_base_part_number LIKE (qm.normalized_base_part_number || '%')
+            ON pl.normalized_base_part_number LIKE (qm.normalized_base_part_number || '%%')
         LEFT JOIN (
             SELECT
                 UPPER(TRIM(base_part_number)) AS normalized_base_part_number,
