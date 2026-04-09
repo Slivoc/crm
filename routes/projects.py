@@ -4,6 +4,7 @@ import csv
 import io
 import json
 from datetime import datetime
+from time import perf_counter
 from flask import Blueprint, request, redirect, url_for, jsonify, current_app, render_template, send_from_directory, flash, session, Response
 from werkzeug.utils import secure_filename
 from db import db_cursor, execute as db_execute
@@ -379,28 +380,9 @@ def _qpl_prefix_instruction_table_exists():
     return row is not None
 
 
-def _fetch_project_qpl_mapped_rows(project_id):
-    if not _qpl_supplier_mapping_table_exists():
-        return []
-
-    has_project_lines = db_execute(
-        """
-        SELECT 1
-        FROM parts_lists pl
-        JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
-        WHERE pl.project_id = ?
-          AND TRIM(COALESCE(pll.base_part_number, '')) <> ''
-        LIMIT 1
-        """,
-        (project_id,),
-        fetch='one',
-    )
-    if not has_project_lines:
-        return []
-
+def _build_project_qpl_mapped_ctes():
     manufacturer_name_normalized_sql = _manufacturer_name_normalized_sql('ma.manufacturer_name')
-    rows = db_execute(
-        f"""
+    return f"""
         WITH project_lines AS (
             SELECT
                 pl.id AS parts_list_id,
@@ -417,6 +399,10 @@ def _fetch_project_qpl_mapped_rows(project_id):
             WHERE pl.project_id = ?
               AND TRIM(COALESCE(pll.base_part_number, '')) <> ''
         ),
+        distinct_project_parts AS (
+            SELECT DISTINCT normalized_base_part_number
+            FROM project_lines
+        ),
         stock AS (
             SELECT
                 UPPER(TRIM(base_part_number)) AS normalized_base_part_number,
@@ -426,6 +412,26 @@ def _fetch_project_qpl_mapped_rows(project_id):
               AND COALESCE(available_quantity, 0) > 0
               AND TRIM(COALESCE(base_part_number, '')) <> ''
             GROUP BY UPPER(TRIM(base_part_number))
+        ),
+        matched_parts AS (
+            SELECT DISTINCT
+                dpp.normalized_base_part_number,
+                TRIM(ma.manufacturer_name) AS qpl_manufacturer_name,
+                map.supplier_id,
+                s.name AS mapped_supplier_name,
+                s.contact_name AS mapped_supplier_contact_name,
+                s.contact_email AS mapped_supplier_contact_email
+            FROM distinct_project_parts dpp
+            JOIN manufacturer_approvals ma
+                ON dpp.normalized_base_part_number LIKE (
+                    UPPER(TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, '')))) || '%%'
+                )
+            JOIN qpl_manufacturer_supplier_mappings map
+                ON map.manufacturer_name_normalized = {manufacturer_name_normalized_sql}
+            LEFT JOIN suppliers s ON s.id = map.supplier_id
+            WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
+              AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''))) <> ''
+              AND COALESCE(ma.approval_list_type, '') IN ('airbus_fixed_wing', 'airbus_rotary')
         ),
         matched_rows AS (
             SELECT DISTINCT
@@ -438,22 +444,85 @@ def _fetch_project_qpl_mapped_rows(project_id):
                 pl.description,
                 pl.requested_qty,
                 pl.normalized_base_part_number,
-                TRIM(ma.manufacturer_name) AS qpl_manufacturer_name,
-                map.supplier_id,
-                s.name AS mapped_supplier_name,
-                s.contact_name AS mapped_supplier_contact_name,
-                s.contact_email AS mapped_supplier_contact_email
+                mp.qpl_manufacturer_name,
+                mp.supplier_id AS mapped_supplier_id,
+                mp.mapped_supplier_name,
+                mp.mapped_supplier_contact_name,
+                mp.mapped_supplier_contact_email
             FROM project_lines pl
-            JOIN manufacturer_approvals ma
-                ON pl.normalized_base_part_number LIKE (
-                    UPPER(TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, '')))) || '%%'
-                )
-            JOIN qpl_manufacturer_supplier_mappings map
-                ON map.manufacturer_name_normalized = {manufacturer_name_normalized_sql}
-            LEFT JOIN suppliers s ON s.id = map.supplier_id
-            WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
-              AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''))) <> ''
+            JOIN matched_parts mp ON mp.normalized_base_part_number = pl.normalized_base_part_number
         )
+    """
+
+
+def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_summary=False):
+    if not _qpl_supplier_mapping_table_exists():
+        return {'rows': [], 'summary': {'line_count': 0, 'mapping_count': 0, 'supplier_count': 0}, 'supplier_names': []}
+
+    has_project_lines = db_execute(
+        """
+        SELECT 1
+        FROM parts_lists pl
+        JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+        WHERE pl.project_id = ?
+          AND TRIM(COALESCE(pll.base_part_number, '')) <> ''
+        LIMIT 1
+        """,
+        (project_id,),
+        fetch='one',
+    )
+    if not has_project_lines:
+        return {'rows': [], 'summary': {'line_count': 0, 'mapping_count': 0, 'supplier_count': 0}, 'supplier_names': []}
+
+    ctes_sql = _build_project_qpl_mapped_ctes()
+
+    summary = {
+        'line_count': 0,
+        'mapping_count': 0,
+        'supplier_count': 0,
+    }
+    supplier_names = []
+
+    if include_summary:
+        summary_row = db_execute(
+            f"""
+            {ctes_sql}
+            SELECT
+                COUNT(DISTINCT parts_list_line_id) AS line_count,
+                COUNT(*) AS mapping_count,
+                COUNT(DISTINCT mapped_supplier_id) AS supplier_count
+            FROM matched_rows
+            """,
+            (project_id,),
+            fetch='one',
+        ) or {}
+        summary = {
+            'line_count': summary_row.get('line_count') or 0,
+            'mapping_count': summary_row.get('mapping_count') or 0,
+            'supplier_count': summary_row.get('supplier_count') or 0,
+        }
+        supplier_rows = db_execute(
+            f"""
+            {ctes_sql}
+            SELECT DISTINCT mapped_supplier_name
+            FROM matched_rows
+            WHERE TRIM(COALESCE(mapped_supplier_name, '')) <> ''
+            ORDER BY mapped_supplier_name
+            """,
+            (project_id,),
+            fetch='all',
+        ) or []
+        supplier_names = [row.get('mapped_supplier_name') for row in supplier_rows if row.get('mapped_supplier_name')]
+
+    limit_clause = ''
+    params = [project_id]
+    if limit is not None:
+        limit_clause = "\n        LIMIT ? OFFSET ?"
+        params.extend([limit, max(offset or 0, 0)])
+
+    rows = db_execute(
+        f"""
+        {ctes_sql}
         SELECT
             mr.parts_list_id,
             mr.parts_list_name,
@@ -473,11 +542,16 @@ def _fetch_project_qpl_mapped_rows(project_id):
         FROM matched_rows mr
         LEFT JOIN stock ON stock.normalized_base_part_number = mr.normalized_base_part_number
         ORDER BY mr.parts_list_id, mr.line_number, mr.parts_list_line_id, mr.qpl_manufacturer_name
+        {limit_clause}
         """,
-        (project_id,),
+        params,
         fetch='all',
     ) or []
-    return [dict(row) for row in rows]
+    return {
+        'rows': [dict(row) for row in rows],
+        'summary': summary,
+        'supplier_names': supplier_names,
+    }
 
 
 def _fetch_project_parts_list_overview(project_id):
@@ -806,25 +880,63 @@ def project_parts_list_qpl_mapped_report(project_id):
         return redirect(url_for('projects.list_projects'))
 
     has_mapping_table = _qpl_supplier_mapping_table_exists()
-    rows = _fetch_project_qpl_mapped_rows(project_id) if has_mapping_table else []
-
-    summary = {
-        'line_count': len({row.get('parts_list_line_id') for row in rows if row.get('parts_list_line_id') is not None}),
-        'mapping_count': len(rows),
-        'supplier_count': len({
-            row.get('mapped_supplier_id')
-            for row in rows
-            if row.get('mapped_supplier_id') is not None
-        }),
-    }
 
     return render_template(
         'project_parts_list_qpl_report.html',
         project=project,
         has_mapping_table=has_mapping_table,
         has_instruction_table=_qpl_prefix_instruction_table_exists(),
-        summary=summary,
-        rows=rows,
+    )
+
+
+@projects_bp.route('/<int:project_id>/parts-lists/report/qpl-mapped/data', methods=['GET'])
+def project_parts_list_qpl_mapped_report_data(project_id):
+    project = get_project_by_id(project_id)
+    if not project:
+        return jsonify(success=False, message='Project not found.'), 404
+
+    if not _qpl_supplier_mapping_table_exists():
+        return jsonify(
+            success=True,
+            rows=[],
+            summary={'line_count': 0, 'mapping_count': 0, 'supplier_count': 0},
+            supplier_names=[],
+            pagination={'offset': 0, 'limit': 0, 'returned': 0, 'has_more': False},
+            timings_ms={'total': 0, 'query': 0},
+        )
+
+    limit = request.args.get('limit', 100, type=int)
+    offset = request.args.get('offset', 0, type=int)
+    include_summary = str(request.args.get('include_summary', '0')).lower() not in ('0', 'false', 'off', '')
+    limit = max(1, min(limit or 100, 500))
+    offset = max(offset or 0, 0)
+
+    started_at = perf_counter()
+    result = _fetch_project_qpl_mapped_rows(
+        project_id,
+        limit=limit,
+        offset=offset,
+        include_summary=include_summary,
+    )
+    total_ms = round((perf_counter() - started_at) * 1000, 1)
+    returned = len(result['rows'])
+    total_matches = result['summary']['mapping_count'] if include_summary else None
+
+    return jsonify(
+        success=True,
+        rows=result['rows'],
+        summary=result['summary'],
+        supplier_names=result['supplier_names'],
+        pagination={
+            'offset': offset,
+            'limit': limit,
+            'returned': returned,
+            'has_more': (offset + returned) < total_matches if total_matches is not None else (returned == limit),
+        },
+        timings_ms={
+            'total': total_ms,
+            'query': total_ms,
+        },
     )
 
 

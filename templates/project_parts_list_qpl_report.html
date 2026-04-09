@@ -30,7 +30,7 @@
             <div class="card border-0 shadow-sm">
                 <div class="card-body">
                     <div class="text-muted small">Project Lines with Mapped QPL</div>
-                    <div class="fs-4">{{ summary.line_count or 0 }}</div>
+                    <div class="fs-4" id="qplSummaryLineCount">-</div>
                 </div>
             </div>
         </div>
@@ -38,7 +38,7 @@
             <div class="card border-0 shadow-sm">
                 <div class="card-body">
                     <div class="text-muted small">QPL Mapping Matches</div>
-                    <div class="fs-4">{{ summary.mapping_count or 0 }}</div>
+                    <div class="fs-4" id="qplSummaryMappingCount">-</div>
                 </div>
             </div>
         </div>
@@ -46,10 +46,18 @@
             <div class="card border-0 shadow-sm">
                 <div class="card-body">
                     <div class="text-muted small">Mapped Suppliers</div>
-                    <div class="fs-4">{{ summary.supplier_count or 0 }}</div>
+                    <div class="fs-4" id="qplSummarySupplierCount">-</div>
                 </div>
             </div>
         </div>
+    </div>
+
+    <div class="alert alert-secondary d-flex justify-content-between align-items-center flex-wrap gap-2" id="qplDebugPanel">
+        <div>
+            <strong>Status:</strong>
+            <span id="qplLoadStatus">Waiting to load report rows.</span>
+        </div>
+        <div class="small text-muted" id="qplLoadMetrics"></div>
     </div>
 
     <div class="card border-0 shadow-sm">
@@ -58,9 +66,6 @@
             <div class="d-flex align-items-center gap-2">
                 <select id="qplSupplierFilter" class="form-select form-select-sm">
                     <option value="">All suppliers</option>
-                    {% for supplier_name in rows|map(attribute='mapped_supplier_name')|select|unique|sort %}
-                        <option value="{{ supplier_name }}">{{ supplier_name }}</option>
-                    {% endfor %}
                 </select>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="qplSelectAllBtn">Select All</button>
                 <button type="button" class="btn btn-sm btn-success" id="qplEmailSelectedBtn">
@@ -89,80 +94,22 @@
                             <th>Mapped Supplier</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        {% if rows %}
-                            {% for row in rows %}
-                                {% set instruction_prefix = ((row.base_part_number or '')|trim|upper)[:6] %}
-                                <tr
-                                    data-row-supplier="{{ row.mapped_supplier_name or '' }}"
-                                    data-row-id="qpl-row-{{ row.parts_list_line_id }}-{{ loop.index }}"
-                                >
-                                    <td class="text-center">
-                                        {% if row.mapped_supplier_id and row.mapped_supplier_contact_email and row.parts_list_line_id %}
-                                            <input
-                                                type="checkbox"
-                                                class="form-check-input qpl-email-checkbox"
-                                                data-row-id="qpl-row-{{ row.parts_list_line_id }}-{{ loop.index }}"
-                                                data-parts-list-id="{{ row.parts_list_id }}"
-                                                data-parts-list-line-id="{{ row.parts_list_line_id }}"
-                                                data-supplier-id="{{ row.mapped_supplier_id }}"
-                                                data-supplier-name="{{ row.mapped_supplier_name or '' }}"
-                                                data-contact-name="{{ row.mapped_supplier_contact_name or '' }}"
-                                                data-contact-email="{{ row.mapped_supplier_contact_email or '' }}"
-                                                data-part-number="{{ row.base_part_number or row.customer_part_number or '' }}"
-                                                data-quantity="{{ row.requested_qty or 1 }}"
-                                            />
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        <a href="{{ url_for('parts_list.view_parts_list', list_id=row.parts_list_id) }}">
-                                            {{ row.parts_list_id }}
-                                        </a>
-                                    </td>
-                                    <td>{{ row.parts_list_name }}</td>
-                                    <td>{{ row.line_number }}</td>
-                                    <td>{{ row.customer_part_number }}</td>
-                                    <td>{{ row.base_part_number }}</td>
-                                    <td>{{ row.description }}</td>
-                                    <td>
-                                        <input
-                                            type="number"
-                                            class="form-control form-control-sm qpl-qty-input"
-                                            min="1"
-                                            step="1"
-                                            value="{{ row.requested_qty or 1 }}"
-                                        />
-                                    </td>
-                                    <td>{{ row.total_available_stock or 0 }}</td>
-                                    <td>{{ row.qpl_manufacturer_name }}</td>
-                                    <td
-                                        class="small qpl-instruction-cell text-muted"
-                                        data-supplier-id="{{ row.mapped_supplier_id or '' }}"
-                                        data-manufacturer-name="{{ row.qpl_manufacturer_name or '' }}"
-                                        data-prefix="{{ instruction_prefix }}"
-                                    >{{ row.instruction_text or '' }}</td>
-                                    <td>
-                                        {% if row.mapped_supplier_id %}
-                                            <a href="{{ url_for('suppliers.edit_supplier', supplier_id=row.mapped_supplier_id) }}">
-                                                {{ row.mapped_supplier_name }}
-                                            </a>
-                                            {% if row.mapped_supplier_contact_email %}
-                                                <div class="small text-muted">{{ row.mapped_supplier_contact_email }}</div>
-                                            {% endif %}
-                                        {% else %}
-                                            {{ row.mapped_supplier_name or '' }}
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                            {% endfor %}
-                        {% else %}
-                            <tr>
-                                <td colspan="12" class="text-center text-muted py-4">No mapped QPL manufacturer matches found for this project.</td>
-                            </tr>
-                        {% endif %}
+                    <tbody id="qplReportTableBody">
+                        <tr id="qplLoadingRow">
+                            <td colspan="12" class="text-center text-muted py-4">
+                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                Loading report rows...
+                            </td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
+        </div>
+        <div class="card-footer bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div class="small text-muted" id="qplRenderedCount">0 rows rendered.</div>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="qplLoadMoreBtn" style="display: none;">
+                Load More
+            </button>
         </div>
     </div>
 </div>
@@ -171,15 +118,40 @@
 {% block extra_js %}
 <script>
 (() => {
+    const reportTableBody = document.getElementById('qplReportTableBody');
+    const loadingRow = document.getElementById('qplLoadingRow');
     const selectAllCheckbox = document.getElementById('qplSelectAllCheckbox');
     const selectAllBtn = document.getElementById('qplSelectAllBtn');
     const emailSelectedBtn = document.getElementById('qplEmailSelectedBtn');
     const supplierFilter = document.getElementById('qplSupplierFilter');
+    const loadMoreBtn = document.getElementById('qplLoadMoreBtn');
+    const renderedCountEl = document.getElementById('qplRenderedCount');
+    const loadStatusEl = document.getElementById('qplLoadStatus');
+    const loadMetricsEl = document.getElementById('qplLoadMetrics');
+    const summaryLineCountEl = document.getElementById('qplSummaryLineCount');
+    const summaryMappingCountEl = document.getElementById('qplSummaryMappingCount');
+    const summarySupplierCountEl = document.getElementById('qplSummarySupplierCount');
     const hasInstructionTable = {{ 'true' if has_instruction_table else 'false' }};
+    const pageSize = 100;
+    const partsListViewUrlTemplate = '{{ url_for("parts_list.view_parts_list", list_id=0) }}';
+    const supplierEditUrlTemplate = '{{ url_for("suppliers.edit_supplier", supplier_id=0) }}';
     const instructionStopwords = new Set([
         'ltd', 'limited', 'inc', 'llc', 'plc', 'corp', 'corporation',
         'co', 'company', 'gmbh', 'sa', 'bv', 'ag', 'srl', 'pte', 'group'
     ]);
+    let nextOffset = 0;
+    let hasMoreRows = false;
+    let isLoadingRows = false;
+    let summaryLoaded = false;
+
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
 
     function normalizeManufacturerName(value) {
         return String(value || '')
@@ -202,6 +174,123 @@
             row.style.display = (!selected || rowSupplier === selected) ? '' : 'none';
         });
         syncSelectAll();
+    }
+
+    function updateRenderedCount() {
+        const rowCount = reportTableBody.querySelectorAll('tr[data-row-supplier]').length;
+        renderedCountEl.textContent = `${rowCount} row${rowCount === 1 ? '' : 's'} rendered.`;
+    }
+
+    function ensureEmptyState() {
+        const dataRows = reportTableBody.querySelectorAll('tr[data-row-supplier]').length;
+        const emptyRow = document.getElementById('qplEmptyRow');
+        if (dataRows === 0 && !isLoadingRows) {
+            if (!emptyRow) {
+                const tr = document.createElement('tr');
+                tr.id = 'qplEmptyRow';
+                tr.innerHTML = '<td colspan="12" class="text-center text-muted py-4">No mapped QPL manufacturer matches found for this project.</td>';
+                reportTableBody.appendChild(tr);
+            }
+        } else if (emptyRow) {
+            emptyRow.remove();
+        }
+    }
+
+    function updateSummary(summary) {
+        summaryLineCountEl.textContent = summary?.line_count ?? 0;
+        summaryMappingCountEl.textContent = summary?.mapping_count ?? 0;
+        summarySupplierCountEl.textContent = summary?.supplier_count ?? 0;
+    }
+
+    function populateSupplierOptions(names) {
+        if (!supplierFilter || !Array.isArray(names) || !names.length) {
+            return;
+        }
+
+        const existing = new Set(Array.from(supplierFilter.options).map(option => option.value));
+        names.forEach((name) => {
+            const trimmed = String(name || '').trim();
+            if (!trimmed || existing.has(trimmed)) {
+                return;
+            }
+            const option = document.createElement('option');
+            option.value = trimmed;
+            option.textContent = trimmed;
+            supplierFilter.appendChild(option);
+            existing.add(trimmed);
+        });
+    }
+
+    function renderRow(row, rowIndex) {
+        const rowId = `qpl-row-${row.parts_list_line_id || 'x'}-${rowIndex}`;
+        const instructionPrefix = String(row.base_part_number || '').trim().toUpperCase().slice(0, 6);
+        const canEmail = row.mapped_supplier_id && row.mapped_supplier_contact_email && row.parts_list_line_id;
+        const partsListUrl = partsListViewUrlTemplate.replace(/0$/, String(row.parts_list_id || 0));
+        const supplierEditUrl = supplierEditUrlTemplate.replace(/0\/edit$/, `${row.mapped_supplier_id || 0}/edit`);
+        const supplierCell = row.mapped_supplier_id
+            ? `
+                <a href="${escapeHtml(supplierEditUrl)}">
+                    ${escapeHtml(row.mapped_supplier_name || '')}
+                </a>
+                ${row.mapped_supplier_contact_email ? `<div class="small text-muted">${escapeHtml(row.mapped_supplier_contact_email)}</div>` : ''}
+            `
+            : escapeHtml(row.mapped_supplier_name || '');
+
+        return `
+            <tr data-row-supplier="${escapeHtml(row.mapped_supplier_name || '')}" data-row-id="${escapeHtml(rowId)}">
+                <td class="text-center">
+                    ${canEmail ? `
+                        <input
+                            type="checkbox"
+                            class="form-check-input qpl-email-checkbox"
+                            data-row-id="${escapeHtml(rowId)}"
+                            data-parts-list-id="${escapeHtml(row.parts_list_id)}"
+                            data-parts-list-line-id="${escapeHtml(row.parts_list_line_id)}"
+                            data-supplier-id="${escapeHtml(row.mapped_supplier_id)}"
+                            data-supplier-name="${escapeHtml(row.mapped_supplier_name || '')}"
+                            data-contact-name="${escapeHtml(row.mapped_supplier_contact_name || '')}"
+                            data-contact-email="${escapeHtml(row.mapped_supplier_contact_email || '')}"
+                            data-part-number="${escapeHtml(row.base_part_number || row.customer_part_number || '')}"
+                            data-quantity="${escapeHtml(row.requested_qty || 1)}"
+                        />
+                    ` : ''}
+                </td>
+                <td>
+                    <a href="${escapeHtml(partsListUrl)}">
+                        ${escapeHtml(row.parts_list_id)}
+                    </a>
+                </td>
+                <td>${escapeHtml(row.parts_list_name || '')}</td>
+                <td>${escapeHtml(row.line_number || '')}</td>
+                <td>${escapeHtml(row.customer_part_number || '')}</td>
+                <td>${escapeHtml(row.base_part_number || '')}</td>
+                <td>${escapeHtml(row.description || '')}</td>
+                <td>
+                    <input
+                        type="number"
+                        class="form-control form-control-sm qpl-qty-input"
+                        min="1"
+                        step="1"
+                        value="${escapeHtml(row.requested_qty || 1)}"
+                    />
+                </td>
+                <td>${escapeHtml(row.total_available_stock || 0)}</td>
+                <td>${escapeHtml(row.qpl_manufacturer_name || '')}</td>
+                <td
+                    class="small qpl-instruction-cell text-muted"
+                    data-supplier-id="${escapeHtml(row.mapped_supplier_id || '')}"
+                    data-manufacturer-name="${escapeHtml(row.qpl_manufacturer_name || '')}"
+                    data-prefix="${escapeHtml(instructionPrefix)}"
+                ></td>
+                <td>${supplierCell}</td>
+            </tr>
+        `;
+    }
+
+    function bindCheckboxListeners(elements) {
+        elements.forEach((cb) => {
+            cb.addEventListener('change', syncSelectAll);
+        });
     }
 
     const syncSelectAll = () => {
@@ -229,10 +318,6 @@
         });
     }
 
-    document.querySelectorAll('.qpl-email-checkbox').forEach(cb => {
-        cb.addEventListener('change', syncSelectAll);
-    });
-
     if (supplierFilter) {
         supplierFilter.addEventListener('change', applySupplierFilter);
     }
@@ -241,7 +326,8 @@
     syncSelectAll();
 
     async function loadInstructionTexts() {
-        const instructionCells = Array.from(document.querySelectorAll('.qpl-instruction-cell'));
+        const instructionCells = Array.from(document.querySelectorAll('.qpl-instruction-cell'))
+            .filter((cell) => cell.dataset.instructionLoaded !== '1');
         if (!instructionCells.length || !hasInstructionTable) {
             return;
         }
@@ -304,13 +390,87 @@
                 const key = `${supplierId}::${manufacturerName}::${prefix}`;
                 cell.textContent = instructionMap.get(key) || '';
                 cell.classList.toggle('text-muted', !cell.textContent);
+                cell.dataset.instructionLoaded = '1';
             });
         } catch (error) {
             console.error(error);
         }
     }
 
-    loadInstructionTexts();
+    async function loadRows() {
+        if (isLoadingRows) {
+            return;
+        }
+
+        isLoadingRows = true;
+        if (loadingRow) {
+            loadingRow.style.display = '';
+        }
+        if (loadMoreBtn) {
+            loadMoreBtn.disabled = true;
+        }
+        loadStatusEl.textContent = `Loading rows ${nextOffset + 1} to ${nextOffset + pageSize}...`;
+
+        try {
+            const startedAt = performance.now();
+            const includeSummary = !summaryLoaded ? '1' : '0';
+            const response = await fetch(`{{ url_for("projects.project_parts_list_qpl_mapped_report_data", project_id=project.id) }}?limit=${pageSize}&offset=${nextOffset}&include_summary=${includeSummary}`);
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Unable to load report rows');
+            }
+
+            if (!summaryLoaded) {
+                updateSummary(data.summary || {});
+                populateSupplierOptions(data.supplier_names || []);
+                summaryLoaded = true;
+            }
+
+            const rows = Array.isArray(data.rows) ? data.rows : [];
+            const beforeCount = reportTableBody.querySelectorAll('tr[data-row-supplier]').length;
+            const wrapper = document.createElement('tbody');
+            wrapper.innerHTML = rows.map((row, index) => renderRow(row, beforeCount + index + 1)).join('');
+            const newCheckboxes = Array.from(wrapper.querySelectorAll('.qpl-email-checkbox'));
+            while (wrapper.firstElementChild) {
+                reportTableBody.appendChild(wrapper.firstElementChild);
+            }
+            bindCheckboxListeners(newCheckboxes);
+            applySupplierFilter();
+            updateRenderedCount();
+            ensureEmptyState();
+            await loadInstructionTexts();
+
+            nextOffset += rows.length;
+            hasMoreRows = Boolean(data.pagination?.has_more);
+            const browserMs = Math.round((performance.now() - startedAt) * 10) / 10;
+            loadStatusEl.textContent = rows.length
+                ? `Loaded ${rows.length} row${rows.length === 1 ? '' : 's'}.`
+                : 'No more rows returned.';
+            loadMetricsEl.textContent = `Server ${data.timings_ms?.query ?? data.timings_ms?.total ?? '?'} ms, browser ${browserMs} ms, next offset ${nextOffset}${hasMoreRows ? ', more rows available' : ''}.`;
+            if (loadMoreBtn) {
+                loadMoreBtn.style.display = hasMoreRows ? '' : 'none';
+            }
+        } catch (error) {
+            console.error(error);
+            loadStatusEl.textContent = `Load failed: ${error.message}`;
+            loadMetricsEl.textContent = '';
+            ensureEmptyState();
+        } finally {
+            isLoadingRows = false;
+            if (loadingRow) {
+                loadingRow.style.display = 'none';
+            }
+            if (loadMoreBtn) {
+                loadMoreBtn.disabled = false;
+            }
+        }
+    }
+
+    if (loadMoreBtn) {
+        loadMoreBtn.addEventListener('click', loadRows);
+    }
+
+    loadRows();
 
     async function generateSupplierEmailPayload(supplierData) {
         const resp = await fetch('{{ url_for("parts_list.generate_supplier_email") }}', {
