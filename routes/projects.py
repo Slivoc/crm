@@ -1217,6 +1217,7 @@ def project_parts_lists_priority_scores(project_id):
             WITH project_lists AS (
                 SELECT
                     id,
+                    customer_id,
                     COALESCE(date_created, date_modified, CURRENT_TIMESTAMP) AS cutoff_at
                 FROM parts_lists
                 WHERE project_id = ?
@@ -1226,6 +1227,8 @@ def project_parts_lists_priority_scores(project_id):
                     pll.parts_list_id,
                     pll.id AS parts_list_line_id,
                     pl.cutoff_at,
+                    pl.customer_id,
+                    COALESCE(pll.quantity, 0) AS quantity,
                     UPPER(TRIM(pll.base_part_number)) AS normalized_base_part_number
                 FROM parts_list_lines pll
                 JOIN project_lists pl ON pl.id = pll.parts_list_id
@@ -1279,6 +1282,19 @@ def project_parts_lists_priority_scores(project_id):
                 JOIN parts_list_lines src ON src.id = cql.parts_list_line_id
                 WHERE TRIM(COALESCE(src.base_part_number, '')) <> ''
             ),
+            past_customer_quote_events AS (
+                SELECT
+                    src_pl.customer_id,
+                    UPPER(TRIM(src.base_part_number)) AS normalized_base_part_number,
+                    COALESCE(cql.date_created, cql.date_modified, src_pl.date_created, CURRENT_TIMESTAMP) AS event_at,
+                    CAST(cql.unit_price AS NUMERIC) AS unit_price
+                FROM customer_quote_lines cql
+                JOIN parts_list_lines src ON src.id = cql.parts_list_line_id
+                JOIN parts_lists src_pl ON src_pl.id = src.parts_list_id
+                WHERE TRIM(COALESCE(src.base_part_number, '')) <> ''
+                  AND cql.quoted_status = 'quoted'
+                  AND cql.unit_price IS NOT NULL
+            ),
             line_history AS (
                 SELECT
                     ll.parts_list_id,
@@ -1293,15 +1309,36 @@ def project_parts_lists_priority_scores(project_id):
                     ON pae.normalized_base_part_number = ll.normalized_base_part_number
                    AND pae.event_at < ll.cutoff_at
                 GROUP BY ll.parts_list_id, ll.parts_list_line_id
+            ),
+            line_estimates AS (
+                SELECT
+                    ll.parts_list_id,
+                    ll.parts_list_line_id,
+                    AVG(pcq.unit_price) AS estimated_unit_price,
+                    COUNT(*) AS historical_quote_count,
+                    AVG(pcq.unit_price) * ll.quantity AS estimated_line_value
+                FROM list_lines ll
+                LEFT JOIN past_customer_quote_events pcq
+                    ON pcq.normalized_base_part_number = ll.normalized_base_part_number
+                   AND pcq.event_at < ll.cutoff_at
+                   AND (
+                        ll.customer_id IS NULL
+                        OR pcq.customer_id = ll.customer_id
+                   )
+                GROUP BY ll.parts_list_id, ll.parts_list_line_id, ll.quantity
             )
             SELECT
                 pl.id AS parts_list_id,
                 COUNT(DISTINCT lh.parts_list_line_id) AS total_base_lines,
                 COALESCE(SUM(lh.has_past_quoteable), 0) AS quoted_before_count,
                 COALESCE(SUM(lh.has_past_activity), 0) AS activity_before_count,
-                COALESCE(SUM(CASE WHEN lh.has_past_activity = 1 AND lh.has_past_quoteable = 0 THEN 1 ELSE 0 END), 0) AS no_bid_or_requested_only_count
+                COALESCE(SUM(CASE WHEN lh.has_past_activity = 1 AND lh.has_past_quoteable = 0 THEN 1 ELSE 0 END), 0) AS no_bid_or_requested_only_count,
+                COALESCE(SUM(CASE WHEN le.historical_quote_count > 0 THEN 1 ELSE 0 END), 0) AS estimated_priced_lines,
+                COALESCE(SUM(COALESCE(le.estimated_line_value, 0)), 0) AS estimated_customer_quote_total
             FROM project_lists pl
             LEFT JOIN line_history lh ON lh.parts_list_id = pl.id
+            LEFT JOIN line_estimates le ON le.parts_list_id = pl.id
+                                     AND le.parts_list_line_id = lh.parts_list_line_id
             GROUP BY pl.id
             """,
             (project_id,),
@@ -1316,6 +1353,8 @@ def project_parts_lists_priority_scores(project_id):
             quoted_before_count = int(data.get('quoted_before_count') or 0)
             activity_before_count = int(data.get('activity_before_count') or 0)
             no_bid_or_requested_only_count = int(data.get('no_bid_or_requested_only_count') or 0)
+            estimated_priced_lines = int(data.get('estimated_priced_lines') or 0)
+            estimated_customer_quote_total = float(data.get('estimated_customer_quote_total') or 0)
 
             if total_base_lines <= 0:
                 score = 0
@@ -1331,6 +1370,8 @@ def project_parts_lists_priority_scores(project_id):
                 'quoted_before_count': quoted_before_count,
                 'activity_before_count': activity_before_count,
                 'no_bid_or_requested_only_count': no_bid_or_requested_only_count,
+                'estimated_priced_lines': estimated_priced_lines,
+                'estimated_customer_quote_total': round(estimated_customer_quote_total, 2),
             }
 
         return jsonify(success=True, scores=scores)
