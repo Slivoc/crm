@@ -1817,8 +1817,15 @@ def _scrape_monroe(product_name, headless=True):
     }
 
     screenshot_dir = "monroe_debug_screenshots"
-    os.makedirs(screenshot_dir, exist_ok=True)
+    screenshots_enabled = False
+    if screenshots_enabled:
+        os.makedirs(screenshot_dir, exist_ok=True)
     timestamp = int(time.time())
+
+    def _save_screenshot(page_obj, filename):
+        if not screenshots_enabled:
+            return
+        page_obj.screenshot(path=f"{screenshot_dir}/{filename}")
 
     try:
         logging.info(f"Monroe scrape starting for: {product_name}")
@@ -1838,9 +1845,7 @@ def _scrape_monroe(product_name, headless=True):
                      wait_until="domcontentloaded", timeout=60000)
             time.sleep(2)
 
-            # Take screenshot after page load
-            page.screenshot(path=f"{screenshot_dir}/{timestamp}_01_pageload_{product_name.replace('/', '_')}.png")
-            result["debug_info"].append(f"Screenshot saved: 01_pageload")
+            # Screenshot capture disabled by default.
 
             # Find and fill the Express Ordering search input
             logging.info(f"Monroe: Looking for search input")
@@ -1853,13 +1858,11 @@ def _scrape_monroe(product_name, headless=True):
                 search_input.click()
                 search_input.fill(product_name)
 
-                # Screenshot after filling
-                page.screenshot(path=f"{screenshot_dir}/{timestamp}_02_search_filled_{product_name.replace('/', '_')}.png")
-                result["debug_info"].append(f"Screenshot saved: 02_search_filled")
+                _save_screenshot(page, f"{timestamp}_02_search_filled_{product_name.replace('/', '_')}.png")
             except Exception as e:
                 logging.error(f"Monroe: Failed to find search input: {e}")
                 result["debug_info"].append(f"ERROR finding search input: {e}")
-                page.screenshot(path=f"{screenshot_dir}/{timestamp}_ERROR_no_search_input.png")
+                _save_screenshot(page, f"{timestamp}_ERROR_no_search_input.png")
                 raise
 
             # Click the SEARCH button
@@ -1877,7 +1880,7 @@ def _scrape_monroe(product_name, headless=True):
             except Exception as e:
                 logging.error(f"Monroe: Failed to find search button: {e}")
                 result["debug_info"].append(f"ERROR finding search button: {e}")
-                page.screenshot(path=f"{screenshot_dir}/{timestamp}_ERROR_no_search_button.png")
+                _save_screenshot(page, f"{timestamp}_ERROR_no_search_button.png")
                 raise
 
             # Wait for results
@@ -1885,9 +1888,7 @@ def _scrape_monroe(product_name, headless=True):
             result["debug_info"].append("Waiting 3 seconds for results to load")
             time.sleep(3)
 
-            # Screenshot after search
-            page.screenshot(path=f"{screenshot_dir}/{timestamp}_03_search_results_{product_name.replace('/', '_')}.png")
-            result["debug_info"].append(f"Screenshot saved: 03_search_results")
+            _save_screenshot(page, f"{timestamp}_03_search_results_{product_name.replace('/', '_')}.png")
 
             # Debug: Get page content and search for part number
             page_content = page.content()
@@ -1992,9 +1993,7 @@ def _scrape_monroe(product_name, headless=True):
                     page.wait_for_load_state("domcontentloaded")
                     time.sleep(2)
 
-                # Screenshot product detail page
-                page.screenshot(path=f"{screenshot_dir}/{timestamp}_04_product_details_{product_name.replace('/', '_')}.png")
-                result["debug_info"].append(f"Screenshot saved: 04_product_details")
+                _save_screenshot(page, f"{timestamp}_04_product_details_{product_name.replace('/', '_')}.png")
 
                 # Try to extract price from detail page if not found yet
                 if not result["unit_price"]:
@@ -2023,9 +2022,7 @@ def _scrape_monroe(product_name, headless=True):
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 time.sleep(1)
 
-                # Screenshot after scroll
-                page.screenshot(path=f"{screenshot_dir}/{timestamp}_05_after_scroll_{product_name.replace('/', '_')}.png")
-                result["debug_info"].append(f"Screenshot saved: 05_after_scroll")
+                _save_screenshot(page, f"{timestamp}_05_after_scroll_{product_name.replace('/', '_')}.png")
 
                 # Extract from specifications table
                 logging.info(f"Monroe: Looking for specifications table")
@@ -2090,8 +2087,7 @@ def _scrape_monroe(product_name, headless=True):
                 result["error"] = error_msg
                 result["debug_info"].append(f"ERROR: {error_msg}")
 
-                # Save error screenshot
-                page.screenshot(path=f"{screenshot_dir}/{timestamp}_ERROR_product_not_found_{product_name.replace('/', '_')}.png")
+                _save_screenshot(page, f"{timestamp}_ERROR_product_not_found_{product_name.replace('/', '_')}.png")
 
             # Final summary
             logging.info(f"Monroe scrape complete for {product_name}: price=${result.get('unit_price')}, inventory={result.get('inventory')}, moq={result.get('minimum_order')}")
