@@ -176,8 +176,7 @@ def _load_qpl_manufacturer_rows(search_term='', limit=10, mapped_only=True):
             'normalized_length': len(normalized_name),
         })
 
-    qpl_rows = db_execute(
-        """
+    qpl_query = """
         SELECT
             manufacturer_name,
             COUNT(*) AS approvals_count,
@@ -185,9 +184,17 @@ def _load_qpl_manufacturer_rows(search_term='', limit=10, mapped_only=True):
         FROM manufacturer_approvals
         WHERE manufacturer_name IS NOT NULL
           AND TRIM(manufacturer_name) <> ''
-        GROUP BY manufacturer_name
-        ORDER BY COUNT(*) DESC, manufacturer_name
-        """,
+    """
+    qpl_params = []
+    if search_term:
+        qpl_query += " AND LOWER(manufacturer_name) LIKE LOWER(?)"
+        qpl_params.append(f'%{search_term}%')
+
+    qpl_query += " GROUP BY manufacturer_name"
+
+    qpl_rows = db_execute(
+        qpl_query,
+        tuple(qpl_params),
         fetch='all',
     ) or []
 
