@@ -144,6 +144,15 @@
                 <div class="card-body">
                     <p class="card-text text-danger"><strong>Warning:</strong> This will REPLACE all existing stock levels!</p>
                     <p class="card-text small">Required columns: <code>partNumber</code>, <code>remainingQty</code>, <code>unitCost</code> (optional). Part numbers are normalized (special chars stripped) and duplicate rows are summed.</p>
+                    {% if mailbox_import.message_id and mailbox_import.attachment_id %}
+                    <div class="alert alert-info small">
+                        <div><strong>Mailbox source ready:</strong> {{ mailbox_import.attachment_name or 'ZIP attachment' }}</div>
+                        <div>Imports the VS inventory workbook from the email attachment and only keeps rows where <code>Warehouse = MAIN</code>.</div>
+                        <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="mailboxStockImportBtn">
+                            <i class="bi bi-envelope-paper me-1"></i>Import From Mailbox Attachment
+                        </button>
+                    </div>
+                    {% endif %}
                     <p class="text-muted small mb-3">
                         Latest record: {{ latest_dates.stock_levels or 'No records yet' }}
                     </p>
@@ -185,6 +194,8 @@
 </div>
 
 <script>
+const mailboxStockImport = {{ mailbox_import|tojson }};
+
 // Generic form handler for all imports
 async function handleImport(formId, progressId, uploadUrl, includeCheckbox = false) {
     const form = document.getElementById(formId);
@@ -335,6 +346,47 @@ async function handleStockImport(formId, progressId) {
     });
 }
 
+function handleMailboxStockImport(progressId) {
+    const button = document.getElementById('mailboxStockImportBtn');
+    const progress = document.getElementById(progressId);
+    if (!button || !mailboxStockImport?.message_id || !mailboxStockImport?.attachment_id) {
+        return;
+    }
+
+    button.addEventListener('click', async () => {
+        progress.style.display = 'block';
+        button.disabled = true;
+
+        try {
+            const response = await fetch('/imports/unified/stock-from-mailbox', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    message_id: mailboxStockImport.message_id,
+                    attachment_id: mailboxStockImport.attachment_id
+                })
+            });
+
+            const result = await response.json();
+            progress.style.display = 'none';
+            button.disabled = false;
+
+            if (result.success) {
+                showSuccessMessage(result);
+            } else {
+                showErrorMessage(result.message || 'Mailbox stock import failed');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            progress.style.display = 'none';
+            button.disabled = false;
+            showErrorMessage('Error: ' + error.message);
+        }
+    });
+}
+
 function showSuccessMessage(data) {
     const modal = new bootstrap.Modal(document.getElementById('resultsModal'));
     const content = document.getElementById('resultsContent');
@@ -395,5 +447,6 @@ handleImport('poForm', 'poProgress', '/purchase_orders/import_erp');
 handleImport('vqForm', 'vqProgress', '/vqs/import');
 handleImport('cqForm', 'cqProgress', '/cqs/import', true); // true = include checkbox
 handleStockImport('stockForm', 'stockProgress'); // Custom handler for stock
+handleMailboxStockImport('stockProgress');
 </script>
 {% endblock %}

@@ -60,23 +60,11 @@
                     <div class="reading-subject-row">
                         <h4 id="readingSubject">Subject</h4>
                         <div class="reading-actions">
-                            <button type="button" class="btn btn-sm btn-primary" id="createPartsListBtn" disabled title="Create Parts List">
+                            <button type="button" class="btn btn-sm btn-primary d-none" id="quickCreatePartsListBtn" disabled title="Create Parts List">
                                 <i class="bi bi-list-ul me-1"></i>Parts List
                             </button>
-                            <button type="button" class="btn btn-sm btn-info" id="createExcessListBtn" disabled title="Create Excess List">
-                                <i class="bi bi-boxes me-1"></i>Excess List
-                            </button>
-                            <button type="button" class="btn btn-sm btn-success" id="createSupplierQuoteBtn" disabled title="Quick Supplier Quote">
+                            <button type="button" class="btn btn-sm btn-success d-none" id="quickCreateSupplierQuoteBtn" disabled title="Quick Supplier Quote">
                                 <i class="bi bi-lightning-charge me-1"></i>Supplier Quote
-                            </button>
-                            <button type="button" class="btn btn-sm btn-warning" id="createTicketBtn" disabled title="Create Ticket">
-                                <i class="bi bi-ticket-detailed me-1"></i>Ticket
-                            </button>
-                            <button type="button" class="btn btn-sm btn-outline-info" id="checkCustomerPoBtn" disabled title="Check Customer PO">
-                                <i class="bi bi-file-earmark-check me-1"></i>Check PO
-                            </button>
-                            <button type="button" class="btn btn-sm btn-outline-dark" id="mailboxTriageBtn" disabled title="Preview triage decision">
-                                <i class="bi bi-diagram-3 me-1"></i>Triage
                             </button>
                             <button type="button" class="btn btn-sm btn-outline-primary" id="mailboxReplyBtn" disabled title="Reply">
                                 <i class="bi bi-reply me-1"></i>Reply
@@ -84,6 +72,49 @@
                             <button type="button" class="btn btn-sm btn-outline-primary" id="mailboxReplyAllBtn" disabled title="Reply all">
                                 <i class="bi bi-reply-all me-1"></i>Reply all
                             </button>
+                            <div class="dropdown">
+                                <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" id="mailboxActionsBtn" data-bs-toggle="dropdown" aria-expanded="false" disabled>
+                                    <i class="bi bi-three-dots me-1"></i>Actions
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-end">
+                                    <li>
+                                        <button type="button" class="dropdown-item" id="createPartsListBtn" disabled title="Create Parts List">
+                                            <i class="bi bi-list-ul me-2"></i>Parts List
+                                        </button>
+                                    </li>
+                                    <li>
+                                        <button type="button" class="dropdown-item" id="createSupplierQuoteBtn" disabled title="Quick Supplier Quote">
+                                            <i class="bi bi-lightning-charge me-2"></i>Supplier Quote
+                                        </button>
+                                    </li>
+                                    <li>
+                                        <button type="button" class="dropdown-item" id="createExcessListBtn" disabled title="Create Excess List">
+                                            <i class="bi bi-boxes me-2"></i>Excess List
+                                        </button>
+                                    </li>
+                                    <li>
+                                        <button type="button" class="dropdown-item" id="createTicketBtn" disabled title="Create Ticket">
+                                            <i class="bi bi-ticket-detailed me-2"></i>Ticket
+                                        </button>
+                                    </li>
+                                    <li><hr class="dropdown-divider"></li>
+                                    <li>
+                                        <button type="button" class="dropdown-item" id="checkCustomerPoBtn" disabled title="Check Customer PO">
+                                            <i class="bi bi-file-earmark-check me-2"></i>Check PO
+                                        </button>
+                                    </li>
+                                    <li>
+                                        <button type="button" class="dropdown-item" id="openStockImportBtn" disabled title="Open stock import from mailbox">
+                                            <i class="bi bi-box-arrow-in-down me-2"></i>Stock Import
+                                        </button>
+                                    </li>
+                                    <li>
+                                        <button type="button" class="dropdown-item" id="mailboxTriageBtn" disabled title="Preview triage decision">
+                                            <i class="bi bi-diagram-3 me-2"></i>Triage
+                                        </button>
+                                    </li>
+                                </ul>
+                            </div>
                             <a class="btn btn-sm btn-outline-secondary disabled" id="openOutlookBtn" href="#" target="_blank" rel="noopener" title="Open in Outlook">
                                 <i class="bi bi-box-arrow-up-right"></i>
                             </a>
@@ -389,10 +420,14 @@ const readingReceived = document.getElementById('readingReceived');
 const readingFrame = document.getElementById('readingFrame');
 const senderAvatar = document.getElementById('senderAvatar');
 const createPartsListBtn = document.getElementById('createPartsListBtn');
+const quickCreatePartsListBtn = document.getElementById('quickCreatePartsListBtn');
 const createExcessListBtn = document.getElementById('createExcessListBtn');
 const createSupplierQuoteBtn = document.getElementById('createSupplierQuoteBtn');
+const quickCreateSupplierQuoteBtn = document.getElementById('quickCreateSupplierQuoteBtn');
 const createTicketBtn = document.getElementById('createTicketBtn');
 const checkCustomerPoBtn = document.getElementById('checkCustomerPoBtn');
+const openStockImportBtn = document.getElementById('openStockImportBtn');
+const mailboxActionsBtn = document.getElementById('mailboxActionsBtn');
 const mailboxTriageBtn = document.getElementById('mailboxTriageBtn');
 const mailboxReplyBtn = document.getElementById('mailboxReplyBtn');
 const mailboxReplyAllBtn = document.getElementById('mailboxReplyAllBtn');
@@ -461,6 +496,7 @@ const mailboxManualPartsOpenEmptyBtn = document.getElementById('mailboxManualPar
 let messageCache = [];
 let selectedMessage = null;
 let selectedMessageId = null;
+let selectedMessageLookup = null;
 let selectedPartsListId = null;
 let selectedSupplierId = null;
 let mailboxSelectedCustomerData = null;
@@ -472,6 +508,7 @@ let mailboxPartsScanInFlight = false;
 let mailboxModalSupplierSelection = null;
 let selectedMessageHtml = null;
 let selectedMessagePdfAttachments = [];
+let selectedMessageZipAttachments = [];
 let supplierToolsExpanded = false;
 let selectedMessageText = null;
 let selectedMessageResolvedHtml = null;
@@ -582,8 +619,37 @@ function updateSupplierQuoteButton(subject) {
     if (parsed) {
         const label = parsed.listId ? `Supplier Quote (PL ${parsed.listId})` : 'Supplier Quote';
         createSupplierQuoteBtn.innerHTML = `<i class="bi bi-lightning-charge me-1"></i>${label}`;
+        if (quickCreateSupplierQuoteBtn) {
+            quickCreateSupplierQuoteBtn.innerHTML = `<i class="bi bi-lightning-charge me-1"></i>${label}`;
+        }
     } else {
         createSupplierQuoteBtn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i>Supplier Quote';
+        if (quickCreateSupplierQuoteBtn) {
+            quickCreateSupplierQuoteBtn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i>Supplier Quote';
+        }
+    }
+
+    updatePrimaryMailboxActions();
+}
+
+function updatePrimaryMailboxActions() {
+    const hasMessage = Boolean(selectedMessage);
+    const contactType = (selectedMessageLookup?.contact_type || '').toLowerCase();
+    const isSupplierContext = Boolean(mailboxSelectedSupplierData?.id || selectedSupplierId || contactType === 'supplier' || selectedPartsListId);
+    const isCustomerContext = Boolean(mailboxSelectedCustomerData?.id || contactType === 'customer');
+
+    if (mailboxActionsBtn) {
+        mailboxActionsBtn.disabled = !hasMessage;
+    }
+
+    if (quickCreatePartsListBtn) {
+        quickCreatePartsListBtn.disabled = !hasMessage || createPartsListBtn.disabled;
+        quickCreatePartsListBtn.classList.toggle('d-none', !(hasMessage && isCustomerContext));
+    }
+
+    if (quickCreateSupplierQuoteBtn) {
+        quickCreateSupplierQuoteBtn.disabled = !hasMessage || createSupplierQuoteBtn.disabled;
+        quickCreateSupplierQuoteBtn.classList.toggle('d-none', !(hasMessage && isSupplierContext));
     }
 }
 
@@ -1315,9 +1381,12 @@ async function fetchMessageAttachments(messageId) {
         const data = await response.json();
         if (!response.ok || !data.success) return;
 
-        selectedMessagePdfAttachments = (data.attachments || []).filter(att => att.is_pdf && !att.is_inline);
+        const attachments = (data.attachments || []).filter(att => !att.is_inline);
+        selectedMessagePdfAttachments = attachments.filter(att => att.is_pdf);
+        selectedMessageZipAttachments = attachments.filter(att => (att.name || '').toLowerCase().endsWith('.zip'));
         renderPdfAttachmentsDropdown();
         updateCheckPoButton();
+        updateStockImportButton();
         return selectedMessagePdfAttachments;
     } catch (error) {
         console.error('Failed to fetch attachments:', error);
@@ -1335,6 +1404,22 @@ function updateCheckPoButton() {
     } else {
         checkCustomerPoBtn.innerHTML = '<i class="bi bi-file-earmark-check me-1"></i>Check PO';
         checkCustomerPoBtn.title = 'Check Customer PO (no PDF attached)';
+    }
+}
+
+function updateStockImportButton() {
+    if (!openStockImportBtn) return;
+    const zips = selectedMessageZipAttachments || [];
+    if (zips.length > 0) {
+        const zipName = zips[0].name || 'ZIP';
+        const shortName = zipName.length > 18 ? zipName.substring(0, 15) + '...' : zipName;
+        openStockImportBtn.disabled = false;
+        openStockImportBtn.innerHTML = `<i class="bi bi-box-arrow-in-down me-1"></i>Stock Import <span class="badge bg-secondary ms-1">${shortName}</span>`;
+        openStockImportBtn.title = `Open stock import with: ${zipName}`;
+    } else {
+        openStockImportBtn.disabled = true;
+        openStockImportBtn.innerHTML = '<i class="bi bi-box-arrow-in-down me-1"></i>Stock Import';
+        openStockImportBtn.title = 'Open stock import from mailbox';
     }
 }
 
@@ -1476,6 +1561,7 @@ function resetMailboxAddContactModal() {
     mailboxSelectedCustomer.classList.add('d-none');
     mailboxAddContactFeedback.classList.add('d-none');
     mailboxAddContactFeedback.textContent = '';
+    updatePrimaryMailboxActions();
 }
 
 function resetMailboxAddSupplierModal(seed = '') {
@@ -1575,6 +1661,7 @@ function setSelectedSupplier(supplier) {
             updateSupplierQuoteButton(selectedMessage.subject || '');
         }
     }
+    updatePrimaryMailboxActions();
 }
 
 function updateLoadMoreState({ hasMore = false, loading = false, error = '' } = {}) {
@@ -2009,6 +2096,7 @@ async function selectMessage(messageId) {
         item.classList.toggle('selected', item.getAttribute('data-id') === messageId);
     });
     selectedMessageId = messageId;
+    selectedMessageLookup = null;
     mailboxTriageBtn.disabled = true;
     if (mailboxReplyBtn) mailboxReplyBtn.disabled = true;
     if (mailboxReplyAllBtn) mailboxReplyAllBtn.disabled = true;
@@ -2017,8 +2105,11 @@ async function selectMessage(messageId) {
     mailboxSupplierRequests = [];
     mailboxPartsScanData = null;
     selectedMessagePdfAttachments = [];
+    selectedMessageZipAttachments = [];
     supplierToolsExpanded = false;
     renderSupplierMatchState();
+    updateStockImportButton();
+    updatePrimaryMailboxActions();
     
     // Show loading state
     emptyReadingState.style.display = 'none';
@@ -2039,6 +2130,7 @@ async function selectMessage(messageId) {
 
         selectedMessage = data.message;
         const lookup = data.lookup || {};
+        selectedMessageLookup = lookup;
         const fromData = selectedMessage.from?.emailAddress || {};
         const subject = selectedMessage.subject || '(no subject)';
         const received = selectedMessage.receivedDateTime ? formatFullDate(selectedMessage.receivedDateTime) : '';
@@ -2106,6 +2198,7 @@ async function selectMessage(messageId) {
         mailboxTriageBtn.disabled = false;
         if (mailboxReplyBtn) mailboxReplyBtn.disabled = false;
         if (mailboxReplyAllBtn) mailboxReplyAllBtn.disabled = false;
+        updatePrimaryMailboxActions();
         renderSupplierMatchState();
 
         // Fetch PDF attachments for the email (non-blocking)
@@ -2167,6 +2260,7 @@ async function searchMailboxCustomers(query) {
                 mailboxSelectedCustomerMeta.textContent = meta;
                 mailboxSelectedCustomer.classList.remove('d-none');
                 mailboxAddContactSaveBtn.disabled = false;
+                updatePrimaryMailboxActions();
             });
         });
     } catch (error) {
@@ -2238,6 +2332,7 @@ mailboxAddContactSaveBtn?.addEventListener('click', async () => {
         readingCompanyBadge.style.display = 'inline-flex';
         setContactActionsVisible(false);
         mailboxContactSeed = null;
+        updatePrimaryMailboxActions();
 
         const modal = bootstrap.Modal.getInstance(mailboxAddContactModal);
         modal?.hide();
@@ -2610,6 +2705,7 @@ createPartsListBtn.addEventListener('click', async () => {
     if (!selectedMessage) return;
     createPartsListBtn.disabled = true;
     createPartsListBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creating...';
+    updatePrimaryMailboxActions();
     const bodyText = extractTextFromBody(selectedMessage);
     const payload = {
         subject: selectedMessage.subject || '',
@@ -2647,6 +2743,7 @@ createPartsListBtn.addEventListener('click', async () => {
     } finally {
         createPartsListBtn.disabled = false;
         createPartsListBtn.innerHTML = '<i class="bi bi-list-ul me-1"></i>Parts List';
+        updatePrimaryMailboxActions();
     }
 });
 
@@ -2682,6 +2779,18 @@ createSupplierQuoteBtn.addEventListener('click', () => {
     }
 
     window.location.href = url;
+});
+
+quickCreatePartsListBtn?.addEventListener('click', () => {
+    if (!createPartsListBtn.disabled) {
+        createPartsListBtn.click();
+    }
+});
+
+quickCreateSupplierQuoteBtn?.addEventListener('click', () => {
+    if (!createSupplierQuoteBtn.disabled) {
+        createSupplierQuoteBtn.click();
+    }
 });
 
 createExcessListBtn.addEventListener('click', async () => {
@@ -2830,6 +2939,28 @@ checkCustomerPoBtn.addEventListener('click', async () => {
     }
 });
 
+openStockImportBtn?.addEventListener('click', () => {
+    if (!selectedMessage) {
+        showToast('Select an email first', 'warning');
+        return;
+    }
+
+    const zips = selectedMessageZipAttachments || [];
+    if (!zips.length) {
+        showToast('No ZIP attachment found on this email', 'warning');
+        return;
+    }
+
+    const zipAttachment = zips[0];
+    const url = new URL('/imports/unified', window.location.origin);
+    url.searchParams.set('message_id', selectedMessage.id);
+    url.searchParams.set('attachment_id', zipAttachment.id);
+    if (zipAttachment.name) {
+        url.searchParams.set('attachment_name', zipAttachment.name);
+    }
+    window.open(url.toString(), '_blank');
+});
+
 function showToast(message, type = 'success') {
     const container = document.getElementById('toastContainer') || createToastContainer();
     const toast = document.createElement('div');
@@ -2874,6 +3005,7 @@ supplierActionsHeader?.addEventListener('click', (e) => {
 console.log('Mailbox initialized');
 console.log('createTicketBtn element:', createTicketBtn);
 renderSupplierMatchState();
+updatePrimaryMailboxActions();
 setGraphStatus(graphSeed);
 (async () => {
     const initial = await loadMailboxMessages({ reset: true, useCache: true });

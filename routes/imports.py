@@ -3,7 +3,10 @@ import json
 from werkzeug.exceptions import BadRequest
 from datetime import date, datetime
 import os
+import io
+import zipfile
 from werkzeug.utils import secure_filename
+import pandas as pd
 
 from db import db_cursor, execute as db_execute
 
@@ -100,6 +103,134 @@ class ImportHelpers:
             fetch='one'
         )
         return result['id'] if result else None
+
+
+def _save_import_file_bytes(filename, content_bytes, import_type='stock_levels'):
+    safe_name = secure_filename(filename or 'mailbox_import.xlsx')
+    upload_dir = os.path.join(current_app.root_path, 'uploads')
+    os.makedirs(upload_dir, exist_ok=True)
+
+    base, ext = os.path.splitext(safe_name)
+    candidate = safe_name
+    counter = 1
+    while os.path.exists(os.path.join(upload_dir, candidate)):
+        candidate = f"{base}_{counter}{ext}"
+        counter += 1
+
+    filepath = os.path.join(upload_dir, candidate)
+    with open(filepath, 'wb') as handle:
+        handle.write(content_bytes)
+
+    insert_sql = """
+        INSERT INTO files (filename, filepath, upload_date, import_type)
+        VALUES (?, ?, ?, ?)
+    """
+    with db_cursor(commit=True) as cur:
+        if _using_postgres():
+            _execute_with_cursor(cur, insert_sql + " RETURNING id", (candidate, filepath, datetime.now(), import_type))
+            row = cur.fetchone()
+            file_id = row['id'] if isinstance(row, dict) else row[0]
+        else:
+            _execute_with_cursor(cur, insert_sql, (candidate, filepath, datetime.now(), import_type))
+            file_id = getattr(cur, 'lastrowid', None)
+
+    return file_id, filepath, candidate
+
+
+def _fetch_mailbox_attachment_bytes(message_id, attachment_id):
+    from routes.emails import (
+        _build_msal_app,
+        _get_graph_settings,
+        _load_graph_cache,
+        _save_graph_cache,
+    )
+    import requests
+    from urllib.parse import quote
+
+    settings = _get_graph_settings(include_secret=True)
+    cache = _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+    if not accounts:
+        raise BadRequest('No Graph account connected. Click Connect with Microsoft first.')
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache(cache)
+    if not token or "access_token" not in token:
+        raise BadRequest('Failed to refresh Graph access token')
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    safe_message_id = quote(message_id, safe="")
+    safe_attachment_id = quote(attachment_id, safe="")
+    response = requests.get(
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments/{safe_attachment_id}",
+        headers=headers,
+        timeout=20,
+    )
+
+    try:
+        payload = response.json() if response.content else None
+    except ValueError:
+        payload = None
+
+    if response.status_code >= 400 or not isinstance(payload, dict):
+        raise BadRequest('Failed to fetch mailbox attachment')
+
+    content_b64 = payload.get('contentBytes')
+    if not content_b64:
+        raise BadRequest('Mailbox attachment has no content')
+
+    import base64
+    return {
+        'name': payload.get('name') or 'attachment',
+        'content_type': payload.get('contentType') or '',
+        'bytes': base64.b64decode(content_b64),
+    }
+
+
+def _extract_vs_inventory_workbook(zip_bytes):
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile as exc:
+        raise BadRequest('Attachment is not a valid ZIP file') from exc
+
+    workbook_names = [
+        info.filename for info in archive.infolist()
+        if not info.is_dir() and info.filename.lower().endswith(('.xlsx', '.xls'))
+    ]
+    if not workbook_names:
+        raise BadRequest('ZIP file does not contain an Excel workbook')
+    if len(workbook_names) > 1:
+        raise BadRequest('ZIP file contains multiple Excel workbooks; expected exactly one')
+
+    workbook_name = workbook_names[0]
+    workbook_bytes = archive.read(workbook_name)
+    return workbook_name, workbook_bytes
+
+
+def _build_vs_stock_dataframe(workbook_bytes):
+    df = pd.read_excel(io.BytesIO(workbook_bytes))
+    df.columns = [str(col).strip() for col in df.columns]
+
+    required_cols = ['Part_Number', 'QTY_Rem', 'Warehouse']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise BadRequest(f"Workbook missing required column(s): {', '.join(missing_cols)}")
+
+    main_mask = df['Warehouse'].astype(str).str.strip().str.upper() == 'MAIN'
+    filtered = df.loc[main_mask].copy()
+    filtered['Part_Number'] = filtered['Part_Number'].astype(str).str.strip()
+    filtered['QTY_Rem'] = pd.to_numeric(filtered['QTY_Rem'], errors='coerce')
+    filtered = filtered[filtered['Part_Number'].ne('')]
+    filtered = filtered[filtered['Part_Number'].str.lower().ne('nan')]
+    filtered = filtered[filtered['QTY_Rem'].fillna(0) > 0]
+
+    output = pd.DataFrame({
+        'partNumber': filtered['Part_Number'],
+        'remainingQty': filtered['QTY_Rem'],
+    })
+    output['unitCost'] = filtered['LastSourceCost'] if 'LastSourceCost' in filtered.columns else None
+    return output
 
 
 @imports_bp.route('/mappings', methods=['GET'])
@@ -386,4 +517,49 @@ def unified_imports():
         'stock_levels': _format_latest(latest_stock),
     }
 
-    return render_template('unified_imports.html', latest_dates=latest_dates)
+    mailbox_import = {
+        'message_id': (request.args.get('message_id') or '').strip(),
+        'attachment_id': (request.args.get('attachment_id') or '').strip(),
+        'attachment_name': (request.args.get('attachment_name') or '').strip(),
+    }
+
+    return render_template('unified_imports.html', latest_dates=latest_dates, mailbox_import=mailbox_import)
+
+
+@imports_bp.route('/unified/stock-from-mailbox', methods=['POST'])
+def import_stock_from_mailbox():
+    payload = request.get_json(silent=True) or {}
+    message_id = (payload.get('message_id') or '').strip()
+    attachment_id = (payload.get('attachment_id') or '').strip()
+
+    if not message_id or not attachment_id:
+        return jsonify(success=False, message='message_id and attachment_id are required'), 400
+
+    try:
+        attachment = _fetch_mailbox_attachment_bytes(message_id, attachment_id)
+        attachment_name = attachment['name'] or 'attachment.zip'
+        if not attachment_name.lower().endswith('.zip'):
+            return jsonify(success=False, message='Expected a ZIP attachment'), 400
+
+        workbook_name, workbook_bytes = _extract_vs_inventory_workbook(attachment['bytes'])
+        stock_df = _build_vs_stock_dataframe(workbook_bytes)
+        file_id, _filepath, saved_name = _save_import_file_bytes(workbook_name, workbook_bytes, import_type='stock_levels')
+
+        from routes.stock_movements import process_stock_levels_dataframe
+        results = process_stock_levels_dataframe(
+            stock_df,
+            file_id=file_id,
+            reference_prefix='MAILBOX-VS-IMPORT',
+        )
+
+        return jsonify(
+            success=True,
+            message=f'Imported stock levels from mailbox attachment {attachment_name}',
+            source_file=saved_name,
+            results=results,
+        )
+    except BadRequest as exc:
+        return jsonify(success=False, message=str(exc)), 400
+    except Exception as exc:
+        current_app.logger.exception("Mailbox stock import failed")
+        return jsonify(success=False, message=str(exc)), 500

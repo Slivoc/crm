@@ -43,6 +43,196 @@ def _get_inserted_id(row, cur) -> int | None:
             return getattr(cur, 'lastrowid', None)
 
 
+def _normalize_stock_levels_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
+    normalized.columns = [str(col).strip() for col in normalized.columns]
+    return normalized
+
+
+def _build_stock_level_rows_from_dataframe(df: pd.DataFrame):
+    results = {
+        'processed': 0,
+        'created': 0,
+        'deleted': 0,
+        'not_found': 0,
+        'errors': []
+    }
+
+    imported_rows = []
+    stock_totals = {}
+
+    for idx, row in df.iterrows():
+        raw_part_number = str(row.get('partNumber', '')).strip()
+        if not raw_part_number or raw_part_number.lower() in ['nan', 'none']:
+            continue
+
+        base_part_number = create_base_part_number(raw_part_number)
+        if not base_part_number:
+            continue
+
+        try:
+            quantity = float(str(row.get('remainingQty', '')).strip())
+        except (ValueError, TypeError):
+            results['errors'].append(f"Row {idx + 1}: Invalid quantity format")
+            continue
+
+        if quantity < 0:
+            results['errors'].append(f"Row {idx + 1}: Quantity cannot be negative")
+            continue
+
+        if quantity == 0:
+            continue
+
+        unit_price = None
+        try:
+            price_str = str(row.get('unitCost', '')).strip()
+            if price_str and price_str.lower() not in ['nan', 'none', '']:
+                price_str = price_str.replace('$', '').replace(',', '')
+                unit_price = float(price_str)
+        except (ValueError, TypeError):
+            unit_price = None
+
+        imported_rows.append({
+            'base_part_number': base_part_number,
+            'sample_part_number': raw_part_number,
+            'quantity': quantity,
+            'unit_price': unit_price,
+            'row_number': idx + 2,
+        })
+        stock_totals[base_part_number] = stock_totals.get(base_part_number, 0.0) + quantity
+        results['processed'] += 1
+
+    return imported_rows, stock_totals, results
+
+
+def _rebuild_stock_levels_from_rows(imported_rows, stock_totals, results, *, file_id=None, reference_prefix='STOCK-IMPORT'):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        _execute_with_cursor(cur, "SELECT COUNT(*) FROM stock_movements")
+        count_row = cur.fetchone()
+        results['deleted'] = (
+            count_row.get('count') if isinstance(count_row, dict) and 'count' in count_row
+            else (count_row[0] if count_row else 0)
+        )
+
+        _execute_with_cursor(cur, "DELETE FROM stock_movements")
+        _execute_with_cursor(cur, "UPDATE part_numbers SET stock = 0")
+        conn.commit()
+
+        known_parts = set()
+
+        for imported_row in imported_rows:
+            base_part_number = imported_row['base_part_number']
+            sample_part_number = imported_row['sample_part_number']
+            try:
+                if base_part_number not in known_parts:
+                    _execute_with_cursor(
+                        cur,
+                        "SELECT base_part_number FROM part_numbers WHERE base_part_number = ?",
+                        (base_part_number,),
+                    )
+                    part_row = cur.fetchone()
+                    if not part_row:
+                        create_part_on_demand(cur, sample_part_number, sample_part_number)
+                        results['not_found'] += 1
+                    known_parts.add(base_part_number)
+
+                if file_id is not None:
+                    reference = f"{reference_prefix}-{file_id}-ROW-{imported_row['row_number']}"
+                else:
+                    reference = f"{reference_prefix}-ROW-{imported_row['row_number']}"
+
+                _execute_with_cursor(
+                    cur,
+                    """
+                    INSERT INTO stock_movements
+                    (base_part_number, movement_type, quantity, available_quantity,
+                     cost_per_unit, reference, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        base_part_number,
+                        'IN',
+                        imported_row['quantity'],
+                        imported_row['quantity'],
+                        imported_row['unit_price'],
+                        reference,
+                        "Imported stock level row",
+                    ),
+                )
+
+                results['created'] += 1
+            except Exception as e:
+                results['errors'].append(f"Base {base_part_number}: {str(e)}")
+                conn.rollback()
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+                cur = conn.cursor()
+                continue
+
+        for base_part_number, quantity in stock_totals.items():
+            try:
+                _execute_with_cursor(
+                    cur,
+                    "UPDATE part_numbers SET stock = ? WHERE base_part_number = ?",
+                    (quantity, base_part_number),
+                )
+            except Exception as e:
+                results['errors'].append(f"Base {base_part_number}: {str(e)}")
+                conn.rollback()
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+                cur = conn.cursor()
+                continue
+
+        if file_id is not None:
+            _execute_with_cursor(
+                cur,
+                """
+                INSERT INTO import_status
+                (file_id, import_type, processed, created, updated, skipped, errors, status, completed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    file_id,
+                    'stock_levels',
+                    results['processed'],
+                    results['created'],
+                    0,
+                    0,
+                    str(results['errors']),
+                    'completed',
+                ),
+            )
+
+        conn.commit()
+        return results
+
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        conn.close()
+
+
+def process_stock_levels_dataframe(df: pd.DataFrame, *, file_id=None, reference_prefix='STOCK-IMPORT'):
+    normalized = _normalize_stock_levels_dataframe(df)
+    imported_rows, stock_totals, results = _build_stock_level_rows_from_dataframe(normalized)
+    return _rebuild_stock_levels_from_rows(
+        imported_rows,
+        stock_totals,
+        results,
+        file_id=file_id,
+        reference_prefix=reference_prefix,
+    )
+
+
 def update_part_stock(base_part_number, quantity, movement_type):
     operator = '+' if movement_type == 'IN' else '-'
     query = f"""
@@ -1091,15 +1281,7 @@ def process_stock_levels_upload():
             filepath = file_details['filepath'] if isinstance(file_details, dict) else file_details[0]
 
         # Read CSV file
-        df = pd.read_csv(filepath)
-
-        results = {
-            'processed': 0,
-            'created': 0,
-            'deleted': 0,
-            'not_found': 0,
-            'errors': []
-        }
+        df = _normalize_stock_levels_dataframe(pd.read_csv(filepath))
 
         # Resolve mapped columns (mapping values are column indices from UI).
         def _mapped_column_name(field_name):
@@ -1124,164 +1306,17 @@ def process_stock_levels_upload():
             missing_list = ", ".join(missing_cols)
             return jsonify(success=False, message=f"Required column(s) '{missing_list}' not found in file"), 400
 
-        # First pass: preserve each uploaded row as a distinct stock lot.
-        imported_rows = []
-        stock_totals = {}
-        for idx, row in df.iterrows():
-            raw_part_number = str(row.get(part_col, '')).strip()
-            if not raw_part_number or raw_part_number.lower() in ['nan', 'none']:
-                continue
+        import_df = pd.DataFrame({
+            'partNumber': df[part_col],
+            'remainingQty': df[qty_col],
+        })
+        import_df['unitCost'] = df[cost_col] if cost_col in df.columns else None
 
-            base_part_number = create_base_part_number(raw_part_number)
-            if not base_part_number:
-                continue
-
-            try:
-                quantity = float(str(row.get(qty_col, '')).strip())
-            except (ValueError, TypeError):
-                results['errors'].append(f"Row {idx + 1}: Invalid quantity format")
-                continue
-
-            if quantity < 0:
-                results['errors'].append(f"Row {idx + 1}: Quantity cannot be negative")
-                continue
-
-            if quantity == 0:
-                continue
-
-            unit_price = None
-            if cost_col in df.columns:
-                try:
-                    price_str = str(row.get(cost_col, '')).strip()
-                    if price_str and price_str.lower() not in ['nan', 'none', '']:
-                        price_str = price_str.replace('$', '').replace(',', '')
-                        unit_price = float(price_str)
-                except (ValueError, TypeError):
-                    unit_price = None
-
-            imported_rows.append({
-                'base_part_number': base_part_number,
-                'sample_part_number': raw_part_number,
-                'quantity': quantity,
-                'unit_price': unit_price,
-                'row_number': idx + 2,
-            })
-            stock_totals[base_part_number] = stock_totals.get(base_part_number, 0.0) + quantity
-            results['processed'] += 1
-
-        # Run destructive reset inside a transaction
-        conn = get_db_connection()
-        cur = conn.cursor()
-        try:
-            # NUKE EVERYTHING - Delete ALL stock movements (no conditions)
-            _execute_with_cursor(cur, "SELECT COUNT(*) FROM stock_movements")
-            count_row = cur.fetchone()
-            results['deleted'] = (
-                count_row.get('count') if isinstance(count_row, dict) and 'count' in count_row
-                else (count_row[0] if count_row else 0)
-            )
-
-            _execute_with_cursor(cur, "DELETE FROM stock_movements")
-            print(f"NUKED ALL {results['deleted']} stock movements")
-
-            # Reset all stock levels to 0
-            _execute_with_cursor(cur, "UPDATE part_numbers SET stock = 0")
-            print("Reset all stock levels to 0")
-            conn.commit()
-
-            known_parts = set()
-
-            # Rebuild stock movements exactly as uploaded rows so per-lot costs remain distinct.
-            for imported_row in imported_rows:
-                base_part_number = imported_row['base_part_number']
-                sample_part_number = imported_row['sample_part_number']
-                try:
-                    if base_part_number not in known_parts:
-                        _execute_with_cursor(
-                            cur,
-                            "SELECT base_part_number FROM part_numbers WHERE base_part_number = ?",
-                            (base_part_number,),
-                        )
-                        part_row = cur.fetchone()
-                        if not part_row:
-                            create_part_on_demand(cur, sample_part_number, sample_part_number)
-                            results['not_found'] += 1
-                        known_parts.add(base_part_number)
-
-                    _execute_with_cursor(
-                        cur,
-                        """
-                        INSERT INTO stock_movements
-                        (base_part_number, movement_type, quantity, available_quantity,
-                         cost_per_unit, reference, notes)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            base_part_number,
-                            'IN',
-                            imported_row['quantity'],
-                            imported_row['quantity'],
-                            imported_row['unit_price'],
-                            f"STOCK-IMPORT-{file_id}-ROW-{imported_row['row_number']}",
-                            "Imported stock level row",
-                        ),
-                    )
-
-                    results['created'] += 1
-                except Exception as e:
-                    results['errors'].append(f"Base {base_part_number}: {str(e)}")
-                    conn.rollback()
-                    try:
-                        cur.close()
-                    except Exception:
-                        pass
-                    cur = conn.cursor()
-                    continue
-
-            for base_part_number, quantity in stock_totals.items():
-                try:
-                    _execute_with_cursor(
-                        cur,
-                        "UPDATE part_numbers SET stock = ? WHERE base_part_number = ?",
-                        (quantity, base_part_number),
-                    )
-                except Exception as e:
-                    results['errors'].append(f"Base {base_part_number}: {str(e)}")
-                    conn.rollback()
-                    try:
-                        cur.close()
-                    except Exception:
-                        pass
-                    cur = conn.cursor()
-                    continue
-            # Record the import
-            _execute_with_cursor(
-                cur,
-                """
-                INSERT INTO import_status
-                (file_id, import_type, processed, created, updated, skipped, errors, status, completed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """,
-                (
-                    file_id,
-                    'stock_levels',
-                    results['processed'],
-                    results['created'],
-                    0,
-                    0,
-                    str(results['errors']),
-                    'completed',
-                ),
-            )
-
-            conn.commit()
-
-        finally:
-            try:
-                cur.close()
-            except Exception:
-                pass
-            conn.close()
+        results = process_stock_levels_dataframe(
+            import_df,
+            file_id=file_id,
+            reference_prefix='STOCK-IMPORT',
+        )
 
         return jsonify(success=True, results=results)
 
