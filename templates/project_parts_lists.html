@@ -293,6 +293,13 @@ document.addEventListener('DOMContentLoaded', function() {
     function renderPriorityCell(cell, scoreData) {
         const totalBaseLines = scoreData.total_base_lines || 0;
         const score = scoreData.score || 0;
+        const estimatedTotal = Number(scoreData.estimated_customer_quote_total || 0);
+        const estimatedPricedLines = Number(scoreData.estimated_priced_lines || 0);
+        const estimatedTotalLabel = new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            maximumFractionDigits: 0
+        }).format(estimatedTotal);
         cell.dataset.priorityScore = String(score);
         cell.setAttribute('data-order', String(score));
 
@@ -315,6 +322,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     ${scoreData.activity_before_count || 0}/${totalBaseLines} touched before
                     <br>
                     ${scoreData.no_bid_or_requested_only_count || 0}/${totalBaseLines} request-only / no-bid
+                    <br>
+                    Est. value from past CQs: ${estimatedTotalLabel} (${estimatedPricedLines} line${estimatedPricedLines === 1 ? '' : 's'})
                 </div>
             </div>
         `;
@@ -371,7 +380,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     runPriorityScanBtn?.addEventListener('click', () => {
         runPriorityScanBtn.disabled = true;
-        priorityScanStatus.textContent = 'Scanning past quote and sourcing activity on the parts in each list...';
+        priorityScanStatus.textContent = 'Scanning past quote/sourcing activity and estimating value from previous customer quotes...';
         priorityCells.forEach(cell => {
             cell.setAttribute('data-order', '-1');
             cell.innerHTML = '<span class="spinner-border spinner-border-sm text-muted" role="status"></span>';
@@ -392,7 +401,9 @@ document.addEventListener('DOMContentLoaded', function() {
                         total_base_lines: 0,
                         quoted_before_count: 0,
                         activity_before_count: 0,
-                        no_bid_or_requested_only_count: 0
+                        no_bid_or_requested_only_count: 0,
+                        estimated_priced_lines: 0,
+                        estimated_customer_quote_total: 0
                     };
                     renderPriorityCell(cell, scoreData);
                 });
