@@ -1,10 +1,12 @@
-from flask import Blueprint, render_template, jsonify, request, redirect, url_for
+from flask import Blueprint, render_template, jsonify, request, redirect, url_for, Response
 from db import db_cursor, execute as db_execute
 from models import create_base_part_number
 import logging
 import pandas as pd
 from werkzeug.utils import secure_filename
 import os
+import csv
+import io
 
 
 def _using_postgres() -> bool:
@@ -34,6 +36,79 @@ def _fetch_inserted_id(cur):
             return row.get('id') if isinstance(row, dict) else row[0]
         return None
     return getattr(cur, 'lastrowid', None)
+
+
+def _build_in_clause(values):
+    if not values:
+        return None, []
+    return ', '.join(['?'] * len(values)), values
+
+
+def _get_bom_stock_report_data(selected_bom_ids):
+    if not selected_bom_ids:
+        return [], []
+
+    in_clause, params = _build_in_clause(selected_bom_ids)
+    if not in_clause:
+        return [], []
+
+    selected_boms = db_execute(f'''
+        SELECT id, name
+        FROM bom_headers
+        WHERE id IN ({in_clause})
+        ORDER BY name
+    ''', params, fetch='all') or []
+
+    if not selected_boms:
+        return [], []
+
+    selected_bom_ids = [int(row['id']) for row in selected_boms]
+    in_clause, params = _build_in_clause(selected_bom_ids)
+
+    rows = db_execute(f'''
+        SELECT
+            bl.base_part_number,
+            COALESCE(MAX(pn.part_number), bl.base_part_number) AS part_number,
+            COALESCE(SUM(sm.available_quantity), 0) AS amount_in_stock
+        FROM bom_lines bl
+        JOIN stock_movements sm
+          ON sm.base_part_number = bl.base_part_number
+         AND sm.movement_type = 'IN'
+         AND sm.available_quantity > 0
+        LEFT JOIN part_numbers pn ON pn.base_part_number = bl.base_part_number
+        WHERE bl.bom_header_id IN ({in_clause})
+        GROUP BY bl.base_part_number
+        ORDER BY COALESCE(MAX(pn.part_number), bl.base_part_number)
+    ''', params, fetch='all') or []
+
+    memberships = db_execute(f'''
+        SELECT DISTINCT
+            bl.base_part_number,
+            bl.bom_header_id
+        FROM bom_lines bl
+        WHERE bl.bom_header_id IN ({in_clause})
+    ''', params, fetch='all') or []
+
+    membership_map = {}
+    for membership in memberships:
+        base_part_number = membership['base_part_number']
+        bom_id = int(membership['bom_header_id'])
+        membership_map.setdefault(base_part_number, set()).add(bom_id)
+
+    matrix_rows = []
+    for row in rows:
+        base_part_number = row['base_part_number']
+        bom_flags = {
+            bom['id']: ('X' if bom['id'] in membership_map.get(base_part_number, set()) else '')
+            for bom in selected_boms
+        }
+        matrix_rows.append({
+            'part_number': row['part_number'] or base_part_number,
+            'amount_in_stock': row['amount_in_stock'] or 0,
+            'bom_flags': bom_flags
+        })
+
+    return selected_boms, matrix_rows
 
 def _load_bom_dataframe(file, filename):
     if filename.endswith('.csv'):
@@ -117,6 +192,55 @@ def boms():
     ''', fetch='all')
 
     return render_template('bom/boms.html', boms=boms)
+
+
+@bom_bp.route('/stock-report')
+def stock_report():
+    selected_bom_ids = request.args.getlist('bom_ids', type=int)
+
+    all_boms = db_execute('''
+        SELECT id, name, description
+        FROM bom_headers
+        WHERE type = 'kit'
+        ORDER BY name
+    ''', fetch='all') or []
+
+    selected_boms, matrix_rows = _get_bom_stock_report_data(selected_bom_ids)
+
+    return render_template(
+        'bom/stock_report.html',
+        boms=all_boms,
+        selected_bom_ids=selected_bom_ids,
+        selected_boms=selected_boms,
+        matrix_rows=matrix_rows
+    )
+
+
+@bom_bp.route('/stock-report.csv')
+def stock_report_csv():
+    selected_bom_ids = request.args.getlist('bom_ids', type=int)
+    selected_boms, matrix_rows = _get_bom_stock_report_data(selected_bom_ids)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    header = ['Part Number', 'Amount In Stock'] + [bom['name'] for bom in selected_boms]
+    writer.writerow(header)
+
+    for row in matrix_rows:
+        csv_row = [row['part_number'], row['amount_in_stock']]
+        for bom in selected_boms:
+            csv_row.append(row['bom_flags'].get(bom['id'], ''))
+        writer.writerow(csv_row)
+
+    csv_data = output.getvalue()
+    output.close()
+
+    return Response(
+        csv_data,
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=bom_stock_report.csv'}
+    )
 
 
 @bom_bp.route('/create', methods=['POST'])
