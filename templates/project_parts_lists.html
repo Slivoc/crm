@@ -295,9 +295,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const score = scoreData.score || 0;
         const estimatedTotal = Number(scoreData.estimated_customer_quote_total || 0);
         const estimatedPricedLines = Number(scoreData.estimated_priced_lines || 0);
-        const estimatedTotalLabel = new Intl.NumberFormat('en-US', {
+        const estimatedTotalLabel = new Intl.NumberFormat('en-GB', {
             style: 'currency',
-            currency: 'USD',
+            currency: 'GBP',
             maximumFractionDigits: 0
         }).format(estimatedTotal);
         cell.dataset.priorityScore = String(score);

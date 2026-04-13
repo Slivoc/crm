@@ -1322,10 +1322,6 @@ def project_parts_lists_priority_scores(project_id):
                 LEFT JOIN past_customer_quote_events pcq
                     ON pcq.normalized_base_part_number = ll.normalized_base_part_number
                    AND pcq.event_at < ll.cutoff_at
-                   AND (
-                        ll.customer_id IS NULL
-                        OR pcq.customer_id = ll.customer_id
-                   )
                 GROUP BY ll.parts_list_id, ll.parts_list_line_id, ll.quantity
             )
             SELECT
