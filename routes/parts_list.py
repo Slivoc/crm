@@ -8319,36 +8319,137 @@ def extract_quote_from_xlsx():
             return (single, single)
         return None
 
-    def _choose_price_break(breaks, target_qty):
-        if not breaks:
-            return None
-        if target_qty is None:
-            return breaks[0]['price']
-        for item in breaks:
-            minimum = item['min']
-            maximum = item['max']
-            if minimum is None:
+    def _parse_purchase_increment(value, moq=None):
+        text = (str(value).strip() if value is not None else '')
+        if text:
+            patterns = (
+                r'sold in\s+(\d+)\s*[A-Z]*\s+increments?\s+only',
+                r'increments?\s+of\s+(\d+)',
+                r'order(?:ed)?\s+in\s+(\d+)\s*[A-Z]*\s+increments?',
+            )
+            for pattern in patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    return int(match.group(1))
+        return moq if moq and moq > 1 else None
+
+    def _sanitize_proponent_notes(value):
+        if value is None:
+            return ''
+        text = str(value).replace('\r\n', '\n').replace('\r', '\n')
+        filtered_lines = []
+        for raw_line in text.split('\n'):
+            line = raw_line.strip()
+            if not line:
                 continue
-            if maximum is None and target_qty >= minimum:
-                return item['price']
-            if maximum is not None and minimum <= target_qty <= maximum:
-                return item['price']
-        eligible = [b for b in breaks if b['min'] is not None and b['min'] <= target_qty]
-        if eligible:
-            return max(eligible, key=lambda b: b['min'])['price']
-        return min(breaks, key=lambda b: b['min'] if b['min'] is not None else 0)['price']
+            lower_line = line.lower()
+            if 'lead time' in lower_line:
+                continue
+            if 'date next in' in lower_line:
+                continue
+            filtered_lines.append(line)
+        return '\n'.join(filtered_lines).strip()
+
+    def _manufacturer_cert_missing(value):
+        text = (str(value).strip() if value is not None else '')
+        if not text:
+            return True
+        lower_text = text.lower()
+        manufacturer_cert_terms = (
+            'manufacturer cofc',
+            'manufacturer cof c',
+            'manufacturer c of c',
+            'manufacturer coc',
+            'mfr cofc',
+            'mfr c of c',
+            'mfg cofc',
+            'mfg c of c',
+        )
+        return not any(term in lower_text for term in manufacturer_cert_terms)
+
+    def _choose_best_price_break(breaks, target_qty, moq=None, purchase_increment=None, qty_available=None, unit_price=None):
+        base_qty = target_qty if target_qty is not None else 1
+        if moq is not None:
+            base_qty = max(base_qty, moq)
+
+        def _round_up_increment(quantity):
+            if purchase_increment and purchase_increment > 1:
+                return int(ceil(quantity / purchase_increment) * purchase_increment)
+            return int(quantity)
+
+        candidates = []
+        if unit_price is not None:
+            unit_qty = _round_up_increment(base_qty)
+            if qty_available is None or unit_qty <= qty_available:
+                candidates.append({
+                    'quantity': unit_qty,
+                    'price': unit_price,
+                    'total_cost': unit_qty * unit_price,
+                })
+
+        for item in breaks:
+            minimum = item.get('min')
+            maximum = item.get('max')
+            price = item.get('price')
+            if minimum is None or price is None:
+                continue
+
+            candidate_qty = _round_up_increment(max(base_qty, minimum))
+            if maximum is not None and candidate_qty > maximum:
+                continue
+            if qty_available is not None and candidate_qty > qty_available:
+                continue
+
+            candidates.append({
+                'quantity': candidate_qty,
+                'price': price,
+                'total_cost': candidate_qty * price,
+            })
+
+        if not candidates:
+            return None
+
+        return min(
+            candidates,
+            key=lambda item: (
+                item['total_cost'],
+                item['quantity'],
+                item['price'],
+            )
+        )
 
     try:
         import openpyxl
 
         workbook = openpyxl.load_workbook(file, data_only=True)
-        sheet = workbook.active
+        sheet = None
+        for candidate_sheet in workbook.worksheets:
+            first_rows = list(candidate_sheet.iter_rows(min_row=1, max_row=3, values_only=True))
+            for header_candidate in first_rows:
+                normalized_headers = {str(value).strip().lower() for value in header_candidate if value}
+                if 'requested part' in normalized_headers:
+                    sheet = candidate_sheet
+                    break
+            if sheet is not None:
+                break
+        if sheet is None:
+            sheet = workbook.active
         rows = list(sheet.iter_rows(values_only=True))
 
         if not rows:
             return jsonify(success=False, message="No rows found in XLSX")
 
-        header_row = rows[0]
+        header_row = None
+        header_row_index = 0
+        for idx, row in enumerate(rows[:10]):
+            normalized_headers = {str(value).strip().lower() for value in row if value}
+            if 'requested part' in normalized_headers:
+                header_row = row
+                header_row_index = idx
+                break
+        if header_row is None:
+            header_row = rows[0]
+
         header_map = {}
         for idx, value in enumerate(header_row):
             if value:
@@ -8367,6 +8468,9 @@ def extract_quote_from_xlsx():
         lead_time_idx = _col('out of stock lead time')
         certs_idx = _col('certs')
         notes_idx = _col('notes')
+        manufacturer_idx = _col('manufacturer1')
+        if manufacturer_idx is None:
+            manufacturer_idx = _col('manufacturer')
 
         breaks = []
         for i in range(1, 8):
@@ -8400,7 +8504,7 @@ def extract_quote_from_xlsx():
                 requested_qty_by_part[key] = max(current, qty) if current is not None else qty
 
         best_by_part = {}
-        for row in rows[1:]:
+        for row in rows[header_row_index + 1:]:
             requested_part = row[requested_part_idx] if requested_part_idx is not None else None
             if not requested_part:
                 continue
@@ -8435,30 +8539,51 @@ def extract_quote_from_xlsx():
                         'price': price_value
                     })
 
-            selected_price = _choose_price_break(price_breaks, target_qty) if price_breaks else unit_price
-            if selected_price is None:
-                continue
-            notes_parts = []
-            certs_value = row[certs_idx] if certs_idx is not None else None
             notes_value = row[notes_idx] if notes_idx is not None else None
-            if certs_value:
-                notes_parts.append(str(certs_value).strip())
-            if notes_value:
-                notes_parts.append(str(notes_value).strip())
+            certs_value = row[certs_idx] if certs_idx is not None else None
+            manufacturer_value = row[manufacturer_idx] if manufacturer_idx is not None else None
+            purchase_increment = _parse_purchase_increment(notes_value, moq=moq)
+
+            selected_break = _choose_best_price_break(
+                price_breaks,
+                target_qty,
+                moq=moq,
+                purchase_increment=purchase_increment,
+                qty_available=qty_available,
+                unit_price=unit_price,
+            )
+            if not selected_break:
+                continue
+
+            selected_price = selected_break['price']
+            selected_qty = selected_break['quantity']
+
+            notes_parts = []
+            sanitized_notes = _sanitize_proponent_notes(notes_value)
+            if sanitized_notes:
+                notes_parts.append(sanitized_notes)
+            if target_qty is not None and selected_qty > target_qty:
+                notes_parts.append(
+                    f"Quantity increased from {target_qty} to {selected_qty} to use a lower overall Proponent price break."
+                )
+            certifications = 'No manufacturer CofC' if _manufacturer_cert_missing(certs_value) else ''
 
             line_entry = {
                 'match_part_number': requested_part_text,
                 'part_number': str(quoted_part).strip() if quoted_part else requested_part_text,
-                'quantity': quoted_qty if quoted_qty is not None else requested_qty,
+                'manufacturer': str(manufacturer_value).strip() if manufacturer_value else '',
+                'quantity': selected_qty,
                 'qty_available': qty_available,
-                'purchase_increment': None,
+                'purchase_increment': purchase_increment,
                 'moq': moq,
                 'price': selected_price,
-                'lead_time_days': lead_time_days,
+                'lead_time_days': None,
                 'condition': '',
-                'certifications': str(certs_value).strip() if certs_value else '',
+                'certifications': certifications,
                 'notes': "\n".join(notes_parts).strip(),
-                '_exact_match': _normalize_part_number(requested_part_text) == _normalize_part_number(quoted_part)
+                '_exact_match': _normalize_part_number(requested_part_text) == _normalize_part_number(quoted_part),
+                '_comparison_total_cost': selected_break['total_cost'],
+                '_comparison_qty': selected_qty,
             }
 
             existing = best_by_part.get(normalized_part)
@@ -8469,16 +8594,23 @@ def extract_quote_from_xlsx():
                 if line_entry['_exact_match'] and not existing.get('_exact_match'):
                     replace = True
                 elif line_entry.get('_exact_match') == existing.get('_exact_match'):
-                    if line_entry['price'] is not None and existing.get('price') is not None:
-                        replace = line_entry['price'] < existing['price']
-                    if line_entry['price'] == existing.get('price'):
-                        replace = (line_entry.get('qty_available') or 0) > (existing.get('qty_available') or 0)
+                    line_total = line_entry.get('_comparison_total_cost')
+                    existing_total = existing.get('_comparison_total_cost')
+                    if line_total is not None and existing_total is not None:
+                        replace = line_total < existing_total
+                    if line_total == existing_total:
+                        if line_entry['price'] is not None and existing.get('price') is not None:
+                            replace = line_entry['price'] < existing['price']
+                        if line_entry['price'] == existing.get('price'):
+                            replace = (line_entry.get('qty_available') or 0) > (existing.get('qty_available') or 0)
                 if replace:
                     best_by_part[normalized_part] = line_entry
 
         extracted_lines = []
         for line_entry in best_by_part.values():
             line_entry.pop('_exact_match', None)
+            line_entry.pop('_comparison_total_cost', None)
+            line_entry.pop('_comparison_qty', None)
             extracted_lines.append(line_entry)
 
         return jsonify(

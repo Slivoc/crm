@@ -1287,13 +1287,14 @@ def project_parts_lists_priority_scores(project_id):
                     src_pl.customer_id,
                     UPPER(TRIM(src.base_part_number)) AS normalized_base_part_number,
                     COALESCE(cql.date_created, cql.date_modified, src_pl.date_created, CURRENT_TIMESTAMP) AS event_at,
-                    CAST(cql.unit_price AS NUMERIC) AS unit_price
+                    CAST(cql.quote_price_gbp AS NUMERIC) AS unit_price
                 FROM customer_quote_lines cql
                 JOIN parts_list_lines src ON src.id = cql.parts_list_line_id
                 JOIN parts_lists src_pl ON src_pl.id = src.parts_list_id
                 WHERE TRIM(COALESCE(src.base_part_number, '')) <> ''
                   AND cql.quoted_status = 'quoted'
-                  AND cql.unit_price IS NOT NULL
+                  AND COALESCE(CAST(cql.is_no_bid AS INTEGER), 0) = 0
+                  AND cql.quote_price_gbp IS NOT NULL
             ),
             line_history AS (
                 SELECT
