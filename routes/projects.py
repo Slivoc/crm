@@ -1316,7 +1316,7 @@ def project_parts_lists_priority_scores(project_id):
                     ll.parts_list_id,
                     ll.parts_list_line_id,
                     AVG(pcq.unit_price) AS estimated_unit_price,
-                    COUNT(*) AS historical_quote_count,
+                    COUNT(pcq.unit_price) AS historical_quote_count,
                     AVG(pcq.unit_price) * ll.quantity AS estimated_line_value
                 FROM list_lines ll
                 LEFT JOIN past_customer_quote_events pcq
