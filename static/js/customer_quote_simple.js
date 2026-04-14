@@ -688,6 +688,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function autoSelectDiffColumns() {
         let pnDiff = false;
         let qtyDiff = false;
+        let revisionFilled = false;
         let conditionFilled = false;
         let certsFilled = false;
         let notesFilled = false;
@@ -706,11 +707,13 @@ document.addEventListener('DOMContentLoaded', function() {
             const effectiveQty = parseFloat(elements.chosenQty.value) || requestedQty;
             if (effectiveQty !== requestedQty) qtyDiff = true;
 
+            const revisionVal = (lineData.revision || '').toString().trim();
             const conditionVal = (elements.standardCondition && elements.standardCondition.value.trim()) || (lineData.supplier_condition_code || '').toString().trim();
             const certsVal = (elements.standardCerts && elements.standardCerts.value.trim()) || (lineData.supplier_certifications || '').toString().trim();
             const notesVal = elements.lineNotes ? elements.lineNotes.value.trim() : '';
             const manufacturerVal = (elements.manufacturer && elements.manufacturer.value.trim()) || (lineData.manufacturer || '').toString().trim();
 
+            if (revisionVal) revisionFilled = true;
             if (conditionVal) conditionFilled = true;
             if (certsVal) certsFilled = true;
             if (notesVal) notesFilled = true;
@@ -724,6 +727,10 @@ document.addEventListener('DOMContentLoaded', function() {
         if (qtyDiff) {
             const qtyCheckbox = document.getElementById('col-requested-qty');
             if (qtyCheckbox) qtyCheckbox.checked = true;
+        }
+        if (revisionFilled) {
+            const revisionCheckbox = document.getElementById('col-revision');
+            if (revisionCheckbox) revisionCheckbox.checked = true;
         }
         if (conditionFilled) {
             const conditionCheckbox = document.getElementById('col-condition');
@@ -936,6 +943,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (selectedCols.line) headers += `<th align="left" style="${hStyle}">Line</th>`;
         if (selectedCols.requested_pn) headers += `<th align="left" style="${hStyle}">Requested P/N</th>`;
         if (selectedCols.quoted_pn) headers += `<th align="left" style="${hStyle}">Quoted P/N</th>`;
+        if (selectedCols.revision) headers += `<th align="left" style="${hStyle}">Rev</th>`;
         if (selectedCols.requested_qty) headers += `<th align="right" style="${hStyle}">Requested Qty</th>`;
         if (selectedCols.qty) headers += `<th align="right" style="${hStyle}">Quoted Qty</th>`;
         if (selectedCols.unit_price) headers += `<th align="right" style="${hStyle}">Unit Price (${displayCurrencyCode})</th>`;
@@ -996,6 +1004,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // Highlights
             const requestedPN = getRequestedPartNumber(lineData);
             const quotedPN = elements.displayPartNumber ? elements.displayPartNumber.value.trim() : requestedPN;
+            const revisionValue = (lineData.revision || '').toString().trim() || '-';
 
             const isPNDifferent = !lastIsNoBid && (quotedPN !== requestedPN && quotedPN !== '');
             const isQtyDifferent = !lastIsNoBid && (effectiveQty !== requestedQty);
@@ -1010,6 +1019,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (selectedCols.line) html += `<td align="left" style="${rowStyle}">${lineData.line_number || ''}</td>`;
             if (selectedCols.requested_pn) html += `<td align="left" style="${highlightStyle}">${requestedPN}</td>`;
             if (selectedCols.quoted_pn) html += `<td align="left" style="${highlightStyle}">${isPNDifferent && !selectedCols.requested_pn ? quotedPN + ' *' : quotedPN}</td>`;
+            if (selectedCols.revision) html += `<td align="left" style="${rowStyle}">${revisionValue}</td>`;
             if (selectedCols.requested_qty) html += `<td align="right" style="${qtyHighlightStyle}">${requestedQty || ''}</td>`;
             if (selectedCols.qty) html += `<td align="right" style="${qtyHighlightStyle}">${isQtyDifferent && !selectedCols.requested_qty ? effectiveQty + ' *' : effectiveQty}</td>`;
             if (selectedCols.unit_price) html += `<td align="right" style="${rowStyle}">${unitPriceDisplay}</td>`;
