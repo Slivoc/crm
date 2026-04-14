@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', function() {
     let hasUnsavedChanges = false;
     let summaryUpdateTimer = null;
+    const ADMIN_CC_EMAIL = 'harry@mgcaero.co.uk';
 
     const BASE_CURRENCY_ID = (() => {
         const baseCurrency = CURRENCIES.find(c => (c.currency_code || '').toUpperCase() === 'GBP');
@@ -1256,6 +1257,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const replySelect = document.getElementById('emailQuoteReplySelect');
         const toInput = document.getElementById('emailQuoteTo');
         const ccInput = document.getElementById('emailQuoteCc');
+        const ccHarryCheckbox = document.getElementById('emailQuoteCcHarry');
         const subjectInput = document.getElementById('emailQuoteSubjectInput');
         const isReply = replySelect && replySelect.value;
         if (toInput) {
@@ -1263,6 +1265,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (ccInput) {
             ccInput.disabled = Boolean(isReply);
+        }
+        if (ccHarryCheckbox) {
+            ccHarryCheckbox.disabled = Boolean(isReply);
         }
         if (subjectInput) {
             if (isReply) {
@@ -1640,6 +1645,16 @@ document.addEventListener('DOMContentLoaded', function() {
             const replyToMessageId = document.getElementById('emailQuoteReplySelect')?.value || '';
             const toEmails = document.getElementById('emailQuoteTo')?.value || '';
             const ccEmails = document.getElementById('emailQuoteCc')?.value || '';
+            const copyHarry = Boolean(document.getElementById('emailQuoteCcHarry')?.checked);
+            const ccList = ccEmails
+                .split(/[;,]/)
+                .map(email => email.trim())
+                .filter(Boolean);
+            const hasHarryAlready = ccList.some(email => email.toLowerCase() === ADMIN_CC_EMAIL);
+            if (copyHarry && !hasHarryAlready) {
+                ccList.push(ADMIN_CC_EMAIL);
+            }
+            const finalCcEmails = ccList.join(', ');
 
             btn.disabled = true;
             const originalHtml = btn.innerHTML;
@@ -1656,7 +1671,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         subject: subject,
                         body_html: bodyHtml,
                         to_emails: toEmails,
-                        cc_emails: ccEmails,
+                        cc_emails: finalCcEmails,
                         reply_to_message_id: replyToMessageId
                     };
                 const response = await fetch(endpoint, {
