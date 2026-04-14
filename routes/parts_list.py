@@ -1708,8 +1708,9 @@ Do NOT use markdown formatting like ```json or any wrappers. Output raw JSON onl
   - condition: Condition code like "NE", "OH", "SV", "AR" (use null if not specified)
 - certifications: Keep this concise. Prefer "OEM certs" if there is full trace to OEM/manufacturer. Use "EASA Form 1" or "8130-3" when those certificates are mentioned. Use "Dual release (8130/EASA)" if both are present. Use "no trace" ONLY when explicitly stated (e.g., "no certs", "no trace", "distributor C of C only"). If not mentioned, use null. Omit DFARS/ITAR/testing notes from this field.
 - is_no_bid: true if supplier declined to quote this part, false otherwise
-- manufacturer: Extract the manufacturer name if mentioned. Look for common aerospace hardware brands like "Cherry", "Alcoa", "Arconic", "Allfast", "SPS", "Monogram", "Fairchild", "Kaynar", "Huck", "Shur-Lok".
-- notes: Any additional relevant notes about this line. Include the originally requested part number here if it differs from what the supplier is quoting. If DFARS/ITAR compliance, test reports, or other paperwork details are mentioned, put them here instead of certifications.
+  - manufacturer: Extract the manufacturer name if mentioned. Look for common aerospace hardware brands like "Cherry", "Alcoa", "Arconic", "Allfast", "SPS", "Monogram", "Fairchild", "Kaynar", "Huck", "Shur-Lok".
+  - revision: Extract revision/rev if explicitly provided (examples: "Rev A", "REV: B", "R1"). Return only the revision value (e.g., "A", "B", "R1"), null if not specified.
+  - notes: Any additional relevant notes about this line. Include the originally requested part number here if it differs from what the supplier is quoting. If DFARS/ITAR compliance, test reports, or other paperwork details are mentioned, put them here instead of certifications.
 
 Look for common patterns:
 - "No quote", "Not available", "NQ", "N/A" = is_no_bid: true
@@ -1834,6 +1835,11 @@ CRITICAL REMINDER: If you see text like "CR3212-4-04 / Quoting: NAS9301B-5-10", 
                     or item.get('mfg')
                     or item.get('mfr')
                 )
+                revision = _normalize_optional_text(
+                    item.get('revision')
+                    or item.get('rev')
+                    or item.get('revision_code')
+                )
 
                 is_no_bid_raw = item.get('is_no_bid', False)
                 if isinstance(is_no_bid_raw, str):
@@ -1909,7 +1915,8 @@ CRITICAL REMINDER: If you see text like "CR3212-4-04 / Quoting: NAS9301B-5-10", 
                     'certifications': certifications,
                     'is_no_bid': is_no_bid,
                     'notes': notes,
-                    'manufacturer': manufacturer
+                    'manufacturer': manufacturer,
+                    'revision': revision
                 }
 
                 logger.debug("Cleaned item %d: %r", idx, cleaned_item)

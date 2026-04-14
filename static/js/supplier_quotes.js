@@ -1219,6 +1219,7 @@ function applyExtractedDataToTable(extractedLines) {
             quoteLinesTable.setDataAtCell([
                 [bestIndex, 3, extracted.part_number],
                 [bestIndex, 4, extracted.manufacturer || ''],
+                [bestIndex, 5, extracted.revision || ''],
                 [bestIndex, 6, extracted.quantity],
                 [bestIndex, 7, extracted.qty_available],
                 [bestIndex, 8, extracted.purchase_increment],
