@@ -1353,7 +1353,7 @@ def _merge_graph_reply_body(reply_html, draft_html):
     return f"{reply_html}<br><br>{draft_html}"
 
 
-def send_graph_reply(message_id, html_body, *, reply_all=False, user_id=None):
+def send_graph_reply(message_id, html_body, *, reply_all=False, user_id=None, cc_emails=None):
     if not message_id:
         return {"success": False, "error": "Message ID is required for reply."}
     settings = _get_graph_settings(include_secret=True)
@@ -1408,10 +1408,46 @@ def send_graph_reply(message_id, html_body, *, reply_all=False, user_id=None):
     merged_body = _merge_graph_reply_body(html_body, draft_content)
 
     safe_draft_id = quote(draft_id, safe="")
+    cc_recipients = []
+    if isinstance(draft_body, dict):
+        cc_recipients = draft_body.get("ccRecipients") or []
+
+    normalized_existing_cc = set()
+    merged_cc_recipients = []
+    for recipient in cc_recipients:
+        if not isinstance(recipient, dict):
+            continue
+        email_address = (recipient.get("emailAddress") or {}).get("address")
+        normalized = _normalize_email_address(email_address)
+        if not normalized or normalized in normalized_existing_cc:
+            continue
+        normalized_existing_cc.add(normalized)
+        merged_cc_recipients.append(recipient)
+
+    requested_cc_emails = []
+    if isinstance(cc_emails, str):
+        requested_cc_emails = [email.strip() for email in cc_emails.replace(";", ",").split(",") if email and email.strip()]
+    elif isinstance(cc_emails, (list, tuple, set)):
+        requested_cc_emails = [str(email).strip() for email in cc_emails if str(email).strip()]
+
+    for cc_email in requested_cc_emails:
+        recipient = _graph_recipient(cc_email)
+        if not recipient:
+            continue
+        normalized = _normalize_email_address((recipient.get("emailAddress") or {}).get("address"))
+        if not normalized or normalized in normalized_existing_cc:
+            continue
+        normalized_existing_cc.add(normalized)
+        merged_cc_recipients.append(recipient)
+
+    patch_payload = {"body": {"contentType": "HTML", "content": merged_body}}
+    if merged_cc_recipients:
+        patch_payload["ccRecipients"] = merged_cc_recipients
+
     patch_resp = requests.patch(
         f"https://graph.microsoft.com/v1.0/me/messages/{safe_draft_id}",
         headers=headers,
-        json={"body": {"contentType": "HTML", "content": merged_body}},
+        json=patch_payload,
         timeout=20,
     )
     if patch_resp.status_code >= 400:
@@ -3933,6 +3969,93 @@ def graph_move_message(message_id):
     })
 
 
+@emails_bp.route('/emails/graph/message/<path:message_id>/forward-to-admin', methods=['POST'])
+def graph_forward_message_to_admin(message_id):
+    payload = request.get_json(silent=True) or {}
+    admin_email = _normalize_email_address(payload.get("admin_email")) or "harry@mgcaero.co.uk"
+    if not message_id:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Message ID is required.",
+            },
+        }), 400
+    if not admin_email:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Admin email is required.",
+            },
+        }), 400
+
+    settings = _get_graph_settings(include_secret=True)
+    cache, user_id = _load_graph_cache_for_request()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+
+    if not accounts:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "No Graph account connected. Click Connect with Microsoft first.",
+            },
+        }), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache_for_request(user_id, cache)
+
+    if not token or "access_token" not in token:
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Failed to refresh access token",
+            },
+            "debug": token,
+        }), 400
+
+    headers = {
+        "Authorization": f"Bearer {token['access_token']}",
+        "Content-Type": "application/json",
+    }
+    safe_message_id = quote(message_id, safe="")
+    forward_payload = {
+        "toRecipients": [{"emailAddress": {"address": admin_email}}],
+        "comment": "Forwarded from mailbox filing workflow.",
+    }
+    resp = requests.post(
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/forward",
+        headers=headers,
+        json=forward_payload,
+        timeout=20,
+    )
+    try:
+        body = resp.json() if resp.content else None
+    except ValueError:
+        body = resp.text
+
+    if resp.status_code >= 400:
+        request_id = resp.headers.get("request-id") or resp.headers.get("client-request-id")
+        current_app.logger.warning(
+            "Graph forward failed: status=%s request_id=%s body=%s",
+            resp.status_code,
+            request_id,
+            body,
+        )
+        return jsonify({
+            "success": False,
+            "error": {
+                "message": "Graph forward failed",
+                "status": resp.status_code,
+            },
+            "debug": body,
+        }), 400
+
+    return jsonify({
+        "success": True,
+        "admin_email": admin_email,
+    })
+
+
 @emails_bp.route('/emails/mailbox/folder-rules', methods=['GET', 'POST'])
 def mailbox_folder_rules():
     user_id = _current_graph_user_id()
@@ -4313,6 +4436,7 @@ def graph_reply_message():
     message_id = (payload.get("message_id") or "").strip()
     html_body = payload.get("html_body") or ""
     reply_all = bool(payload.get("reply_all"))
+    cc_emails = payload.get("cc_emails")
 
     if not message_id or not html_body:
         return jsonify({
@@ -4329,6 +4453,7 @@ def graph_reply_message():
         html_body,
         reply_all=reply_all,
         user_id=current_user.id,
+        cc_emails=cc_emails,
     )
     if not result.get("success"):
         return jsonify({
