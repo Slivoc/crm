@@ -1267,7 +1267,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const replySelect = document.getElementById('emailQuoteReplySelect');
         const toInput = document.getElementById('emailQuoteTo');
         const ccInput = document.getElementById('emailQuoteCc');
-        const ccHarryCheckbox = document.getElementById('emailQuoteCcHarry');
         const subjectInput = document.getElementById('emailQuoteSubjectInput');
         const isReply = replySelect && replySelect.value;
         if (toInput) {
@@ -1275,9 +1274,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (ccInput) {
             ccInput.disabled = Boolean(isReply);
-        }
-        if (ccHarryCheckbox) {
-            ccHarryCheckbox.disabled = Boolean(isReply);
         }
         if (subjectInput) {
             if (isReply) {
@@ -1676,7 +1672,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     ? '/emails/graph/reply'
                     : `/customer-quoting/parts-lists/${LIST_ID}/customer-quote/send-email`;
                 const payload = isReply
-                    ? { message_id: replyToMessageId, html_body: bodyHtml }
+                    ? {
+                        message_id: replyToMessageId,
+                        html_body: bodyHtml,
+                        cc_emails: finalCcEmails
+                    }
                     : {
                         subject: subject,
                         body_html: bodyHtml,

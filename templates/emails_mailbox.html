@@ -364,9 +364,26 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" id="mailboxFolderSaveBtn" disabled>
-                    <i class="bi bi-check2-circle me-1"></i>Save & File
-                </button>
+                <div class="btn-group">
+                    <button type="button" class="btn btn-primary" id="mailboxFolderSaveBtn" disabled>
+                        <i class="bi bi-check2-circle me-1"></i>Save & File
+                    </button>
+                    <button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split" id="mailboxFolderSaveDropdownBtn" data-bs-toggle="dropdown" aria-expanded="false" disabled>
+                        <span class="visually-hidden">Toggle filing options</span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li>
+                            <button type="button" class="dropdown-item" id="mailboxFolderSaveOnlyOption">
+                                <i class="bi bi-folder2-open me-2"></i>Save & File
+                            </button>
+                        </li>
+                        <li>
+                            <button type="button" class="dropdown-item" id="mailboxFolderSaveForwardAdminOption">
+                                <i class="bi bi-send-check me-2"></i>Save, File & Forward to admin
+                            </button>
+                        </li>
+                    </ul>
+                </div>
             </div>
         </div>
     </div>
@@ -486,6 +503,9 @@ const mailboxFolderModal = document.getElementById('mailboxFolderModal');
 const mailboxFolderSelect = document.getElementById('mailboxFolderSelect');
 const mailboxFolderEmail = document.getElementById('mailboxFolderEmail');
 const mailboxFolderSaveBtn = document.getElementById('mailboxFolderSaveBtn');
+const mailboxFolderSaveDropdownBtn = document.getElementById('mailboxFolderSaveDropdownBtn');
+const mailboxFolderSaveOnlyOption = document.getElementById('mailboxFolderSaveOnlyOption');
+const mailboxFolderSaveForwardAdminOption = document.getElementById('mailboxFolderSaveForwardAdminOption');
 const mailboxFolderFeedback = document.getElementById('mailboxFolderFeedback');
 const mailboxManualPartsModalEl = document.getElementById('mailboxManualPartsModal');
 const mailboxManualPartsInput = document.getElementById('mailboxManualPartsInput');
@@ -527,6 +547,8 @@ const INLINE_PREFETCH_LIMIT = 6;
 const INLINE_PREFETCH_CONCURRENCY = 2;
 const MAX_ATTACHMENT_SCAN_COUNT = 3;
 const MAX_ATTACHMENT_SCAN_BYTES = 3 * 1024 * 1024;
+const MAILBOX_FORWARD_ADMIN_EMAIL = 'harry@mgcaero.co.uk';
+let mailboxFolderSaveMode = 'file_only';
 updateLoadImagesButton();
 
 function normalizeMailboxRecipient(recipient, role) {
@@ -1813,10 +1835,29 @@ function renderEmailList(messages, append = false) {
         const folderTitle = folderRule?.graph_folder_name
             ? `File to ${folderRule.graph_folder_name}`
             : 'File to folder';
+        const canQuickForwardAdmin = Boolean(message.parts_list_id && folderRule?.graph_folder_id);
         const folderButton = normalizedFromEmail
-            ? `<button type="button" class="email-badge email-badge-folder email-folder-btn${folderRule ? ' email-folder-has-rule' : ''}" data-message-id="${message.id}" data-email="${normalizedFromEmail}" title="${folderTitle}">
-                   <i class="bi bi-folder"></i>
-               </button>`
+            ? (canQuickForwardAdmin
+                ? `<div class="dropdown d-inline-block">
+                        <button type="button" class="email-badge email-badge-folder email-folder-btn email-folder-has-rule dropdown-toggle" data-email="${normalizedFromEmail}" data-bs-toggle="dropdown" aria-expanded="false" title="${folderTitle}">
+                            <i class="bi bi-folder"></i>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li>
+                                <button type="button" class="dropdown-item email-folder-dropdown-file" data-message-id="${message.id}" data-email="${normalizedFromEmail}">
+                                    <i class="bi bi-folder2-open me-2"></i>File
+                                </button>
+                            </li>
+                            <li>
+                                <button type="button" class="dropdown-item email-folder-dropdown-file-admin" data-message-id="${message.id}" data-email="${normalizedFromEmail}">
+                                    <i class="bi bi-send-check me-2"></i>File and send to admin
+                                </button>
+                            </li>
+                        </ul>
+                    </div>`
+                : `<button type="button" class="email-badge email-badge-folder email-folder-btn${folderRule ? ' email-folder-has-rule' : ''}" data-message-id="${message.id}" data-email="${normalizedFromEmail}" title="${folderTitle}">
+                       <i class="bi bi-folder"></i>
+                   </button>`)
             : '';
         const ticketBadge = message.ticket_id
             ? `<a class="email-badge email-badge-ticket" href="/tickets/${message.ticket_id}" target="_blank" rel="noopener" onclick="event.stopPropagation();">Ticket #${message.ticket_id}</a>`
@@ -1904,6 +1945,24 @@ function resetMailboxFolderModal() {
     }
     if (mailboxFolderSelect) {
         mailboxFolderSelect.value = '';
+    }
+    setMailboxFolderSaveMode('file_only');
+}
+
+function setMailboxFolderSaveMode(mode = 'file_only') {
+    mailboxFolderSaveMode = mode === 'file_and_forward_admin' ? 'file_and_forward_admin' : 'file_only';
+    const forwardEnabled = mailboxFolderModal?.dataset.forwardAdminAllowed === '1';
+    if (mailboxFolderSaveOnlyOption) {
+        mailboxFolderSaveOnlyOption.classList.toggle('active', mailboxFolderSaveMode === 'file_only');
+    }
+    if (mailboxFolderSaveForwardAdminOption) {
+        mailboxFolderSaveForwardAdminOption.classList.toggle('active', mailboxFolderSaveMode === 'file_and_forward_admin');
+        mailboxFolderSaveForwardAdminOption.disabled = !forwardEnabled;
+    }
+    if (mailboxFolderSaveBtn) {
+        mailboxFolderSaveBtn.innerHTML = mailboxFolderSaveMode === 'file_and_forward_admin'
+            ? '<i class="bi bi-send-check me-1"></i>Save, File & Forward'
+            : '<i class="bi bi-check2-circle me-1"></i>Save & File';
     }
 }
 
@@ -2005,15 +2064,33 @@ async function loadMailboxFolderList(forceRefresh = false) {
     }
 }
 
-async function openMailboxFolderModal(messageId, emailAddress) {
+async function openMailboxFolderModal(messageId, emailAddress, options = {}) {
     if (!mailboxFolderModal) return;
+    const preferredFolderId = options?.preferredFolderId || '';
+    const preferredFolderName = options?.preferredFolderName || '';
+    const message = messageCache.find(item => item?.id === messageId) || null;
+    const forwardAdminAllowed = Boolean(message?.parts_list_id);
     mailboxFolderModal.dataset.messageId = messageId || '';
     mailboxFolderModal.dataset.emailAddress = normalizeEmailAddress(emailAddress || '');
+    mailboxFolderModal.dataset.forwardAdminAllowed = forwardAdminAllowed ? '1' : '0';
+    mailboxFolderModal.dataset.preferredFolderId = preferredFolderId;
+    mailboxFolderModal.dataset.preferredFolderName = preferredFolderName;
     if (mailboxFolderEmail) {
         mailboxFolderEmail.textContent = emailAddress || 'Unknown sender';
     }
     resetMailboxFolderModal();
     await loadMailboxFolderList();
+    const modalPreferredFolderId = mailboxFolderModal.dataset.preferredFolderId || '';
+    if (mailboxFolderSelect && modalPreferredFolderId) {
+        mailboxFolderSelect.value = modalPreferredFolderId;
+        const hasValue = Boolean(mailboxFolderSelect.value);
+        if (mailboxFolderSaveBtn) {
+            mailboxFolderSaveBtn.disabled = !hasValue;
+        }
+        if (mailboxFolderSaveDropdownBtn) {
+            mailboxFolderSaveDropdownBtn.disabled = !hasValue;
+        }
+    }
     const modal = bootstrap.Modal.getOrCreateInstance(mailboxFolderModal);
     modal.show();
 }
@@ -2039,6 +2116,20 @@ async function moveMessageToFolder(messageId, folderId, folderName) {
     return true;
 }
 
+async function forwardMessageToAdmin(messageId, adminEmail = MAILBOX_FORWARD_ADMIN_EMAIL) {
+    if (!messageId) return false;
+    const response = await fetch(`/emails/graph/message/${encodeURIComponent(messageId)}/forward-to-admin`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ admin_email: adminEmail })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+        throw new Error(data.error?.message || data.error || 'Failed to forward message to admin');
+    }
+    return true;
+}
+
 async function handleFolderButtonClick(folderBtn) {
     if (!folderBtn) return;
     const messageId = folderBtn.getAttribute('data-message-id');
@@ -2061,6 +2152,36 @@ async function handleFolderButtonClick(folderBtn) {
         showToast(error.message || 'Failed to file email', 'error');
         folderBtn.disabled = false;
         folderBtn.innerHTML = original;
+    }
+}
+
+async function handleFolderDropdownAction(actionBtn, { sendAdmin = false } = {}) {
+    if (!actionBtn) return;
+    const messageId = actionBtn.getAttribute('data-message-id');
+    const email = actionBtn.getAttribute('data-email');
+    if (!messageId || !email) {
+        showToast('No sender email available to file', 'warning');
+        return;
+    }
+    const rule = getFolderRuleForEmail(email);
+    if (!rule?.graph_folder_id) {
+        await openMailboxFolderModal(messageId, email);
+        return;
+    }
+    const original = actionBtn.innerHTML;
+    actionBtn.disabled = true;
+    actionBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
+    try {
+        if (sendAdmin) {
+            await forwardMessageToAdmin(messageId);
+            showToast(`Forwarded to ${MAILBOX_FORWARD_ADMIN_EMAIL}`, 'success');
+        }
+        await moveMessageToFolder(messageId, rule.graph_folder_id, rule.graph_folder_name);
+    } catch (error) {
+        showToast(error.message || 'Failed to process filing action', 'error');
+    } finally {
+        actionBtn.disabled = false;
+        actionBtn.innerHTML = original;
     }
 }
 
@@ -2484,8 +2605,25 @@ emailSearch.addEventListener('input', (e) => {
 });
 
 emailListContainer?.addEventListener('click', (event) => {
+    const folderDropdownFileBtn = event.target.closest('.email-folder-dropdown-file');
+    if (folderDropdownFileBtn) {
+        event.stopPropagation();
+        event.preventDefault();
+        handleFolderDropdownAction(folderDropdownFileBtn, { sendAdmin: false });
+        return;
+    }
+    const folderDropdownFileAdminBtn = event.target.closest('.email-folder-dropdown-file-admin');
+    if (folderDropdownFileAdminBtn) {
+        event.stopPropagation();
+        event.preventDefault();
+        handleFolderDropdownAction(folderDropdownFileAdminBtn, { sendAdmin: true });
+        return;
+    }
     const folderBtn = event.target.closest('.email-folder-btn');
     if (folderBtn) {
+        if (folderBtn.getAttribute('data-bs-toggle') === 'dropdown') {
+            return;
+        }
         event.stopPropagation();
         handleFolderButtonClick(folderBtn);
         return;
@@ -2502,7 +2640,19 @@ mailboxFolderSelect?.addEventListener('change', () => {
     if (mailboxFolderSaveBtn) {
         mailboxFolderSaveBtn.disabled = !mailboxFolderSelect.value;
     }
+    if (mailboxFolderSaveDropdownBtn) {
+        mailboxFolderSaveDropdownBtn.disabled = !mailboxFolderSelect.value;
+    }
     setMailboxFolderFeedback('');
+});
+
+mailboxFolderSaveOnlyOption?.addEventListener('click', () => {
+    setMailboxFolderSaveMode('file_only');
+});
+
+mailboxFolderSaveForwardAdminOption?.addEventListener('click', () => {
+    if (mailboxFolderSaveForwardAdminOption.disabled) return;
+    setMailboxFolderSaveMode('file_and_forward_admin');
 });
 
 mailboxFolderSaveBtn?.addEventListener('click', async () => {
@@ -2515,6 +2665,9 @@ mailboxFolderSaveBtn?.addEventListener('click', async () => {
     const messageId = mailboxFolderModal?.dataset.messageId || '';
     const folderName = mailboxFolderSelect?.selectedOptions?.[0]?.textContent?.trim() || '';
     mailboxFolderSaveBtn.disabled = true;
+    if (mailboxFolderSaveDropdownBtn) {
+        mailboxFolderSaveDropdownBtn.disabled = true;
+    }
     const original = mailboxFolderSaveBtn.innerHTML;
     mailboxFolderSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
     try {
@@ -2538,6 +2691,10 @@ mailboxFolderSaveBtn?.addEventListener('click', async () => {
         setFolderRuleForEmail(emailAddress, rule);
         updateFolderButtonsForEmail(emailAddress, rule);
         updateFolderRuleInCache(emailAddress, rule);
+        if (mailboxFolderSaveMode === 'file_and_forward_admin') {
+            await forwardMessageToAdmin(messageId);
+            showToast(`Forwarded to ${MAILBOX_FORWARD_ADMIN_EMAIL}`, 'success');
+        }
         await moveMessageToFolder(messageId, folderId, folderName);
         const modalInstance = bootstrap.Modal.getInstance(mailboxFolderModal);
         modalInstance?.hide();
@@ -2546,6 +2703,9 @@ mailboxFolderSaveBtn?.addEventListener('click', async () => {
     } finally {
         mailboxFolderSaveBtn.innerHTML = original;
         mailboxFolderSaveBtn.disabled = !mailboxFolderSelect?.value;
+        if (mailboxFolderSaveDropdownBtn) {
+            mailboxFolderSaveDropdownBtn.disabled = !mailboxFolderSelect?.value;
+        }
     }
 });
 
