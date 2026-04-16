@@ -1911,7 +1911,16 @@ def customer_quote_simple(list_id):
                       pll.parent_line_id,
                       pll.line_type,
                       pll.customer_part_number,
-                      pll.revision,
+                      CASE
+                          WHEN pll.chosen_source_type = 'quote'
+                               AND pll.chosen_source_reference IS NOT NULL THEN (
+                              SELECT sql.revision
+                              FROM parts_list_supplier_quote_lines sql
+                              WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference
+                              LIMIT 1
+                          )
+                          ELSE pll.revision
+                      END AS revision,
                       parent.customer_part_number as parent_customer_part_number,
                       pll.base_part_number,
                       pll.quantity,

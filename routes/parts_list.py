@@ -640,7 +640,7 @@ def get_supplier_quote_details(list_id, quote_id):
                 sql.line_notes,
                 pll.customer_part_number,
                 pll.base_part_number,
-                pll.revision,
+                COALESCE(sql.revision, pll.revision) AS revision,
                 pll.quantity as requested_quantity,
                 pll.line_number,
                 -- Check if this line has other quotes
@@ -884,16 +884,6 @@ def save_supplier_quote_lines(list_id, quote_id):
             logging.info(f"is_no_bid: {is_no_bid} (type: {type(is_no_bid).__name__})")
             logging.info(f"line_notes: '{line_notes}' (type: {type(line_notes).__name__})")
 
-            db_execute(
-                """
-                UPDATE parts_list_lines
-                SET revision = ?
-                WHERE id = ? AND parts_list_id = ?
-                """,
-                (revision, parts_list_line_id, list_id),
-                commit=True,
-            )
-
             # Skip if there's no meaningful data to save
             has_quote_data = (
                     unit_price is not None or
@@ -951,6 +941,7 @@ def save_supplier_quote_lines(list_id, quote_id):
                     """
                     UPDATE parts_list_supplier_quote_lines
                     SET quoted_part_number = ?,
+                        revision = ?,
                         quantity_quoted = ?,
                         qty_available = ?,
                         purchase_increment = ?,
@@ -966,7 +957,7 @@ def save_supplier_quote_lines(list_id, quote_id):
                     WHERE id = ?
                     """,
                     (
-                        quoted_part_number, quantity_quoted, qty_available, purchase_increment,
+                        quoted_part_number, revision, quantity_quoted, qty_available, purchase_increment,
                         moq, unit_price, lead_time_days, condition_code, certifications,
                         manufacturer, is_no_bid, line_notes, existing['id']
                     ),
@@ -979,12 +970,13 @@ def save_supplier_quote_lines(list_id, quote_id):
                     """
                     INSERT INTO parts_list_supplier_quote_lines
                     (supplier_quote_id, parts_list_line_id, quoted_part_number,
-                     manufacturer, quantity_quoted, qty_available, purchase_increment, moq,
+                     revision, manufacturer, quantity_quoted, qty_available, purchase_increment, moq,
                      unit_price, lead_time_days, condition_code, certifications, is_no_bid, line_notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         quote_id, parts_list_line_id, quoted_part_number,
+                        revision,
                         manufacturer, quantity_quoted, qty_available, purchase_increment, moq,
                         unit_price, lead_time_days, condition_code, certifications, is_no_bid, line_notes
                     ),
@@ -7880,6 +7872,7 @@ def get_line_quotes(list_id, line_id):
                 SELECT
                     sql.id as quote_line_id,
                     sql.quoted_part_number,
+                    sql.revision,
                     sql.manufacturer,
                     sql.quantity_quoted,
                     sql.qty_available,
@@ -7922,6 +7915,7 @@ def get_line_quotes(list_id, line_id):
                 SELECT
                     sql.id as quote_line_id,
                     sql.quoted_part_number,
+                    sql.revision,
                     sql.manufacturer,
                     sql.quantity_quoted,
                     sql.qty_available,
