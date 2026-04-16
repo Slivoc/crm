@@ -33,6 +33,16 @@
                     <i class="bi bi-search"></i>
                     <input type="text" class="form-control" id="emailSearch" placeholder="Search emails...">
                 </div>
+                <div class="d-flex flex-wrap gap-3 mt-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="filterCustomerContacts">
+                        <label class="form-check-label small" for="filterCustomerContacts">Customer contacts</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="filterSupplierContacts">
+                        <label class="form-check-label small" for="filterSupplierContacts">Supplier contacts</label>
+                    </div>
+                </div>
             </div>
             <div class="email-list-body" id="emailListContainer">
                 <div class="email-list-placeholder">
@@ -453,6 +463,8 @@ const loadImagesToggle = document.getElementById('loadImagesToggle');
 const loadImagesLabel = document.getElementById('loadImagesLabel');
 const mailboxCount = document.getElementById('mailboxCount');
 const emailSearch = document.getElementById('emailSearch');
+const filterCustomerContacts = document.getElementById('filterCustomerContacts');
+const filterSupplierContacts = document.getElementById('filterSupplierContacts');
 const mailboxCustomerSearchInput = document.getElementById('mailboxCustomerSearchInput');
 const mailboxCustomerSearchResults = document.getElementById('mailboxCustomerSearchResults');
 const mailboxSelectedCustomer = document.getElementById('mailboxSelectedCustomer');
@@ -1786,11 +1798,7 @@ async function loadMailboxMessages({ reset = false, useCache = false, silent = f
             return data;
         }
 
-        if (reset) {
-            renderEmailList(messageCache, false);
-        } else {
-            renderEmailList(messagesToRender, true);
-        }
+        applyEmailFilters();
         prefetchInlineAttachments(messagesToRender);
         if (!silent) {
             updateLoadMoreState({ hasMore: Boolean(mailboxNextToken) });
@@ -1891,6 +1899,38 @@ function renderEmailList(messages, append = false) {
     } else if (html) {
         emailListContainer.insertAdjacentHTML('beforeend', html);
     }
+}
+
+function getFilteredMessages() {
+    const query = (emailSearch?.value || '').toLowerCase().trim();
+    const filterCustomers = Boolean(filterCustomerContacts?.checked);
+    const filterSuppliers = Boolean(filterSupplierContacts?.checked);
+    const hasContactTypeFilter = filterCustomers || filterSuppliers;
+
+    return messageCache.filter(msg => {
+        const contactType = (msg.lookup?.contact_type || '').toLowerCase();
+        if (hasContactTypeFilter) {
+            const matchesCustomer = filterCustomers && contactType === 'customer';
+            const matchesSupplier = filterSuppliers && contactType === 'supplier';
+            if (!matchesCustomer && !matchesSupplier) {
+                return false;
+            }
+        }
+
+        if (!query) {
+            return true;
+        }
+
+        const from = (msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || '').toLowerCase();
+        const subject = (msg.subject || '').toLowerCase();
+        const preview = (msg.bodyPreview || '').toLowerCase();
+        const company = (msg.lookup?.company_name || '').toLowerCase();
+        return from.includes(query) || subject.includes(query) || preview.includes(query) || company.includes(query);
+    });
+}
+
+function applyEmailFilters() {
+    renderEmailList(getFilteredMessages(), false);
 }
 
 function updateFolderButtonsForEmail(address, rule) {
@@ -2585,24 +2625,10 @@ async function resolveInlineImages(htmlContent, messageId) {
     }
 }
 
-// Search functionality
-emailSearch.addEventListener('input', (e) => {
-    const query = e.target.value.toLowerCase().trim();
-    if (!query) {
-        renderEmailList(messageCache);
-        return;
-    }
-    
-    const filtered = messageCache.filter(msg => {
-        const from = (msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || '').toLowerCase();
-        const subject = (msg.subject || '').toLowerCase();
-        const preview = (msg.bodyPreview || '').toLowerCase();
-        const company = (msg.lookup?.company_name || '').toLowerCase();
-        return from.includes(query) || subject.includes(query) || preview.includes(query) || company.includes(query);
-    });
-    
-    renderEmailList(filtered);
-});
+// Search and contact filters
+emailSearch?.addEventListener('input', applyEmailFilters);
+filterCustomerContacts?.addEventListener('change', applyEmailFilters);
+filterSupplierContacts?.addEventListener('change', applyEmailFilters);
 
 emailListContainer?.addEventListener('click', (event) => {
     const folderDropdownFileBtn = event.target.closest('.email-folder-dropdown-file');

@@ -21,6 +21,16 @@
             <span class="input-group-text"><i class="bi bi-search"></i></span>
             <input type="text" class="form-control" id="emailSearch" placeholder="Search emails...">
         </div>
+        <div class="d-flex flex-wrap gap-3 mt-2">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="filterCustomerContacts">
+                <label class="form-check-label small" for="filterCustomerContacts">Customer contacts</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="filterSupplierContacts">
+                <label class="form-check-label small" for="filterSupplierContacts">Supplier contacts</label>
+            </div>
+        </div>
     </div>
 
     <!-- Email List -->
@@ -272,6 +282,9 @@ let pendingQuoteListId = null;
 let manualPartsContext = null;
 
 const MAILBOX_PAGE_SIZE = 20;
+const emailSearchInput = document.getElementById('emailSearch');
+const filterCustomerContacts = document.getElementById('filterCustomerContacts');
+const filterSupplierContacts = document.getElementById('filterSupplierContacts');
 
 document.addEventListener('DOMContentLoaded', function() {
     loadEmails();
@@ -288,10 +301,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    document.getElementById('emailSearch').addEventListener('input', debounce(function() {
-        const query = this.value.toLowerCase();
-        filterEmails(query);
+    emailSearchInput?.addEventListener('input', debounce(function() {
+        applyEmailFilters();
     }, 300));
+    filterCustomerContacts?.addEventListener('change', applyEmailFilters);
+    filterSupplierContacts?.addEventListener('change', applyEmailFilters);
 
     document.getElementById('createPartsListBtn').addEventListener('click', createPartsList);
     document.getElementById('quickQuoteBtn').addEventListener('click', openQuickQuote);
@@ -349,7 +363,7 @@ async function loadEmails(nextToken = null) {
             messageCache = [...messageCache, ...messages];
         }
 
-        renderEmailList();
+        applyEmailFilters();
         document.getElementById('mailboxCount').textContent = messageCache.length;
         loadMoreBtn.style.display = mailboxNextToken ? 'inline-block' : 'none';
 
@@ -408,17 +422,29 @@ function renderEmailList(messages = null) {
     }).join('');
 }
 
-function filterEmails(query) {
-    if (!query) {
-        renderEmailList();
-        return;
-    }
+function applyEmailFilters() {
+    const query = (emailSearchInput?.value || '').toLowerCase().trim();
+    const filterCustomers = Boolean(filterCustomerContacts?.checked);
+    const filterSuppliers = Boolean(filterSupplierContacts?.checked);
+    const hasContactTypeFilter = filterCustomers || filterSuppliers;
 
     const filtered = messageCache.filter(msg => {
+        const contactType = (msg.lookup?.contact_type || '').toLowerCase();
+        if (hasContactTypeFilter) {
+            const matchesCustomer = filterCustomers && contactType === 'customer';
+            const matchesSupplier = filterSuppliers && contactType === 'supplier';
+            if (!matchesCustomer && !matchesSupplier) {
+                return false;
+            }
+        }
+
+        if (!query) return true;
+
         const from = (msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || '').toLowerCase();
         const subject = (msg.subject || '').toLowerCase();
         const preview = (msg.bodyPreview || '').toLowerCase();
-        return from.includes(query) || subject.includes(query) || preview.includes(query);
+        const company = (msg.lookup?.company_name || '').toLowerCase();
+        return from.includes(query) || subject.includes(query) || preview.includes(query) || company.includes(query);
     });
 
     renderEmailList(filtered);
