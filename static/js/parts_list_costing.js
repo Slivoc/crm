@@ -1481,8 +1481,6 @@ function useQuoteForLine(lineId, quoteLineId, supplierId, supplierName, cost, cu
 
     const opts = options || {};
 
-    const supplierNotes = quoteNotes || '';
-
     // Update supplier dropdown
     const supplierSelect = row.querySelector('.supplier-select');
     if (supplierSelect) {
@@ -1529,16 +1527,9 @@ function useQuoteForLine(lineId, quoteLineId, supplierId, supplierName, cost, cu
         chosenQtyInput.value = quotedQuantity ?? '';
     }
 
-    // Pull supplier quote notes into the notes column so they are visible/saved
-    const notesInput = row.querySelector('.notes-input');
-    if (notesInput && supplierNotes) {
-        const existingNotes = notesInput.value.trim();
-        if (!existingNotes) {
-            notesInput.value = supplierNotes;
-        } else if (!existingNotes.includes(supplierNotes)) {
-            notesInput.value = `${existingNotes} | Quote notes: ${supplierNotes}`;
-        }
-    }
+    // Do not overwrite/append to internal notes when applying a supplier offer.
+    // Supplier quote notes remain on the supplier quote line and should not
+    // bleed into general internal notes for the parts list line.
 
     // Update line total
     updateLineTotal(lineId);
