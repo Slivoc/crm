@@ -53,6 +53,18 @@ def _parse_positive_int(value, default=None):
     return parsed if parsed > 0 else default
 
 
+def _parse_percentage(value, default=50):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed < 0:
+        return 0
+    if parsed > 100:
+        return 100
+    return parsed
+
+
 def _get_all_kit_boms():
     return db_execute('''
         SELECT id, name, description
@@ -175,7 +187,7 @@ def _get_bom_stock_report_data(selected_bom_ids, include_recent_offers=False, re
     return selected_boms, matrix_rows
 
 
-def _get_bom_commonality_report_data(selected_bom_ids, recent_offer_days=None):
+def _get_bom_commonality_report_data(selected_bom_ids, recent_offer_days=None, coverage_threshold_pct=50):
     if not selected_bom_ids:
         return [], []
 
@@ -273,10 +285,16 @@ def _get_bom_commonality_report_data(selected_bom_ids, recent_offer_days=None):
         membership_map.setdefault(base_part_number, set()).add(bom_id)
 
     total_selected_boms = len(selected_boms)
+    minimum_bom_count = 0
+    if total_selected_boms:
+        minimum_bom_count = max(1, int((coverage_threshold_pct / 100) * total_selected_boms + 0.999999))
     report_rows = []
     for row in rows:
         row_data = dict(row)
         base_part_number = row_data['base_part_number']
+        bom_count = row_data.get('bom_count') or 0
+        if bom_count < minimum_bom_count:
+            continue
         bom_ids = membership_map.get(base_part_number, set())
         bom_flags = {
             bom['id']: ('X' if bom['id'] in bom_ids else '')
@@ -287,8 +305,8 @@ def _get_bom_commonality_report_data(selected_bom_ids, recent_offer_days=None):
             'amount_in_stock': row_data.get('amount_in_stock') or 0,
             'recent_offer_count': row_data.get('recent_offer_count', 0),
             'latest_offer_date': row_data.get('latest_offer_date'),
-            'bom_count': row_data.get('bom_count') or 0,
-            'bom_coverage_pct': ((row_data.get('bom_count') or 0) / total_selected_boms * 100) if total_selected_boms else 0,
+            'bom_count': bom_count,
+            'bom_coverage_pct': (bom_count / total_selected_boms * 100) if total_selected_boms else 0,
             'bom_flags': bom_flags,
         })
 
@@ -382,10 +400,12 @@ def boms():
 def common_parts_report():
     selected_bom_ids = request.args.getlist('bom_ids', type=int)
     recent_offer_days = _parse_positive_int(request.args.get('recent_offer_days'), default=30)
+    coverage_threshold_pct = _parse_percentage(request.args.get('coverage_threshold_pct'), default=50)
     all_boms = _get_all_kit_boms()
     selected_boms, report_rows = _get_bom_commonality_report_data(
         selected_bom_ids,
         recent_offer_days=recent_offer_days,
+        coverage_threshold_pct=coverage_threshold_pct,
     )
 
     return render_template(
@@ -395,6 +415,7 @@ def common_parts_report():
         selected_boms=selected_boms,
         report_rows=report_rows,
         recent_offer_days=recent_offer_days,
+        coverage_threshold_pct=coverage_threshold_pct,
     )
 
 
@@ -402,9 +423,11 @@ def common_parts_report():
 def common_parts_report_csv():
     selected_bom_ids = request.args.getlist('bom_ids', type=int)
     recent_offer_days = _parse_positive_int(request.args.get('recent_offer_days'), default=30)
+    coverage_threshold_pct = _parse_percentage(request.args.get('coverage_threshold_pct'), default=50)
     selected_boms, report_rows = _get_bom_commonality_report_data(
         selected_bom_ids,
         recent_offer_days=recent_offer_days,
+        coverage_threshold_pct=coverage_threshold_pct,
     )
 
     output = io.StringIO()
@@ -413,6 +436,7 @@ def common_parts_report_csv():
         'Part Number',
         'BOM Count',
         'BOM Coverage %',
+        'Coverage Threshold %',
         'Amount In Stock',
         f'Recent Supplier Offers ({recent_offer_days} days)',
         'Latest Supplier Offer Date',
@@ -424,6 +448,7 @@ def common_parts_report_csv():
             row['part_number'],
             row['bom_count'],
             round(float(row['bom_coverage_pct']), 2),
+            coverage_threshold_pct,
             row['amount_in_stock'],
             row.get('recent_offer_count', 0),
             row.get('latest_offer_date') or '',
