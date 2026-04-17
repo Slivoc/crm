@@ -7,6 +7,7 @@ from werkzeug.utils import secure_filename
 import os
 import csv
 import io
+from datetime import datetime, timedelta
 
 
 def _using_postgres() -> bool:
@@ -44,7 +45,30 @@ def _build_in_clause(values):
     return ', '.join(['?'] * len(values)), values
 
 
-def _get_bom_stock_report_data(selected_bom_ids):
+def _parse_positive_int(value, default=None):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _get_all_kit_boms():
+    return db_execute('''
+        SELECT id, name, description
+        FROM bom_headers
+        WHERE type = 'kit'
+        ORDER BY name
+    ''', fetch='all') or []
+
+
+def _get_recent_offer_cutoff(recent_offer_days):
+    if not recent_offer_days:
+        return None
+    return (datetime.utcnow() - timedelta(days=recent_offer_days)).strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _get_bom_stock_report_data(selected_bom_ids, include_recent_offers=False, recent_offer_days=None):
     if not selected_bom_ids:
         return [], []
 
@@ -65,21 +89,58 @@ def _get_bom_stock_report_data(selected_bom_ids):
     selected_bom_ids = [int(row['id']) for row in selected_boms]
     in_clause, params = _build_in_clause(selected_bom_ids)
 
+    recent_offer_clause = ''
+    query_params = list(params)
+    if include_recent_offers and recent_offer_days:
+        recent_offer_cutoff = _get_recent_offer_cutoff(recent_offer_days)
+        recent_offer_clause = '''
+            , recent_offer_parts AS (
+                SELECT
+                    pll.base_part_number,
+                    COUNT(*) AS recent_offer_count,
+                    MAX(COALESCE(sq.quote_date, sq.date_created)) AS latest_offer_date
+                FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+                WHERE COALESCE(sq.quote_date, sq.date_created) >= ?
+                GROUP BY pll.base_part_number
+            )
+        '''
+        query_params.append(recent_offer_cutoff)
+
     rows = db_execute(f'''
+        WITH selected_parts AS (
+            SELECT DISTINCT bl.base_part_number
+            FROM bom_lines bl
+            WHERE bl.bom_header_id IN ({in_clause})
+        ),
+        stock_totals AS (
+            SELECT
+                sm.base_part_number,
+                SUM(sm.available_quantity) AS amount_in_stock
+            FROM stock_movements sm
+            WHERE sm.movement_type = 'IN'
+              AND sm.available_quantity > 0
+            GROUP BY sm.base_part_number
+        )
+        {recent_offer_clause}
         SELECT
-            bl.base_part_number,
-            COALESCE(MAX(pn.part_number), bl.base_part_number) AS part_number,
-            COALESCE(SUM(sm.available_quantity), 0) AS amount_in_stock
-        FROM bom_lines bl
-        JOIN stock_movements sm
-          ON sm.base_part_number = bl.base_part_number
-         AND sm.movement_type = 'IN'
-         AND sm.available_quantity > 0
-        LEFT JOIN part_numbers pn ON pn.base_part_number = bl.base_part_number
-        WHERE bl.bom_header_id IN ({in_clause})
-        GROUP BY bl.base_part_number
-        ORDER BY COALESCE(MAX(pn.part_number), bl.base_part_number)
-    ''', params, fetch='all') or []
+            sp.base_part_number,
+            COALESCE(MAX(pn.part_number), sp.base_part_number) AS part_number,
+            COALESCE(st.amount_in_stock, 0) AS amount_in_stock
+            {", COALESCE(rop.recent_offer_count, 0) AS recent_offer_count, rop.latest_offer_date" if recent_offer_clause else ""}
+        FROM selected_parts sp
+        LEFT JOIN stock_totals st ON st.base_part_number = sp.base_part_number
+        LEFT JOIN part_numbers pn ON pn.base_part_number = sp.base_part_number
+        {"LEFT JOIN recent_offer_parts rop ON rop.base_part_number = sp.base_part_number" if recent_offer_clause else ""}
+        WHERE COALESCE(st.amount_in_stock, 0) > 0
+            {"OR COALESCE(rop.recent_offer_count, 0) > 0" if recent_offer_clause else ""}
+        GROUP BY
+            sp.base_part_number,
+            st.amount_in_stock
+            {", rop.recent_offer_count, rop.latest_offer_date" if recent_offer_clause else ""}
+        ORDER BY COALESCE(MAX(pn.part_number), sp.base_part_number)
+    ''', query_params, fetch='all') or []
 
     memberships = db_execute(f'''
         SELECT DISTINCT
@@ -97,18 +158,141 @@ def _get_bom_stock_report_data(selected_bom_ids):
 
     matrix_rows = []
     for row in rows:
+        row_data = dict(row)
         base_part_number = row['base_part_number']
         bom_flags = {
             bom['id']: ('X' if bom['id'] in membership_map.get(base_part_number, set()) else '')
             for bom in selected_boms
         }
         matrix_rows.append({
-            'part_number': row['part_number'] or base_part_number,
-            'amount_in_stock': row['amount_in_stock'] or 0,
+            'part_number': row_data.get('part_number') or base_part_number,
+            'amount_in_stock': row_data.get('amount_in_stock') or 0,
+            'recent_offer_count': row_data.get('recent_offer_count', 0),
+            'latest_offer_date': row_data.get('latest_offer_date'),
             'bom_flags': bom_flags
         })
 
     return selected_boms, matrix_rows
+
+
+def _get_bom_commonality_report_data(selected_bom_ids, recent_offer_days=None):
+    if not selected_bom_ids:
+        return [], []
+
+    in_clause, params = _build_in_clause(selected_bom_ids)
+    if not in_clause:
+        return [], []
+
+    selected_boms = db_execute(f'''
+        SELECT id, name
+        FROM bom_headers
+        WHERE id IN ({in_clause})
+        ORDER BY name
+    ''', params, fetch='all') or []
+
+    if not selected_boms:
+        return [], []
+
+    selected_bom_ids = [int(row['id']) for row in selected_boms]
+    in_clause, params = _build_in_clause(selected_bom_ids)
+    recent_offer_cutoff = _get_recent_offer_cutoff(recent_offer_days)
+    query_params = list(params)
+    if recent_offer_cutoff:
+        query_params.append(recent_offer_cutoff)
+
+    rows = db_execute(f'''
+        WITH selected_lines AS (
+            SELECT DISTINCT
+                bl.bom_header_id,
+                bl.base_part_number
+            FROM bom_lines bl
+            WHERE bl.bom_header_id IN ({in_clause})
+        ),
+        common_parts AS (
+            SELECT
+                sl.base_part_number,
+                COUNT(*) AS bom_count
+            FROM selected_lines sl
+            GROUP BY sl.base_part_number
+        ),
+        stock_totals AS (
+            SELECT
+                sm.base_part_number,
+                SUM(sm.available_quantity) AS amount_in_stock
+            FROM stock_movements sm
+            WHERE sm.movement_type = 'IN'
+              AND sm.available_quantity > 0
+            GROUP BY sm.base_part_number
+        ),
+        recent_offer_parts AS (
+            SELECT
+                pll.base_part_number,
+                COUNT(*) AS recent_offer_count,
+                MAX(COALESCE(sq.quote_date, sq.date_created)) AS latest_offer_date
+            FROM parts_list_supplier_quote_lines sql
+            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+            WHERE COALESCE(sq.quote_date, sq.date_created) >= ?
+            GROUP BY pll.base_part_number
+        )
+        SELECT
+            cp.base_part_number,
+            COALESCE(MAX(pn.part_number), cp.base_part_number) AS part_number,
+            cp.bom_count,
+            COALESCE(st.amount_in_stock, 0) AS amount_in_stock,
+            COALESCE(rop.recent_offer_count, 0) AS recent_offer_count,
+            rop.latest_offer_date
+        FROM common_parts cp
+        LEFT JOIN stock_totals st ON st.base_part_number = cp.base_part_number
+        LEFT JOIN recent_offer_parts rop ON rop.base_part_number = cp.base_part_number
+        LEFT JOIN part_numbers pn ON pn.base_part_number = cp.base_part_number
+        GROUP BY
+            cp.base_part_number,
+            cp.bom_count,
+            st.amount_in_stock,
+            rop.recent_offer_count,
+            rop.latest_offer_date
+        ORDER BY
+            cp.bom_count DESC,
+            COALESCE(st.amount_in_stock, 0) DESC,
+            COALESCE(MAX(pn.part_number), cp.base_part_number)
+    ''', query_params, fetch='all') or []
+
+    memberships = db_execute(f'''
+        SELECT DISTINCT
+            bl.base_part_number,
+            bl.bom_header_id
+        FROM bom_lines bl
+        WHERE bl.bom_header_id IN ({in_clause})
+    ''', params, fetch='all') or []
+
+    membership_map = {}
+    for membership in memberships:
+        base_part_number = membership['base_part_number']
+        bom_id = int(membership['bom_header_id'])
+        membership_map.setdefault(base_part_number, set()).add(bom_id)
+
+    total_selected_boms = len(selected_boms)
+    report_rows = []
+    for row in rows:
+        row_data = dict(row)
+        base_part_number = row_data['base_part_number']
+        bom_ids = membership_map.get(base_part_number, set())
+        bom_flags = {
+            bom['id']: ('X' if bom['id'] in bom_ids else '')
+            for bom in selected_boms
+        }
+        report_rows.append({
+            'part_number': row_data.get('part_number') or base_part_number,
+            'amount_in_stock': row_data.get('amount_in_stock') or 0,
+            'recent_offer_count': row_data.get('recent_offer_count', 0),
+            'latest_offer_date': row_data.get('latest_offer_date'),
+            'bom_count': row_data.get('bom_count') or 0,
+            'bom_coverage_pct': ((row_data.get('bom_count') or 0) / total_selected_boms * 100) if total_selected_boms else 0,
+            'bom_flags': bom_flags,
+        })
+
+    return selected_boms, report_rows
 
 def _load_bom_dataframe(file, filename):
     if filename.endswith('.csv'):
@@ -194,41 +378,119 @@ def boms():
     return render_template('bom/boms.html', boms=boms)
 
 
+@bom_bp.route('/common-parts-report')
+def common_parts_report():
+    selected_bom_ids = request.args.getlist('bom_ids', type=int)
+    recent_offer_days = _parse_positive_int(request.args.get('recent_offer_days'), default=30)
+    all_boms = _get_all_kit_boms()
+    selected_boms, report_rows = _get_bom_commonality_report_data(
+        selected_bom_ids,
+        recent_offer_days=recent_offer_days,
+    )
+
+    return render_template(
+        'bom/common_parts_report.html',
+        boms=all_boms,
+        selected_bom_ids=selected_bom_ids,
+        selected_boms=selected_boms,
+        report_rows=report_rows,
+        recent_offer_days=recent_offer_days,
+    )
+
+
+@bom_bp.route('/common-parts-report.csv')
+def common_parts_report_csv():
+    selected_bom_ids = request.args.getlist('bom_ids', type=int)
+    recent_offer_days = _parse_positive_int(request.args.get('recent_offer_days'), default=30)
+    selected_boms, report_rows = _get_bom_commonality_report_data(
+        selected_bom_ids,
+        recent_offer_days=recent_offer_days,
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    header = [
+        'Part Number',
+        'BOM Count',
+        'BOM Coverage %',
+        'Amount In Stock',
+        f'Recent Supplier Offers ({recent_offer_days} days)',
+        'Latest Supplier Offer Date',
+    ] + [bom['name'] for bom in selected_boms]
+    writer.writerow(header)
+
+    for row in report_rows:
+        csv_row = [
+            row['part_number'],
+            row['bom_count'],
+            round(float(row['bom_coverage_pct']), 2),
+            row['amount_in_stock'],
+            row.get('recent_offer_count', 0),
+            row.get('latest_offer_date') or '',
+        ]
+        for bom in selected_boms:
+            csv_row.append(row['bom_flags'].get(bom['id'], ''))
+        writer.writerow(csv_row)
+
+    csv_data = output.getvalue()
+    output.close()
+
+    return Response(
+        csv_data,
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename=bom_common_parts_report_{recent_offer_days}d.csv'}
+    )
+
+
 @bom_bp.route('/stock-report')
 def stock_report():
     selected_bom_ids = request.args.getlist('bom_ids', type=int)
+    include_recent_offers = str(request.args.get('include_recent_offers', '')).lower() in ('1', 'true', 'yes', 'on')
+    recent_offer_days = _parse_positive_int(request.args.get('recent_offer_days'), default=30)
 
-    all_boms = db_execute('''
-        SELECT id, name, description
-        FROM bom_headers
-        WHERE type = 'kit'
-        ORDER BY name
-    ''', fetch='all') or []
+    all_boms = _get_all_kit_boms()
 
-    selected_boms, matrix_rows = _get_bom_stock_report_data(selected_bom_ids)
+    selected_boms, matrix_rows = _get_bom_stock_report_data(
+        selected_bom_ids,
+        include_recent_offers=include_recent_offers,
+        recent_offer_days=recent_offer_days,
+    )
 
     return render_template(
         'bom/stock_report.html',
         boms=all_boms,
         selected_bom_ids=selected_bom_ids,
         selected_boms=selected_boms,
-        matrix_rows=matrix_rows
+        matrix_rows=matrix_rows,
+        include_recent_offers=include_recent_offers,
+        recent_offer_days=recent_offer_days,
     )
 
 
 @bom_bp.route('/stock-report.csv')
 def stock_report_csv():
     selected_bom_ids = request.args.getlist('bom_ids', type=int)
-    selected_boms, matrix_rows = _get_bom_stock_report_data(selected_bom_ids)
+    include_recent_offers = str(request.args.get('include_recent_offers', '')).lower() in ('1', 'true', 'yes', 'on')
+    recent_offer_days = _parse_positive_int(request.args.get('recent_offer_days'), default=30)
+    selected_boms, matrix_rows = _get_bom_stock_report_data(
+        selected_bom_ids,
+        include_recent_offers=include_recent_offers,
+        recent_offer_days=recent_offer_days,
+    )
 
     output = io.StringIO()
     writer = csv.writer(output)
 
-    header = ['Part Number', 'Amount In Stock'] + [bom['name'] for bom in selected_boms]
+    header = ['Part Number', 'Amount In Stock', 'Recent Supplier Offers', 'Latest Supplier Offer Date'] + [bom['name'] for bom in selected_boms]
     writer.writerow(header)
 
     for row in matrix_rows:
-        csv_row = [row['part_number'], row['amount_in_stock']]
+        csv_row = [
+            row['part_number'],
+            row['amount_in_stock'],
+            row.get('recent_offer_count', 0),
+            row.get('latest_offer_date') or '',
+        ]
         for bom in selected_boms:
             csv_row.append(row['bom_flags'].get(bom['id'], ''))
         writer.writerow(csv_row)

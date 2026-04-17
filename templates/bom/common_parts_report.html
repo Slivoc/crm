@@ -4,16 +4,16 @@
 <div class="container-fluid mt-4">
     <div class="card shadow-sm border-0 mb-4">
         <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-            <strong>BOM Stock Report</strong>
+            <strong>BOM Common Parts Report</strong>
             {% if selected_boms %}
-            <a href="{{ url_for('bom.stock_report_csv', bom_ids=selected_bom_ids, include_recent_offers='1' if include_recent_offers else None, recent_offer_days=recent_offer_days if include_recent_offers else None) }}" class="btn btn-sm btn-light">
+            <a href="{{ url_for('bom.common_parts_report_csv', bom_ids=selected_bom_ids, recent_offer_days=recent_offer_days) }}" class="btn btn-sm btn-light">
                 <i class="fas fa-file-csv"></i> Export CSV
             </a>
             {% endif %}
         </div>
         <div class="card-body">
-            <form method="get" action="{{ url_for('bom.stock_report') }}" class="row g-3 align-items-end">
-                <div class="col-lg-8 col-md-9">
+            <form method="get" action="{{ url_for('bom.common_parts_report') }}" class="row g-3 align-items-end">
+                <div class="col-lg-8 col-md-8">
                     <label for="bom_ids" class="form-label fw-semibold">Select BOMs</label>
                     <select class="form-select" id="bom_ids" name="bom_ids" multiple size="8" required>
                         {% for bom in boms %}
@@ -22,21 +22,15 @@
                         </option>
                         {% endfor %}
                     </select>
-                    <small class="text-muted">Show BOM parts that are in stock, with an option to also include parts with recent parts list supplier offers.</small>
+                    <small class="text-muted">Ranks parts by how many of the selected BOMs they appear in, then shows stock and recent supplier-offer context.</small>
                 </div>
                 <div class="col-lg-2 col-md-4">
-                    <div class="form-check mb-2">
-                        <input class="form-check-input" type="checkbox" id="include_recent_offers" name="include_recent_offers" value="1" {% if include_recent_offers %}checked{% endif %}>
-                        <label class="form-check-label fw-semibold" for="include_recent_offers">
-                            Include recent supplier offers
-                        </label>
-                    </div>
-                    <label for="recent_offer_days" class="form-label fw-semibold">Offer age in days</label>
+                    <label for="recent_offer_days" class="form-label fw-semibold">Recent offer days</label>
                     <input type="number" class="form-control" id="recent_offer_days" name="recent_offer_days" min="1" value="{{ recent_offer_days or 30 }}">
                 </div>
-                <div class="col-lg-2 col-md-8">
+                <div class="col-lg-2 col-md-12">
                     <button type="submit" class="btn btn-primary w-100">
-                        <i class="fas fa-table"></i> Generate Report
+                        <i class="fas fa-layer-group"></i> Generate Report
                     </button>
                 </div>
             </form>
@@ -46,15 +40,8 @@
     {% if selected_boms %}
     <div class="card shadow-sm border-0">
         <div class="card-header bg-light">
-            <strong>Report Matrix</strong>
-            <small class="text-muted ms-2">
-                {{ matrix_rows|length }} part{{ 's' if matrix_rows|length != 1 }}
-                {% if include_recent_offers %}
-                with stock or supplier offers from the last {{ recent_offer_days }} day{{ 's' if recent_offer_days != 1 }}
-                {% else %}
-                in stock
-                {% endif %}
-            </small>
+            <strong>Commonality Matrix</strong>
+            <small class="text-muted ms-2">{{ report_rows|length }} part{{ 's' if report_rows|length != 1 }} across {{ selected_boms|length }} selected BOM{{ 's' if selected_boms|length != 1 }}</small>
         </div>
         <div class="card-body">
             <div class="table-responsive">
@@ -62,6 +49,8 @@
                     <thead class="table-light">
                         <tr>
                             <th>Part Number</th>
+                            <th>BOM Count</th>
+                            <th>BOM Coverage</th>
                             <th>Amount In Stock</th>
                             <th>Recent Supplier Offers</th>
                             <th>Latest Supplier Offer Date</th>
@@ -71,9 +60,11 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for row in matrix_rows %}
+                        {% for row in report_rows %}
                         <tr>
                             <td><strong>{{ row.part_number }}</strong></td>
+                            <td>{{ row.bom_count }}</td>
+                            <td>{{ '%.1f'|format(row.bom_coverage_pct) }}%</td>
                             <td>{{ row.amount_in_stock }}</td>
                             <td>{{ row.recent_offer_count or 0 }}</td>
                             <td>{{ row.latest_offer_date or '-' }}</td>
@@ -82,14 +73,10 @@
                             {% endfor %}
                         </tr>
                         {% endfor %}
-                        {% if not matrix_rows %}
+                        {% if not report_rows %}
                         <tr>
-                            <td colspan="{{ 4 + selected_boms|length }}" class="text-center text-muted py-4">
-                                {% if include_recent_offers %}
-                                No in-stock parts or recent supplier-offer parts found for the selected BOMs.
-                                {% else %}
-                                No in-stock parts found for the selected BOMs.
-                                {% endif %}
+                            <td colspan="{{ 6 + selected_boms|length }}" class="text-center text-muted py-4">
+                                No parts found for the selected BOMs.
                             </td>
                         </tr>
                         {% endif %}
@@ -100,17 +87,4 @@
     </div>
     {% endif %}
 </div>
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-    const includeRecentOffers = document.getElementById('include_recent_offers');
-    const recentOfferDays = document.getElementById('recent_offer_days');
-
-    function syncRecentOfferDaysState() {
-        recentOfferDays.disabled = !includeRecentOffers.checked;
-    }
-
-    includeRecentOffers.addEventListener('change', syncRecentOfferDaysState);
-    syncRecentOfferDaysState();
-});
-</script>
 {% endblock %}
