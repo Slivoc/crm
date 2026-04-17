@@ -222,6 +222,43 @@ function displayResults(results) {
     if (viewAsTableBtn) {
         viewAsTableBtn.style.display = 'inline-block';
     }
+
+    const exportLookupBtn = document.getElementById('export-lookup-btn');
+    if (exportLookupBtn) {
+        exportLookupBtn.style.display = 'inline-block';
+    }
+}
+
+function escapeCsvValue(value) {
+    if (value === null || value === undefined) return '';
+    const stringValue = String(value).replace(/"/g, '""');
+    if (/[",\n]/.test(stringValue)) {
+        return `"${stringValue}"`;
+    }
+    return stringValue;
+}
+
+function getLookupExportRows(results) {
+    return (results || [])
+        .filter(part => !(part.is_global_alternative || part.line_type === 'alternate'))
+        .map((part, index) => ({
+            line_number: part.line_number || index + 1,
+            customer_part_number: part.input_part_number || '',
+            base_part_number: part.base_part_number || '',
+            quantity: part.quantity || 1,
+            found: part.found ? 'Yes' : 'No',
+            total_available_stock: part.total_available_stock || 0,
+            vq_count: part.vq_count || 0,
+            latest_vq_price: part.latest_vq_price ?? '',
+            po_count: part.po_count || 0,
+            excess_count: part.excess_count || 0,
+            parts_list_quotes_count: part.parts_list_quotes_count || 0,
+            qpl_approval_count: part.qpl_approval_count || 0,
+            ils_total_suppliers: part.ils_total_suppliers || 0,
+            bom_usage_count: part.bom_usage_count || 0,
+            cq_count: part.cq_count || 0,
+            so_count: part.so_count || 0
+        }));
 }
 
 function buildBasicResultsFromLines(lines) {
@@ -4125,6 +4162,38 @@ if (viewAsTableBtn) {
             console.error('Error:', error);
             alert('Error navigating to table view');
         });
+    });
+}
+
+const exportLookupBtn = document.getElementById('export-lookup-btn');
+if (exportLookupBtn) {
+    exportLookupBtn.addEventListener('click', function() {
+        if (!window.allResults || window.allResults.length === 0) {
+            alert('No lookup results to export');
+            return;
+        }
+
+        const rows = getLookupExportRows(window.allResults);
+        if (!rows.length) {
+            alert('No primary lookup lines to export');
+            return;
+        }
+
+        const headers = Object.keys(rows[0]);
+        const csvLines = [
+            headers.join(','),
+            ...rows.map(row => headers.map(header => escapeCsvValue(row[header])).join(','))
+        ];
+
+        const csvBlob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const dateSuffix = new Date().toISOString().slice(0, 10);
+        const downloadLink = document.createElement('a');
+        downloadLink.href = URL.createObjectURL(csvBlob);
+        downloadLink.download = `parts_lookup_export_${dateSuffix}.csv`;
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+        URL.revokeObjectURL(downloadLink.href);
     });
 }
 
