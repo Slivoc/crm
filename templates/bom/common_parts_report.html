@@ -61,6 +61,7 @@
                             <th>Amount In Stock</th>
                             <th>Recent Supplier Offers</th>
                             <th>Latest Supplier Offer Date</th>
+                            <th>Comments</th>
                             {% for bom in selected_boms %}
                             <th>{{ bom.name }}</th>
                             {% endfor %}
@@ -75,6 +76,7 @@
                             <td>{{ row.amount_in_stock }}</td>
                             <td>{{ row.recent_offer_count or 0 }}</td>
                             <td>{{ row.latest_offer_date or '-' }}</td>
+                            <td class="small">{{ row.comments or '' }}</td>
                             {% for bom in selected_boms %}
                             <td class="text-center">{{ row.bom_flags[bom.id] }}</td>
                             {% endfor %}
@@ -82,7 +84,7 @@
                         {% endfor %}
                         {% if not report_rows %}
                         <tr>
-                            <td colspan="{{ 6 + selected_boms|length }}" class="text-center text-muted py-4">
+                            <td colspan="{{ 7 + selected_boms|length }}" class="text-center text-muted py-4">
                                 No parts found for the selected BOMs.
                             </td>
                         </tr>

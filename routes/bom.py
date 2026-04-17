@@ -80,6 +80,83 @@ def _get_recent_offer_cutoff(recent_offer_days):
     return (datetime.utcnow() - timedelta(days=recent_offer_days)).strftime('%Y-%m-%d %H:%M:%S')
 
 
+def _get_global_alt_comment_map(base_part_numbers, recent_offer_days=None):
+    cleaned = [str(value).strip() for value in (base_part_numbers or []) if str(value).strip()]
+    if not cleaned:
+        return {}
+
+    placeholders = ', '.join(['?'] * len(cleaned))
+    recent_offer_cutoff = _get_recent_offer_cutoff(recent_offer_days or 30)
+
+    rows = db_execute(f'''
+        WITH stock_totals AS (
+            SELECT
+                sm.base_part_number,
+                SUM(sm.available_quantity) AS amount_in_stock
+            FROM stock_movements sm
+            WHERE sm.movement_type = 'IN'
+              AND sm.available_quantity > 0
+            GROUP BY sm.base_part_number
+        ),
+        recent_offer_parts AS (
+            SELECT
+                pll.base_part_number,
+                COUNT(*) AS recent_offer_count
+            FROM parts_list_supplier_quote_lines sql
+            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+            WHERE COALESCE(sq.quote_date, sq.date_created) >= ?
+            GROUP BY pll.base_part_number
+        )
+        SELECT DISTINCT
+            source.base_part_number AS source_base_part_number,
+            alt.base_part_number AS alt_base_part_number,
+            COALESCE(NULLIF(TRIM(pn_alt.part_number), ''), alt.base_part_number) AS alt_part_number,
+            COALESCE(st.amount_in_stock, 0) AS amount_in_stock,
+            COALESCE(rop.recent_offer_count, 0) AS recent_offer_count
+        FROM part_alt_group_members source
+        JOIN part_alt_group_members alt
+          ON alt.group_id = source.group_id
+         AND alt.base_part_number <> source.base_part_number
+        LEFT JOIN part_numbers pn_alt ON pn_alt.base_part_number = alt.base_part_number
+        LEFT JOIN stock_totals st ON st.base_part_number = alt.base_part_number
+        LEFT JOIN recent_offer_parts rop ON rop.base_part_number = alt.base_part_number
+        WHERE source.base_part_number IN ({placeholders})
+          AND (
+              COALESCE(st.amount_in_stock, 0) > 0
+              OR COALESCE(rop.recent_offer_count, 0) > 0
+          )
+        ORDER BY
+            source.base_part_number,
+            COALESCE(st.amount_in_stock, 0) DESC,
+            COALESCE(rop.recent_offer_count, 0) DESC,
+            COALESCE(NULLIF(TRIM(pn_alt.part_number), ''), alt.base_part_number)
+    ''', [recent_offer_cutoff] + cleaned, fetch='all') or []
+
+    comment_map = {}
+    for row in rows:
+        row_data = dict(row)
+        source_base = row_data.get('source_base_part_number')
+        if not source_base:
+            continue
+
+        metrics = []
+        if row_data.get('amount_in_stock'):
+            metrics.append(f"{row_data['amount_in_stock']} in stock")
+        if row_data.get('recent_offer_count'):
+            metrics.append(f"{row_data['recent_offer_count']} supplier offer{'s' if row_data['recent_offer_count'] != 1 else ''}")
+        if not metrics:
+            continue
+
+        detail = f"alt: {row_data.get('alt_part_number')}: {', '.join(metrics)}"
+        comment_map.setdefault(source_base, []).append(detail)
+
+    return {
+        source_base: '; '.join(details)
+        for source_base, details in comment_map.items()
+    }
+
+
 def _get_bom_stock_report_data(selected_bom_ids, include_recent_offers=False, recent_offer_days=None):
     if not selected_bom_ids:
         return [], []
@@ -288,6 +365,10 @@ def _get_bom_commonality_report_data(selected_bom_ids, recent_offer_days=None, c
     minimum_bom_count = 0
     if total_selected_boms:
         minimum_bom_count = max(1, int((coverage_threshold_pct / 100) * total_selected_boms + 0.999999))
+    alt_comment_map = _get_global_alt_comment_map(
+        [dict(row).get('base_part_number') for row in rows],
+        recent_offer_days=recent_offer_days,
+    )
     report_rows = []
     for row in rows:
         row_data = dict(row)
@@ -307,6 +388,7 @@ def _get_bom_commonality_report_data(selected_bom_ids, recent_offer_days=None, c
             'latest_offer_date': row_data.get('latest_offer_date'),
             'bom_count': bom_count,
             'bom_coverage_pct': (bom_count / total_selected_boms * 100) if total_selected_boms else 0,
+            'comments': alt_comment_map.get(base_part_number, ''),
             'bom_flags': bom_flags,
         })
 
@@ -440,6 +522,7 @@ def common_parts_report_csv():
         'Amount In Stock',
         f'Recent Supplier Offers ({recent_offer_days} days)',
         'Latest Supplier Offer Date',
+        'Comments',
     ] + [bom['name'] for bom in selected_boms]
     writer.writerow(header)
 
@@ -452,6 +535,7 @@ def common_parts_report_csv():
             row['amount_in_stock'],
             row.get('recent_offer_count', 0),
             row.get('latest_offer_date') or '',
+            row.get('comments') or '',
         ]
         for bom in selected_boms:
             csv_row.append(row['bom_flags'].get(bom['id'], ''))
