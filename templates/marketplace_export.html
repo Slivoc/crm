@@ -1348,14 +1348,23 @@ function resolveOfferProductId(part, baselineRow) {
         }
     }
     const storedValue = String((part && part.mkp_offer_product_id) || '').trim();
-    if (storedValue) {
+    const storedType = String((part && part.mkp_offer_product_id_type) || '').trim().toUpperCase();
+    const resolvedTitle = String((part && part.resolved_mpn_title) || '').trim();
+    const partNumber = String((part && (part.part_number || part.base_part_number)) || '').trim();
+    const storedUpper = storedValue.toUpperCase();
+    const partUpper = partNumber.toUpperCase();
+    const resolvedUpper = resolvedTitle.toUpperCase();
+    const shouldUseStoredValue = !!storedValue && !(
+        (storedType === '' || storedType === 'SKU') &&
+        storedUpper.startsWith('MKP-')
+    ) && storedUpper !== partUpper && storedUpper !== resolvedUpper;
+    if (shouldUseStoredValue) {
         return storedValue;
     }
-    const resolvedTitle = String((part && part.resolved_mpn_title) || '').trim();
     if (resolvedTitle) {
         return resolvedTitle;
     }
-    return String((part && (part.part_number || part.base_part_number)) || '').trim();
+    return partNumber;
 }
 
 function normalizeOfferProductIdType(productIdType, productId, part) {

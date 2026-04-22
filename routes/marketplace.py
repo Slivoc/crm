@@ -1035,6 +1035,27 @@ def _normalize_offer_product_id_type(product_id_type, product_id, part_number):
     return 'SKU'
 
 
+def _should_use_stored_offer_identity(product_id, product_id_type, part_number, resolved_mpn_title):
+    product_id_text = _coerce_text(product_id, default='').strip()
+    if not product_id_text:
+        return False
+
+    normalized_type = _coerce_text(product_id_type, default='').strip().upper()
+    part_number_text = _coerce_text(part_number, default='').strip().upper()
+    resolved_title_text = _coerce_text(resolved_mpn_title, default='').strip().upper()
+    product_id_upper = product_id_text.upper()
+
+    if product_id_upper and (product_id_upper == part_number_text or product_id_upper == resolved_title_text):
+        return False
+
+    # Older imports stored opaque marketplace IDs as SKU. For current Airbus
+    # offer matching, prefer canonicalized mpnTitle over these stored IDs.
+    if normalized_type in ('', 'SKU') and product_id_upper.startswith('MKP-'):
+        return False
+
+    return True
+
+
 def _extract_product_identity(row_data):
     found_product_id, product_id = _get_import_row_value(row_data, 'id')
     product_id_text = _coerce_optional_text(product_id) if found_product_id else None
@@ -1050,6 +1071,7 @@ def _extract_product_identity(row_data):
 def _resolve_offer_identity(part, source_mode):
     part_number = _part_identifier(part)
     baseline_row = part.get('baseline_row') or {}
+    resolved_mpn_title = _coerce_text(part.get('resolved_mpn_title'), default='').strip() or part_number
 
     if source_mode == 'baseline':
         baseline_identity = _extract_offer_product_identity(baseline_row)
@@ -1066,7 +1088,12 @@ def _resolve_offer_identity(part, source_mode):
                 )
 
     stored_product_id = _coerce_text(part.get('mkp_offer_product_id'), default='').strip()
-    if stored_product_id:
+    if stored_product_id and _should_use_stored_offer_identity(
+        stored_product_id,
+        part.get('mkp_offer_product_id_type'),
+        part_number,
+        resolved_mpn_title,
+    ):
         stored_product_id_type = _normalize_offer_product_id_type(
             part.get('mkp_offer_product_id_type'),
             stored_product_id,
@@ -1074,7 +1101,6 @@ def _resolve_offer_identity(part, source_mode):
         )
         return (stored_product_id, stored_product_id_type)
 
-    resolved_mpn_title = _coerce_text(part.get('resolved_mpn_title'), default='').strip() or part_number
     return (resolved_mpn_title, 'mpnTitle')
 
 
