@@ -12,6 +12,8 @@ import os
 import time
 import json
 import re
+import shutil
+import uuid
 
 from airbus_marketplace_helper import (
     suggest_marketplace_category,
@@ -34,6 +36,8 @@ PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 AIRBUS_ROTARY_APPROVAL_LIST_TYPE = 'airbus_rotary'
 _AIRBUS_HARDWARE_REFERENCE_CACHE = None
 _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME = None
+_ACTIVE_MASTER_LIST_SUMMARY_SETTING = 'marketplace_master_list_active_summary'
+_ACTIVE_MASTER_LIST_UPLOAD_TOKEN_SETTING = 'marketplace_master_list_active_upload_token'
 _MASTER_LIST_TEST_REFERENCE_MAP = {
     '21215DC2405J': 'MKP-H-57077',
     'MS20470AD4-8': 'MKP-H-45486',
@@ -96,6 +100,119 @@ def _upsert_portal_setting(cursor, key, value):
             "INSERT INTO portal_settings (setting_key, setting_value, date_modified) VALUES (?, ?, CURRENT_TIMESTAMP)",
             (key, value),
         )
+
+
+def _ensure_marketplace_master_list_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS marketplace_master_list_entries (
+            upload_token TEXT NOT NULL,
+            source_filename TEXT,
+            source_ref TEXT,
+            normalized_ref TEXT,
+            matched_base_part_number TEXT NOT NULL,
+            matched_part_number TEXT,
+            canonical_mpn_title TEXT,
+            date_imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def _get_marketplace_master_list_storage_dir():
+    path = os.path.join(os.getcwd(), 'uploads', 'marketplace_master_lists')
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _sanitize_uploaded_filename(filename, default='masterlist.xlsx'):
+    cleaned = re.sub(r'[^A-Za-z0-9._ -]+', '_', str(filename or '').strip())
+    cleaned = cleaned.strip(' .')
+    return cleaned or default
+
+
+def _read_master_list_rows(uploaded_file, filename):
+    extension = os.path.splitext(filename.lower())[1]
+    if extension not in ('.xlsx', '.csv'):
+        raise ValueError('Only .xlsx and .csv files are supported for master lists.')
+
+    if extension == '.xlsx':
+        workbook = load_workbook(io.BytesIO(uploaded_file.read()), read_only=True, data_only=True)
+        try:
+            worksheet = workbook['Data'] if 'Data' in workbook.sheetnames else workbook.active
+            row_iter = worksheet.iter_rows(values_only=True)
+            display_headers = next(row_iter, None)
+            field_headers = next(row_iter, None)
+            if not display_headers:
+                return []
+
+            selected_headers = field_headers if field_headers and any(str(value or '').strip() for value in field_headers) else display_headers
+            start_row = 3 if selected_headers is field_headers else 2
+            output_rows = []
+            for row_number, values in enumerate(row_iter, start=start_row):
+                row_data = {}
+                for idx, raw_header in enumerate(selected_headers):
+                    header = str(raw_header or '').strip()
+                    if not header:
+                        continue
+                    row_data[header] = values[idx] if idx < len(values) else None
+                output_rows.append((row_number, row_data))
+            return output_rows
+        finally:
+            workbook.close()
+
+    csv_bytes = uploaded_file.read()
+    if not csv_bytes:
+        return []
+    csv_text = _decode_csv_bytes(csv_bytes)
+    delimiter = _detect_csv_delimiter(csv_text)
+    reader = csv.DictReader(io.StringIO(csv_text), delimiter=delimiter)
+    return [(row_number, row) for row_number, row in enumerate(reader, start=2)]
+
+
+def _split_master_list_reference_values(value):
+    if value is None:
+        return []
+    return [
+        token.strip()
+        for token in re.split(r'[\r\n,;|]+', str(value or ''))
+        if str(token or '').strip()
+    ]
+
+
+def _build_master_list_reference_payload(row_data):
+    _, mpn_title = _get_import_row_value(row_data, 'mpnTitle')
+    _, alt_refs = _get_import_row_value(row_data, 'alternativePartRefList')
+    canonical_title = _coerce_text(mpn_title, default='').strip()
+    refs = []
+    if canonical_title:
+        refs.append(canonical_title)
+    refs.extend(_split_master_list_reference_values(alt_refs))
+    unique_refs = []
+    seen = set()
+    for ref in refs:
+        normalized_key = ref.upper()
+        if not ref or normalized_key in seen:
+            continue
+        seen.add(normalized_key)
+        unique_refs.append(ref)
+    if not unique_refs:
+        return None
+    return {
+        'canonical_mpn_title': canonical_title or unique_refs[0],
+        'references': unique_refs,
+    }
+
+
+def _get_active_master_list_summary():
+    raw = get_portal_setting(_ACTIVE_MASTER_LIST_SUMMARY_SETTING)
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _get_marketplace_customer_id():
@@ -905,11 +1022,14 @@ def _extract_offer_product_identity(row_data):
 
 def _normalize_offer_product_id_type(product_id_type, product_id, part_number):
     normalized_type = _coerce_text(product_id_type, default='').strip()
-    if normalized_type:
-        return normalized_type
-
     product_id_text = _coerce_text(product_id, default='').strip()
     part_number_text = _coerce_text(part_number, default='').strip()
+    if normalized_type:
+        if normalized_type.upper() == 'SKU' and product_id_text and part_number_text:
+            if product_id_text.upper() == part_number_text.upper():
+                return 'mpnTitle'
+        return normalized_type
+
     if product_id_text and part_number_text and product_id_text == part_number_text:
         return 'mpnTitle'
     return 'SKU'
@@ -962,7 +1082,14 @@ def _sanitize_marketplace_lead_time_days(value, *, default=7):
     parsed = _coerce_int(value, default=default)
     if parsed is None:
         parsed = default
-    return max(parsed, 1)
+    parsed = max(parsed, 1)
+    configured_max = _coerce_int(
+        os.getenv('MIRAKL_MAX_LEADTIME_TO_SHIP_DAYS') or get_portal_setting('mirakl_max_leadtime_to_ship_days'),
+        default=30,
+    )
+    if configured_max and configured_max > 0:
+        return min(parsed, configured_max)
+    return parsed
 
 
 def _get_airbus_hardware_reference_maps():
@@ -1298,7 +1425,14 @@ def _build_offer_row_from_payload(offer):
     payload['quantity'] = offer.get('quantity', payload.get('quantity', ''))
     payload['sku'] = offer.get('sku', payload.get('sku', ''))
     payload['product-id'] = offer.get('product-id', payload.get('product-id', ''))
-    payload['product-id-type'] = offer.get('product-id-type', payload.get('product-id-type', ''))
+    payload['product-id-type'] = _normalize_offer_product_id_type(
+        offer.get('product-id-type', payload.get('product-id-type', '')),
+        payload.get('product-id', ''),
+        payload.get('sku', ''),
+    )
+    payload['leadtime-to-ship'] = _sanitize_marketplace_lead_time_days(
+        offer.get('leadtime-to-ship', payload.get('leadtime-to-ship', '')),
+    )
     payload['commercial-on-collection'] = offer.get(
         'commercial-on-collection',
         payload.get('commercial-on-collection', '')
@@ -1947,6 +2081,220 @@ def import_marketplace_stock_price_file():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@marketplace_bp.route('/master-list/import', methods=['POST'])
+def import_marketplace_master_list():
+    try:
+        file = request.files.get('file')
+        if not file or not file.filename:
+            return jsonify({'success': False, 'error': 'Master list file is required'}), 400
+
+        filename = file.filename
+        rows = _read_master_list_rows(file, filename)
+        if not rows:
+            return jsonify({'success': False, 'error': 'Uploaded master list is empty'}), 400
+
+        header_summary = _summarize_import_headers(rows)
+        processed = 0
+        skipped_invalid = 0
+        row_errors = []
+        exact_references = set()
+        normalized_references = set()
+        parsed_rows = []
+
+        for row_number, row_data in rows:
+            processed += 1
+            payload = _build_master_list_reference_payload(row_data)
+            if not payload:
+                skipped_invalid += 1
+                if len(row_errors) < 20:
+                    row_errors.append(f"Row {row_number}: Missing mpnTitle / alternative references.")
+                continue
+
+            canonical_title = payload['canonical_mpn_title']
+            refs = payload['references']
+            parsed_rows.append((row_number, canonical_title, refs))
+            for ref in refs:
+                ref_key = ref.strip().upper()
+                normalized_ref = _normalize_part_reference(ref)
+                if ref_key:
+                    exact_references.add(ref_key)
+                if normalized_ref:
+                    normalized_references.add(normalized_ref)
+
+        if not exact_references and not normalized_references:
+            return jsonify({
+                'success': False,
+                'error': 'No usable part references were found in the uploaded master list.',
+                'errors': row_errors,
+            }), 400
+
+        db = get_db()
+        cursor = db.cursor()
+        _ensure_marketplace_master_list_table(cursor)
+
+        exact_placeholders = ','.join(['?'] * len(exact_references)) if exact_references else ''
+        normalized_placeholders = ','.join(['?'] * len(normalized_references)) if normalized_references else ''
+        where_clauses = []
+        params = []
+
+        if exact_references:
+            where_clauses.append(f"UPPER(base_part_number) IN ({exact_placeholders})")
+            params.extend(exact_references)
+            where_clauses.append(f"UPPER(part_number) IN ({exact_placeholders})")
+            params.extend(exact_references)
+
+        if normalized_references:
+            where_clauses.append(
+                f"REGEXP_REPLACE(UPPER(COALESCE(base_part_number, '')), '[^A-Z0-9]+', '', 'g') IN ({normalized_placeholders})"
+            )
+            params.extend(normalized_references)
+            where_clauses.append(
+                f"REGEXP_REPLACE(UPPER(COALESCE(part_number, '')), '[^A-Z0-9]+', '', 'g') IN ({normalized_placeholders})"
+            )
+            params.extend(normalized_references)
+
+        cursor.execute(
+            f"""
+            SELECT base_part_number, part_number
+            FROM part_numbers
+            WHERE {' OR '.join(where_clauses)}
+            """,
+            params,
+        )
+        matches = cursor.fetchall()
+
+        exact_lookup = {}
+        normalized_lookup = {}
+        for row in matches:
+            base_part_number = row['base_part_number']
+            part_number = row['part_number']
+            matched_value = (base_part_number, part_number)
+            if base_part_number:
+                exact_lookup.setdefault(str(base_part_number).strip().upper(), matched_value)
+                normalized_base = _normalize_part_reference(base_part_number)
+                if normalized_base:
+                    normalized_lookup.setdefault(normalized_base, matched_value)
+            if part_number:
+                exact_lookup.setdefault(str(part_number).strip().upper(), matched_value)
+                normalized_part = _normalize_part_reference(part_number)
+                if normalized_part:
+                    normalized_lookup.setdefault(normalized_part, matched_value)
+
+        upload_token = str(uuid.uuid4())
+        matched_rows = []
+        seen_base_parts = set()
+        unmatched_rows = 0
+
+        for row_number, canonical_title, refs in parsed_rows:
+            matched = None
+            matched_ref = ''
+            for ref in refs:
+                ref_key = ref.strip().upper()
+                normalized_ref = _normalize_part_reference(ref)
+                matched = exact_lookup.get(ref_key)
+                if not matched and normalized_ref:
+                    matched = normalized_lookup.get(normalized_ref)
+                if matched:
+                    matched_ref = ref
+                    break
+            if not matched:
+                unmatched_rows += 1
+                if len(row_errors) < 20:
+                    row_errors.append(f"Row {row_number}: Part not found for master list reference '{canonical_title}'.")
+                continue
+
+            base_part_number, part_number = matched
+            base_key = str(base_part_number).strip()
+            if not base_key or base_key in seen_base_parts:
+                continue
+            seen_base_parts.add(base_key)
+            matched_rows.append({
+                'upload_token': upload_token,
+                'source_filename': _sanitize_uploaded_filename(filename, default='masterlist.xlsx'),
+                'source_ref': matched_ref,
+                'normalized_ref': _normalize_part_reference(matched_ref),
+                'matched_base_part_number': base_part_number,
+                'matched_part_number': part_number or base_part_number,
+                'canonical_mpn_title': canonical_title,
+            })
+
+        storage_dir = _get_marketplace_master_list_storage_dir()
+        safe_filename = _sanitize_uploaded_filename(filename, default='masterlist.xlsx')
+        stored_path = os.path.join(storage_dir, f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{safe_filename}")
+        file.stream.seek(0)
+        with open(stored_path, 'wb') as output_file:
+            shutil.copyfileobj(file.stream, output_file)
+
+        cursor.execute("DELETE FROM marketplace_master_list_entries")
+        if matched_rows:
+            cursor.executemany(
+                """
+                INSERT INTO marketplace_master_list_entries (
+                    upload_token,
+                    source_filename,
+                    source_ref,
+                    normalized_ref,
+                    matched_base_part_number,
+                    matched_part_number,
+                    canonical_mpn_title
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        row['upload_token'],
+                        row['source_filename'],
+                        row['source_ref'],
+                        row['normalized_ref'],
+                        row['matched_base_part_number'],
+                        row['matched_part_number'],
+                        row['canonical_mpn_title'],
+                    )
+                    for row in matched_rows
+                ],
+            )
+
+        summary = {
+            'filename': safe_filename,
+            'stored_path': stored_path,
+            'uploaded_at': datetime.utcnow().isoformat() + 'Z',
+            'processed_rows': processed,
+            'matched_rows': len(matched_rows),
+            'unmatched_rows': unmatched_rows,
+            'skipped_invalid': skipped_invalid,
+            'active': bool(matched_rows),
+        }
+        _upsert_portal_setting(cursor, _ACTIVE_MASTER_LIST_UPLOAD_TOKEN_SETTING, upload_token if matched_rows else '')
+        _upsert_portal_setting(cursor, _ACTIVE_MASTER_LIST_SUMMARY_SETTING, json.dumps(summary))
+        db.commit()
+
+        return jsonify({
+            'success': True,
+            'message': f"Master list '{safe_filename}' imported.",
+            'summary': summary,
+            'header_diagnostics': header_summary,
+            'errors': row_errors,
+        }), 200
+    except Exception as e:
+        logger.exception("Error importing marketplace master list")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@marketplace_bp.route('/master-list/clear', methods=['POST'])
+def clear_marketplace_master_list():
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        _ensure_marketplace_master_list_table(cursor)
+        cursor.execute("DELETE FROM marketplace_master_list_entries")
+        _upsert_portal_setting(cursor, _ACTIVE_MASTER_LIST_UPLOAD_TOKEN_SETTING, '')
+        _upsert_portal_setting(cursor, _ACTIVE_MASTER_LIST_SUMMARY_SETTING, '')
+        db.commit()
+        return jsonify({'success': True, 'message': 'Active master list cleared.'}), 200
+    except Exception as e:
+        logger.exception("Error clearing marketplace master list")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @marketplace_bp.route('/export-page', methods=['GET'])
 def export_page():
     """Render the marketplace export page"""
@@ -1955,12 +2303,14 @@ def export_page():
     mirakl_shop_id = get_portal_setting('mirakl_shop_id')
     mirakl_api_key = get_portal_setting('mirakl_api_key')
     marketplace_export_defaults = _get_marketplace_export_defaults()
+    active_master_list_summary = _get_active_master_list_summary()
     return render_template(
         'marketplace_export.html',
         mirakl_base_url=mirakl_base_url,
         mirakl_shop_id=mirakl_shop_id,
         mirakl_api_key_set=bool(mirakl_api_key),
         marketplace_export_defaults=marketplace_export_defaults,
+        active_master_list_summary=active_master_list_summary,
     )
 
 
@@ -2666,6 +3016,7 @@ def get_parts_for_export():
         part_number_search = data.get('part_number_search', '').strip()
         include_non_hqpl_alts = _coerce_bool(data.get('include_non_hqpl_alts'), default=False)
         include_alt_stock_rollup = _coerce_bool(data.get('include_alt_stock_rollup'), default=False)
+        apply_master_list = _coerce_bool(data.get('apply_master_list'), default=False)
         source_mode = _coerce_text(data.get('source_mode'), default='filters')
         if source_mode not in ('filters', 'baseline'):
             source_mode = 'filters'
@@ -2680,11 +3031,12 @@ def get_parts_for_export():
 
         logger.info(
             "Marketplace export parts request: source_mode=%s stock_filter=%s category_filter=%s "
-            "pricing_only=%s part_number_search=%s selected_count=%s max_results=%s",
+            "pricing_only=%s apply_master_list=%s part_number_search=%s selected_count=%s max_results=%s",
             source_mode,
             stock_filter,
             category_filter,
             pricing_only,
+            apply_master_list,
             part_number_search or "<none>",
             len(selected_base_part_numbers),
             max_results or "<none>",
@@ -2694,6 +3046,12 @@ def get_parts_for_export():
 
         db = get_db()
         cursor = db.cursor()
+        active_master_list_summary = _get_active_master_list_summary()
+        active_master_list_token = _coerce_text(get_portal_setting(_ACTIVE_MASTER_LIST_UPLOAD_TOKEN_SETTING), default='')
+        master_list_applied = False
+        if apply_master_list and active_master_list_token:
+            _ensure_marketplace_master_list_table(cursor)
+            master_list_applied = True
 
         query = """
             SELECT
@@ -2723,6 +3081,17 @@ def get_parts_for_export():
 
         params = [AIRBUS_ROTARY_APPROVAL_LIST_TYPE]
         query += " AND " + _build_rotary_hqpl_exists_clause('pn')
+
+        if master_list_applied:
+            query += """
+                AND EXISTS (
+                    SELECT 1
+                    FROM marketplace_master_list_entries mmle
+                    WHERE mmle.upload_token = ?
+                      AND mmle.matched_base_part_number = pn.base_part_number
+                )
+            """
+            params.append(active_master_list_token)
 
         if selected_base_part_numbers:
             placeholders = ','.join('?' * len(selected_base_part_numbers))
@@ -3001,6 +3370,8 @@ def get_parts_for_export():
             'success': True,
             'parts': parts,
             'reference_summary': reference_summary,
+            'master_list_applied': master_list_applied,
+            'active_master_list_summary': active_master_list_summary,
         }), 200
 
     except Exception as e:

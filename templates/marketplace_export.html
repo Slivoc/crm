@@ -211,6 +211,31 @@
         </div>
     </div>
 
+    <div class="filter-section">
+        <h5><i class="bi bi-journal-check"></i> Airbus Master List</h5>
+        <p class="text-muted mb-3">Upload the current Airbus hardware master list and use it as the approved hardware filter for export.</p>
+
+        <div class="row g-3 align-items-stretch">
+            <div class="col-lg-8">
+                <input type="file" class="form-control form-control-sm mb-2" id="airbusMasterListFile" accept=".csv,.xlsx">
+                <div class="d-flex gap-2 flex-wrap">
+                    <button class="btn btn-outline-primary" id="importMasterListBtn">
+                        <i class="bi bi-box-arrow-in-up"></i> Set Active Master List
+                    </button>
+                    <button class="btn btn-outline-secondary" id="clearMasterListBtn">
+                        <i class="bi bi-x-circle"></i> Clear Active Master List
+                    </button>
+                </div>
+            </div>
+            <div class="col-lg-4">
+                <div class="source-summary" id="masterListSummary">
+                    <div class="fw-bold mb-1">No active master list</div>
+                    <div class="text-muted small">Upload the latest Airbus hardware master list to constrain exportable parts to the current approved set.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Filter Section -->
     <div class="filter-section">
         <h5><i class="bi bi-funnel"></i> Part Selection Filters</h5>
@@ -247,6 +272,12 @@
                     <input class="form-check-input" type="checkbox" id="pricingOnly">
                     <label class="form-check-label" for="pricingOnly">
                         Only parts with portal pricing data
+                    </label>
+                </div>
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="applyMasterListFilter">
+                    <label class="form-check-label" for="applyMasterListFilter">
+                        Restrict to active Airbus master list
                     </label>
                 </div>
             </div>
@@ -774,6 +805,7 @@
 {% block extra_js %}
 <script>
 const MARKETPLACE_EXPORT_DEFAULTS = {{ marketplace_export_defaults | tojson }};
+const ACTIVE_MASTER_LIST_SUMMARY = {{ active_master_list_summary | tojson }};
 let allParts = [];
 let categories = [];
 let currentEditingPartNumber = null;
@@ -782,12 +814,14 @@ let importedAirbusBaselineRows = {};
 let importedAirbusBaselineTemplateKind = null;
 let partSourceMode = 'filters';
 let referenceSummary = {};
+let activeMasterListSummary = ACTIVE_MASTER_LIST_SUMMARY || null;
 
 $(document).ready(function() {
     applySavedMarketplaceDefaults();
     loadCategories();
     setPartSourceMode('filters');
     renderBaselineSourceSummary();
+    renderMasterListSummary(activeMasterListSummary);
 
     // Apply filters
     $('#applyFiltersBtn').click(function() {
@@ -808,6 +842,14 @@ $(document).ready(function() {
         loadParts();
     });
 
+    $('#importMasterListBtn').click(function() {
+        importMasterListFile();
+    });
+
+    $('#clearMasterListBtn').click(function() {
+        clearMasterList();
+    });
+
     // Reset filters
     $('#resetFiltersBtn').click(function() {
         $('input[name="stockFilter"][value="all"]').prop('checked', true);
@@ -815,6 +857,7 @@ $(document).ready(function() {
         $('#pricingOnly').prop('checked', false);
         $('#partNumberSearch').val('');
         $('#defaultQuantity').val(1);
+        $('#applyMasterListFilter').prop('checked', !!activeMasterListSummary);
         applySavedMarketplaceDefaults();
         setPartSourceMode('filters');
     });
@@ -943,6 +986,7 @@ function loadParts() {
         stock_filter: $('input[name="stockFilter"]:checked').val(),
         category_filter: $('input[name="categoryFilter"]:checked').val(),
         pricing_only: $('#pricingOnly').prop('checked'),
+        apply_master_list: $('#applyMasterListFilter').prop('checked'),
         include_non_hqpl_alts: includeNonHqplAltsEnabled(),
         include_alt_stock_rollup: includeAltStockRollupEnabled(),
         part_number_search: $('#partNumberSearch').val().trim(),
@@ -965,24 +1009,31 @@ function loadParts() {
             if (response.success && response.parts && response.parts.length > 0) {
                 allParts = response.parts;
                 referenceSummary = response.reference_summary || {};
+                if (response.active_master_list_summary !== undefined) {
+                    renderMasterListSummary(response.active_master_list_summary);
+                }
                 storeExportUncategorizedParts(response.parts, filters);
                 updateSummaryStats();
                 renderUncategorizedParts();
                 $('#statsRow').show();
                 $('#exportCard').show();
                 const sourceLabel = partSourceMode === 'baseline' ? 'uploaded Airbus list' : 'CRM filters';
+                const masterListText = response.master_list_applied ? ' Master list filter active.' : '';
                 const aliasCount = (referenceSummary.alias || 0) + (referenceSummary.alias_normalized || 0);
                 const unknownCount = referenceSummary.unknown || 0;
                 const exactCount = (referenceSummary.exact || 0) + (referenceSummary.exact_normalized || 0);
                 setLoadStatus(
                     `Loaded ${response.parts.length} parts from ${sourceLabel} in ${elapsedSeconds}s. ` +
-                    `MPN refs: ${exactCount} exact, ${aliasCount} rewritten from alt refs, ${unknownCount} unresolved.`,
+                    `MPN refs: ${exactCount} exact, ${aliasCount} rewritten from alt refs, ${unknownCount} unresolved.${masterListText}`,
                     'text-success'
                 );
             } else {
                 $('#noPartsMessage').show();
                 allParts = [];
                 referenceSummary = {};
+                if (response.active_master_list_summary !== undefined) {
+                    renderMasterListSummary(response.active_master_list_summary);
+                }
                 if (partSourceMode === 'baseline') {
                     setLoadStatus(`No CRM parts found for the uploaded Airbus list (${elapsedSeconds}s).`, 'text-muted');
                 } else {
@@ -1146,6 +1197,35 @@ function renderBaselineSourceSummary(summary) {
     $('#useBaselineSourceBtn').prop('disabled', false);
 }
 
+function renderMasterListSummary(summary) {
+    activeMasterListSummary = summary || null;
+    const hasActiveMasterList = !!(activeMasterListSummary && activeMasterListSummary.active);
+    $('#applyMasterListFilter').prop('disabled', !hasActiveMasterList);
+
+    if (!hasActiveMasterList) {
+        $('#applyMasterListFilter').prop('checked', false);
+        $('#masterListSummary').html(`
+            <div class="fw-bold mb-1">No active master list</div>
+            <div class="text-muted small">Upload the latest Airbus hardware master list to constrain exportable parts to the current approved set.</div>
+        `);
+        return;
+    }
+
+    const uploadedAt = activeMasterListSummary.uploaded_at
+        ? new Date(activeMasterListSummary.uploaded_at).toLocaleString()
+        : 'Unknown';
+    $('#applyMasterListFilter').prop('checked', true);
+    $('#masterListSummary').html(`
+        <div class="fw-bold mb-1">${activeMasterListSummary.filename || 'Active master list'}</div>
+        <div class="text-muted small">
+            Uploaded ${uploadedAt}. Processed ${activeMasterListSummary.processed_rows || 0} row(s),
+            matched ${activeMasterListSummary.matched_rows || 0},
+            unmatched ${activeMasterListSummary.unmatched_rows || 0},
+            invalid ${activeMasterListSummary.skipped_invalid || 0}.
+        </div>
+    `);
+}
+
 function updateSummaryStats() {
     const categorized = allParts.filter(p => p.mkp_category).length;
     const uncategorized = allParts.length - categorized;
@@ -1280,18 +1360,34 @@ function resolveOfferProductId(part, baselineRow) {
 
 function normalizeOfferProductIdType(productIdType, productId, part) {
     const normalizedType = String(productIdType || '').trim();
+    const productIdText = String(productId || '').trim();
+    const resolvedTitle = String((part && part.resolved_mpn_title) || '').trim();
+    const partNumber = String((part && (part.part_number || part.base_part_number)) || '').trim();
     if (normalizedType) {
+        if (normalizedType.toUpperCase() === 'SKU' && productIdText) {
+            const comparableValues = [partNumber, resolvedTitle]
+                .map(value => String(value || '').trim().toUpperCase())
+                .filter(Boolean);
+            if (comparableValues.includes(productIdText.toUpperCase())) {
+                return 'mpnTitle';
+            }
+        }
         return normalizedType;
     }
     const storedId = String((part && part.mkp_offer_product_id) || '').trim();
     if (storedId && productId === storedId) {
         return String((part && part.mkp_offer_product_id_type) || 'SKU').trim() || 'SKU';
     }
-    const partNumber = String((part && (part.part_number || part.base_part_number)) || '').trim();
     if (productId && partNumber && productId === partNumber) {
         return 'mpnTitle';
     }
     return 'SKU';
+}
+
+function sanitizeLeadTimeToShipDays(value, defaultValue = 7) {
+    const parsed = Number.parseInt(value, 10);
+    const minimum = Number.isFinite(parsed) ? parsed : defaultValue;
+    return Math.min(Math.max(minimum, 1), 30);
 }
 
 function resolveOfferProductIdType(part, baselineRow) {
@@ -1299,7 +1395,7 @@ function resolveOfferProductIdType(part, baselineRow) {
     if (partSourceMode === 'baseline') {
         const baselineType = String(getBaselineRowValue(baselineRow, 'product-id-type') || '').trim();
         if (baselineType) {
-            return baselineType;
+            return normalizeOfferProductIdType(baselineType, productId, part);
         }
     }
     const baselineValue = String(getBaselineRowValue(baselineRow, 'product-id-type') || '').trim();
@@ -1988,7 +2084,7 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
     const stockQty = effectiveState.stockQty;
     const quantity = Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
     const rawLeadTime = quantity > 0 ? 1 : (part.estimated_lead_days ?? 7);
-    const leadTime = Math.max(Number.parseInt(rawLeadTime, 10) || 1, 1);
+    const leadTime = sanitizeLeadTimeToShipDays(rawLeadTime, 7);
     const baselineRow = getImportedAirbusBaselineRow(part);
     const rawPrice = effectiveState.price ?? '';
     const price = coerceNumber(rawPrice) === null ? '0.00' : rawPrice;
@@ -2707,6 +2803,94 @@ function importAirbusStockPriceFile() {
         alert('Import failed: ' + error);
     }).always(function() {
         $('#importAirbusStockPriceBtn').prop('disabled', false).html('<i class="bi bi-box-arrow-in-up"></i> Import Airbus Export File');
+    });
+}
+
+function importMasterListFile() {
+    const fileInput = document.getElementById('airbusMasterListFile');
+    const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+
+    if (!file) {
+        alert('Choose a master list file first.');
+        return;
+    }
+
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith('.csv') && !lowerName.endsWith('.xlsx')) {
+        alert('Only .csv and .xlsx files are supported.');
+        return;
+    }
+
+    if (!confirm(`Set ${file.name} as the active Airbus hardware master list?`)) {
+        return;
+    }
+
+    $('#importMasterListBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Importing...');
+    $('#exportStatus').text('Importing Airbus master list...');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    $.ajax({
+        url: '/marketplace/master-list/import',
+        method: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false
+    }).done(function(response) {
+        if (!response.success) {
+            const error = response.error || 'Master list import failed.';
+            $('#exportStatus').text(error);
+            alert('Import failed: ' + error);
+            return;
+        }
+
+        renderMasterListSummary(response.summary || null);
+        $('#exportStatus').text(response.message || 'Master list imported.');
+
+        if (response.errors && response.errors.length) {
+            console.warn('Marketplace master list import warnings:', response.errors);
+        }
+
+        fileInput.value = '';
+    }).fail(function(xhr) {
+        const error = (xhr.responseJSON && xhr.responseJSON.error) || xhr.statusText || 'Unknown error';
+        $('#exportStatus').text(error);
+        alert('Import failed: ' + error);
+    }).always(function() {
+        $('#importMasterListBtn').prop('disabled', false).html('<i class="bi bi-box-arrow-in-up"></i> Set Active Master List');
+    });
+}
+
+function clearMasterList() {
+    if (!activeMasterListSummary) {
+        renderMasterListSummary(null);
+        return;
+    }
+
+    if (!confirm('Clear the active Airbus master list?')) {
+        return;
+    }
+
+    $('#clearMasterListBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Clearing...');
+    $.ajax({
+        url: '/marketplace/master-list/clear',
+        method: 'POST'
+    }).done(function(response) {
+        if (!response.success) {
+            const error = response.error || 'Failed to clear master list.';
+            $('#exportStatus').text(error);
+            alert(error);
+            return;
+        }
+        renderMasterListSummary(null);
+        $('#exportStatus').text(response.message || 'Active master list cleared.');
+    }).fail(function(xhr) {
+        const error = (xhr.responseJSON && xhr.responseJSON.error) || xhr.statusText || 'Unknown error';
+        $('#exportStatus').text(error);
+        alert(error);
+    }).always(function() {
+        $('#clearMasterListBtn').prop('disabled', false).html('<i class="bi bi-x-circle"></i> Clear Active Master List');
     });
 }
 </script>

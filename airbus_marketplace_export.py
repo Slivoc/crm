@@ -101,6 +101,29 @@ def _airbus_bool(value):
     return 'TRUE' if bool(value) else 'FALSE'
 
 
+def _sanitize_marketplace_lead_time_days(value, default=7):
+    if value is None or value == '':
+        parsed = default
+    else:
+        try:
+            parsed = int(round(float(str(value).strip().replace(',', '.'))))
+        except ValueError:
+            parsed = default
+    parsed = max(parsed, 1)
+    try:
+        configured_max = int(
+            (
+                os.getenv('MIRAKL_MAX_LEADTIME_TO_SHIP_DAYS')
+                or '30'
+            ).strip()
+        )
+    except (AttributeError, ValueError):
+        configured_max = 30
+    if configured_max > 0:
+        return min(parsed, configured_max)
+    return parsed
+
+
 def _normalize_header(header):
     return re.sub(r'[^a-z0-9]+', '', str(header or '').strip().lower())
 
@@ -266,7 +289,7 @@ def _build_generated_airbus_payload(part):
         "discount-start-date": "",
         "discount-end-date": "",
         "allow-quote-requests": "true",
-        "leadtime-to-ship": lead_time_days if lead_time_days else "",
+        "leadtime-to-ship": _sanitize_marketplace_lead_time_days(lead_time_days),
         "min-order-quantity": "",
         "package-quantity": "",
         "update-delete": "",
