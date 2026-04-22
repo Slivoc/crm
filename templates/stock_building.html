@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+
+{% block title %}Stock Building{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row mb-3">
+        <div class="col-12">
+            <h1 class="h3 mb-1">Stock Building</h1>
+            <p class="text-muted mb-0">Quick access to reports that help identify recurring demand and stocking opportunities.</p>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <div class="col-12 col-lg-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body d-flex flex-column">
+                    <h2 class="h5 card-title">BoM Common Parts Report</h2>
+                    <p class="card-text text-muted flex-grow-1">Which parts are common among Bills of Materials.</p>
+                    <a class="btn btn-outline-primary mt-2" href="/bom/common-parts-report">Open report</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-lg-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body d-flex flex-column">
+                    <h2 class="h5 card-title">Customer Request Common Parts</h2>
+                    <p class="card-text text-muted flex-grow-1">Which parts show up regularly among customer requests.</p>
+                    <a class="btn btn-outline-primary mt-2" href="/parts_list/parts-lists/common-parts-report">Open report</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-lg-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body d-flex flex-column">
+                    <h2 class="h5 card-title">Low Stock vs Sales Orders</h2>
+                    <p class="card-text text-muted flex-grow-1">Which parts are low on stock compared to sales orders.</p>
+                    <a class="btn btn-outline-primary mt-2" href="/purchase-suggestions/">Open report</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -311,6 +311,11 @@ def parts():
                            total_pages=total_pages,
                            breadcrumbs=breadcrumbs)
 
+
+@parts_bp.route('/stock-building', methods=['GET'])
+def stock_building():
+    return render_template('stock_building.html')
+
 @parts_bp.route('/parts/create_part', methods=['POST'])
 def create_part():
     # Handle both form data and JSON
