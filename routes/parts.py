@@ -37,6 +37,14 @@ def _extract_single_value(row):
     return row[0]
 
 
+def _build_in_clause(values):
+    cleaned = [value for value in (values or []) if value is not None]
+    if not cleaned:
+        return '', []
+    placeholders = ','.join(['?'] * len(cleaned))
+    return placeholders, cleaned
+
+
 def _with_returning_clause(query, returning='id'):
     if not _using_postgres():
         return query
@@ -314,7 +322,264 @@ def parts():
 
 @parts_bp.route('/stock-building', methods=['GET'])
 def stock_building():
-    return render_template('stock_building.html')
+    selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
+    selected_bom_ids = [bid for bid in request.args.getlist('bom_ids', type=int) if bid]
+    selected_qpl_manufacturers = [name.strip() for name in request.args.getlist('qpl_manufacturers') if (name or '').strip()]
+    exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
+
+    customers = db_execute(
+        '''
+        SELECT id, name
+        FROM customers
+        ORDER BY name
+        ''',
+        fetch='all',
+    ) or []
+    boms = db_execute(
+        '''
+        SELECT id, name, description
+        FROM bom_headers
+        WHERE type = 'kit'
+        ORDER BY name
+        ''',
+        fetch='all',
+    ) or []
+
+    customer_clause, customer_params = _build_in_clause(selected_customer_ids)
+    bom_clause, bom_params = _build_in_clause(selected_bom_ids)
+
+    parts_list_query = '''
+        SELECT
+            pll.base_part_number,
+            COUNT(*) AS parts_list_frequency,
+            COUNT(DISTINCT pl.customer_id) AS parts_list_customer_count
+        FROM parts_list_lines pll
+        JOIN parts_lists pl ON pl.id = pll.parts_list_id
+        WHERE pll.base_part_number IS NOT NULL
+          AND TRIM(pll.base_part_number) <> ''
+    '''
+    parts_list_params = []
+    if customer_clause:
+        parts_list_query += f' AND pl.customer_id IN ({customer_clause})'
+        parts_list_params.extend(customer_params)
+    parts_list_query += ' GROUP BY pll.base_part_number'
+    parts_list_rows = db_execute(parts_list_query, tuple(parts_list_params), fetch='all') or []
+
+    sales_query = '''
+        SELECT
+            sol.base_part_number,
+            COUNT(*) AS sales_frequency,
+            COUNT(DISTINCT so.customer_id) AS sales_customer_count
+        FROM sales_order_lines sol
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE sol.base_part_number IS NOT NULL
+          AND TRIM(sol.base_part_number) <> ''
+    '''
+    sales_params = []
+    if customer_clause:
+        sales_query += f' AND so.customer_id IN ({customer_clause})'
+        sales_params.extend(customer_params)
+    sales_query += ' GROUP BY sol.base_part_number'
+    sales_rows = db_execute(sales_query, tuple(sales_params), fetch='all') or []
+
+    stock_rows = db_execute(
+        '''
+        SELECT
+            base_part_number,
+            COALESCE(SUM(available_quantity), 0) AS stock_quantity
+        FROM stock_movements
+        WHERE movement_type = 'IN'
+          AND available_quantity > 0
+          AND base_part_number IS NOT NULL
+          AND TRIM(base_part_number) <> ''
+        GROUP BY base_part_number
+        ''',
+        fetch='all',
+    ) or []
+
+    try:
+        mapped_qpl_rows = db_execute(
+            '''
+            SELECT
+                ma.base_part_number,
+                ma.manufacturer_name,
+                map.supplier_id,
+                s.name AS supplier_name
+            FROM manufacturer_approvals ma
+            JOIN qpl_manufacturer_supplier_mappings map
+              ON LOWER(TRIM(ma.manufacturer_name)) = map.manufacturer_name_normalized
+            LEFT JOIN suppliers s ON s.id = map.supplier_id
+            WHERE ma.base_part_number IS NOT NULL
+              AND TRIM(ma.base_part_number) <> ''
+              AND ma.manufacturer_name IS NOT NULL
+              AND TRIM(ma.manufacturer_name) <> ''
+            ''',
+            fetch='all',
+        ) or []
+    except Exception:
+        current_app.logger.warning('QPL mapping table not available for stock building consolidated report.')
+        mapped_qpl_rows = []
+
+    bom_membership_query = '''
+        SELECT DISTINCT
+            bl.base_part_number,
+            bh.id AS bom_id,
+            bh.name AS bom_name
+        FROM bom_lines bl
+        JOIN bom_headers bh ON bh.id = bl.bom_header_id
+        WHERE bh.type = 'kit'
+          AND bl.base_part_number IS NOT NULL
+          AND TRIM(bl.base_part_number) <> ''
+    '''
+    bom_membership_params = []
+    if bom_clause:
+        bom_membership_query += f' AND bh.id IN ({bom_clause})'
+        bom_membership_params.extend(bom_params)
+    bom_membership_rows = db_execute(bom_membership_query, tuple(bom_membership_params), fetch='all') or []
+
+    part_rows = {}
+    for row in parts_list_rows:
+        base_part = (row.get('base_part_number') or '').strip().upper()
+        if not base_part:
+            continue
+        part_rows.setdefault(base_part, {'base_part_number': base_part})
+        part_rows[base_part]['parts_list_frequency'] = int(row.get('parts_list_frequency') or 0)
+        part_rows[base_part]['parts_list_customer_count'] = int(row.get('parts_list_customer_count') or 0)
+
+    for row in sales_rows:
+        base_part = (row.get('base_part_number') or '').strip().upper()
+        if not base_part:
+            continue
+        part_rows.setdefault(base_part, {'base_part_number': base_part})
+        part_rows[base_part]['sales_frequency'] = int(row.get('sales_frequency') or 0)
+        part_rows[base_part]['sales_customer_count'] = int(row.get('sales_customer_count') or 0)
+
+    for row in stock_rows:
+        base_part = (row.get('base_part_number') or '').strip().upper()
+        if not base_part:
+            continue
+        part_rows.setdefault(base_part, {'base_part_number': base_part})
+        part_rows[base_part]['stock_quantity'] = float(row.get('stock_quantity') or 0)
+
+    for row in bom_membership_rows:
+        base_part = (row.get('base_part_number') or '').strip().upper()
+        if not base_part:
+            continue
+        part_rows.setdefault(base_part, {'base_part_number': base_part})
+        bom_map = part_rows[base_part].setdefault('bom_map', {})
+        bom_id = int(row.get('bom_id'))
+        bom_map[bom_id] = row.get('bom_name') or f'BOM {bom_id}'
+
+    for row in mapped_qpl_rows:
+        base_part = (row.get('base_part_number') or '').strip().upper()
+        if not base_part:
+            continue
+        part_rows.setdefault(base_part, {'base_part_number': base_part})
+        qpl_mappings = part_rows[base_part].setdefault('qpl_mappings', [])
+        qpl_mappings.append({
+            'manufacturer_name': row.get('manufacturer_name'),
+            'supplier_name': row.get('supplier_name'),
+            'supplier_id': row.get('supplier_id'),
+        })
+
+    all_bom_ids = sorted({
+        int(row.get('bom_id'))
+        for row in bom_membership_rows
+        if row.get('bom_id') is not None
+    })
+    bom_name_by_id = {
+        int(row.get('bom_id')): (row.get('bom_name') or f"BOM {row.get('bom_id')}")
+        for row in bom_membership_rows
+        if row.get('bom_id') is not None
+    }
+
+    base_parts = list(part_rows.keys())
+    if base_parts:
+        in_clause, pn_params = _build_in_clause(base_parts)
+        part_number_rows = db_execute(
+            f'''
+            SELECT base_part_number, MAX(part_number) AS part_number
+            FROM part_numbers
+            WHERE base_part_number IN ({in_clause})
+            GROUP BY base_part_number
+            ''',
+            tuple(pn_params),
+            fetch='all',
+        ) or []
+    else:
+        part_number_rows = []
+
+    part_number_map = {
+        (row.get('base_part_number') or '').strip().upper(): (row.get('part_number') or row.get('base_part_number'))
+        for row in part_number_rows
+    }
+
+    qpl_manufacturer_option_set = set()
+    consolidated_rows = []
+    selected_qpl_keys = {name.lower() for name in selected_qpl_manufacturers}
+    selected_bom_id_set = set(selected_bom_ids)
+
+    for base_part, data in part_rows.items():
+        qpl_mappings = data.get('qpl_mappings') or []
+        mapped_manufacturers = sorted({
+            (mapping.get('manufacturer_name') or '').strip()
+            for mapping in qpl_mappings
+            if (mapping.get('manufacturer_name') or '').strip()
+        }, key=lambda name: name.lower())
+        qpl_manufacturer_option_set.update(mapped_manufacturers)
+
+        if selected_qpl_keys:
+            mapped_keys = {(name or '').lower() for name in mapped_manufacturers}
+            if not (mapped_keys & selected_qpl_keys):
+                continue
+
+        bom_map = data.get('bom_map') or {}
+        if selected_bom_id_set and not (set(bom_map.keys()) & selected_bom_id_set):
+            continue
+
+        stock_quantity = float(data.get('stock_quantity') or 0)
+        if exclude_in_stock and stock_quantity > 0:
+            continue
+
+        consolidated_rows.append({
+            'base_part_number': base_part,
+            'part_number': part_number_map.get(base_part) or base_part,
+            'sales_frequency': int(data.get('sales_frequency') or 0),
+            'sales_customer_count': int(data.get('sales_customer_count') or 0),
+            'parts_list_frequency': int(data.get('parts_list_frequency') or 0),
+            'parts_list_customer_count': int(data.get('parts_list_customer_count') or 0),
+            'stock_quantity': stock_quantity,
+            'qpl_mappings': qpl_mappings,
+            'qpl_manufacturers': mapped_manufacturers,
+            'bom_map': bom_map,
+            'bom_count': len(bom_map),
+        })
+
+    consolidated_rows.sort(
+        key=lambda row: (
+            -len(row.get('qpl_manufacturers') or []),
+            -(row.get('sales_frequency') or 0),
+            -(row.get('parts_list_frequency') or 0),
+            -(row.get('bom_count') or 0),
+            row.get('part_number') or row.get('base_part_number'),
+        )
+    )
+
+    qpl_manufacturer_options = sorted(qpl_manufacturer_option_set, key=lambda name: name.lower())
+
+    return render_template(
+        'stock_building.html',
+        rows=consolidated_rows,
+        customers=[dict(row) for row in customers],
+        boms=[dict(row) for row in boms],
+        bom_column_ids=all_bom_ids,
+        bom_name_by_id=bom_name_by_id,
+        qpl_manufacturer_options=qpl_manufacturer_options,
+        selected_customer_ids=selected_customer_ids,
+        selected_bom_ids=selected_bom_ids,
+        selected_qpl_manufacturers=selected_qpl_manufacturers,
+        exclude_in_stock=exclude_in_stock,
+    )
 
 @parts_bp.route('/parts/create_part', methods=['POST'])
 def create_part():
