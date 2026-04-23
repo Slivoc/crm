@@ -1991,13 +1991,11 @@ function resetMailboxFolderModal() {
 
 function setMailboxFolderSaveMode(mode = 'file_only') {
     mailboxFolderSaveMode = mode === 'file_and_forward_admin' ? 'file_and_forward_admin' : 'file_only';
-    const forwardEnabled = mailboxFolderModal?.dataset.forwardAdminAllowed === '1';
     if (mailboxFolderSaveOnlyOption) {
         mailboxFolderSaveOnlyOption.classList.toggle('active', mailboxFolderSaveMode === 'file_only');
     }
     if (mailboxFolderSaveForwardAdminOption) {
         mailboxFolderSaveForwardAdminOption.classList.toggle('active', mailboxFolderSaveMode === 'file_and_forward_admin');
-        mailboxFolderSaveForwardAdminOption.disabled = !forwardEnabled;
     }
     if (mailboxFolderSaveBtn) {
         mailboxFolderSaveBtn.innerHTML = mailboxFolderSaveMode === 'file_and_forward_admin'
@@ -2108,11 +2106,8 @@ async function openMailboxFolderModal(messageId, emailAddress, options = {}) {
     if (!mailboxFolderModal) return;
     const preferredFolderId = options?.preferredFolderId || '';
     const preferredFolderName = options?.preferredFolderName || '';
-    const message = messageCache.find(item => item?.id === messageId) || null;
-    const forwardAdminAllowed = Boolean(message?.parts_list_id);
     mailboxFolderModal.dataset.messageId = messageId || '';
     mailboxFolderModal.dataset.emailAddress = normalizeEmailAddress(emailAddress || '');
-    mailboxFolderModal.dataset.forwardAdminAllowed = forwardAdminAllowed ? '1' : '0';
     mailboxFolderModal.dataset.preferredFolderId = preferredFolderId;
     mailboxFolderModal.dataset.preferredFolderName = preferredFolderName;
     if (mailboxFolderEmail) {
@@ -2677,7 +2672,6 @@ mailboxFolderSaveOnlyOption?.addEventListener('click', () => {
 });
 
 mailboxFolderSaveForwardAdminOption?.addEventListener('click', () => {
-    if (mailboxFolderSaveForwardAdminOption.disabled) return;
     setMailboxFolderSaveMode('file_and_forward_admin');
 });
 
