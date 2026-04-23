@@ -3,7 +3,7 @@
 {% block title %}Stock Building{% endblock %}
 
 {% block content %}
-<div class="container py-4">
+<div class="container-fluid py-4 px-4 min-vh-100">
     <div class="d-flex align-items-start justify-content-between flex-wrap gap-3 mb-3">
         <div>
             <h1 class="h3 mb-1">Stock Building (Consolidated)</h1>
@@ -73,15 +73,15 @@
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-striped table-hover align-middle mb-0">
+                <table class="table table-striped table-hover align-middle mb-0" id="stockBuildingTable">
                     <thead class="table-light">
                         <tr>
-                            <th>Part</th>
-                            <th class="text-end">Stock</th>
-                            <th>QPL manufacturers (mapped)</th>
-                            <th class="text-center">Sales<br><small class="text-muted">Freq / Cust</small></th>
-                            <th class="text-center">Parts Lists<br><small class="text-muted">Freq / Cust</small></th>
-                            <th class="text-center">BOMs</th>
+                            <th role="button" class="sortable" data-sort-key="part_number" data-sort-type="text">Part <span class="sort-indicator text-muted">↕</span></th>
+                            <th role="button" class="text-end sortable" data-sort-key="stock_quantity" data-sort-type="number">Stock <span class="sort-indicator text-muted">↕</span></th>
+                            <th role="button" class="sortable" data-sort-key="qpl_count" data-sort-type="number">QPL manufacturers (mapped) <span class="sort-indicator text-muted">↕</span></th>
+                            <th role="button" class="text-center sortable" data-sort-key="sales_frequency" data-sort-type="number">Sales<br><small class="text-muted">Freq / Cust</small> <span class="sort-indicator text-muted">↕</span></th>
+                            <th role="button" class="text-center sortable" data-sort-key="parts_list_frequency" data-sort-type="number">Parts Lists<br><small class="text-muted">Freq / Cust</small> <span class="sort-indicator text-muted">↕</span></th>
+                            <th role="button" class="text-center sortable" data-sort-key="bom_count" data-sort-type="number">BOMs <span class="sort-indicator text-muted">↕</span></th>
                             {% for bom_id in bom_column_ids %}
                             <th class="text-center bom-col" style="display:none;">{{ bom_name_by_id.get(bom_id, 'BOM ' ~ bom_id) }}</th>
                             {% endfor %}
@@ -89,7 +89,14 @@
                     </thead>
                     <tbody>
                         {% for row in rows %}
-                        <tr>
+                        <tr
+                            data-part_number="{{ (row.part_number or row.base_part_number)|lower }}"
+                            data-stock_quantity="{{ row.stock_quantity }}"
+                            data-qpl_count="{{ row.qpl_mappings|length }}"
+                            data-sales_frequency="{{ row.sales_frequency }}"
+                            data-parts_list_frequency="{{ row.parts_list_frequency }}"
+                            data-bom_count="{{ row.bom_count }}"
+                        >
                             <td>
                                 <div class="fw-semibold font-monospace">{{ row.part_number }}</div>
                                 <div class="small text-muted">{{ row.base_part_number }}</div>
@@ -111,8 +118,18 @@
                                 <span class="text-muted">-</span>
                                 {% endif %}
                             </td>
-                            <td class="text-center">{{ row.sales_frequency }} / {{ row.sales_customer_count }}</td>
-                            <td class="text-center">{{ row.parts_list_frequency }} / {{ row.parts_list_customer_count }}</td>
+                            <td class="text-center">
+                                {{ row.sales_frequency }} / {{ row.sales_customer_count }}
+                                {% if row.sales_customers %}
+                                <div class="small text-muted mt-1">{{ row.sales_customers }}</div>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {{ row.parts_list_frequency }} / {{ row.parts_list_customer_count }}
+                                {% if row.parts_list_customers %}
+                                <div class="small text-muted mt-1">{{ row.parts_list_customers }}</div>
+                                {% endif %}
+                            </td>
                             <td class="text-center">{{ row.bom_count }}</td>
                             {% for bom_id in bom_column_ids %}
                             <td class="text-center bom-col" style="display:none;">
@@ -140,6 +157,50 @@
 </div>
 
 <script>
+document.querySelectorAll('#stockBuildingTable th.sortable').forEach(function (header) {
+    header.addEventListener('click', function () {
+        const table = document.getElementById('stockBuildingTable');
+        const tbody = table?.querySelector('tbody');
+        if (!tbody) return;
+
+        const key = header.dataset.sortKey;
+        const sortType = header.dataset.sortType || 'text';
+        const currentDirection = header.dataset.sortDirection === 'asc' ? 'asc' : 'desc';
+        const nextDirection = currentDirection === 'asc' ? 'desc' : 'asc';
+        header.dataset.sortDirection = nextDirection;
+
+        table.querySelectorAll('th.sortable').forEach(function (th) {
+            if (th !== header) {
+                th.dataset.sortDirection = '';
+                const indicator = th.querySelector('.sort-indicator');
+                if (indicator) indicator.textContent = '↕';
+            }
+        });
+
+        const indicator = header.querySelector('.sort-indicator');
+        if (indicator) indicator.textContent = nextDirection === 'asc' ? '↑' : '↓';
+
+        const rows = Array.from(tbody.querySelectorAll('tr')).filter(function (row) {
+            return row.dataset[key] !== undefined;
+        });
+
+        rows.sort(function (a, b) {
+            const aRaw = a.dataset[key] || '';
+            const bRaw = b.dataset[key] || '';
+            const aValue = sortType === 'number' ? Number(aRaw) || 0 : aRaw.toString();
+            const bValue = sortType === 'number' ? Number(bRaw) || 0 : bRaw.toString();
+
+            if (aValue < bValue) return nextDirection === 'asc' ? -1 : 1;
+            if (aValue > bValue) return nextDirection === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        rows.forEach(function (row) {
+            tbody.appendChild(row);
+        });
+    });
+});
+
 document.getElementById('toggleBomColumnsBtn')?.addEventListener('click', function () {
     document.querySelectorAll('.bom-col').forEach(function (cell) {
         const isHidden = cell.style.display === 'none';
