@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from math import ceil
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app
@@ -43,6 +44,19 @@ def _build_in_clause(values):
         return '', []
     placeholders = ','.join(['?'] * len(cleaned))
     return placeholders, cleaned
+
+
+def _normalize_company_name_for_match(name):
+    cleaned = re.sub(r'[^a-z0-9]+', ' ', (name or '').lower())
+    tokens = [
+        token
+        for token in cleaned.split()
+        if token not in {
+            'ltd', 'limited', 'inc', 'llc', 'plc', 'corp', 'corporation',
+            'co', 'company', 'gmbh', 'sa', 'bv', 'ag', 'srl', 'pte', 'group'
+        }
+    ]
+    return ''.join(tokens)
 
 
 def _with_returning_clause(query, returning='id'):
@@ -348,13 +362,21 @@ def stock_building():
     customer_clause, customer_params = _build_in_clause(selected_customer_ids)
     bom_clause, bom_params = _build_in_clause(selected_bom_ids)
 
-    parts_list_query = '''
+    customer_agg_sql = (
+        "STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name)"
+        if _using_postgres()
+        else "GROUP_CONCAT(DISTINCT c.name)"
+    )
+
+    parts_list_query = f'''
         SELECT
             pll.base_part_number,
             COUNT(*) AS parts_list_frequency,
-            COUNT(DISTINCT pl.customer_id) AS parts_list_customer_count
+            COUNT(DISTINCT pl.customer_id) AS parts_list_customer_count,
+            {customer_agg_sql} AS parts_list_customers
         FROM parts_list_lines pll
         JOIN parts_lists pl ON pl.id = pll.parts_list_id
+        LEFT JOIN customers c ON c.id = pl.customer_id
         WHERE pll.base_part_number IS NOT NULL
           AND TRIM(pll.base_part_number) <> ''
     '''
@@ -365,13 +387,15 @@ def stock_building():
     parts_list_query += ' GROUP BY pll.base_part_number'
     parts_list_rows = db_execute(parts_list_query, tuple(parts_list_params), fetch='all') or []
 
-    sales_query = '''
+    sales_query = f'''
         SELECT
             sol.base_part_number,
             COUNT(*) AS sales_frequency,
-            COUNT(DISTINCT so.customer_id) AS sales_customer_count
+            COUNT(DISTINCT so.customer_id) AS sales_customer_count,
+            {customer_agg_sql} AS sales_customers
         FROM sales_order_lines sol
         JOIN sales_orders so ON so.id = sol.sales_order_id
+        LEFT JOIN customers c ON c.id = so.customer_id
         WHERE sol.base_part_number IS NOT NULL
           AND TRIM(sol.base_part_number) <> ''
     '''
@@ -398,24 +422,63 @@ def stock_building():
     ) or []
 
     try:
-        mapped_qpl_rows = db_execute(
+        qpl_mapping_rows = db_execute(
             '''
-            SELECT
-                ma.base_part_number,
-                ma.manufacturer_name,
-                map.supplier_id,
-                s.name AS supplier_name
-            FROM manufacturer_approvals ma
-            JOIN qpl_manufacturer_supplier_mappings map
-              ON LOWER(TRIM(ma.manufacturer_name)) = map.manufacturer_name_normalized
-            LEFT JOIN suppliers s ON s.id = map.supplier_id
-            WHERE ma.base_part_number IS NOT NULL
-              AND TRIM(ma.base_part_number) <> ''
-              AND ma.manufacturer_name IS NOT NULL
-              AND TRIM(ma.manufacturer_name) <> ''
+            SELECT manufacturer_name_normalized, manufacturer_name, supplier_id
+            FROM qpl_manufacturer_supplier_mappings
             ''',
             fetch='all',
         ) or []
+        qpl_supplier_map = {
+            (row.get('manufacturer_name_normalized') or '').strip(): row.get('supplier_id')
+            for row in qpl_mapping_rows
+            if (row.get('manufacturer_name_normalized') or '').strip() and row.get('supplier_id')
+        }
+        supplier_rows = db_execute(
+            '''
+            SELECT id, name
+            FROM suppliers
+            ''',
+            fetch='all',
+        ) or []
+        supplier_name_map = {
+            row.get('id'): row.get('name')
+            for row in supplier_rows
+            if row.get('id')
+        }
+        mapped_qpl_candidates = db_execute(
+            '''
+            SELECT
+                UPPER(TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''), NULLIF(ma.base_part_number, '')))) AS base_part_number,
+                ma.manufacturer_name
+            FROM manufacturer_approvals ma
+            WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
+              AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''), NULLIF(ma.base_part_number, ''))) <> ''
+            ''',
+            fetch='all',
+        ) or []
+
+        mapped_qpl_rows = []
+        seen_mapped_rows = set()
+        for row in mapped_qpl_candidates:
+            manufacturer_name = (row.get('manufacturer_name') or '').strip()
+            normalized_name = _normalize_company_name_for_match(manufacturer_name)
+            supplier_id = qpl_supplier_map.get(normalized_name)
+            if not supplier_id:
+                continue
+            base_part = (row.get('base_part_number') or '').strip().upper()
+            if not base_part:
+                continue
+            dedupe_key = (base_part, manufacturer_name, supplier_id)
+            if dedupe_key in seen_mapped_rows:
+                continue
+            seen_mapped_rows.add(dedupe_key)
+            mapped_qpl_rows.append({
+                'base_part_number': base_part,
+                'manufacturer_name': manufacturer_name,
+                'supplier_id': supplier_id,
+                'supplier_name': supplier_name_map.get(supplier_id),
+            })
     except Exception:
         current_app.logger.warning('QPL mapping table not available for stock building consolidated report.')
         mapped_qpl_rows = []
@@ -445,6 +508,7 @@ def stock_building():
         part_rows.setdefault(base_part, {'base_part_number': base_part})
         part_rows[base_part]['parts_list_frequency'] = int(row.get('parts_list_frequency') or 0)
         part_rows[base_part]['parts_list_customer_count'] = int(row.get('parts_list_customer_count') or 0)
+        part_rows[base_part]['parts_list_customers'] = row.get('parts_list_customers') or ''
 
     for row in sales_rows:
         base_part = (row.get('base_part_number') or '').strip().upper()
@@ -453,6 +517,7 @@ def stock_building():
         part_rows.setdefault(base_part, {'base_part_number': base_part})
         part_rows[base_part]['sales_frequency'] = int(row.get('sales_frequency') or 0)
         part_rows[base_part]['sales_customer_count'] = int(row.get('sales_customer_count') or 0)
+        part_rows[base_part]['sales_customers'] = row.get('sales_customers') or ''
 
     for row in stock_rows:
         base_part = (row.get('base_part_number') or '').strip().upper()
@@ -546,8 +611,10 @@ def stock_building():
             'part_number': part_number_map.get(base_part) or base_part,
             'sales_frequency': int(data.get('sales_frequency') or 0),
             'sales_customer_count': int(data.get('sales_customer_count') or 0),
+            'sales_customers': data.get('sales_customers') or '',
             'parts_list_frequency': int(data.get('parts_list_frequency') or 0),
             'parts_list_customer_count': int(data.get('parts_list_customer_count') or 0),
+            'parts_list_customers': data.get('parts_list_customers') or '',
             'stock_quantity': stock_quantity,
             'qpl_mappings': qpl_mappings,
             'qpl_manufacturers': mapped_manufacturers,
