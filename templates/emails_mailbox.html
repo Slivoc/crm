@@ -1843,9 +1843,9 @@ function renderEmailList(messages, append = false) {
         const folderTitle = folderRule?.graph_folder_name
             ? `File to ${folderRule.graph_folder_name}`
             : 'File to folder';
-        const canQuickForwardAdmin = Boolean(message.parts_list_id && folderRule?.graph_folder_id);
+        const hasFolderRule = Boolean(folderRule?.graph_folder_id);
         const folderButton = normalizedFromEmail
-            ? (canQuickForwardAdmin
+            ? (hasFolderRule
                 ? `<div class="dropdown d-inline-block">
                         <button type="button" class="email-badge email-badge-folder email-folder-btn email-folder-has-rule dropdown-toggle" data-email="${normalizedFromEmail}" data-bs-toggle="dropdown" aria-expanded="false" title="${folderTitle}">
                             <i class="bi bi-folder"></i>
