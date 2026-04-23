@@ -931,6 +931,25 @@ function setFolderRuleForEmail(address, rule) {
     }
 }
 
+async function preloadMailboxFolderRules() {
+    try {
+        const response = await fetch('/emails/mailbox/folder-rules');
+        const data = await response.json();
+        if (!response.ok || !data.success) return;
+        const rules = Array.isArray(data.rules) ? data.rules : [];
+        rules.forEach(rule => {
+            const email = normalizeEmailAddress(rule?.email_address);
+            if (!email || !rule?.graph_folder_id) return;
+            setFolderRuleForEmail(email, {
+                graph_folder_id: rule.graph_folder_id,
+                graph_folder_name: rule.graph_folder_name || ''
+            });
+        });
+    } catch (error) {
+        // Best effort only; the message payload may still provide folder rules.
+    }
+}
+
 function setContactActionsVisible(isVisible) {
     if (!readingContactActions) return;
     readingContactActions.style.display = isVisible ? 'flex' : 'none';
@@ -3188,6 +3207,7 @@ renderSupplierMatchState();
 updatePrimaryMailboxActions();
 setGraphStatus(graphSeed);
 (async () => {
+    await preloadMailboxFolderRules();
     const initial = await loadMailboxMessages({ reset: true, useCache: true });
     if (initial?.from_cache) {
         loadMailboxMessages({ reset: true, silent: true });
