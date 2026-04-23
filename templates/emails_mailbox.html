@@ -1866,7 +1866,7 @@ function renderEmailList(messages, append = false) {
         const folderButton = normalizedFromEmail
             ? (hasFolderRule
                 ? `<div class="dropdown d-inline-block">
-                        <button type="button" class="email-badge email-badge-folder email-folder-btn email-folder-has-rule dropdown-toggle" data-email="${normalizedFromEmail}" data-bs-toggle="dropdown" aria-expanded="false" title="${folderTitle}">
+                        <button type="button" class="email-badge email-badge-folder email-folder-btn email-folder-has-rule dropdown-toggle" data-message-id="${message.id}" data-email="${normalizedFromEmail}" data-bs-toggle="dropdown" aria-expanded="false" title="${folderTitle}">
                             <i class="bi bi-folder"></i>
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end">
@@ -2662,6 +2662,10 @@ emailListContainer?.addEventListener('click', (event) => {
     const folderBtn = event.target.closest('.email-folder-btn');
     if (folderBtn) {
         if (folderBtn.getAttribute('data-bs-toggle') === 'dropdown') {
+            event.stopPropagation();
+            event.preventDefault();
+            const dropdown = window.bootstrap?.Dropdown?.getOrCreateInstance(folderBtn);
+            dropdown?.toggle();
             return;
         }
         event.stopPropagation();
@@ -3512,7 +3516,7 @@ mailboxManualPartsInput?.addEventListener('keydown', (event) => {
 .email-content {
     flex: 1;
     min-width: 0;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .email-top-row {
