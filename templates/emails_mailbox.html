@@ -1865,23 +1865,9 @@ function renderEmailList(messages, append = false) {
         const hasFolderRule = Boolean(folderRule?.graph_folder_id);
         const folderButton = normalizedFromEmail
             ? (hasFolderRule
-                ? `<div class="dropdown d-inline-block">
-                        <button type="button" class="email-badge email-badge-folder email-folder-btn email-folder-has-rule dropdown-toggle" data-message-id="${message.id}" data-email="${normalizedFromEmail}" data-bs-toggle="dropdown" aria-expanded="false" title="${folderTitle}">
+                ? `<button type="button" class="email-badge email-badge-folder email-folder-btn email-folder-has-rule" data-message-id="${message.id}" data-email="${normalizedFromEmail}" title="${folderTitle}">
                             <i class="bi bi-folder"></i>
-                        </button>
-                        <ul class="dropdown-menu dropdown-menu-end">
-                            <li>
-                                <button type="button" class="dropdown-item email-folder-dropdown-file" data-message-id="${message.id}" data-email="${normalizedFromEmail}">
-                                    <i class="bi bi-folder2-open me-2"></i>File
-                                </button>
-                            </li>
-                            <li>
-                                <button type="button" class="dropdown-item email-folder-dropdown-file-admin" data-message-id="${message.id}" data-email="${normalizedFromEmail}">
-                                    <i class="bi bi-send-check me-2"></i>File and send to admin
-                                </button>
-                            </li>
-                        </ul>
-                    </div>`
+                        </button>`
                 : `<button type="button" class="email-badge email-badge-folder email-folder-btn${folderRule ? ' email-folder-has-rule' : ''}" data-message-id="${message.id}" data-email="${normalizedFromEmail}" title="${folderTitle}">
                        <i class="bi bi-folder"></i>
                    </button>`)
@@ -2645,29 +2631,8 @@ filterCustomerContacts?.addEventListener('change', applyEmailFilters);
 filterSupplierContacts?.addEventListener('change', applyEmailFilters);
 
 emailListContainer?.addEventListener('click', (event) => {
-    const folderDropdownFileBtn = event.target.closest('.email-folder-dropdown-file');
-    if (folderDropdownFileBtn) {
-        event.stopPropagation();
-        event.preventDefault();
-        handleFolderDropdownAction(folderDropdownFileBtn, { sendAdmin: false });
-        return;
-    }
-    const folderDropdownFileAdminBtn = event.target.closest('.email-folder-dropdown-file-admin');
-    if (folderDropdownFileAdminBtn) {
-        event.stopPropagation();
-        event.preventDefault();
-        handleFolderDropdownAction(folderDropdownFileAdminBtn, { sendAdmin: true });
-        return;
-    }
     const folderBtn = event.target.closest('.email-folder-btn');
     if (folderBtn) {
-        if (folderBtn.getAttribute('data-bs-toggle') === 'dropdown') {
-            event.stopPropagation();
-            event.preventDefault();
-            const dropdown = window.bootstrap?.Dropdown?.getOrCreateInstance(folderBtn);
-            dropdown?.toggle();
-            return;
-        }
         event.stopPropagation();
         handleFolderButtonClick(folderBtn);
         return;
