@@ -1867,6 +1867,9 @@ function renderEmailList(messages, append = false) {
             ? (hasFolderRule
                 ? `<button type="button" class="email-badge email-badge-folder email-folder-btn email-folder-has-rule" data-message-id="${message.id}" data-email="${normalizedFromEmail}" title="${folderTitle}">
                             <i class="bi bi-folder"></i>
+                        </button>
+                        <button type="button" class="email-badge email-badge-folder email-folder-admin-btn email-folder-has-rule" data-message-id="${message.id}" data-email="${normalizedFromEmail}" title="File to ${folderRule.graph_folder_name || 'folder'} and send to admin">
+                            <i class="bi bi-send-check"></i>
                         </button>`
                 : `<button type="button" class="email-badge email-badge-folder email-folder-btn${folderRule ? ' email-folder-has-rule' : ''}" data-message-id="${message.id}" data-email="${normalizedFromEmail}" title="${folderTitle}">
                        <i class="bi bi-folder"></i>
@@ -2631,6 +2634,12 @@ filterCustomerContacts?.addEventListener('change', applyEmailFilters);
 filterSupplierContacts?.addEventListener('change', applyEmailFilters);
 
 emailListContainer?.addEventListener('click', (event) => {
+    const folderAdminBtn = event.target.closest('.email-folder-admin-btn');
+    if (folderAdminBtn) {
+        event.stopPropagation();
+        handleFolderDropdownAction(folderAdminBtn, { sendAdmin: true });
+        return;
+    }
     const folderBtn = event.target.closest('.email-folder-btn');
     if (folderBtn) {
         event.stopPropagation();
