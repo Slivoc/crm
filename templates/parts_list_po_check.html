@@ -763,6 +763,9 @@
                         <span class="text-muted">Ready to update parts lists to "Won" status?</span>
                     </div>
                     <div>
+                        <button class="btn btn-outline-primary me-2" id="retryOcrBtn" disabled title="Upload a PDF first to retry with OCR">
+                            <i class="bi bi-eye me-1"></i>Retry with OCR
+                        </button>
                         <button class="btn btn-outline-secondary me-2" id="resetBtn">
                             <i class="bi bi-arrow-counterclockwise me-1"></i>Start Over
                         </button>
@@ -890,6 +893,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const confirmBtn = document.getElementById('confirmBtn');
     const supplierInsightModalEl = document.getElementById('supplierInsightModal');
     const supplierInsightModal = supplierInsightModalEl ? new bootstrap.Modal(supplierInsightModalEl) : null;
+    const retryOcrBtn = document.getElementById('retryOcrBtn');
     const resetBtn = document.getElementById('resetBtn');
     const loadingOverlay = document.getElementById('loadingOverlay');
     const loadingText = document.getElementById('loadingText');
@@ -1036,22 +1040,25 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateExtractBtn() {
         const customerId = $(customerSelect).val();
         extractBtn.disabled = !selectedFile || !customerId;
+        retryOcrBtn.disabled = !selectedFile || !customerId;
+        retryOcrBtn.title = selectedFile
+            ? 'Re-run extraction with OCR on this same PDF'
+            : 'Upload a PDF first to retry with OCR';
     }
 
     $(customerSelect).on('change', updateExtractBtn);
 
-    // Extract button handler
-    extractBtn.addEventListener('click', async () => {
+    async function extractAndMatchPo(extractionMode) {
         const customerId = $(customerSelect).val();
         if (!selectedFile || !customerId) return;
 
-        showLoading(useOcrMode?.checked ? 'Running OCR on PDF pages...' : 'Extracting text from PDF...');
+        showLoading(extractionMode === 'ocr' ? 'Running OCR on PDF pages...' : 'Extracting text from PDF...');
 
         try {
             // Step 1: Extract from PDF
             const formData = new FormData();
             formData.append('file', selectedFile);
-            formData.append('extraction_mode', useOcrMode?.checked ? 'ocr' : 'text');
+            formData.append('extraction_mode', extractionMode);
 
             const extractResponse = await fetch('{{ url_for("parts_list_po_check.extract_po") }}', {
                 method: 'POST',
@@ -1098,6 +1105,15 @@ document.addEventListener('DOMContentLoaded', function() {
         } finally {
             hideLoading();
         }
+    }
+
+    // Extract button handler
+    extractBtn.addEventListener('click', async () => {
+        await extractAndMatchPo(useOcrMode?.checked ? 'ocr' : 'text');
+    });
+
+    retryOcrBtn.addEventListener('click', async () => {
+        await extractAndMatchPo('ocr');
     });
 
     function updatePODisplay(data) {
