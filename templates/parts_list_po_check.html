@@ -763,7 +763,7 @@
                         <span class="text-muted">Ready to update parts lists to "Won" status?</span>
                     </div>
                     <div>
-                        <button class="btn btn-outline-primary me-2" id="retryOcrBtn" disabled title="Upload a PDF first to retry with OCR">
+                        <button class="btn btn-outline-primary me-2" id="retryOcrBtn" title="Retry with OCR (you will be asked to choose a PDF first)">
                             <i class="bi bi-eye me-1"></i>Retry with OCR
                         </button>
                         <button class="btn btn-outline-secondary me-2" id="resetBtn">
@@ -875,6 +875,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let matchResults = null;
     let rawText = '';
     let extractionModeUsed = 'text';
+    let pendingRetryOcrAfterFilePick = false;
     const supplierInsightCache = {};
     let visibleRowIndices = [];
     let activeRowIndex = null;
@@ -1027,6 +1028,11 @@ document.addEventListener('DOMContentLoaded', function() {
         fileInfo.style.display = 'block';
         dropZone.classList.add('has-file');
         updateExtractBtn();
+
+        if (pendingRetryOcrAfterFilePick) {
+            pendingRetryOcrAfterFilePick = false;
+            extractAndMatchPo('ocr');
+        }
     }
 
     function clearFile() {
@@ -1040,10 +1046,10 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateExtractBtn() {
         const customerId = $(customerSelect).val();
         extractBtn.disabled = !selectedFile || !customerId;
-        retryOcrBtn.disabled = !selectedFile || !customerId;
+        retryOcrBtn.disabled = false;
         retryOcrBtn.title = selectedFile
             ? 'Re-run extraction with OCR on this same PDF'
-            : 'Upload a PDF first to retry with OCR';
+            : 'Retry with OCR (you will be asked to choose a PDF first)';
     }
 
     $(customerSelect).on('change', updateExtractBtn);
@@ -1113,6 +1119,17 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     retryOcrBtn.addEventListener('click', async () => {
+        const customerId = $(customerSelect).val();
+        if (!customerId) {
+            alert('Please select a customer first.');
+            $(customerSelect).select2('open');
+            return;
+        }
+        if (!selectedFile) {
+            pendingRetryOcrAfterFilePick = true;
+            fileInput.click();
+            return;
+        }
         await extractAndMatchPo('ocr');
     });
 
