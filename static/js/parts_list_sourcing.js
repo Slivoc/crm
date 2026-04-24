@@ -1441,17 +1441,6 @@ function copyToClipboard(text, buttonEl) {
 const emailSuppliersBtn = document.getElementById('email-suppliers-btn');
 
 if (emailSuppliersBtn) {
-    const hasILSData = document.querySelectorAll('.sourcing-table .populated').length > 0 ||
-                       (window.LINE_DATA && window.LINE_DATA.some(line =>
-                           line.ils_data && line.ils_data.length > 0
-                       ));
-
-    console.log('Has ILS data:', hasILSData);
-
-    if (hasILSData) {
-        emailSuppliersBtn.style.display = 'inline-block';
-    }
-
     emailSuppliersBtn.addEventListener('click', function() {
         console.log('Email ILS Suppliers clicked');
 
@@ -1535,14 +1524,6 @@ if (emailSuppliersBtn) {
 const emailSuggestedBtn = document.getElementById('email-suggested-suppliers-btn');
 
 if (emailSuggestedBtn) {
-    const hasSuggestedSuppliers = document.querySelectorAll('.sourcing-table .suggested-wrapper').length > 0;
-
-    console.log('Has suggested suppliers:', hasSuggestedSuppliers);
-
-    if (hasSuggestedSuppliers) {
-        emailSuggestedBtn.style.display = 'inline-block';
-    }
-
     emailSuggestedBtn.addEventListener('click', function() {
         console.log('Email Suggested Suppliers clicked');
 

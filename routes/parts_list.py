@@ -3338,13 +3338,23 @@ def email_suppliers():
         logging.info(
             f"First part number: {data['results'][0].get('input_part_number') if data.get('results') else 'NONE'}")
 
+        list_id = data.get('list_id')
         session['email_data'] = data
         session['email_mode'] = mode
+        session['email_data_key'] = f"{list_id}:{mode}" if list_id is not None else None
 
-        return jsonify({'success': True, 'redirect': url_for('parts_list.email_suppliers', mode=mode)})
+        keyed_data = session.get('email_data_by_context', {})
+        if not isinstance(keyed_data, dict):
+            keyed_data = {}
+        if list_id is not None:
+            keyed_data[f"{list_id}:{mode}"] = data
+            session['email_data_by_context'] = keyed_data
+
+        return jsonify({'success': True, 'redirect': url_for('parts_list.email_suppliers', mode=mode, list_id=list_id)})
 
     # GET: Display the page
     mode = request.args.get('mode')
+    requested_list_id = request.args.get('list_id', type=int)
 
     # If mode is specified in URL, update session
     if mode:
@@ -3353,12 +3363,28 @@ def email_suppliers():
         # Otherwise use session or default to 'ils'
         mode = session.get('email_mode', 'ils')
 
-    email_data = session.get('email_data')
+    email_data = None
+    keyed_data = session.get('email_data_by_context', {})
+    if not isinstance(keyed_data, dict):
+        keyed_data = {}
+
+    if requested_list_id is not None:
+        email_data = keyed_data.get(f"{requested_list_id}:{mode}")
+
+    if not email_data:
+        active_key = session.get('email_data_key')
+        if active_key:
+            email_data = keyed_data.get(active_key)
+
+    if not email_data:
+        email_data = session.get('email_data')
 
     if not email_data:
         return redirect(url_for('parts_list.parts_list'))
 
     list_id = email_data.get('list_id')
+    if requested_list_id is not None and list_id != requested_list_id:
+        return redirect(url_for('parts_list.parts_list_sourcing', list_id=requested_list_id))
     list_header = None
 
     logging.info(f"Retrieved email data from session: list_id={email_data.get('list_id')}, mode={mode}")
