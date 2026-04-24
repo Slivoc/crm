@@ -7995,36 +7995,39 @@ def get_quote_availability_for_lines(list_id):
             WITH lines AS (
                 SELECT
                     id,
-                    base_part_number,
-                    COALESCE(parent_line_id, id) AS quote_line_id
+                    base_part_number
                 FROM parts_list_lines
                 WHERE parts_list_id = ?
             ),
             this_list AS (
                 SELECT
-                    l.quote_line_id AS line_id,
+                    sql.parts_list_line_id AS line_id,
                     SUM(CASE WHEN sql.is_no_bid = FALSE AND sql.unit_price IS NOT NULL THEN 1 ELSE 0 END) AS this_list_count
                 FROM parts_list_supplier_quote_lines sql
-                JOIN lines l ON l.quote_line_id = sql.parts_list_line_id
-                GROUP BY l.quote_line_id
+                JOIN lines l ON l.id = sql.parts_list_line_id
+                GROUP BY sql.parts_list_line_id
+            ),
+            list_base_part_numbers AS (
+                SELECT DISTINCT base_part_number
+                FROM lines
+                WHERE base_part_number IS NOT NULL
             ),
             other_offers AS (
                 SELECT
-                    l.base_part_number,
+                    pll.base_part_number,
                     SUM(CASE WHEN sql.is_no_bid = FALSE AND sql.unit_price IS NOT NULL THEN 1 ELSE 0 END) AS other_offers_count
                 FROM parts_list_supplier_quote_lines sql
                 JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
-                JOIN lines l ON l.base_part_number = pll.base_part_number
+                JOIN list_base_part_numbers lbpn ON lbpn.base_part_number = pll.base_part_number
                 WHERE pll.parts_list_id != ?
-                  AND l.base_part_number IS NOT NULL
-                GROUP BY l.base_part_number
+                GROUP BY pll.base_part_number
             )
             SELECT
                 l.id AS line_id,
                 COALESCE(t.this_list_count, 0) AS this_list_count,
                 COALESCE(o.other_offers_count, 0) AS other_offers_count
             FROM lines l
-            LEFT JOIN this_list t ON t.line_id = l.quote_line_id
+            LEFT JOIN this_list t ON t.line_id = l.id
             LEFT JOIN other_offers o ON o.base_part_number = l.base_part_number
             ORDER BY l.id
             """,
