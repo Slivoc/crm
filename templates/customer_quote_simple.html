@@ -865,7 +865,7 @@
         <td class="target-price-cell target-price-column sticky-right-1">
             <input type="number" class="form-control form-control-sm editable-field"
                    data-field="target_price_gbp"
-                   value="{{ '%.2f'|format(line.target_price_gbp) if line.target_price_gbp is not none else '' }}"
+                   value="{{ '%.2f'|format(line.get('target_price_gbp')) if line.get('target_price_gbp') is not none else '' }}"
                    min="0" step="0.01" placeholder="Optional">
         </td>
 
