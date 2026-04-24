@@ -3160,6 +3160,16 @@ def parts_list_costing(list_id):
                    AND TRIM(sql.line_notes) != ''
                  ORDER BY sql.date_modified DESC, sql.id DESC
                  LIMIT 1) as supplier_quote_notes,
+                (SELECT cql.quoted_status
+                 FROM customer_quote_lines cql
+                 WHERE cql.parts_list_line_id = pll.id
+                 ORDER BY cql.date_modified DESC, cql.id DESC
+                 LIMIT 1) as customer_quote_status,
+                (SELECT COALESCE(CAST(cql.is_no_bid AS INTEGER), 0)
+                 FROM customer_quote_lines cql
+                 WHERE cql.parts_list_line_id = pll.id
+                 ORDER BY cql.date_modified DESC, cql.id DESC
+                 LIMIT 1) as customer_quote_is_no_bid,
                 (SELECT COALESCE(SUM(sm.available_quantity), 0)
                  FROM stock_movements sm
                  WHERE sm.base_part_number = pll.base_part_number

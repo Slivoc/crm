@@ -104,6 +104,13 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+    document.querySelectorAll('.line-status-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+            const lineId = this.dataset.lineId;
+            toggleLineNoBidStatus(lineId, this);
+        });
+    });
+
     // Save all changes
     const saveAllBtn = document.getElementById('save-all-costs-btn');
     if (saveAllBtn) {
@@ -431,6 +438,58 @@ function markRowAsModified(row) {
         saveBtn.classList.add('btn-warning');
         saveBtn.innerHTML = '<i class="bi bi-exclamation-circle me-1"></i>Save';
     }
+}
+
+function updateLineStatusButton(btn, status) {
+    if (!btn) return;
+    btn.classList.remove('status-created', 'status-no-bid');
+    if (status === 'no_bid') {
+        btn.classList.add('status-no-bid');
+        btn.textContent = 'No Bid';
+    } else {
+        btn.classList.add('status-created');
+        btn.textContent = 'Created';
+    }
+}
+
+function toggleLineNoBidStatus(lineId, btn) {
+    const row = document.querySelector(`tr[data-line-id="${lineId}"]`);
+    if (!row) return;
+
+    const currentStatus = row.dataset.lineStatus || 'created';
+    const nextStatus = currentStatus === 'no_bid' ? 'created' : 'no_bid';
+    const isNoBid = nextStatus === 'no_bid' ? 1 : 0;
+
+    btn.disabled = true;
+
+    fetch(`/customer-quoting/parts-lists/${window.PARTS_LIST_ID}/customer-quote/bulk-update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            updates: [{
+                parts_list_line_id: parseInt(lineId, 10),
+                quoted_status: nextStatus,
+                is_no_bid: isNoBid
+            }]
+        })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                showToast(data.message || 'Failed to update line status', 'danger');
+                return;
+            }
+            row.dataset.lineStatus = nextStatus;
+            updateLineStatusButton(btn, nextStatus);
+            showToast(`Line status set to ${nextStatus === 'no_bid' ? 'No Bid' : 'Created'}`, 'success');
+        })
+        .catch(error => {
+            console.error('Error updating line status:', error);
+            showToast('Failed to update line status', 'danger');
+        })
+        .finally(() => {
+            btn.disabled = false;
+        });
 }
 
 // ---------- HELPER FUNCTIONS (GLOBAL) ----------

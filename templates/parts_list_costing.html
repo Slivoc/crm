@@ -156,6 +156,25 @@
     white-space: nowrap;
 }
 
+.line-status-btn {
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.22rem 0.55rem;
+}
+
+.line-status-btn.status-created {
+    border-color: #6c757d;
+    color: #6c757d;
+    background: #f8f9fa;
+}
+
+.line-status-btn.status-no-bid {
+    border-color: #dc3545;
+    color: #dc3545;
+    background: #fff5f5;
+}
+
 /* Additional styles for quote availability indicators */
 
 /* Tooltip styling for additional context */
@@ -301,6 +320,7 @@
                         <th style="width: 100px;">Lead Days</th>
                         <th style="width: 120px;">Line Total</th>
                         <th style="width: 120px;">Quotes</th>
+                        <th style="width: 130px;">Quote Status</th>
                         <th style="width: 120px;">Stock</th>
                         <th style="width: 200px;">Notes</th>
                         <th style="width: 120px;">Actions</th>
@@ -312,6 +332,7 @@
                     <tr class="{{ 'has-cost' if line.chosen_cost else 'missing-cost' }}"
                         data-line-id="{{ line.id }}"
                         data-line-number="{{ line.line_number }}"
+                        data-line-status="{{ 'no_bid' if line.customer_quote_is_no_bid else (line.customer_quote_status or 'created') }}"
                         data-cost-source="{{ 'stock' if is_stock_source else '' }}">
                         <td>{{ line.line_number }}</td>
                         <td>
@@ -419,6 +440,15 @@
                                 data-part-number="{{ line.customer_part_number }}"
                                 title="View quotes">
                             <i class="bi bi-clipboard-data"></i>
+                        </button>
+                    </td>
+
+                    <td>
+                        {% set line_status = 'no_bid' if line.customer_quote_is_no_bid else (line.customer_quote_status or 'created') %}
+                        <button class="btn btn-sm line-status-btn {{ 'status-no-bid' if line_status == 'no_bid' else 'status-created' }}"
+                                data-line-id="{{ line.id }}"
+                                title="Toggle line status between Created and No Bid">
+                            {{ 'No Bid' if line_status == 'no_bid' else 'Created' }}
                         </button>
                     </td>
 
