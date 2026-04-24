@@ -3798,6 +3798,13 @@ def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_
                 status = _execute_with_cursor(cursor, f"""
                     SELECT
                         (chosen_cost IS NOT NULL) as has_chosen_cost,
+                        EXISTS(
+                            SELECT 1
+                            FROM parts_list_lines related
+                            WHERE COALESCE(related.parent_line_id, related.id) = COALESCE(line.parent_line_id, line.id)
+                              AND related.id != line.id
+                              AND related.chosen_cost IS NOT NULL
+                        ) as has_related_chosen_cost,
                         (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
                          JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
                          WHERE sql.parts_list_line_id = line.id AND sql.is_no_bid = FALSE) as quote_count,
@@ -3839,6 +3846,7 @@ def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_
                     'quote_count': status['quote_count'],
                     'has_quotes': bool(status['quote_count']),
                     'has_chosen_cost': bool(status['has_chosen_cost']),
+                    'has_related_chosen_cost': bool(status['has_related_chosen_cost']),
                     'has_email_sent': bool(status['email_count']),
                     'sent_to_this_supplier': bool(status['sent_to_this_supplier']),
                     'supplier_quote_count': status['supplier_quote_count'],
@@ -3851,6 +3859,7 @@ def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_
                     'quote_count': 0,
                     'has_quotes': False,
                     'has_chosen_cost': False,
+                    'has_related_chosen_cost': False,
                     'has_email_sent': False,
                     'sent_to_this_supplier': False,
                     'supplier_quote_count': 0,
@@ -3922,6 +3931,13 @@ def process_suggested_suppliers(email_data, cursor, request_cutoff, list_id=None
             status = _execute_with_cursor(cursor, f"""
                 SELECT
                     (chosen_cost IS NOT NULL) as has_chosen_cost,
+                EXISTS(
+                    SELECT 1
+                    FROM parts_list_lines related
+                    WHERE COALESCE(related.parent_line_id, related.id) = COALESCE(line.parent_line_id, line.id)
+                      AND related.id != line.id
+                      AND related.chosen_cost IS NOT NULL
+                ) as has_related_chosen_cost,
                 (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
                  JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
                  WHERE sql.parts_list_line_id = line.id AND sql.is_no_bid = FALSE) as quote_count,
@@ -3971,6 +3987,7 @@ def process_suggested_suppliers(email_data, cursor, request_cutoff, list_id=None
                 'quote_count': status['quote_count'],
                 'has_quotes': bool(status['quote_count']),
                 'has_chosen_cost': bool(status['has_chosen_cost']),
+                'has_related_chosen_cost': bool(status['has_related_chosen_cost']),
                 'has_email_sent': bool(status['email_count']),
                 'sent_to_this_supplier': bool(status['sent_to_this_supplier']),
                 'supplier_quote_count': status['supplier_quote_count'],

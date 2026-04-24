@@ -391,13 +391,21 @@
                 </div>
                 <div class="col-md-4">
                     <div class="form-check">
+                        <input type="checkbox" id="filterNoRelatedCost" class="form-check-input">
+                        <label for="filterNoRelatedCost" class="form-check-label">
+                            Hide parts with a related costed line
+                        </label>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="form-check">
                         <input type="checkbox" id="filterNotContacted" class="form-check-input">
                         <label for="filterNotContacted" class="form-check-label">
                             Only show parts not sent to this supplier
                         </label>
                     </div>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-12">
                     <input type="text"
                            id="filterPartNumber"
                            class="form-control form-control-sm"
@@ -536,6 +544,7 @@
                         {% for part in primary_parts %}
                         <tr class="part-row"
                             data-has-cost="{{ part.has_chosen_cost|lower }}"
+                            data-has-related-cost="{{ part.has_related_chosen_cost|lower }}"
                             data-sent-to-this="{{ part.sent_to_this_supplier|lower }}"
                             data-part-number="{{ part.part_number }}">
                             <td>
@@ -572,6 +581,9 @@
                                 {% if part.has_chosen_cost %}
                                     <span class="badge badge-sm bg-costed">✓ Costed</span>
                                 {% endif %}
+                                {% if part.has_related_chosen_cost %}
+                                    <span class="badge badge-sm bg-costed">Related Line Costed</span>
+                                {% endif %}
                                 {% if part.has_quotes %}
                                     <span class="badge badge-sm bg-quoted">{{ part.quote_count }} Quote{{ 's' if part.quote_count != 1 else '' }}</span>
                                 {% endif %}
@@ -601,7 +613,7 @@
                                 {% elif part.has_email_sent %}
                                     <span class="badge badge-sm bg-sent-other">Sent to Others</span>
                                 {% endif %}
-                                {% if not (part.has_quotes or part.has_chosen_cost or part.has_email_sent) %}
+                                {% if not (part.has_quotes or part.has_chosen_cost or part.has_related_chosen_cost or part.has_email_sent) %}
                                     <span class="text-muted">—</span>
                                 {% endif %}
                             </td>
@@ -617,6 +629,7 @@
                         {% for part in recent_no_bid_parts %}
                         <tr class="part-row"
                             data-has-cost="{{ part.has_chosen_cost|lower }}"
+                            data-has-related-cost="{{ part.has_related_chosen_cost|lower }}"
                             data-sent-to-this="{{ part.sent_to_this_supplier|lower }}"
                             data-part-number="{{ part.part_number }}">
                             <td>
@@ -652,6 +665,9 @@
                                 {% if part.has_chosen_cost %}
                                     <span class="badge badge-sm bg-costed">âœ“ Costed</span>
                                 {% endif %}
+                                {% if part.has_related_chosen_cost %}
+                                    <span class="badge badge-sm bg-costed">Related Line Costed</span>
+                                {% endif %}
                                 {% if part.has_quotes %}
                                     <span class="badge badge-sm bg-quoted">{{ part.quote_count }} Quote{{ 's' if part.quote_count != 1 else '' }}</span>
                                 {% endif %}
@@ -681,7 +697,7 @@
                                 {% elif part.has_email_sent %}
                                     <span class="badge badge-sm bg-sent-other">Sent to Others</span>
                                 {% endif %}
-                                {% if not (part.has_quotes or part.has_chosen_cost or part.has_email_sent) %}
+                                {% if not (part.has_quotes or part.has_chosen_cost or part.has_related_chosen_cost or part.has_email_sent) %}
                                     <span class="text-muted">â€”</span>
                                 {% endif %}
                             </td>
@@ -1320,11 +1336,13 @@ document.addEventListener('DOMContentLoaded', function() {
     // ---- Apply All Filters ----------------------------------------
     function applyFilters() {
         const filterNoCostChecked = document.getElementById('filterNoCost').checked;
+        const filterNoRelatedCostChecked = document.getElementById('filterNoRelatedCost').checked;
         const filterNotContactedChecked = document.getElementById('filterNotContacted').checked;
         const partNumberFilter = document.getElementById('filterPartNumber').value.trim().toLowerCase();
 
         document.querySelectorAll('.part-row').forEach(row => {
             const hasCost = row.dataset.hasCost === 'true';
+            const hasRelatedCost = row.dataset.hasRelatedCost === 'true';
             const sentToThis = row.dataset.sentToThis === 'true';
             const partNumber = row.dataset.partNumber.toLowerCase();
 
@@ -1332,6 +1350,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Filter: no cost
             if (filterNoCostChecked && hasCost) {
+                hideRow = true;
+            }
+
+            // Filter: related line costed
+            if (filterNoRelatedCostChecked && hasRelatedCost) {
                 hideRow = true;
             }
 
@@ -1357,6 +1380,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // ---- Filter Event Listeners -----------------------------------
     document.getElementById('filterNoCost').addEventListener('change', applyFilters);
+    document.getElementById('filterNoRelatedCost').addEventListener('change', applyFilters);
     document.getElementById('filterNotContacted').addEventListener('change', applyFilters);
     document.getElementById('filterPartNumber').addEventListener('input', applyFilters);
 
