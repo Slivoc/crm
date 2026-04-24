@@ -457,6 +457,51 @@
     cursor: pointer;
 }
 
+/* Visual grouping for related line numbers (e.g. 5.0, 5.1, 5.2) */
+.quote-row.group-tone-a td:first-child {
+    background: linear-gradient(90deg, #eef5ff 0%, #f8fbff 100%);
+}
+
+.quote-row.group-tone-b td:first-child {
+    background: linear-gradient(90deg, #edf8f1 0%, #f7fcf9 100%);
+}
+
+.quote-row.group-line-parent .line-number-text {
+    font-weight: 700;
+}
+
+.quote-row.group-line-child .line-number-wrap {
+    padding-left: 0.85rem;
+    position: relative;
+}
+
+.quote-row.group-line-child .line-number-wrap::before {
+    content: '↳';
+    position: absolute;
+    left: 0.1rem;
+    color: #6c757d;
+    font-size: 0.85rem;
+}
+
+.line-family-badge {
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.detail-row.group-tone-a td {
+    background-color: #f3f8ff;
+}
+
+.detail-row.group-tone-b td {
+    background-color: #f2faf5;
+}
+
+.internal-notes-display {
+    min-height: 34px;
+    white-space: pre-wrap;
+}
+
 /* Line total quote styling to match quote price prominence */
 .line-total-quote-cell {
     font-weight: 600;
@@ -613,6 +658,7 @@
                    <tbody id="quoteTableBody">
     {% for line in lines %}
     <tr data-line-id="{{ line.id }}"
+        data-line-number="{{ line.line_number }}"
         class="quote-row
                {% if line.quoted_status == 'no_bid' or line.is_no_bid %}no-bid-row
                {% elif line.quoted_status == 'in_progress' %}in-progress-row
@@ -623,8 +669,8 @@
         data-is-no-bid="{{ 1 if line.is_no_bid else 0 }}">
 
         <td>
-            <div class="d-flex align-items-center gap-1">
-                <span>{{ line.line_number }}</span>
+            <div class="d-flex align-items-center gap-1 line-number-wrap">
+                <span class="line-number-text">{{ line.line_number }}</span>
                 <button class="btn btn-sm icon-action-btn duplicate-line-btn"
                         data-line-id="{{ line.id }}"
                         title="Add price break">
@@ -830,6 +876,10 @@
                            data-line-id="{{ line.id }}"
                            value="{{ line.line_notes or '' }}"
                            placeholder="Add notes...">
+                </div>
+                <div class="detail-field notes-field">
+                    <label>Internal Notes</label>
+                    <div class="form-control form-control-sm read-only internal-notes-display">{{ line.internal_notes or '—' }}</div>
                 </div>
             </div>
         </td>
