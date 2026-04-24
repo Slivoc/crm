@@ -75,15 +75,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 detailRow.classList.add(toneClass);
             }
 
-            if (parts.subgroupValue === 0) {
-                const lineNumberWrap = row.querySelector('.line-number-wrap');
-                if (lineNumberWrap && !lineNumberWrap.querySelector('.line-family-badge')) {
-                    const badge = document.createElement('span');
-                    badge.className = 'badge text-bg-light border line-family-badge';
-                    badge.textContent = `Group ${parts.groupKey}`;
-                    lineNumberWrap.appendChild(badge);
-                }
-            }
         });
     }
 
