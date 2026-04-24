@@ -7017,7 +7017,17 @@ def parts_list_sourcing(list_id):
                      WHERE cql.parts_list_line_id = pll.id
                        AND cql.quoted_status = 'quoted'
                        AND cql.quote_price_gbp IS NOT NULL
-                     LIMIT 1) as has_customer_quote
+                     LIMIT 1) as has_customer_quote,
+                    (SELECT cql.quoted_status
+                     FROM customer_quote_lines cql
+                     WHERE cql.parts_list_line_id = pll.id
+                     ORDER BY cql.date_modified DESC, cql.id DESC
+                     LIMIT 1) as customer_quote_status,
+                    (SELECT COALESCE(CAST(cql.is_no_bid AS INTEGER), 0)
+                     FROM customer_quote_lines cql
+                     WHERE cql.parts_list_line_id = pll.id
+                     ORDER BY cql.date_modified DESC, cql.id DESC
+                     LIMIT 1) as customer_quote_is_no_bid
                 FROM parts_list_lines pll
                 LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
                 WHERE pll.parts_list_id = ?

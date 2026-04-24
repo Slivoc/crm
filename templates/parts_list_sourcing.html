@@ -107,6 +107,23 @@
     text-decoration: line-through;
     color: #6c757d; /* muted */
 }
+.line-status-btn {
+    margin-top: .35rem;
+    border-radius: 999px;
+    font-size: .68rem;
+    line-height: 1.1;
+    padding: .2rem .55rem;
+}
+.line-status-btn.status-created {
+    border: 1px solid #198754;
+    color: #198754;
+    background: #edf9f1;
+}
+.line-status-btn.status-no-bid {
+    border: 1px solid #dc3545;
+    color: #dc3545;
+    background: #fff1f3;
+}
 
 /* Specific colors */
 .btn-use { background: #e3f2fd; border: 1px solid #90caf9; color: #1976d2; }
@@ -362,6 +379,7 @@
                         {% for line in lines %}
                         <tr class="main-row {% if line.chosen_cost %}has-chosen-cost{% endif %}"
                             data-line-id="{{ line.id }}"
+                            data-line-status="{{ 'no_bid' if line.customer_quote_is_no_bid else (line.customer_quote_status or 'created') }}"
                             data-has-vq="{{ '1' if line.vq_data else '0' }}"
                             data-has-po="{{ '1' if line.po_data else '0' }}"
                             data-has-stock="{{ '1' if line.stock_data else '0' }}"
@@ -375,6 +393,14 @@
                             <td class="text-center"><strong>{{ line.line_number }}</strong></td>
 <td>
     <strong class="text-primary">{{ line.customer_part_number }}</strong>
+    {% set line_status = 'no_bid' if line.customer_quote_is_no_bid else (line.customer_quote_status or 'created') %}
+    <div>
+        <button class="btn btn-sm line-status-btn {{ 'status-no-bid' if line_status == 'no_bid' else 'status-created' }}"
+                data-line-id="{{ line.id }}"
+                title="Toggle line status between Created and No Bid">
+            {{ 'No Bid' if line_status == 'no_bid' else 'Created' }}
+        </button>
+    </div>
     {% if line.chosen_cost %}
         <br>
         <span class="badge bg-success mt-1 cost-badge"

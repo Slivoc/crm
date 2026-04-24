@@ -1003,6 +1003,13 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
 
     // NEW: Quick no-bid X button handler
     document.addEventListener('click', function(e) {
+        const lineStatusBtn = e.target.closest('.line-status-btn');
+        if (lineStatusBtn) {
+            const lineId = lineStatusBtn.dataset.lineId;
+            toggleLineNoBidStatus(lineId, lineStatusBtn);
+            return;
+        }
+
         const noBidBtn = e.target.closest('.quick-no-bid-x');
         if (!noBidBtn) return;
 
@@ -1043,6 +1050,58 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
             showToast(err.message, 'error');
         });
     });
+
+    function updateLineStatusButton(btn, status) {
+        if (!btn) return;
+        btn.classList.remove('status-created', 'status-no-bid');
+        if (status === 'no_bid') {
+            btn.classList.add('status-no-bid');
+            btn.textContent = 'No Bid';
+        } else {
+            btn.classList.add('status-created');
+            btn.textContent = 'Created';
+        }
+    }
+
+    function toggleLineNoBidStatus(lineId, btn) {
+        const row = document.querySelector(`tr[data-line-id="${lineId}"]`);
+        if (!row || !window.PARTS_LIST_ID) return;
+
+        const currentStatus = row.dataset.lineStatus || 'created';
+        const nextStatus = currentStatus === 'no_bid' ? 'created' : 'no_bid';
+        const isNoBid = nextStatus === 'no_bid' ? 1 : 0;
+
+        btn.disabled = true;
+
+        fetch(`/customer-quoting/parts-lists/${window.PARTS_LIST_ID}/customer-quote/bulk-update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                updates: [{
+                    parts_list_line_id: parseInt(lineId, 10),
+                    quoted_status: nextStatus,
+                    is_no_bid: isNoBid
+                }]
+            })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    showToast(data.message || 'Failed to update line status', 'error');
+                    return;
+                }
+                row.dataset.lineStatus = nextStatus;
+                updateLineStatusButton(btn, nextStatus);
+                showToast(`Line status set to ${nextStatus === 'no_bid' ? 'No Bid' : 'Created'}`, 'success');
+            })
+            .catch(error => {
+                console.error('Error updating line status:', error);
+                showToast('Failed to update line status', 'error');
+            })
+            .finally(() => {
+                btn.disabled = false;
+            });
+    }
 
     // Export functionality
     const exportBtn = document.getElementById('export-sourcing-btn');
