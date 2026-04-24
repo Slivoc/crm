@@ -316,8 +316,29 @@
     border-left: 3px solid #198754 !important;
 }
 
+.target-price-cell {
+    background-color: #f7fff0;
+}
+
+.target-price-header {
+    background: linear-gradient(135deg, #6c757d 0%, #5c636a 100%);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
 /* --- STICKY RIGHT COLUMNS --- */
 /* Quote Price column - sticky to right */
+.quote-table th.sticky-right-2,
+.quote-table td.sticky-right-2 {
+    position: sticky;
+    right: 260px;
+    z-index: 5;
+    background-color: #fff;
+    background-clip: padding-box;
+}
+
+/* Target Price column - sticky middle right */
 .quote-table th.sticky-right-1,
 .quote-table td.sticky-right-1 {
     position: sticky;
@@ -338,6 +359,7 @@
 }
 
 /* Headers need higher z-index (sticky top AND right) */
+.quote-table th.sticky-right-2,
 .quote-table th.sticky-right-1,
 .quote-table th.sticky-right-0 {
     top: 0;
@@ -345,33 +367,38 @@
 }
 
 /* Shadow to indicate frozen columns */
+.quote-table td.sticky-right-2,
+.quote-table th.sticky-right-2,
 .quote-table td.sticky-right-1,
 .quote-table th.sticky-right-1 {
     box-shadow: -4px 0 8px -4px rgba(0,0,0,0.2);
 }
 
 /* Background overrides for row states */
+.quote-table tr.quoted-row td.sticky-right-2,
 .quote-table tr.quoted-row td.sticky-right-1,
 .quote-table tr.quoted-row td.sticky-right-0 {
     background-color: #d1e7dd;
 }
 
+.quote-table tr.below-minimum td.sticky-right-2,
 .quote-table tr.below-minimum td.sticky-right-1,
 .quote-table tr.below-minimum td.sticky-right-0 {
     background-color: #ffebee;
 }
 
+.quote-table tr.no-bid-row td.sticky-right-2,
 .quote-table tr.no-bid-row td.sticky-right-1,
 .quote-table tr.no-bid-row td.sticky-right-0 {
     background-color: #fff3cd;
 }
 
 /* Quote price cell special styling */
-.quote-table td.quote-price-cell.sticky-right-1 {
+.quote-table td.quote-price-cell.sticky-right-2 {
     background-color: #f0fff4;
 }
 
-.quote-table tr.quoted-row td.quote-price-cell.sticky-right-1 {
+.quote-table tr.quoted-row td.quote-price-cell.sticky-right-2 {
     background-color: #d1e7dd;
 }
 
@@ -594,6 +621,9 @@
                     <button id="save-all-btn" class="btn btn-sm btn-primary">
                         <i class="bi bi-save me-1"></i>Save All
                     </button>
+                    <button id="toggle-target-price-btn" class="btn btn-sm btn-outline-secondary" type="button">
+                        <i class="bi bi-eye me-1"></i>Show Target Prices
+                    </button>
                     <button id="purchasing-instructions-btn" class="btn btn-sm btn-info">
                         <i class="bi bi-cart me-1"></i>Purchasing Instructions
                     </button>
@@ -651,7 +681,8 @@
                             <th style="min-width: 90px;">Lead Days</th>
                             <th style="min-width: 80px;">No Bid</th>
                             <th style="min-width: 50px;">Details</th>
-                            <th style="min-width: 140px;" class="quote-price-header quote-price-separator sticky-right-1">Quote Price</th>
+                            <th style="min-width: 140px;" class="quote-price-header quote-price-separator sticky-right-2">Quote Price</th>
+                            <th style="min-width: 130px;" class="target-price-header target-price-column sticky-right-1">Target Price</th>
                             <th style="min-width: 130px; background: linear-gradient(135deg, #198754 0%, #157347 100%); color: white; font-weight: 600;" class="sticky-right-0">Line Total</th>
                         </tr>
                     </thead>
@@ -819,7 +850,7 @@
             </button>
         </td>
 
-        <td class="quote-price-cell quote-price-separator sticky-right-1">
+        <td class="quote-price-cell quote-price-separator sticky-right-2">
             <div class="value-stack">
                 <input type="number" class="form-control form-control-sm editable-field"
                        data-field="quote_price_gbp"
@@ -831,11 +862,18 @@
             </div>
         </td>
 
+        <td class="target-price-cell target-price-column sticky-right-1">
+            <input type="number" class="form-control form-control-sm editable-field"
+                   data-field="target_price_gbp"
+                   value="{{ '%.2f'|format(line.target_price_gbp) if line.target_price_gbp is not none else '' }}"
+                   min="0" step="0.01" placeholder="Optional">
+        </td>
+
         <td class="read-only line-total-quote line-total-quote-cell sticky-right-0">GBP 0.00</td>
     </tr>
     <!-- Expandable detail row -->
     <tr class="detail-row" data-parent-line-id="{{ line.id }}">
-        <td colspan="19">
+        <td colspan="20">
             <div class="detail-content">
                 <div class="detail-field">
                     <label>Condition</label>

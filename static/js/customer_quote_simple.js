@@ -12,7 +12,9 @@ document.addEventListener('DOMContentLoaded', function() {
         return Number.isFinite(parsed) ? parsed : null;
     })();
     let displayCurrencyId = CUSTOMER_CURRENCY_ID_NUMBER || BASE_CURRENCY_ID;
+    let targetPriceColumnVisible = false;
     const currencySelect = document.getElementById('quoteCurrencySelect');
+    const targetPriceToggleBtn = document.getElementById('toggle-target-price-btn');
     if (currencySelect) {
         if (CUSTOMER_CURRENCY_ID_NUMBER !== null) {
             const hasCustomerCurrencyOption = Array.from(currencySelect.options).some(opt => Number.parseInt(opt.value, 10) === CUSTOMER_CURRENCY_ID_NUMBER);
@@ -36,6 +38,41 @@ document.addEventListener('DOMContentLoaded', function() {
     function toNumber(value) {
         const num = parseFloat(value);
         return Number.isFinite(num) ? num : 0;
+    }
+
+    function hasExistingTargetPrices() {
+        return (LINES_DATA || []).some(line => {
+            const value = line && line.target_price_gbp;
+            return value !== null && value !== undefined && value !== '' && toNumber(value) > 0;
+        });
+    }
+
+    function updateDetailRowColspans() {
+        const quoteTable = document.getElementById('quoteTable');
+        if (!quoteTable) return;
+        const visibleColumnCount = quoteTable.querySelectorAll('thead th:not(.d-none)').length || 1;
+        quoteTable.querySelectorAll('.detail-row > td').forEach(cell => {
+            cell.colSpan = visibleColumnCount;
+        });
+    }
+
+    function setTargetPriceColumnVisibility(isVisible) {
+        targetPriceColumnVisible = !!isVisible;
+        document.querySelectorAll('.target-price-column').forEach(el => {
+            el.classList.toggle('d-none', !targetPriceColumnVisible);
+        });
+        if (targetPriceToggleBtn) {
+            if (targetPriceColumnVisible) {
+                targetPriceToggleBtn.classList.remove('btn-outline-secondary');
+                targetPriceToggleBtn.classList.add('btn-outline-success');
+                targetPriceToggleBtn.innerHTML = '<i class="bi bi-eye-slash me-1"></i>Hide Target Prices';
+            } else {
+                targetPriceToggleBtn.classList.remove('btn-outline-success');
+                targetPriceToggleBtn.classList.add('btn-outline-secondary');
+                targetPriceToggleBtn.innerHTML = '<i class="bi bi-eye me-1"></i>Show Target Prices';
+            }
+        }
+        updateDetailRowColspans();
     }
 
     function parseLineNumberParts(lineNumberRaw) {
@@ -270,6 +307,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 deliveryPerLine: row.querySelector('[data-field="delivery_per_line"]'),
                 marginPercent: row.querySelector('[data-field="margin_percent"]'),
                 quotePriceGbp: row.querySelector('[data-field="quote_price_gbp"]'),
+                targetPriceGbp: row.querySelector('[data-field="target_price_gbp"]'),
                 deliveryPerUnit: row.querySelector('.delivery-per-unit'),
                 baseCostCell: row.querySelector('.base-cost-gbp'),
                 lineTotalCost: detailRow ? detailRow.querySelector('.line-total-cost') : null,
@@ -1103,6 +1141,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 display_part_number: elements.displayPartNumber.value,
                 margin_percent: parseFloat(elements.marginPercent.value) || 0,
                 quote_price_gbp: parseFloat(elements.quotePriceGbp.value) || 0,
+                target_price_gbp: elements.targetPriceGbp && elements.targetPriceGbp.value !== ''
+                    ? (parseFloat(elements.targetPriceGbp.value) || 0)
+                    : null,
                 delivery_per_line: parseFloat(elements.deliveryPerLine.value) || 0,
                 lead_days: parseInt(elements.leadDays.value) || null,
                 is_no_bid: elements.isNoBid.checked ? 1 : 0,
@@ -1145,6 +1186,12 @@ document.addEventListener('DOMContentLoaded', function() {
         if (statusEl) statusEl.textContent = '';
         new bootstrap.Modal(document.getElementById('purchasingModal')).show();
     });
+
+    if (targetPriceToggleBtn) {
+        targetPriceToggleBtn.addEventListener('click', function() {
+            setTargetPriceColumnVisibility(!targetPriceColumnVisible);
+        });
+    }
 
     const purchasingSupplierFilter = document.getElementById('purchasingSupplierFilter');
     if (purchasingSupplierFilter) {
@@ -1969,6 +2016,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // START
     setSummaryCurrencyLabels();
     applyLineGroupingVisuals();
+    setTargetPriceColumnVisibility(hasExistingTargetPrices());
     initializeTable();
     setupDuplicateLineButtons();
     setupCopyPartNumberButtons();
