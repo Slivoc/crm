@@ -338,6 +338,12 @@
     background-clip: padding-box;
 }
 
+/* When target price column is hidden, close the sticky gap */
+.quote-table.target-price-hidden th.sticky-right-2,
+.quote-table.target-price-hidden td.sticky-right-2 {
+    right: 130px;
+}
+
 /* Target Price column - sticky middle right */
 .quote-table th.sticky-right-1,
 .quote-table td.sticky-right-1 {
@@ -621,8 +627,8 @@
                     <button id="save-all-btn" class="btn btn-sm btn-primary">
                         <i class="bi bi-save me-1"></i>Save All
                     </button>
-                    <button id="toggle-target-price-btn" class="btn btn-sm btn-outline-secondary" type="button">
-                        <i class="bi bi-eye me-1"></i>Show Target Prices
+                    <button id="toggle-target-price-btn" class="btn btn-sm btn-outline-secondary" type="button" title="Show or hide the target price column">
+                        <i class="bi bi-eye me-1"></i>Show Target Price Column
                     </button>
                     <button id="purchasing-instructions-btn" class="btn btn-sm btn-info">
                         <i class="bi bi-cart me-1"></i>Purchasing Instructions

@@ -58,6 +58,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function setTargetPriceColumnVisibility(isVisible) {
         targetPriceColumnVisible = !!isVisible;
+        const quoteTable = document.getElementById('quoteTable');
+        if (quoteTable) {
+            quoteTable.classList.toggle('target-price-hidden', !targetPriceColumnVisible);
+        }
         document.querySelectorAll('.target-price-column').forEach(el => {
             el.classList.toggle('d-none', !targetPriceColumnVisible);
         });
@@ -65,11 +69,11 @@ document.addEventListener('DOMContentLoaded', function() {
             if (targetPriceColumnVisible) {
                 targetPriceToggleBtn.classList.remove('btn-outline-secondary');
                 targetPriceToggleBtn.classList.add('btn-outline-success');
-                targetPriceToggleBtn.innerHTML = '<i class="bi bi-eye-slash me-1"></i>Hide Target Prices';
+                targetPriceToggleBtn.innerHTML = '<i class="bi bi-eye-slash me-1"></i>Hide Target Price Column';
             } else {
                 targetPriceToggleBtn.classList.remove('btn-outline-success');
                 targetPriceToggleBtn.classList.add('btn-outline-secondary');
-                targetPriceToggleBtn.innerHTML = '<i class="bi bi-eye me-1"></i>Show Target Prices';
+                targetPriceToggleBtn.innerHTML = '<i class="bi bi-eye me-1"></i>Show Target Price Column';
             }
         }
         updateDetailRowColspans();
