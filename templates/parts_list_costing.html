@@ -39,6 +39,46 @@
     padding: 0.75rem;
 }
 
+/* Visual grouping for related line numbers (e.g. 5.0, 5.1, 5.2) */
+.costing-table tbody tr.grouped-line {
+    transition: background-color 0.2s ease;
+}
+
+.costing-table tbody tr.grouped-line.group-tone-a td {
+    background-color: #f8fbff;
+}
+
+.costing-table tbody tr.grouped-line.group-tone-b td {
+    background-color: #f7fcf9;
+}
+
+.costing-table tbody tr.grouped-line td:first-child {
+    border-left: 4px solid #9ec5fe;
+}
+
+.costing-table tbody tr.grouped-line.group-tone-b td:first-child {
+    border-left-color: #8fd19e;
+}
+
+.costing-table tbody tr.group-line-parent td:first-child {
+    font-weight: 700;
+}
+
+.costing-table tbody tr.group-line-child td:first-child {
+    position: relative;
+    padding-left: 1.6rem;
+    font-weight: 500;
+    color: #495057;
+}
+
+.costing-table tbody tr.group-line-child td:first-child::before {
+    content: '↳';
+    position: absolute;
+    left: 0.55rem;
+    color: #6c757d;
+    font-size: 0.9rem;
+}
+
 .cost-input-group {
     display: flex;
     gap: 0.5rem;
@@ -271,6 +311,7 @@
                     {% set is_stock_source = line.chosen_source_type == 'stock' %}
                     <tr class="{{ 'has-cost' if line.chosen_cost else 'missing-cost' }}"
                         data-line-id="{{ line.id }}"
+                        data-line-number="{{ line.line_number }}"
                         data-cost-source="{{ 'stock' if is_stock_source else '' }}">
                         <td>{{ line.line_number }}</td>
                         <td>

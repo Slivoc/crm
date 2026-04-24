@@ -38,6 +38,55 @@ document.addEventListener('DOMContentLoaded', function() {
         return Number.isFinite(num) ? num : 0;
     }
 
+    function parseLineNumberParts(lineNumberRaw) {
+        const lineNumber = String(lineNumberRaw || '').trim();
+        const match = lineNumber.match(/^(\d+)(?:\.(\d+))?/);
+        if (!match) return null;
+
+        return {
+            groupKey: match[1],
+            subgroupValue: parseInt(match[2] || '0', 10)
+        };
+    }
+
+    function applyLineGroupingVisuals() {
+        const rows = Array.from(document.querySelectorAll('.quote-row[data-line-id]'));
+        if (!rows.length) return;
+
+        const groupToneByKey = new Map();
+        let toneIndex = 0;
+
+        rows.forEach(row => {
+            const lineNumberRaw = row.dataset.lineNumber || row.querySelector('.line-number-text')?.textContent || '';
+            const parts = parseLineNumberParts(lineNumberRaw);
+            if (!parts) return;
+
+            if (!groupToneByKey.has(parts.groupKey)) {
+                groupToneByKey.set(parts.groupKey, toneIndex % 2 === 0 ? 'group-tone-a' : 'group-tone-b');
+                toneIndex += 1;
+            }
+
+            const toneClass = groupToneByKey.get(parts.groupKey);
+            row.classList.add(toneClass, parts.subgroupValue === 0 ? 'group-line-parent' : 'group-line-child');
+            row.dataset.groupKey = parts.groupKey;
+
+            const detailRow = document.querySelector(`.detail-row[data-parent-line-id="${row.dataset.lineId}"]`);
+            if (detailRow) {
+                detailRow.classList.add(toneClass);
+            }
+
+            if (parts.subgroupValue === 0) {
+                const lineNumberWrap = row.querySelector('.line-number-wrap');
+                if (lineNumberWrap && !lineNumberWrap.querySelector('.line-family-badge')) {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge text-bg-light border line-family-badge';
+                    badge.textContent = `Group ${parts.groupKey}`;
+                    lineNumberWrap.appendChild(badge);
+                }
+            }
+        });
+    }
+
     function getRequestedPartNumber(lineData) {
         return (lineData.requested_part_number || lineData.customer_part_number || '').toString().trim();
     }
@@ -1928,6 +1977,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // START
     setSummaryCurrencyLabels();
+    applyLineGroupingVisuals();
     initializeTable();
     setupDuplicateLineButtons();
     setupCopyPartNumberButtons();

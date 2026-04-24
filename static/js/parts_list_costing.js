@@ -10,7 +10,44 @@ function setSupplierSourceBadge(row, source) {
     }
 }
 
+function parseLineNumberParts(lineNumberRaw) {
+    const lineNumber = String(lineNumberRaw || '').trim();
+    const match = lineNumber.match(/^(\d+)(?:\.(\d+))?/);
+    if (!match) return null;
+
+    return {
+        groupKey: match[1],
+        subgroupValue: parseInt(match[2] || '0', 10)
+    };
+}
+
+function applyLineGroupingVisuals() {
+    const rows = Array.from(document.querySelectorAll('#costing-table-body tr[data-line-id]'));
+    if (rows.length === 0) return;
+
+    const groupToneByKey = new Map();
+    let toneIndex = 0;
+
+    rows.forEach(row => {
+        const firstCell = row.querySelector('td:first-child');
+        const lineNumberRaw = row.dataset.lineNumber || firstCell?.textContent || '';
+        const parts = parseLineNumberParts(lineNumberRaw);
+        if (!parts) return;
+
+        if (!groupToneByKey.has(parts.groupKey)) {
+            groupToneByKey.set(parts.groupKey, toneIndex % 2 === 0 ? 'group-tone-a' : 'group-tone-b');
+            toneIndex += 1;
+        }
+
+        row.classList.add('grouped-line', groupToneByKey.get(parts.groupKey));
+        row.classList.add(parts.subgroupValue === 0 ? 'group-line-parent' : 'group-line-child');
+        row.dataset.groupKey = parts.groupKey;
+    });
+}
+
 document.addEventListener('DOMContentLoaded', function () {
+    applyLineGroupingVisuals();
+
     // Auto-calculate line totals when cost or quantity changes
     document.querySelectorAll('.cost-input').forEach(input => {
         input.addEventListener('input', function () {
