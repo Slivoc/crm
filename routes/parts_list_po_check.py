@@ -21,6 +21,7 @@ import requests
 from urllib.parse import quote
 from openai import OpenAI
 from flask_login import login_required
+import pypdfium2 as pdfium
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ if client is None:
     logger.warning("OPENAI_API_KEY not found in routes.parts_list_po_check. AI features are disabled.")
 
 AI_MAX_CHARS = 20000
+OCR_MAX_PAGES = 12
 
 
 def _execute_with_cursor(cur, query, params=None):
@@ -501,6 +503,79 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
     return results
 
 
+def _extract_pdf_text_direct(pdf_stream):
+    """Extract text from a PDF using the embedded text layer."""
+    import pdfplumber
+
+    text_chunks = []
+    with pdfplumber.open(pdf_stream) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text_chunks.append(page_text)
+
+    return "\n\n".join(text_chunks).strip()
+
+
+def _extract_pdf_text_with_openai_ocr(pdf_bytes):
+    """OCR a PDF with OpenAI by rendering pages to images first."""
+    if client is None:
+        raise RuntimeError("OPENAI_API_KEY is not configured, OCR is unavailable.")
+
+    try:
+        pdf = pdfium.PdfDocument(pdf_bytes)
+    except Exception as e:
+        raise RuntimeError(f"Failed to read PDF for OCR: {e}") from e
+
+    page_count = len(pdf)
+    if page_count == 0:
+        return ""
+
+    render_count = min(page_count, OCR_MAX_PAGES)
+    if page_count > OCR_MAX_PAGES:
+        logger.warning("OCR limited to first %d pages out of %d pages", OCR_MAX_PAGES, page_count)
+
+    ocr_sections = []
+    from io import BytesIO
+    for idx in range(render_count):
+        page = pdf[idx]
+        bitmap = page.render(scale=2.0)
+        pil_image = bitmap.to_pil()
+        try:
+            buf = BytesIO()
+            pil_image.save(buf, format='PNG')
+            image_b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are OCR for aerospace purchase orders. Extract all readable text exactly. "
+                            "Return plain text only. Preserve line breaks when possible."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"Transcribe page {idx + 1} to text only."},
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}}
+                        ]
+                    }
+                ],
+                max_tokens=3000,
+                temperature=0
+            )
+            page_text = (response.choices[0].message.content or "").strip()
+            if page_text:
+                ocr_sections.append(f"--- PAGE {idx + 1} ---\n{page_text}")
+        finally:
+            pil_image.close()
+
+    return "\n\n".join(ocr_sections).strip()
+
+
 @parts_list_po_check_bp.route('/po-check')
 @login_required
 def po_check_page():
@@ -578,20 +653,30 @@ def extract_po():
     if not file.filename.lower().endswith('.pdf'):
         return jsonify(success=False, message="File must be a PDF"), 400
 
-    try:
-        import pdfplumber
+    extraction_mode = (request.form.get('extraction_mode') or 'text').strip().lower()
+    if extraction_mode not in {'text', 'ocr'}:
+        extraction_mode = 'text'
 
-        text = ""
-        with pdfplumber.open(file) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n\n"
+    try:
+        pdf_bytes = file.read()
+        if not pdf_bytes:
+            return jsonify(success=False, message="Uploaded PDF is empty"), 400
+
+        from io import BytesIO
+        if extraction_mode == 'ocr':
+            text = _extract_pdf_text_with_openai_ocr(pdf_bytes)
+        else:
+            text = _extract_pdf_text_direct(BytesIO(pdf_bytes))
 
         if not text.strip():
+            no_text_message = (
+                "No text found via OCR."
+                if extraction_mode == 'ocr'
+                else "No text found in PDF (might be scanned/image-only). Try OCR mode."
+            )
             return jsonify(
                 success=False,
-                message="No text found in PDF (might be scanned/image-only)"
+                message=no_text_message
             ), 400
 
         # Extract PO data via AI
@@ -608,6 +693,7 @@ def extract_po():
             success=True,
             po_data=po_data,
             raw_text=text[:5000] + ("..." if len(text) > 5000 else ""),
+            extraction_mode=extraction_mode,
             message=f"Extracted {len(po_data.get('lines', []))} lines from PO"
         )
 

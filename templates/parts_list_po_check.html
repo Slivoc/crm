@@ -486,6 +486,12 @@
                         <span class="badge bg-success"><i class="bi bi-file-pdf me-1"></i><span id="fileName"></span></span>
                         <button type="button" class="btn btn-sm btn-link text-danger" id="clearFile">Clear</button>
                     </div>
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="useOcrMode">
+                        <label class="form-check-label small" for="useOcrMode">
+                            Use OCR (OpenAI Vision) for scanned/image PDFs
+                        </label>
+                    </div>
                 </div>
             </div>
 
@@ -593,7 +599,7 @@
             <div class="po-footer">
                 <div class="row align-items-center">
                     <div class="col-md-6">
-                        <small class="text-muted">Extracted from uploaded PDF</small>
+                        <small class="text-muted">Extracted from uploaded PDF (<span id="extractionMethodLabel">Text layer</span>)</small>
                     </div>
                     <div class="col-md-6 text-end">
                         <strong>Total Lines:</strong> <span id="poLineCount">0</span>
@@ -865,6 +871,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let extractedData = null;
     let matchResults = null;
     let rawText = '';
+    let extractionModeUsed = 'text';
     const supplierInsightCache = {};
     let visibleRowIndices = [];
     let activeRowIndex = null;
@@ -877,6 +884,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const fileInfo = document.getElementById('fileInfo');
     const fileName = document.getElementById('fileName');
     const clearFileBtn = document.getElementById('clearFile');
+    const useOcrMode = document.getElementById('useOcrMode');
     const extractBtn = document.getElementById('extractBtn');
     const resultsSection = document.getElementById('resultsSection');
     const confirmBtn = document.getElementById('confirmBtn');
@@ -926,6 +934,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // We have preloaded data from mailbox!
                 extractedData = result.po_data;
                 rawText = result.raw_text || '';
+                extractionModeUsed = (result.extraction_mode || 'text').toLowerCase() === 'ocr' ? 'ocr' : 'text';
 
                 // Set customer if provided
                 if (result.customer) {
@@ -1036,12 +1045,13 @@ document.addEventListener('DOMContentLoaded', function() {
         const customerId = $(customerSelect).val();
         if (!selectedFile || !customerId) return;
 
-        showLoading('Extracting text from PDF...');
+        showLoading(useOcrMode?.checked ? 'Running OCR on PDF pages...' : 'Extracting text from PDF...');
 
         try {
             // Step 1: Extract from PDF
             const formData = new FormData();
             formData.append('file', selectedFile);
+            formData.append('extraction_mode', useOcrMode?.checked ? 'ocr' : 'text');
 
             const extractResponse = await fetch('{{ url_for("parts_list_po_check.extract_po") }}', {
                 method: 'POST',
@@ -1056,6 +1066,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             extractedData = extractResult.po_data;
             rawText = extractResult.raw_text || '';
+            extractionModeUsed = (extractResult.extraction_mode || 'text').toLowerCase() === 'ocr' ? 'ocr' : 'text';
 
             // Update PO details display
             updatePODisplay(extractedData);
@@ -1090,6 +1101,11 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     function updatePODisplay(data) {
+        const methodLabel = document.getElementById('extractionMethodLabel');
+        if (methodLabel) {
+            methodLabel.textContent = extractionModeUsed === 'ocr' ? 'OCR (OpenAI Vision)' : 'Text layer';
+        }
+
         // Update PO header info
         document.getElementById('poReference').textContent = data.po_reference || '-';
         document.getElementById('poDate').textContent = data.po_date || '-';
