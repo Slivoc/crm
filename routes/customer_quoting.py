@@ -255,6 +255,7 @@ def customer_quote(list_id):
                         cql.delivery_per_line,
                         cql.margin_percent,
                         cql.quote_price_gbp,
+                        cql.target_price_gbp,
                         cql.lead_days,
                         cql.is_no_bid,
                         cql.quoted_status,
@@ -1019,7 +1020,8 @@ def bulk_update_quote_lines(list_id):
                         cql.base_cost_gbp,
                         cql.display_part_number,
                         cql.quoted_part_number,
-                        cql.quoted_status
+                        cql.quoted_status,
+                        cql.target_price_gbp
                     FROM parts_list_lines pll
                     LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
                     WHERE pll.id = ? AND pll.parts_list_id = ?
@@ -1064,13 +1066,21 @@ def bulk_update_quote_lines(list_id):
 
                     insert_query = _with_returning_clause("""
                         INSERT INTO customer_quote_lines 
-                        (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line, margin_percent, quote_price_gbp, quoted_status, standard_condition, standard_certs, manufacturer)
-                        VALUES (?, ?, 0, 0, 0, ?, 'created', ?, ?, ?)
+                        (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line, margin_percent, quote_price_gbp, target_price_gbp, quoted_status, standard_condition, standard_certs, manufacturer)
+                        VALUES (?, ?, 0, 0, 0, ?, ?, 'created', ?, ?, ?)
                     """)
                     _execute_with_cursor(
                         cur,
                         insert_query,
-                        (parts_list_line_id, base_cost_gbp, base_cost_gbp, condition, certs, update.get('manufacturer'))
+                        (
+                            parts_list_line_id,
+                            base_cost_gbp,
+                            base_cost_gbp,
+                            update.get('target_price_gbp'),
+                            condition,
+                            certs,
+                            update.get('manufacturer')
+                        )
                     )
                     quote_line_id = _last_inserted_id(cur)
                     logging.info(f"Created new quote line {quote_line_id} for parts_list_line {parts_list_line_id}")
@@ -1127,6 +1137,12 @@ def bulk_update_quote_lines(list_id):
                     fields.append("quote_price_gbp = ?")
                     params.append(float(update['quote_price_gbp'] or 0))
                     logging.debug(f"Line {parts_list_line_id}: quote_price_gbp = {update['quote_price_gbp']}")
+
+                if 'target_price_gbp' in update and not is_locked:
+                    fields.append("target_price_gbp = ?")
+                    target_price = update.get('target_price_gbp')
+                    params.append(float(target_price) if target_price not in (None, '') else None)
+                    logging.debug(f"Line {parts_list_line_id}: target_price_gbp = {target_price}")
 
                 if 'delivery_per_unit' in update and not is_locked:
                     fields.append("delivery_per_unit = ?")
