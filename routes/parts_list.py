@@ -769,6 +769,7 @@ def save_supplier_quote_lines(list_id, quote_id):
 
         saved_count = 0
         skipped_count = 0
+        saved_line_ids = []
 
         for idx, line in enumerate(lines):
             parts_list_line_id = line.get('parts_list_line_id')
@@ -984,11 +985,18 @@ def save_supplier_quote_lines(list_id, quote_id):
                 )
 
             saved_count += 1
+            if not is_no_bid and unit_price is not None:
+                saved_line_ids.append(parts_list_line_id)
 
         logging.info(f"\n=== SUMMARY ===")
         logging.info(f"Saved: {saved_count}, Skipped: {skipped_count}")
 
-        return jsonify(success=True, saved_count=saved_count, skipped_count=skipped_count)
+        return jsonify(
+            success=True,
+            saved_count=saved_count,
+            skipped_count=skipped_count,
+            saved_line_ids=sorted(set(saved_line_ids)),
+        )
 
     except Exception as e:
         logging.exception(e)

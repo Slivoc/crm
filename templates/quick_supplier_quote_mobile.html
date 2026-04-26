@@ -731,10 +731,16 @@ async function saveQuote() {
             throw new Error(linesData.message || linesData.error || 'Failed to save quote lines');
         }
 
+        persistRecentQuoteLines(linesData.saved_line_ids || [], quoteId);
         alert(`Saved ${linesToSave.length} quote lines`);
 
         // Redirect back to costing page
-        window.location.href = `/parts_list/parts-list-costing/${PARTS_LIST_ID}`;
+        const params = new URLSearchParams();
+        if (quoteId) {
+            params.set('open_quote_id', String(quoteId));
+        }
+        const queryString = params.toString();
+        window.location.href = `/parts_list/parts-lists/${PARTS_LIST_ID}/costing${queryString ? `?${queryString}` : ''}`;
 
     } catch (error) {
         alert('Failed to save: ' + error.message);
@@ -768,5 +774,30 @@ document.getElementById('supplierSelect').addEventListener('change', async funct
     }
     renderLines();
 });
+
+function persistRecentQuoteLines(lineIds, quoteId) {
+    if (!window.sessionStorage) return;
+
+    const normalizedLineIds = Array.from(
+        new Set(
+            (Array.isArray(lineIds) ? lineIds : [])
+                .map(id => parseInt(id, 10))
+                .filter(Number.isFinite)
+        )
+    );
+
+    if (normalizedLineIds.length === 0) return;
+
+    try {
+        window.sessionStorage.setItem('partsListRecentQuoteLines', JSON.stringify({
+            listId: window.PARTS_LIST_ID,
+            quoteId: quoteId || null,
+            lineIds: normalizedLineIds,
+            savedAt: Date.now()
+        }));
+    } catch (error) {
+        console.warn('Unable to persist recent quote lines:', error);
+    }
+}
 </script>
 {% endblock %}

@@ -7,8 +7,9 @@
     <!-- Simple Header -->
     <div class="mb-3">
         <h5 class="mb-1">{{ salesperson.name }}</h5>
-        <small class="text-muted">Sales Dashboard</small>
+        <small class="text-muted">Contacts and mailbox</small>
     </div>
+    {% if false %}
 
     <!-- Quick Stats Cards -->
     <div class="row g-2 mb-3">
@@ -69,6 +70,8 @@
         </div>
     </div>
 
+    {% endif %}
+
     <!-- Contact Search -->
     <div class="card mb-3">
         <div class="card-body">
@@ -128,7 +131,7 @@
     <!-- Quick Actions -->
     <div class="card">
         <div class="card-header bg-light">
-            <h6 class="mb-0">Quick Actions</h6>
+            <h6 class="mb-0">Shortcuts</h6>
         </div>
         <div class="list-group list-group-flush">
             <a href="{{ url_for('emails.mailbox_page') }}"
@@ -142,10 +145,6 @@
             <a href="{{ url_for('salespeople.customers', salesperson_id=salesperson.id) }}"
                class="list-group-item list-group-item-action">
                 <i class="bi bi-building me-2"></i>View All Customers
-            </a>
-            <a href="{{ url_for('salespeople.dashboard') }}"
-               class="list-group-item list-group-item-action">
-                <i class="bi bi-speedometer2 me-2"></i>Team Dashboard
             </a>
         </div>
     </div>

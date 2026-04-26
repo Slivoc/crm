@@ -918,6 +918,7 @@ function loadQuoteAvailability() {
     const rows = document.querySelectorAll('tr[data-line-id]');
     const listId = window.PARTS_LIST_ID;
     if (!listId) return;
+    const recentLineIds = getRecentQuoteLineIdSet();
 
     fetch(`/parts_list/parts-lists/${listId}/lines/quote-availability`)
         .then(response => response.json())
@@ -933,19 +934,29 @@ function loadQuoteAvailability() {
                 const stats = map.get(String(lineId)) || {};
                 const thisListCount = Number(stats.this_list_count || 0);
                 const otherOffersCount = Number(stats.other_offers_count || 0);
-                updateQuoteIndicator(quoteBtn, thisListCount, otherOffersCount > 0);
+                updateQuoteIndicator(
+                    quoteBtn,
+                    thisListCount,
+                    otherOffersCount > 0,
+                    recentLineIds.has(String(lineId))
+                );
             });
+
+            clearRecentQuoteLinesMarker();
         })
         .catch(err => {
             console.error('Error loading quote availability:', err);
         });
 }
 
-function updateQuoteIndicator(button, thisListCount, hasOtherOffers) {
+function updateQuoteIndicator(button, thisListCount, hasOtherOffers, isRecentLine) {
     // Remove any existing badges
-    const existingBadge = button.querySelector('.quote-badge');
-    if (existingBadge) {
-        existingBadge.remove();
+    button.querySelectorAll('.quote-badge, .recent-quote-badge').forEach(el => el.remove());
+
+    const icon = button.querySelector('i');
+    if (icon) {
+        button.innerHTML = '';
+        button.appendChild(icon.cloneNode(true));
     }
 
     if (thisListCount > 0) {
@@ -956,17 +967,8 @@ function updateQuoteIndicator(button, thisListCount, hasOtherOffers) {
 
         button.classList.remove('btn-outline-secondary', 'btn-outline-warning');
         button.classList.add('btn-success');
-        button.setAttribute('title', `${thisListCount} quote${thisListCount > 1 ? 's' : ''} on this parts list`);
-
+        button.setAttribute('title', `${thisListCount} quote${thisListCount > 1 ? 's' : ''} on this parts list${isRecentLine ? ' - newly added just now' : ''}`);
         button.appendChild(badge);
-
-        // Update button text to be more compact - just show icon
-        const icon = button.querySelector('i');
-        if (icon) {
-            button.innerHTML = '';
-            button.appendChild(icon.cloneNode(true));
-            button.appendChild(badge);
-        }
     } else if (hasOtherOffers) {
         // No quotes on this list, but has quotes from OTHER parts lists - show warning/orange
         const badge = document.createElement('span');
@@ -975,29 +977,55 @@ function updateQuoteIndicator(button, thisListCount, hasOtherOffers) {
 
         button.classList.remove('btn-outline-secondary', 'btn-success');
         button.classList.add('btn-outline-warning');
-        button.setAttribute('title', 'No quotes on this list, but quotes available from other parts lists');
-
+        button.setAttribute('title', `No quotes on this list, but quotes available from other parts lists${isRecentLine ? ' - newly added just now' : ''}`);
         button.appendChild(badge);
-
-        // Update button text to be more compact - just show icon
-        const icon = button.querySelector('i');
-        if (icon) {
-            button.innerHTML = '';
-            button.appendChild(icon.cloneNode(true));
-            button.appendChild(badge);
-        }
     } else {
         // No quotes at all - keep default styling
         button.classList.remove('btn-success', 'btn-outline-warning');
         button.classList.add('btn-outline-secondary');
-        button.setAttribute('title', 'No quotes available');
+        button.setAttribute('title', isRecentLine ? 'Newly added quote just now' : 'No quotes available');
+    }
 
-        // Just keep icon
-        const icon = button.querySelector('i');
-        if (icon) {
-            button.innerHTML = '';
-            button.appendChild(icon.cloneNode(true));
-        }
+    if (isRecentLine) {
+        const recentBadge = document.createElement('span');
+        recentBadge.className = 'recent-quote-badge badge bg-primary-subtle text-primary border border-primary-subtle ms-2';
+        recentBadge.textContent = 'New';
+        button.appendChild(recentBadge);
+    }
+}
+
+function getRecentQuoteLinesPayload() {
+    if (!window.sessionStorage) return null;
+
+    try {
+        const raw = window.sessionStorage.getItem('partsListRecentQuoteLines');
+        if (!raw) return null;
+        const payload = JSON.parse(raw);
+        if (!payload || payload.listId !== window.PARTS_LIST_ID) return null;
+        if (!Array.isArray(payload.lineIds) || payload.lineIds.length === 0) return null;
+        return payload;
+    } catch (error) {
+        console.warn('Unable to read recent quote lines:', error);
+        return null;
+    }
+}
+
+function getRecentQuoteLineIdSet() {
+    const payload = getRecentQuoteLinesPayload();
+    if (!payload) return new Set();
+    return new Set(payload.lineIds.map(String));
+}
+
+function clearRecentQuoteLinesMarker() {
+    if (!window.sessionStorage) return;
+
+    const payload = getRecentQuoteLinesPayload();
+    if (!payload) return;
+
+    try {
+        window.sessionStorage.removeItem('partsListRecentQuoteLines');
+    } catch (error) {
+        console.warn('Unable to clear recent quote lines:', error);
     }
 }
 

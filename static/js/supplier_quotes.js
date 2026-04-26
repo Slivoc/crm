@@ -1283,7 +1283,7 @@ function saveSupplierQuote() {
             currentQuoteId = quoteId;
             return saveQuoteLines(quoteId);
         })
-        .then(() => {
+        .then((result) => {
             showToast('Quote saved successfully', 'success');
 
             const deleteBtn = document.getElementById('delete-quote-btn');
@@ -1293,8 +1293,14 @@ function saveSupplierQuote() {
 
             // If on quick quote page, redirect back to costing
             if (window.IS_QUICK_QUOTE) {
+                persistRecentQuoteLines(result?.savedLineIds || [], currentQuoteId);
                 setTimeout(() => {
-                    window.location.href = `/parts_list/parts-lists/${window.PARTS_LIST_ID}/costing`;
+                    const params = new URLSearchParams();
+                    if (currentQuoteId) {
+                        params.set('open_quote_id', String(currentQuoteId));
+                    }
+                    const queryString = params.toString();
+                    window.location.href = `/parts_list/parts-lists/${window.PARTS_LIST_ID}/costing${queryString ? `?${queryString}` : ''}`;
                 }, 1000);
             }
         })
@@ -1371,7 +1377,35 @@ function saveQuoteLines(quoteId) {
         if (!data.success) {
             throw new Error(data.message);
         }
+        return {
+            savedLineIds: Array.isArray(data.saved_line_ids) ? data.saved_line_ids : []
+        };
     });
+}
+
+function persistRecentQuoteLines(lineIds, quoteId) {
+    if (!window.IS_QUICK_QUOTE || !window.sessionStorage) return;
+
+    const normalizedLineIds = Array.from(
+        new Set(
+            (Array.isArray(lineIds) ? lineIds : [])
+                .map(id => parseInt(id, 10))
+                .filter(Number.isFinite)
+        )
+    );
+
+    if (normalizedLineIds.length === 0) return;
+
+    try {
+        window.sessionStorage.setItem('partsListRecentQuoteLines', JSON.stringify({
+            listId: window.PARTS_LIST_ID,
+            quoteId: quoteId || null,
+            lineIds: normalizedLineIds,
+            savedAt: Date.now()
+        }));
+    } catch (error) {
+        console.warn('Unable to persist recent quote lines:', error);
+    }
 }
 
 function deleteSupplierQuote() {
