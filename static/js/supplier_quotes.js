@@ -1295,12 +1295,7 @@ function saveSupplierQuote() {
             if (window.IS_QUICK_QUOTE) {
                 persistRecentQuoteLines(result?.savedLineIds || [], currentQuoteId);
                 setTimeout(() => {
-                    const params = new URLSearchParams();
-                    if (currentQuoteId) {
-                        params.set('open_quote_id', String(currentQuoteId));
-                    }
-                    const queryString = params.toString();
-                    window.location.href = `/parts_list/parts-lists/${window.PARTS_LIST_ID}/costing${queryString ? `?${queryString}` : ''}`;
+                    window.location.href = `/parts_list/parts-lists/${window.PARTS_LIST_ID}/costing`;
                 }, 1000);
             }
         })

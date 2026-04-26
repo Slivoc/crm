@@ -441,12 +441,15 @@
                     <!-- Quotes -->
                     <!-- Quotes -->
                     <td>
-                        <button class="btn btn-sm btn-outline-secondary view-quotes-btn"
-                                data-line-id="{{ line.id }}"
-                                data-part-number="{{ line.customer_part_number }}"
-                                title="View quotes">
-                            <i class="bi bi-clipboard-data"></i>
-                        </button>
+                        <div class="d-inline-flex align-items-center gap-2">
+                            <button class="btn btn-sm btn-outline-secondary view-quotes-btn"
+                                    data-line-id="{{ line.id }}"
+                                    data-part-number="{{ line.customer_part_number }}"
+                                    title="View quotes">
+                                <i class="bi bi-clipboard-data"></i>
+                            </button>
+                            <span class="recent-quote-badge-slot"></span>
+                        </div>
                     </td>
 
                     <td>
@@ -547,7 +550,6 @@
 
 <script>
     window.PARTS_LIST_ID = {{ list_id }};
-    window.OPEN_QUOTE_ID = {{ open_quote_id if open_quote_id else 'null' }};
     window.PROPONENT_SUPPLIER_ID = {{ proponent_supplier_id if proponent_supplier_id else 'null' }};
 
     // Add listener to highlight when chosen qty differs from requested

@@ -951,7 +951,11 @@ function loadQuoteAvailability() {
 
 function updateQuoteIndicator(button, thisListCount, hasOtherOffers, isRecentLine) {
     // Remove any existing badges
-    button.querySelectorAll('.quote-badge, .recent-quote-badge').forEach(el => el.remove());
+    button.querySelectorAll('.quote-badge').forEach(el => el.remove());
+    const recentBadgeSlot = button.parentElement?.querySelector('.recent-quote-badge-slot');
+    if (recentBadgeSlot) {
+        recentBadgeSlot.innerHTML = '';
+    }
 
     const icon = button.querySelector('i');
     if (icon) {
@@ -988,9 +992,11 @@ function updateQuoteIndicator(button, thisListCount, hasOtherOffers, isRecentLin
 
     if (isRecentLine) {
         const recentBadge = document.createElement('span');
-        recentBadge.className = 'recent-quote-badge badge bg-primary-subtle text-primary border border-primary-subtle ms-2';
+        recentBadge.className = 'recent-quote-badge badge bg-primary-subtle text-primary border border-primary-subtle';
         recentBadge.textContent = 'New';
-        button.appendChild(recentBadge);
+        if (recentBadgeSlot) {
+            recentBadgeSlot.appendChild(recentBadge);
+        }
     }
 }
 

@@ -735,12 +735,7 @@ async function saveQuote() {
         alert(`Saved ${linesToSave.length} quote lines`);
 
         // Redirect back to costing page
-        const params = new URLSearchParams();
-        if (quoteId) {
-            params.set('open_quote_id', String(quoteId));
-        }
-        const queryString = params.toString();
-        window.location.href = `/parts_list/parts-lists/${PARTS_LIST_ID}/costing${queryString ? `?${queryString}` : ''}`;
+        window.location.href = `/parts_list/parts-lists/${PARTS_LIST_ID}/costing`;
 
     } catch (error) {
         alert('Failed to save: ' + error.message);
