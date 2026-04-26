@@ -34,7 +34,6 @@ from routes.dynamic_table import dynamic_table_bp
 from routes.dashboard import dashboard_bp
 from routes.imports import imports_bp
 from routes.templates import templates_bp
-from routes.hubspot_integration import hubspot_bp
 from routes.auth import auth_bp
 from routes.admin import admin_bp
 from routes.bom import bom_bp
@@ -275,7 +274,6 @@ app.register_blueprint(dynamic_table_bp, url_prefix='/dynamic')
 app.register_blueprint(dashboard_bp, url_prefix='/dashboard')
 app.register_blueprint(imports_bp, url_prefix='/imports')
 app.register_blueprint(templates_bp, url_prefix='/templates')
-app.register_blueprint(hubspot_bp, url_prefix='/hubspot')
 app.register_blueprint(auth_bp, url_prefix='/auth')
 app.register_blueprint(admin_bp)
 app.register_blueprint(bom_bp, url_prefix='/bom')
