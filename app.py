@@ -8,20 +8,17 @@ import imaplib
 import os
 import sys
 import time
-from routes.rfqs import rfqs_bp, get_rfq_lines
 from routes.customers import customers_bp
 from routes.suppliers import suppliers_bp
 from routes.test_email import test_email_bp
 from routes.salespeople import salespeople_bp, collect_customer_news
 from routes.emails import sync_graph_mailbox_contacts
-from models import get_salespeople, insert_update, get_updates_by_customer_id, insert_rfq_from_macro, get_all_tags, get_project_by_id, Permission
-from routes.emails import get_company_name_by_email
+from models import get_salespeople, insert_update, get_updates_by_customer_id, get_all_tags, get_project_by_id, Permission
 from routes.parts import parts_bp
 from routes.manufacturers import manufacturers_bp
-from routes.offers import offers_bp
 from routes.settings import settings_bp
 from routes.files import files_bp
-from models import get_rfq_line_currency, verify_rfq_and_lines, get_rfq_by_id, get_contacts, User
+from models import User
 from db import execute as db_execute
 from routes.currencies import currencies_bp
 import logging
@@ -42,11 +39,8 @@ from routes.auth import auth_bp
 from routes.admin import admin_bp
 from routes.bom import bom_bp
 from routes.price_lists import price_lists_bp
-from routes.invoices import invoices_bp
 from routes.stock_movements import stock_movements_bp
-from routes.tax_rates import tax_rates_bp
 from routes.expediting import expediting_bp
-from routes.finance import finance_bp
 import email
 from email.header import decode_header  # For handling encoded email headers
 from email.message import EmailMessage  # For creating/manipulating email messages
@@ -102,6 +96,7 @@ app.config['APOLLO_BASE_URL'] = 'https://api.apollo.io/v1'  # It's good to keep 
 app.config['EXCHANGE_RATE_API_KEY'] = os.getenv('EXCHANGE_RATE_API_KEY', '')
 app.config['SESSION_TYPE'] = 'filesystem'  # Store sessions in files
 app.config['SESSION_FILE_DIR'] = './flask_session'  # Session folder
+app.config['ALLOW_PUBLIC_REGISTRATION'] = os.getenv('ALLOW_PUBLIC_REGISTRATION', '').lower() in ('1', 'true', 'yes', 'on')
 app.secret_key = os.getenv('SECRET_KEY', app.config['SECRET_KEY'])
 Session(app)
 
@@ -150,6 +145,37 @@ def is_mobile():
 def _is_static_request():
     path = request.path or ''
     return request.endpoint == 'static' or path.startswith('/static/') or path == '/favicon.ico'
+
+
+def _is_public_endpoint():
+    endpoint = request.endpoint or ''
+    blueprint = request.blueprint or ''
+
+    if _is_static_request():
+        return True
+
+    if endpoint in ('index', 'auth.login', 'auth.logout'):
+        return True
+
+    if app.config.get('ALLOW_PUBLIC_REGISTRATION') and endpoint == 'auth.register':
+        return True
+
+    if blueprint in ('portal_api', 'tickets_external_api'):
+        return True
+
+    return False
+
+
+def _unauthenticated_response():
+    login_url = url_for('auth.login', next=request.url)
+    wants_json = (
+        request.path.startswith('/api/')
+        or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.accept_mimetypes.best == 'application/json'
+    )
+    if wants_json:
+        return jsonify({'error': 'Authentication required', 'login_url': login_url}), 401
+    return redirect(login_url)
 
 
 def _using_postgres():
@@ -214,6 +240,11 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'auth.login'
 
+
+@login_manager.unauthorized_handler
+def unauthorized():
+    return _unauthenticated_response()
+
 @login_manager.user_loader
 def load_user(user_id):
     if _is_static_request():
@@ -223,14 +254,12 @@ def load_user(user_id):
 app.jinja_env.filters['nl2br'] = nl2br
 
 # Register Blueprints
-app.register_blueprint(rfqs_bp, url_prefix='/rfqs')
 app.register_blueprint(customers_bp, url_prefix='/customers')
 app.register_blueprint(suppliers_bp, url_prefix='/suppliers')
 app.register_blueprint(test_email_bp, url_prefix='/test')
 app.register_blueprint(salespeople_bp, url_prefix='/salespeople')
 app.register_blueprint(parts_bp, url_prefix='/')
 app.register_blueprint(manufacturers_bp, url_prefix='/manufacturers')
-app.register_blueprint(offers_bp, url_prefix='/offers')
 app.register_blueprint(settings_bp)
 app.register_blueprint(files_bp, url_prefix='/files')
 app.register_blueprint(currencies_bp)
@@ -250,12 +279,9 @@ app.register_blueprint(hubspot_bp, url_prefix='/hubspot')
 app.register_blueprint(auth_bp, url_prefix='/auth')
 app.register_blueprint(admin_bp)
 app.register_blueprint(bom_bp, url_prefix='/bom')
-app.register_blueprint(invoices_bp, url_prefix='/invoices')
 app.register_blueprint(price_lists_bp, url_prefix='/price_lists')
 app.register_blueprint(stock_movements_bp, url_prefix='/stock')
-app.register_blueprint(tax_rates_bp, url_prefix='/tax_rates')
 app.register_blueprint(expediting_bp, url_prefix='/expediting')
-app.register_blueprint(finance_bp, url_prefix='/finance')
 app.register_blueprint(nexar_bp, url_prefix='/nexar')
 app.register_blueprint(salesperson_metrics_bp, url_prefix='/metrics')
 app.register_blueprint(bulk_emails_bp, url_prefix='/bulk_emails')
@@ -315,17 +341,32 @@ def list_routes():
 
 # Load salespeople before each request
 @app.before_request
+def require_login_for_private_routes():
+    if _is_public_endpoint():
+        return None
+    if current_user.is_authenticated:
+        return None
+    return _unauthenticated_response()
+
+
+@app.before_request
 def before_request():
     if _is_static_request():
         return None
-    # Load salespeople
-    g.salespeople = _get_salespeople_cached()
+
+    # Only expose shared dropdown data to authenticated users or explicit public registration.
+    if current_user.is_authenticated or (
+        app.config.get('ALLOW_PUBLIC_REGISTRATION') and request.endpoint == 'auth.register'
+    ):
+        g.salespeople = _get_salespeople_cached()
+    else:
+        g.salespeople = []
 
     # Add the current user's salesperson_id to g if they're logged in
     if current_user.is_authenticated and hasattr(current_user, 'get_salesperson_id'):
         g.current_salesperson_id = current_user.get_salesperson_id()
     else:
-        g.current_salesperson_id = session.get('selected_salesperson_id')
+        g.current_salesperson_id = None
 
 @app.before_request
 def log_route_hit():
@@ -349,7 +390,7 @@ def inject_auth_status():
 # Inject salespeople globally
 @app.context_processor
 def inject_salespeople():
-    return dict(salespeople=g.salespeople)
+    return dict(salespeople=getattr(g, 'salespeople', []))
 
 @app.context_processor
 def inject_pinned_parts_lists():
@@ -421,41 +462,6 @@ def catch_all(path):
     print(f"Caught request to: {path}")
     return jsonify({"error": "Route not found"}), 404
 
-@app.route('/get_rfq_line_currency/<int:line_id>')
-def rfq_line_currency(line_id):
-    current_app.logger.debug(f"Received request for RFQ line currency: line_id={line_id}")
-    try:
-        result = get_rfq_line_currency(line_id)
-        current_app.logger.debug(f"Result from get_rfq_line_currency: {result}")
-        return jsonify(result)
-    except Exception as e:
-        current_app.logger.error(f"Error in rfq_line_currency route: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@app.route('/verify-rfq/<int:rfq_id>')
-def debug_verify_rfq(rfq_id):
-    lines = verify_rfq_and_lines(rfq_id)
-    if lines:
-        return jsonify([dict(row) for row in lines])
-    else:
-        return jsonify({"error": "RFQ or RFQ lines not found"}), 404
-
-@app.route('/view_rfq/<int:rfq_id>')
-def view_rfq(rfq_id):
-    rfq = get_rfq_by_id(rfq_id)
-    if not rfq:
-        return "RFQ not found", 404
-
-    rfq_lines = get_rfq_lines(rfq_id)
-
-    # Add debug logging
-    for line in rfq_lines:
-        logging.info(
-            f"RFQ Line in route: id={line.get('id')}, base_part_number={line.get('base_part_number')}, has_price_list_item={line.get('has_price_list_item')}")
-
-    return render_template('rfq_lines.html', rfq=rfq, rfq_lines=rfq_lines)
-
 @app.route('/customers/<int:customer_id>/add_update', methods=['POST'])
 def add_update(customer_id):
     update_text = request.form['update_text']
@@ -467,50 +473,6 @@ def add_update(customer_id):
     # Redirect back to the customer edit page
     return redirect(url_for('customers.edit_customer', customer_id=customer_id))
 
-
-@app.route('/add_rfq', methods=['POST'])
-def add_rfq_from_outlook():
-    data = request.get_json()
-
-    # Extract necessary fields
-    customer_ref = data.get('subject', 'email macro test')
-    sender_email = data.get('sender_email')
-    email_content = data.get('email_content')  # Add this
-
-    # Fix: Get the result as a single object, then extract what you need
-    result = get_company_name_by_email(sender_email)
-    customer_contact = result['customer_contact']
-
-    if not customer_contact:
-        return jsonify(
-            {"status": "error", "message": "No matching contact or customer found for this email address"}), 404
-
-    try:
-        customer = db_execute(
-            'SELECT * FROM customers WHERE id = ?',
-            (customer_contact['customer_id'],),
-            fetch='one',
-        )
-
-        if not customer:
-            return jsonify(
-                {"status": "error", "message": "Customer not found"}), 404
-
-        # Insert the new RFQ
-        new_rfq_id = insert_rfq_from_macro(
-            customer['id'],
-            customer_contact['id'],
-            customer_ref,
-            customer['currency_id'],
-            "new",
-            email_content  # Pass email content directly
-        )
-
-        # Return the RFQ ID in the response
-        return str(new_rfq_id), 201
-
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/test_get_all_tags', methods=['GET'])
 def test_get_all_tags():

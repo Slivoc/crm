@@ -187,7 +187,6 @@
                   <th>Name</th>
                   <th>Status</th>
                   <th>Customers</th>
-                  <th>RFQs</th>
                   <th>Orders</th>
                   <th>Last Activity</th>
                   <th>Actions</th>
@@ -205,7 +204,6 @@
                     {% endif %}
                   </td>
                   <td>{{ salesperson.customer_count or 0 }}</td>
-                  <td>{{ salesperson.rfq_count or 0 }}</td>
                   <td>{{ salesperson.order_count or 0 }}</td>
                   <td>
                     {% if salesperson.last_activity %}

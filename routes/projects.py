@@ -8,7 +8,7 @@ from time import perf_counter
 from flask import Blueprint, request, redirect, url_for, jsonify, current_app, render_template, send_from_directory, flash, session, Response
 from werkzeug.utils import secure_filename
 from db import db_cursor, execute as db_execute
-from models import create_base_part_number, get_rfqs_for_project, insert_stage_update, get_stage_updates, insert_file_for_project_stage, insert_project, get_stage, get_stage_by_id, insert_project_stage, get_project_stages, generate_breadcrumbs, update_project, get_project_by_id, get_projects, insert_project_update, \
+from models import create_base_part_number, insert_stage_update, get_stage_updates, insert_file_for_project_stage, insert_project, get_stage, get_stage_by_id, insert_project_stage, get_project_stages, generate_breadcrumbs, update_project, get_project_by_id, get_projects, insert_project_update, \
     get_project_updates, get_project_statuses, get_customers, get_salespeople, insert_file_for_project, link_file_to_project, get_files_for_project, get_file_by_id
 from routes.auth import login_required, current_user
 from backfill_project_parts_list_lines import run_backfill
@@ -882,7 +882,6 @@ def edit_project(project_id):
         ('Edit Project #{}'.format(project_id), url_for('projects.edit_project', project_id=project_id))
     )
 
-    project_rfqs = get_rfqs_for_project(project_id)
     project_parts_lists = _fetch_project_parts_lists_summary(project_id, limit=5)
     project_parts_lists_total = db_execute(
         "SELECT COUNT(*) AS list_count FROM parts_lists WHERE project_id = ?",
@@ -903,7 +902,6 @@ def edit_project(project_id):
         recurrence_types=recurrence_types,
         rendered_stages=rendered_stages,
         get_project_stages=get_project_stages,
-        project_rfqs=project_rfqs,  # Add this line to pass RFQs to template
         project_parts_lists=project_parts_lists,
         project_parts_lists_total=project_parts_lists_total.get('list_count', 0),
     )
@@ -2788,24 +2786,3 @@ def update_project_status(project_id):
         return jsonify({'success': False, 'error': str(e)})
 
 
-@projects_bp.route('/<int:project_id>/rfqs', methods=['GET'])
-def get_project_rfqs(project_id):
-    """
-    Get all RFQs associated with a project as JSON.
-    """
-    try:
-        # Import the function we defined for getting RFQs by project
-        from models import get_rfqs_for_project
-
-        rfqs = get_rfqs_for_project(project_id)
-        # Ensure all objects are serializable
-        for rfq in rfqs:
-            for key, value in rfq.items():
-                # Convert non-serializable objects to strings
-                if not isinstance(value, (str, int, float, bool, type(None), list, dict)):
-                    rfq[key] = str(value)
-
-        return jsonify({'success': True, 'rfqs': rfqs})
-    except Exception as e:
-        print(f"Error in get_project_rfqs: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500

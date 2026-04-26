@@ -11,7 +11,6 @@ from sqlalchemy.orm import relationship, sessionmaker
 from datetime import date, datetime
 from collections import Counter
 from typing import List, Dict, Tuple, Optional, Any
-import pdfkit
 import datetime
 import os
 from werkzeug.utils import secure_filename
@@ -1837,33 +1836,25 @@ def insert_sales_order(customer_id, customer_po_ref):
 
 def get_sales_order_lines(sales_order_id):
     query = '''
-        SELECT sol.*, ss.status_name, po.purchase_order_ref, po.supplier_id, s.name as supplier_name,
-               rfq.id as rfq_line_id, rfq.cost, rfq.supplier_lead_time, s.name as supplier_name
+        SELECT sol.*, ss.status_name, po.purchase_order_ref, po.supplier_id, s.name as supplier_name
         FROM sales_order_lines sol
         LEFT JOIN sales_statuses ss ON sol.sales_status_id = ss.id
         LEFT JOIN purchase_order_lines pol ON sol.id = pol.sales_order_line_id
         LEFT JOIN purchase_orders po ON pol.purchase_order_id = po.id
-        LEFT JOIN rfq_lines rfq ON sol.rfq_line_id = rfq.id
-        LEFT JOIN suppliers s ON rfq.chosen_supplier = s.id
+        LEFT JOIN suppliers s ON po.supplier_id = s.id
         WHERE sol.sales_order_id = ?
     '''
     rows = db_execute(query, (sales_order_id,), fetch='all') or []
     return [dict(line) for line in rows]
 
 
-def update_sales_order_line(line_id, quantity, price, promise_date, ship_date, requested_date, rfq_line_id=None, shipped_quantity=None):
-    # Prepare the base query without the rfq_line_id and shipped_quantity updates
+def update_sales_order_line(line_id, quantity, price, promise_date, ship_date, requested_date, shipped_quantity=None):
     query = '''
         UPDATE sales_order_lines
         SET quantity = ?, price = ?, promise_date = ?, ship_date = ?, requested_date = ?
     '''
 
     params = [quantity, price, promise_date, ship_date, requested_date]
-
-    # Only include rfq_line_id in the query if it's provided
-    if rfq_line_id is not None:
-        query += ', rfq_line_id = ?'
-        params.append(rfq_line_id)
 
     # Only include shipped_quantity in the query if it's provided
     if shipped_quantity is not None:

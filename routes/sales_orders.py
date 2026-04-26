@@ -1,11 +1,7 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, send_file, jsonify
-from models import  calculate_ship_dates_for_open_orders, get_sales_orders_paginated, get_orders_for_calendar, check_order_stock_availability, update_all_sales_order_lines_status, is_line_in_sales_order, update_sales_order_line_status, update_multiple_sales_order_lines_status, RFQLine, generate_sales_order_acknowledgment, get_sales_order_lines_with_rfq_options, update_sales_order_lines, get_rfq_lines_for_part_and_customer, get_sales_order_lines_with_status, get_sales_order_lines_with_status_and_po, generate_sales_order_acknowledgment_file, get_sales_order_lines_with_po, get_max_line_number, update_sales_order_line, get_sales_orders, insert_sales_order_line, get_sales_order_by_id, insert_sales_order, get_customers, get_salespeople, update_sales_order, get_sales_order_lines, get_sales_statuses
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+from models import  calculate_ship_dates_for_open_orders, get_sales_orders_paginated, get_orders_for_calendar, check_order_stock_availability, update_all_sales_order_lines_status, is_line_in_sales_order, update_sales_order_line_status, update_multiple_sales_order_lines_status, get_sales_order_lines_with_status, get_sales_order_lines_with_status_and_po, get_sales_order_lines_with_po, get_max_line_number, update_sales_order_line, get_sales_orders, insert_sales_order_line, get_sales_order_by_id, insert_sales_order, get_customers, get_salespeople, update_sales_order, get_sales_order_lines, get_sales_statuses
 import datetime
-from urllib.parse import quote
 import os
-import pythoncom
-import win32com.client as win32
-import pdfkit
 from datetime import datetime, timedelta
 
 from db import db_cursor, execute as db_execute
@@ -188,19 +184,13 @@ def edit_sales_order(sales_order_id):
 
         for line in sales_order_lines:
             line_id = line['id']
-            rfq_line_id = request.form.get(f'rfq_line_{line_id}')
-
-            # Log the captured rfq_line_id for debugging
-            print(f"Captured RFQ line for sales_order_line {line_id}: {rfq_line_id}")
-
-            # Other fields
             quantity = request.form.get(f'quantity_{line_id}')
             price = request.form.get(f'price_{line_id}')
             promise_date = request.form.get(f'promise_date_{line_id}')
             ship_date = request.form.get(f'ship_date_{line_id}')
             requested_date = request.form.get(f'requested_date_{line_id}')
+            shipped_quantity = request.form.get(f'shipped_quantity_{line_id}')
 
-            # Ensure rfq_line_id is being passed to the update function
             update_sales_order_line(
                 line_id,
                 quantity,
@@ -208,7 +198,7 @@ def edit_sales_order(sales_order_id):
                 promise_date,
                 ship_date,
                 requested_date,
-                rfq_line_id  # Make sure this is passed to the update function
+                shipped_quantity
             )
 
         return redirect(url_for('sales_orders.edit_sales_order', sales_order_id=sales_order_id))
@@ -239,10 +229,6 @@ def edit_sales_order(sales_order_id):
             line['purchase_order_id'] = matching_po_line.get('purchase_order_id')
             line['supplier_name'] = matching_po_line.get('supplier_name')
 
-        # Fetch the RFQ lines for this base part and customer
-        rfq_options = get_rfq_lines_for_part_and_customer(line['base_part_number'], sales_order['customer_id'])
-        line['rfq_options'] = rfq_options
-
         combined_sales_order_lines.append(line)
 
     print(f"Combined Sales Order Lines: {combined_sales_order_lines}")
@@ -262,26 +248,6 @@ def edit_sales_order(sales_order_id):
                            max_line_number=max_line_number)
 
 
-@sales_orders_bp.route('/update_sales_order_lines/<int:sales_order_id>', methods=['POST'])
-def update_sales_order_lines(sales_order_id):
-    with db_cursor(commit=True) as cur:
-        for key in request.form:
-            if 'rfq_line_' in key:
-                rfq_line_id = request.form[key]
-                _execute_with_cursor(
-                    cur,
-                    '''
-                    UPDATE sales_order_lines
-                    SET rfq_line_id = ?
-                    WHERE id = ?
-                    ''',
-                    (rfq_line_id, key.split('_')[-1]),
-                )
-
-    flash('Sales order lines updated successfully.', 'success')
-    return redirect(url_for('sales_orders.edit_sales_order', sales_order_id=sales_order_id))
-
-
 @sales_orders_bp.route('/<int:sales_order_id>/lines/add', methods=['POST'])
 def add_sales_order_line(sales_order_id):
     # Get data from the form or request
@@ -298,131 +264,6 @@ def add_sales_order_line(sales_order_id):
     return redirect(url_for('sales_orders.edit_sales_order', sales_order_id=sales_order_id))
 
 
-@sales_orders_bp.route('/create_from_won/<int:rfq_id>', methods=['POST'])
-def create_from_won(rfq_id):
-    with db_cursor(commit=True) as cur:
-        # Modified query to include customer payment_terms and incoterms
-        won_lines = _execute_with_cursor(
-            cur,
-            '''
-            SELECT rl.*, pn.part_number, rf.customer_id, rf.salesperson_id,
-                   c.currency_id, c.salesperson_id AS customer_salesperson_id,
-                   rl.price AS sales_price,
-                   c.payment_terms, c.incoterms
-            FROM rfq_lines rl
-            JOIN statuses s ON rl.status_id = s.id
-            JOIN part_numbers pn ON rl.base_part_number = pn.base_part_number
-            JOIN rfqs rf ON rl.rfq_id = rf.id
-            JOIN customers c ON rf.customer_id = c.id
-            WHERE rl.rfq_id = ? AND s.status = 'won'
-            ''',
-            (rfq_id,),
-        ).fetchall()
-
-    if not won_lines:
-        flash("No 'won' lines found to create a sales order.", 'error')
-        return redirect(url_for('rfqs.edit_rfq', rfq_id=rfq_id))
-
-    # Assuming all lines belong to the same customer
-    customer_id = won_lines[0]['customer_id']
-
-    # Use RFQ salesperson_id if available, otherwise fall back to customer's salesperson_id
-    salesperson_id = won_lines[0]['salesperson_id'] or won_lines[0]['customer_salesperson_id']
-
-    # Check if we have a valid salesperson_id
-    if not salesperson_id:
-        flash("No salesperson associated with this RFQ or customer.", 'error')
-        return redirect(url_for('rfqs.edit_rfq', rfq_id=rfq_id))
-
-    currency_id = won_lines[0]['currency_id']
-
-    # Use customer's payment_terms and incoterms
-    payment_terms = won_lines[0]['payment_terms']
-    incoterms = won_lines[0]['incoterms']
-
-    # Generate a new sales order reference
-    sales_order_ref = generate_sales_order_ref()
-
-    # Set the current date for date_entered
-    date_entered = datetime.now().strftime('%Y-%m-%d')
-
-    # Optional fields
-    customer_po_ref = "PO12345"  # Set this to a real PO if available or use None
-    contact_name = "Default Contact"  # Replace with actual contact name if available
-
-    with db_cursor(commit=True) as cur:
-        # Insert new sales order, ensuring all required fields are covered
-        insert_so_sql = '''
-            INSERT INTO sales_orders (
-                customer_id,
-                sales_order_ref,
-                customer_po_ref,
-                salesperson_id,
-                contact_name,
-                date_entered,
-                incoterms,
-                payment_terms,
-                sales_status_id,
-                currency_id,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        '''
-        if _using_postgres():
-            insert_so_sql = insert_so_sql.strip() + ' RETURNING id'
-
-        _execute_with_cursor(
-            cur,
-            insert_so_sql,
-            (
-                customer_id,
-                sales_order_ref,
-                customer_po_ref,
-                salesperson_id,
-                contact_name,
-                date_entered,
-                incoterms,
-                payment_terms,
-                1,
-                currency_id,
-            ),
-        )
-
-        so_row = cur.fetchone() if _using_postgres() else None
-        sales_order_id = (
-            so_row['id']
-            if isinstance(so_row, dict) and so_row
-            else getattr(cur, 'lastrowid', None)
-        )
-
-        # Initialize the line_number starting from 1
-        line_number = 1
-        sales_status_id = 1  # Default sales status for the line, e.g., 'entered'
-
-        # Insert each RFQ line into the new sales order lines
-        for line in won_lines:
-            _execute_with_cursor(
-                cur,
-                '''
-                INSERT INTO sales_order_lines (
-                    sales_order_id, line_number, base_part_number, quantity, price,
-                    sales_status_id, rfq_line_id, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ''',
-                (
-                    sales_order_id,
-                    line_number,
-                    line['base_part_number'],
-                    line['quantity'],
-                    line['sales_price'],
-                    sales_status_id,
-                    line['id'],
-                ),
-            )
-            line_number += 1
-
-    flash('Sales order created successfully.', 'success')
     return redirect(url_for('sales_orders.edit_sales_order', sales_order_id=sales_order_id))
 
 def generate_sales_order_ref():
@@ -440,199 +281,6 @@ def generate_sales_order_ref():
     year = datetime.now().year
     return f"SO{year}-{new_order_number:03d}"
 
-
-from flask import render_template, send_file
-import pdfkit  # Assuming you are using pdfkit for HTML to PDF conversion
-
-@sales_orders_bp.route('/<int:sales_order_id>/acknowledgment', methods=['GET'])
-def sales_order_acknowledgment(sales_order_id):
-    # Fetch the sales order and its lines
-    sales_order = get_sales_order_by_id(sales_order_id)
-    sales_order_lines = get_sales_order_lines(sales_order_id)
-
-    # Fetch customer addresses
-    delivery_address = CustomerAddress.query.filter_by(id=sales_order['shipping_address_id']).first()
-    invoicing_address = CustomerAddress.query.filter_by(id=sales_order['invoicing_address_id']).first()
-
-    # Render the HTML template for the acknowledgment
-    rendered_html = render_template('acknowledgement.html',
-                                    sales_order=sales_order,
-                                    order_lines=sales_order_lines,
-                                    delivery_address=delivery_address,
-                                    invoicing_address=invoicing_address,
-                                    seller_info={
-                                        'name': 'Your Company Name',
-                                        'address': '123 Business Road',
-                                        'city': 'City',
-                                        'postal_code': 'Postal Code',
-                                        'country': 'Country',
-                                        'email': 'info@yourcompany.com',
-                                        'phone': '+44 1234 567890'
-                                    })
-
-    # Convert the rendered HTML to a PDF file (using pdfkit, wkhtmltopdf, etc.)
-    pdf_file_path = f"/tmp/acknowledgment_{sales_order_id}.pdf"  # Save to a temp directory
-    pdfkit.from_string(rendered_html, pdf_file_path)
-
-    # Send the generated PDF file to the user
-    return send_file(pdf_file_path, as_attachment=True, download_name=f"SalesOrder_{sales_order_id}_Acknowledgment.pdf")
-
-
-
-@sales_orders_bp.route('/<int:sales_order_id>/generate_acknowledgment', methods=['GET'])
-def generate_acknowledgment(sales_order_id):
-    # Fetch sales order and sales order lines
-    sales_order = get_sales_order_by_id(sales_order_id)
-    sales_order_lines = get_sales_order_lines(sales_order_id)
-    sales_order['sales_order_lines'] = sales_order_lines
-
-    # Generate the acknowledgment PDF and save it with a version number
-    pdf_file_path = generate_sales_order_acknowledgment_file(sales_order)
-
-    with db_cursor(commit=True) as cur:
-        _execute_with_cursor(
-            cur,
-            'INSERT INTO acknowledgments (sales_order_id, acknowledgment_pdf) VALUES (?, ?)',
-            (sales_order_id, pdf_file_path),
-        )
-        _execute_with_cursor(
-            cur,
-            'UPDATE sales_orders SET sales_status_id = ? WHERE id = ?',
-            (2, sales_order_id),
-        )
-        _execute_with_cursor(
-            cur,
-            'UPDATE sales_order_lines SET sales_status_id = ? WHERE sales_order_id = ?',
-            (2, sales_order_id),
-        )
-
-    # Redirect to the view acknowledgments page after generating the PDF
-    return redirect(url_for('sales_orders.view_acknowledgments', sales_order_id=sales_order_id))
-
-
-
-@sales_orders_bp.route('/<int:sales_order_id>/acknowledgments', methods=['GET'])
-def view_acknowledgments(sales_order_id):
-    acknowledgments = db_execute(
-        '''
-        SELECT id, acknowledgment_pdf, created_at
-        FROM acknowledgments
-        WHERE sales_order_id = ?
-        ORDER BY created_at DESC
-        ''',
-        (sales_order_id,),
-        fetch='all'
-    ) or []
-
-    # Render the acknowledgments page, passing the sales_order_id
-    return render_template('view_acknowledgments.html', acknowledgments=acknowledgments, sales_order_id=sales_order_id)
-
-
-@sales_orders_bp.route('/<int:sales_order_id>/generate_acknowledgment_email', methods=['GET'])
-def generate_acknowledgment_email(sales_order_id):
-    # Fetch sales order and sales order lines
-    sales_order = get_sales_order_by_id(sales_order_id)
-    sales_order_lines = get_sales_order_lines(sales_order_id)
-    sales_order['sales_order_lines'] = sales_order_lines
-
-    # Generate the acknowledgment PDF and save it
-    pdf_file_path = generate_sales_order_acknowledgment_file(sales_order)
-
-    # Define email parameters
-    recipient = "customer_email@example.com"  # Replace with actual recipient email
-    subject = f"Acknowledgment for Sales Order #{sales_order['id']}"
-    body = f"Dear {sales_order['customer_name']},\n\nPlease find attached the acknowledgment for Sales Order #{sales_order['id']}.\n\nBest regards,\nYour Company"
-
-    # Encode the mailto parameters
-    mailto_link = f"mailto:{recipient}?subject={quote(subject)}&body={quote(body)}"
-
-    # Redirect to open the user's email client with the generated mailto link
-    return redirect(mailto_link)
-
-@sales_orders_bp.route('/email_acknowledgment/<int:acknowledgment_id>', methods=['GET'])
-def email_acknowledgment(acknowledgment_id):
-    acknowledgment = db_execute(
-        '''
-        SELECT a.acknowledgment_pdf, so.customer_id, c.name AS customer_name
-        FROM acknowledgments a
-        JOIN sales_orders so ON a.sales_order_id = so.id
-        JOIN customers c ON so.customer_id = c.id
-        WHERE a.id = ?
-        ''',
-        (acknowledgment_id,),
-        fetch='one'
-    )
-
-    if acknowledgment:
-        # Define email parameters
-        recipient = "customer_email@example.com"  # Replace with actual recipient email
-        subject = f"Acknowledgment for Sales Order #{acknowledgment_id}"
-        body = f"Dear {acknowledgment['customer_name']},\n\nPlease find attached the acknowledgment.\n\nBest regards,\nYour Company"
-
-        # Generate the mailto link
-        mailto_link = f"mailto:{recipient}?subject={quote(subject)}&body={quote(body)}"
-
-        # Redirect to the mailto link to open the email client
-        return redirect(mailto_link)
-    else:
-        return "Acknowledgment not found", 404
-
-
-def send_email_via_outlook(to_address, subject, body, attachment_path):
-    # Initialize the COM library for the current thread
-    pythoncom.CoInitialize()
-
-    # Ensure the path is an absolute path
-    attachment_path = os.path.abspath(attachment_path)
-
-    # Check if the attachment exists before proceeding
-    if not os.path.exists(attachment_path):
-        print(f"Error: The file '{attachment_path}' does not exist.")
-        return
-
-    # Initialize the Outlook application
-    outlook = win32.Dispatch('outlook.application')
-
-    # Create a new email
-    mail = outlook.CreateItem(0)
-
-    # Set email parameters
-    mail.To = to_address
-    mail.Subject = subject
-    mail.Body = body
-
-    # Attach the PDF file
-    mail.Attachments.Add(attachment_path)
-
-    # Display the email (this will open Outlook with the email ready to be sent)
-    mail.Display()
-
-    # Optional: Uninitialize COM after use (recommended for proper cleanup)
-    pythoncom.CoUninitialize()
-
-
-# Example usage in your acknowledgment email route
-@sales_orders_bp.route('/<int:sales_order_id>/generate_acknowledgment_outlook', methods=['GET'])
-def generate_acknowledgment_outlook(sales_order_id):
-    # Fetch sales order and sales order lines
-    sales_order = get_sales_order_by_id(sales_order_id)
-    sales_order_lines = get_sales_order_lines(sales_order_id)
-    sales_order['sales_order_lines'] = sales_order_lines
-
-    # Generate the acknowledgment PDF and save it
-    pdf_file_path = generate_sales_order_acknowledgment_file(sales_order)
-
-    # Prepare email details
-    recipient = "customer_email@example.com"  # Replace with actual recipient email
-    subject = f"Acknowledgment for Sales Order #{sales_order['id']}"
-    body = f"Dear {sales_order['customer_name']},\n\nPlease find attached the acknowledgment.\n\nBest regards,\nYour Company"
-
-    # Send email via Outlook with the PDF attachment
-    send_email_via_outlook(recipient, subject, body, pdf_file_path)
-
-    # Redirect to view acknowledgments page
-    return redirect(url_for('sales_orders.view_acknowledgments', sales_order_id=sales_order_id))
-
 @sales_orders_bp.route('/<int:line_id>/update', methods=['POST'])
 def update_sales_order_line_api(line_id):
     data = request.get_json()
@@ -643,10 +291,8 @@ def update_sales_order_line_api(line_id):
     promise_date = data.get('promise_date')
     ship_date = data.get('ship_date')
     requested_date = data.get('requested_date')
-    rfq_line_id = data.get('rfq_line_id')
-    shipped = data.get('shipped')  # Add this line to get the shipped status
+    shipped_quantity = data.get('shipped_quantity')
 
-    # Call the function, passing all parameters including shipped
     update_sales_order_line(
         line_id,
         quantity,
@@ -654,8 +300,7 @@ def update_sales_order_line_api(line_id):
         promise_date,
         ship_date,
         requested_date,
-        rfq_line_id,
-        shipped  # Add the shipped parameter
+        shipped_quantity
     )
 
     return jsonify({"success": True})
@@ -743,7 +388,7 @@ def update_lines_status(sales_order_id):
             _execute_with_cursor(
                 cur,
                 """
-                SELECT id, line_number, quantity, price, promise_date, requested_date, rfq_line_id
+                SELECT id, line_number, quantity, price, promise_date, requested_date
                 FROM sales_order_lines
                 WHERE sales_order_id = ?
                 """,
@@ -758,7 +403,6 @@ def update_lines_status(sales_order_id):
                     'price': row['price'] if isinstance(row, dict) else row[3],
                     'promise_date': row['promise_date'] if isinstance(row, dict) else row[4],
                     'requested_date': row['requested_date'] if isinstance(row, dict) else row[5],
-                    'rfq_line_id': row['rfq_line_id'] if isinstance(row, dict) else row[6],
                 }
                 for row in lines_data
             }
@@ -784,7 +428,7 @@ def update_lines_status(sales_order_id):
                     UPDATE sales_order_lines
                     SET sales_status_id = ?, ship_date = ?, shipped_quantity = quantity,
                         line_number = ?, quantity = ?, price = ?,
-                        promise_date = ?, requested_date = ?, rfq_line_id = ?
+                        promise_date = ?, requested_date = ?
                     WHERE id = ?
                     """,
                     (
@@ -795,7 +439,6 @@ def update_lines_status(sales_order_id):
                         line_data['price'],
                         line_data['promise_date'],
                         line_data['requested_date'],
-                        line_data['rfq_line_id'],
                         line_id,
                     ),
                 )

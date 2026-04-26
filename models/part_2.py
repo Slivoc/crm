@@ -11,7 +11,6 @@ from sqlalchemy.orm import relationship, sessionmaker
 from datetime import date, datetime
 from collections import Counter
 from typing import List, Dict, Tuple, Optional, Any
-import pdfkit
 import datetime
 import os
 from werkzeug.utils import secure_filename
@@ -277,99 +276,6 @@ def get_sales_order_lines_with_po(sales_order_id):
     return result
 
 
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from flask import make_response
-
-
-def generate_sales_order_acknowledgment(sales_order):
-    # Create a response object to serve the PDF
-    response = make_response()
-    response.headers['Content-Type'] = 'application/pdf'
-    response.headers['Content-Disposition'] = f'inline; filename=sales_order_{sales_order["id"]}_acknowledgment.pdf'
-
-    # Create the PDF object
-    pdf_canvas = canvas.Canvas(response, pagesize=A4)
-
-    # Start adding content to the PDF
-    pdf_canvas.setFont("Helvetica", 12)
-
-    # Example: Add a title
-    pdf_canvas.drawString(100, 800, f"Sales Order Acknowledgment - #{sales_order['id']}")
-
-    # Example: Add Customer Information
-    pdf_canvas.drawString(100, 780, f"Customer: {sales_order['customer_name']}")
-    pdf_canvas.drawString(100, 760, f"Order Date: {sales_order['date_entered']}")
-    pdf_canvas.drawString(100, 740, f"Total Value: ${sales_order['total_value']}")
-
-    # Add footer
-    pdf_canvas.drawString(100, 100, "Thank you for your business!")
-
-    # Finalize the PDF
-    pdf_canvas.showPage()
-    pdf_canvas.save()
-
-    return response
-
-
-import os
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-
-
-import os
-import pdfkit
-from flask import render_template
-
-import os
-import pdfkit
-from flask import render_template
-
-def generate_sales_order_acknowledgment_file(sales_order):
-    acknowledgment_row = db_execute('SELECT COUNT(*) as count FROM acknowledgments WHERE sales_order_id = ?', (sales_order['id'],), fetch='one')
-    acknowledgment_count = acknowledgment_row['count'] if acknowledgment_row else 0
-
-    version = acknowledgment_count + 1
-    file_path = f"./static/pdfs/sales_order_{sales_order['id']}_acknowledgment_v{version}.pdf"
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-    delivery_address = db_execute('''
-        SELECT address, city, postal_code, country 
-        FROM customer_addresses
-        WHERE customer_id = ? AND is_default_shipping = 1
-    ''', (sales_order['customer_id'],), fetch='one')
-
-    invoicing_address = db_execute('''
-        SELECT address, city, postal_code, country 
-        FROM customer_addresses
-        WHERE customer_id = ? AND is_default_invoicing = 1
-    ''', (sales_order['customer_id'],), fetch='one')
-
-    logging.debug("Delivery Address: %s", delivery_address)
-    logging.debug("Invoicing Address: %s", invoicing_address)
-
-    rendered_html = render_template('acknowledgment.html',
-                                    sales_order=sales_order,
-                                    order_lines=sales_order['sales_order_lines'],
-                                    delivery_address=delivery_address,
-                                    invoicing_address=invoicing_address,
-                                    seller_info={
-                                        'name': 'Your Company Name',
-                                        'address': '123 Business Road',
-                                        'city': 'City',
-                                        'postal_code': 'Postal Code',
-                                        'country': 'Country',
-                                        'email': 'info@yourcompany.com',
-                                        'phone': '+44 1234 567890'
-                                    })
-
-    path_to_wkhtmltopdf = r'C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe'
-    config = pdfkit.configuration(wkhtmltopdf=path_to_wkhtmltopdf)
-    pdfkit.from_string(rendered_html, file_path, configuration=config)
-    return file_path
-
-
-
 def dupdate_sales_order_line_status(line_id, status_id):
     try:
         db_execute('''
@@ -406,130 +312,6 @@ def get_sales_order_lines_with_status_and_po(sales_order_id):
     '''
     rows = db_execute(query, (sales_order_id,), fetch='all') or []
     return [dict(line) for line in rows]
-
-def get_purchase_suggestions():
-    query = '''
-        SELECT 
-            sol.id as sales_order_line_id,
-            sol.base_part_number,
-            sol.quantity,
-            rfq.chosen_supplier,
-            COALESCE(s.name, 'Unknown Supplier') as supplier_name,
-            o.supplier_reference,
-            so.sales_order_ref,
-            c.name as customer_name
-        FROM sales_order_lines sol
-        LEFT JOIN rfq_lines rfq ON sol.rfq_line_id = rfq.id
-        LEFT JOIN offers o ON rfq.offer_id = o.id
-        LEFT JOIN suppliers s ON rfq.chosen_supplier = s.id
-        LEFT JOIN sales_orders so ON sol.sales_order_id = so.id
-        LEFT JOIN customers c ON so.customer_id = c.id
-        LEFT JOIN purchase_order_lines pol ON sol.id = pol.sales_order_line_id
-        WHERE pol.id IS NULL  -- No purchase order assigned
-        AND rfq.chosen_supplier IS NOT NULL  -- Only include lines with a known supplier
-        ORDER BY s.name, sol.base_part_number
-        LIMIT 50
-    '''
-
-    rows = db_execute(query, fetch='all') or []
-    return [dict(line) for line in rows]
-
-def get_rfq_lines_for_part_and_customer(base_part_number, customer_id):
-    query = '''
-        SELECT rl.id, rl.base_part_number, rl.quantity, rl.cost, rl.supplier_lead_time, s.name as supplier_name
-        FROM rfq_lines rl
-        JOIN rfqs rf ON rl.rfq_id = rf.id
-        JOIN suppliers s ON rl.chosen_supplier = s.id
-        WHERE rl.base_part_number = ? AND rf.customer_id = ?
-    '''
-    rows = db_execute(query, (base_part_number, customer_id), fetch='all') or []
-    return [dict(line) for line in rows]
-
-def get_sales_order_lines_with_rfq_options(sales_order_id):
-    query = '''
-        SELECT sol.*, ss.status_name, po.purchase_order_ref, po.supplier_id, s.name as supplier_name, 
-               rfq.id as rfq_line_id, rfq.cost, rfq.supplier_lead_time, s.name as supplier_name
-        FROM sales_order_lines sol
-        LEFT JOIN sales_statuses ss ON sol.sales_status_id = ss.id
-        LEFT JOIN purchase_order_lines pol ON sol.id = pol.purchase_order_line_id
-        LEFT JOIN purchase_orders po ON pol.purchase_order_id = po.id
-        LEFT JOIN rfq_lines rfq ON sol.rfq_line_id = rfq.id
-        LEFT JOIN suppliers s ON rfq.chosen_supplier = s.id
-        WHERE sol.sales_order_id = ?
-    '''
-    rows = db_execute(query, (sales_order_id,), fetch='all') or []
-    result = []
-    for row in rows:
-        line = dict(row)
-        line['rfq_options'] = get_rfq_lines_for_part_and_customer(line['base_part_number'], line['customer_id'])
-        result.append(line)
-    return result
-
-def insert_purchase_order_line_from_suggestion(purchase_order_id, sales_order_line_id):
-    # Fetch the necessary data from the RFQ, offer, and offer lines for the sales order line
-    query = '''
-        SELECT 
-            sol.base_part_number, 
-            sol.quantity, 
-            ol.price, 
-            ol.lead_time
-        FROM sales_order_lines sol
-        LEFT JOIN rfq_lines rl ON sol.rfq_line_id = rl.id
-        LEFT JOIN offers o ON rl.offer_id = o.id
-        LEFT JOIN offer_lines ol ON (o.id = ol.offer_id AND ol.base_part_number = sol.base_part_number)
-        WHERE sol.id = ?
-    '''
-
-    rfq_line_data = db_execute(query, (sales_order_line_id,), fetch='one')
-
-    if not rfq_line_data:
-        raise ValueError(f"No RFQ line data found for sales order line ID: {sales_order_line_id}")
-
-    if rfq_line_data['price'] is None:
-        price_query = '''
-            SELECT ol.price
-            FROM sales_order_lines sol
-            JOIN rfq_lines rl ON sol.rfq_line_id = rl.id
-            JOIN offers o ON rl.offer_id = o.id
-            JOIN offer_lines ol ON (o.id = ol.offer_id AND ol.base_part_number = sol.base_part_number)
-            WHERE sol.id = ?
-        '''
-        price_result = db_execute(price_query, (sales_order_line_id,), fetch='one')
-
-        if not price_result or price_result['price'] is None:
-            raise ValueError(f"No price found for sales order line ID: {sales_order_line_id}")
-
-        price = price_result['price']
-    else:
-        price = rfq_line_data['price']
-
-    base_part_number = rfq_line_data['base_part_number']
-    quantity = rfq_line_data['quantity']
-
-    line_number_query = '''
-        SELECT COALESCE(MAX(line_number), 0) + 1 as next_line_number
-        FROM purchase_order_lines
-        WHERE purchase_order_id = ?
-    '''
-    next_line_number_row = db_execute(line_number_query, (purchase_order_id,), fetch='one')
-    next_line_number = next_line_number_row['next_line_number'] if next_line_number_row else 1
-
-    insert_query = '''
-        INSERT INTO purchase_order_lines (
-            purchase_order_id, line_number, base_part_number, quantity, price, sales_order_line_id, 
-            status_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        RETURNING id
-    '''
-    row = db_execute(
-        insert_query,
-        (purchase_order_id, next_line_number, base_part_number, quantity, price, sales_order_line_id, 1),
-        fetch='one',
-        commit=True,
-    )
-    if not row:
-        raise RuntimeError("Failed to insert purchase order line from suggestion")
-    return row.get('id', list(row.values())[0])
 
 def get_addresses_by_customer(customer_id):
     return query_all('SELECT * FROM customer_addresses WHERE customer_id = ?', (customer_id,))
@@ -649,17 +431,6 @@ def get_project_updates(project_id):
     return [dict(update) for update in updates]
 
 
-
-def link_rfq_to_project(project_id, rfq_id):
-    """
-    Creates a link between an RFQ and a project.
-    """
-    try:
-        db_execute('INSERT INTO project_rfqs (project_id, rfq_id) VALUES (?, ?)', (project_id, rfq_id), commit=True)
-        return True
-    except Exception as e:
-        print(f"Error linking RFQ to project: {e}")
-        return False
 
 # File to Project relationship functions
 def link_file_to_project(project_id, file_id):
@@ -1022,38 +793,10 @@ def delete_customer_industries(customer_id):
     db_execute('DELETE FROM customer_industries WHERE customer_id = ?', (customer_id,), commit=True)
 
 
-def insert_rfq_from_macro(customer_id, contact_id, customer_ref, currency, status, email_content=None):
-    try:
-        row = db_execute(
-            'INSERT INTO rfqs (entered_date, customer_id, contact_id, customer_ref, currency, status, email) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
-            (date.today().isoformat(), customer_id, contact_id, customer_ref, currency, status, email_content),
-            fetch='one',
-            commit=True,
-        )
-        rfq_id = row.get('id', list(row.values())[0]) if row else None
-        logging.info(f"Inserted new RFQ with ID: {rfq_id}")
-        return rfq_id
-    except Exception as e:
-        logging.error(f"Error inserting RFQ: {e}")
-        raise
-
 # Fetch part number by base_part_number
 def get_part_number_by_id(base_part_number):
     part_number = query_one('SELECT * FROM part_numbers WHERE base_part_number = ?', (base_part_number,))
     return dict(part_number) if part_number else None
-
-# Fetch RFQ lines by base_part_number with customer and price information
-def get_rfq_lines_by_part_number(base_part_number):
-    rfq_lines = query_all('''
-        SELECT rfq.id, rfq.entered_date, rfq_lines.line_number, rfq_lines.quantity,
-               customers.name as customer, rfq_lines.price
-        FROM rfq_lines
-        JOIN rfqs rfq ON rfq_lines.rfq_id = rfq.id
-        JOIN customers ON rfq.customer_id = customers.id
-        WHERE rfq_lines.base_part_number = ?
-    ''', (base_part_number,))
-    return [dict(line) for line in rfq_lines]
-
 
 # Fetch sales order lines by base_part_number with customer information
 def get_sales_order_lines_by_part_number(base_part_number):
@@ -1486,25 +1229,6 @@ def get_excess_list_line_by_id(line_id):
     row = db_execute('SELECT * FROM excess_list_lines WHERE id = ?', (line_id,), fetch='one')
     return dict(row) if row else None
 
-def match_rfq_lines(excess_stock_list_id):
-    # Fetch all excess stock lines for the given excess stock list
-    excess_lines = get_excess_stock_lines(excess_stock_list_id)
-
-    matches = []
-    for line in excess_lines:
-        base_part_number = line['base_part_number']
-
-        # Find matching RFQ lines
-        rfq_lines = find_rfq_lines_by_part_number(base_part_number)
-
-        if rfq_lines:
-            matches.append({
-                'excess_line': line,
-                'rfq_lines': rfq_lines
-            })
-
-    return matches
-
 def match_sales_order_lines(excess_stock_list_id):
     # Fetch all excess stock lines for the given excess stock list
     excess_lines = get_excess_stock_lines(excess_stock_list_id)
@@ -1530,17 +1254,6 @@ def get_excess_stock_lines(excess_stock_list_id):
         FROM excess_stock_lines 
         WHERE excess_stock_list_id = ?
     ''', (excess_stock_list_id,), fetch='all') or []
-    return [dict(row) for row in rows]
-
-def find_rfq_lines_by_part_number(base_part_number):
-    query = """
-    SELECT rfq_lines.id, rfq_lines.base_part_number, rfq_lines.quantity, 
-           rfq_lines.lead_time, rfqs.customer_id
-    FROM rfq_lines
-    JOIN rfqs ON rfq_lines.rfq_id = rfqs.id
-    WHERE rfq_lines.base_part_number = ?
-    """
-    rows = db_execute(query, (base_part_number,), fetch='all') or []
     return [dict(row) for row in rows]
 
 def find_sales_order_lines_by_part_number(base_part_number):

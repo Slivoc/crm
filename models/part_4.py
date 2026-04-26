@@ -11,7 +11,6 @@ from sqlalchemy.orm import relationship, sessionmaker
 from datetime import date, datetime
 from collections import Counter
 from typing import List, Dict, Tuple, Optional, Any
-import pdfkit
 import datetime
 import os
 from werkzeug.utils import secure_filename
@@ -1227,32 +1226,6 @@ def get_priorities():
         print(f"Error getting priorities: {str(e)}")
         return []
 
-def get_salesperson_active_rfqs(salesperson_id, limit=5):
-    """Get active RFQs for a salesperson"""
-    db = get_db_connection()
-
-    query = """
-    SELECT 
-        r.id,
-        r.entered_date,
-        r.customer_ref,
-        r.status,
-        c.name AS customer_name,
-        c.id AS customer_id,
-        (SELECT COUNT(*) FROM rfq_lines WHERE rfq_id = r.id) AS line_count
-    FROM rfqs r
-    JOIN customers c ON r.customer_id = c.id
-    WHERE r.salesperson_id = ? AND r.status != 'closed'
-    ORDER BY r.entered_date DESC
-    LIMIT ?
-    """
-
-    rfqs = db.execute(query, (salesperson_id, limit)).fetchall()
-    db.close()
-
-    return rfqs
-
-
 def get_salesperson_pending_orders(salesperson_id, limit=5):
     """Get pending sales orders for a salesperson"""
     db = get_db_connection()
@@ -1341,14 +1314,6 @@ def get_total_customers():
     """Get the total number of customers"""
     db = get_db_connection()
     count = db.execute("SELECT COUNT(*) as count FROM customers").fetchone()['count']
-    db.close()
-    return count
-
-
-def get_total_active_rfqs():
-    """Get the total number of active RFQs"""
-    db = get_db_connection()
-    count = db.execute("SELECT COUNT(*) as count FROM rfqs WHERE status = 'open'").fetchone()['count']
     db.close()
     return count
 
@@ -1452,31 +1417,6 @@ def get_customer_updates(customer_id, limit=5):
     return updates
 
 
-def get_customer_rfqs(customer_id, limit=5):
-    """Get recent RFQs for a specific customer"""
-    db = get_db_connection()
-
-    query = """
-    SELECT 
-        r.id,
-        r.entered_date,
-        r.customer_ref,
-        r.status,
-        s.name AS salesperson_name,
-        (SELECT COUNT(*) FROM rfq_lines WHERE rfq_id = r.id) AS line_count
-    FROM rfqs r
-    JOIN salespeople s ON r.salesperson_id = s.id
-    WHERE r.customer_id = ?
-    ORDER BY r.entered_date DESC
-    LIMIT ?
-    """
-
-    rfqs = db.execute(query, (customer_id, limit)).fetchall()
-    db.close()
-
-    return rfqs
-
-
 def get_customer_orders(customer_id, limit=5):
     """Get recent sales orders for a specific customer"""
     db = get_db_connection()
@@ -1524,70 +1464,6 @@ def get_customer_orders(customer_id, limit=5):
         db.close()
 
     return orders
-
-def get_customer_rfqs_by_date_range(customer_id, start_date, end_date, time_period):
-    """Get RFQs for a customer within a given date range"""
-    import sqlite3
-    conn = get_db_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    if time_period == 'yearly':
-        query = """
-            SELECT 
-                substr(CAST(entered_date AS TEXT), 1, 4) AS year,
-                COUNT(*) AS rfq_count,
-                MAX(entered_date) AS latest_date
-            FROM rfqs
-            WHERE customer_id = ?
-            GROUP BY substr(CAST(entered_date AS TEXT), 1, 4)
-            ORDER BY year DESC
-        """
-        cursor.execute(query, (customer_id,))
-        yearly_data = cursor.fetchall()
-        conn.close()
-
-        rfqs = []
-        for year_data in yearly_data:
-            rfqs.append({
-                'customer_ref': f"{year_data['year']} Summary",
-                'entered_date': str(year_data['latest_date']),
-                'status': f"Total: {year_data['rfq_count']}",
-                'salesperson_name': "",
-                'line_count': year_data['rfq_count']
-            })
-        return rfqs
-
-    # For specific date ranges
-    query = """
-        SELECT r.*, s.name AS salesperson_name,
-               (SELECT COUNT(*) FROM rfq_lines WHERE rfq_id = r.id) AS line_count
-        FROM rfqs r
-        LEFT JOIN salespeople s ON r.salesperson_id = s.id
-        WHERE r.customer_id = ?
-    """
-
-    params = [customer_id]
-
-    if start_date and end_date:
-        query += " AND r.entered_date BETWEEN ? AND ?"
-        params.extend([start_date, end_date])
-
-    query += " ORDER BY r.entered_date DESC LIMIT 10"
-
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-
-    rfqs = [dict(row) for row in rows]
-
-    for rfq in rfqs:
-        if 'entered_date' in rfq and rfq['entered_date']:
-            if isinstance(rfq['entered_date'], (datetime.date, datetime.datetime)):
-                rfq['entered_date'] = rfq['entered_date'].strftime('%Y-%m-%d')
-
-    return rfqs
-
 
 def get_customer_orders_by_date_range(customer_id, start_date, end_date, time_period):
     """Get orders for a customer within a given date range, including orders from associated companies"""
@@ -1682,31 +1558,6 @@ def get_customer_orders_by_date_range(customer_id, start_date, end_date, time_pe
     db.close()
     return result
 
-
-def get_customer_active_rfqs_count(customer_id, start_date=None, end_date=None):
-    """Get count of active RFQs for a customer within date range"""
-    import sqlite3  # ensure this is imported at the top of your file
-    conn = get_db_connection()
-    conn.row_factory = sqlite3.Row  # Enable dictionary-style access
-    cursor = conn.cursor()
-
-    query = """
-        SELECT COUNT(*) AS count
-        FROM rfqs
-        WHERE customer_id = ? AND status = 'open'
-    """
-
-    params = [customer_id]
-
-    if start_date and end_date:
-        query += " AND entered_date BETWEEN ? AND ?"
-        params.extend([start_date, end_date])
-
-    cursor.execute(query, params)
-    result = cursor.fetchone()
-    conn.close()
-
-    return result['count'] if result else 0
 
 
 def get_customer_active_orders_count(customer_id, start_date=None, end_date=None):

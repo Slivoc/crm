@@ -8,7 +8,7 @@ This module provides functionality to:
 4. Highlight discrepancies and allow marking parts lists as "Won"
 """
 
-from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for
+from flask import Blueprint, render_template, request, jsonify, session, url_for
 from db import execute as db_execute, db_cursor
 import logging
 import json

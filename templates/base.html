@@ -839,13 +839,11 @@ input:-webkit-autofill {
                     </button>
                     <div class="collapse" id="sales-collapse">
                         <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
-                            <li><a href="{{ url_for('rfqs.rfqs') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-file-text me-2"></i>RFQs</a></li>
                             <li><a href="{{ url_for('customers.customers') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-people me-2"></i>Customers</a></li>
                             <li><a href="{{ url_for('sales_orders.list_sales_orders') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-bag me-2"></i>Sales Orders</a></li>
                             <li><a href="{{ url_for('customers.enrich_dashboard') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-bullseye me-2"></i>Prospecting</a></li>
                             <li><a href="{{ url_for('sales_suggestions.sales_suggestions') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-lightbulb me-2"></i>Sales Suggestions</a></li>
                             <li><a href="{{ url_for('parts_list_ai.ai_home') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-robot me-2"></i>AI Parts Analysis</a></li>
-                            <li><a href="{{ url_for('invoices.list_invoices') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-receipt me-2"></i>Invoices</a></li>
                         </ul>
                     </div>
                 </li>
@@ -933,7 +931,6 @@ input:-webkit-autofill {
         <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
             <li><a href="{{ url_for('suppliers.suppliers') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-building me-2"></i>Suppliers</a></li>
             <li><a href="{{ url_for('supplier_portal.supplier_portal_home') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-network-wired me-2"></i>Supplier Portal</a></li>
-            <li><a href="{{ url_for('offers.offers_list') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-tag me-2"></i>Offers</a></li>
             <li><a href="{{ url_for('purchase_orders.list_purchase_orders') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-bag-check me-2"></i>Purchase Orders</a></li>
             <li><a href="{{ url_for('expediting.expedite_dashboard') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-speedometer2 me-2"></i>Expediting</a></li>
             <li><a href="{{ url_for('purchase_suggestions.purchase_suggestions') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-cart-plus me-2"></i>Purchase Suggestions</a></li>
@@ -965,27 +962,6 @@ input:-webkit-autofill {
         </ul>
     </div>
 </li>
-
-                <!-- Finance Section -->
-               <!-- <li class="mb-1">
-                    <button class="btn btn-toggle align-items-center rounded collapsed d-flex" data-bs-toggle="collapse" data-bs-target="#finance-collapse" aria-expanded="false">
-                        <i class="bi bi-calculator me-2"></i>
-                        Finance
-                    </button>
-                    <div class="collapse" id="finance-collapse">
-                        <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small">
-                            <li><a href="{{ url_for('finance.dashboard') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-graph-up me-2"></i>Dashboard</a></li>
-                            <li><a href="{{ url_for('finance.list_journal_entries') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-journal-text me-2"></i>Journal Entries</a></li>
-                            <li><a href="{{ url_for('finance.list_accounts') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-list-columns me-2"></i>Chart of Accounts</a></li>
-                            <li><a href="{{ url_for('invoices.list_invoices') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-receipt me-2"></i>Invoices</a></li>
-                            <li><a href="{{ url_for('finance.list_fiscal_years') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-calendar3 me-2"></i>Fiscal Periods</a></li>
-                            <li class="dropdown-divider border-top my-1"></li>
-                            <li><a href="{{ url_for('finance.trial_balance_report') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-file-earmark-bar-graph me-2"></i>Trial Balance</a></li>
-                            <li><a href="{{ url_for('finance.income_statement_report') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-graph-up-arrow me-2"></i>Income Statement</a></li>
-                            <li><a href="{{ url_for('finance.balance_sheet_report') }}" class="link-dark rounded d-flex align-items-center ps-3 py-1"><i class="bi bi-clipboard-data me-2"></i>Balance Sheet</a></li>
-                        </ul>
-                    </div>
-                </li>-->
 
              <!-- Emails Section -->
 <li class="mb-1">
@@ -1083,6 +1059,9 @@ input:-webkit-autofill {
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item d-flex align-items-center" href="{{ url_for('settings.settings') }}">
                                     <i class="bi bi-gear me-2"></i>Settings
+                                </a></li>
+                                <li><a class="dropdown-item d-flex align-items-center" href="{{ url_for('auth.change_password') }}">
+                                    <i class="bi bi-key me-2"></i>Change Password
                                 </a></li>
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item d-flex align-items-center" href="{{ url_for('auth.logout') }}">

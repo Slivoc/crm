@@ -7,10 +7,10 @@ import traceback
 
 from db import db_cursor
 from models import (get_purchase_orders, get_purchase_order_by_id, insert_purchase_order, get_purchase_orders_count, get_purchase_orders_total_value,
-                    update_purchase_order, get_purchase_order_lines, insert_purchase_order_line,
-                    update_purchase_order_line, delete_purchase_order_line, get_suppliers, insert_purchase_order_line_from_suggestion,
-                    get_all_sales_statuses, get_currencies, get_next_purchase_order_ref, update_sales_order_line_status,
-                    get_open_sales_order_lines, get_purchase_order_id_from_line, update_purchase_order_line_field, update_sales_order_line_ship_date, get_purchase_suggestions)
+                    get_purchase_order_lines, insert_purchase_order_line,
+                    delete_purchase_order_line, get_suppliers,
+                    get_all_sales_statuses, update_sales_order_line_status,
+                    get_open_sales_order_lines, update_purchase_order_line_field, update_sales_order_line_ship_date)
 
 purchase_orders_bp = Blueprint('purchase_orders', __name__)
 
@@ -165,7 +165,7 @@ def update_sales_order_ship_date():
     po_ship_date_obj = datetime.strptime(po_ship_date, '%Y-%m-%d')
 
     # Calculate the new SO line ship date by adding the supplier buffer
-    new_so_ship_date = po_ship_date_obj + datetime.timedelta(days=supplier_buffer)
+    new_so_ship_date = po_ship_date_obj + timedelta(days=supplier_buffer)
 
     # Update the SO line's ship date in the database
     update_sales_order_line_ship_date(so_line_id, new_so_ship_date)
@@ -175,50 +175,6 @@ def update_sales_order_ship_date():
 
     # Return a success response
     return jsonify({"success": True})
-
-
-@purchase_orders_bp.route('/purchase_suggestions', methods=['GET'])
-def purchase_suggestions():
-    suggestions = get_purchase_suggestions()  # Fetch the suggestions
-    return render_template('purchase_suggestions.html', suggestions=suggestions)
-
-
-@purchase_orders_bp.route('/generate_po', methods=['POST'])
-def generate_po():
-    selected_line_ids = request.form.getlist('line_ids')  # Get the selected sales order line IDs from the form
-
-    if not selected_line_ids:
-        flash('No lines selected to generate PO.', 'error')
-        return redirect(url_for('purchase_orders.purchase_suggestions'))
-
-    # Fetch supplier details for the selected lines
-    placeholders = ','.join('?' for _ in selected_line_ids)
-    query = f'''
-        SELECT sol.id as sales_order_line_id, rfq.chosen_supplier, s.name as supplier_name
-        FROM sales_order_lines sol
-        LEFT JOIN rfq_lines rfq ON sol.rfq_line_id = rfq.id
-        LEFT JOIN suppliers s ON rfq.chosen_supplier = s.id
-        WHERE sol.id IN ({placeholders})
-    '''
-
-    lines_by_supplier = {}
-    with db_cursor() as cursor:
-        line_rows = _execute_with_cursor(cursor, query, selected_line_ids).fetchall()
-        for line in line_rows:
-            supplier_id = line['chosen_supplier']
-            if supplier_id not in lines_by_supplier:
-                lines_by_supplier[supplier_id] = []
-            lines_by_supplier[supplier_id].append(line['sales_order_line_id'])
-
-    # For each supplier, create a PO and assign the selected lines
-    for supplier_id, line_ids in lines_by_supplier.items():
-        po_id = insert_purchase_order(supplier_id)
-        for line_id in line_ids:
-            insert_purchase_order_line_from_suggestion(po_id, line_id)
-
-    # Redirect to the new PO edit page after creation
-    flash('Purchase orders generated successfully!', 'success')
-    return redirect(url_for('purchase_orders.edit_purchase_order', purchase_order_id=po_id))
 
 
 @purchase_orders_bp.route('/import_erp', methods=['GET', 'POST'])

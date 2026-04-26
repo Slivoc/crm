@@ -1,7 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, request, g, current_app
 import logging
 from db import execute as db_execute, db_cursor
-from models import get_contact_status_by_id, get_contact_communications, get_customer_development_plan, update_customer_development_answer, delete_customer_development_answer, update_contact_status, add_contact_ajax, get_all_contacts_by_status, get_all_contact_statuses, get_all_contact_status_counts, get_customer_contacts, get_all_contacts_filtered, get_all_contact_lists, create_contact_list, delete_contact_list, get_contact_list_by_id, add_contacts_to_list, remove_contacts_from_list, get_lists_by_contact_id, update_contact_list_name, remove_contacts_from_list, get_contacts_by_ids, get_customer_domains, get_tag_description, Permission, get_all_company_types, get_available_company_types, abort, get_company_types_by_customer_id, remove_customer_company_type, insert_customer_company_type, get_rfqs_by_customer_id, get_sales_orders_by_customer_id, update_customer_apollo_id, get_customer_tags, get_templates_by_tags, update_contact, update_customer_enrichment, get_customer, get_customer_data, get_available_tags, get_customers_by_country, get_nested_tags, get_child_tags, get_customers_by_tag, get_customers_by_tags, get_customers_by_continent, get_available_countries, get_countries_by_continent, get_customer_statuses, get_continents, get_status_name, insert_customer_tag, get_all_customers, get_all_tags, get_customers_by_tag, get_latest_activity, get_customers_with_status_and_updates,  get_tag_description, insert_customer_tags, insert_customer_industry, delete_customer_industries, get_industries, get_customer_industry, update_customer_industry, delete_customer_tags, get_tags_by_customer_id, get_updates_by_customer_id, get_addresses_by_customer, insert_update, get_contact_by_id, get_customers, get_salespeople, get_currencies, get_salesperson_by_id, get_customer_by_id, get_contacts_by_customer, insert_customer, update_customer, insert_contact, get_call_list_contact_ids
+from models import get_contact_status_by_id, get_contact_communications, get_customer_development_plan, update_customer_development_answer, delete_customer_development_answer, update_contact_status, add_contact_ajax, get_all_contacts_by_status, get_all_contact_statuses, get_all_contact_status_counts, get_customer_contacts, get_all_contacts_filtered, get_all_contact_lists, create_contact_list, delete_contact_list, get_contact_list_by_id, add_contacts_to_list, remove_contacts_from_list, get_lists_by_contact_id, update_contact_list_name, remove_contacts_from_list, get_contacts_by_ids, get_customer_domains, get_tag_description, Permission, get_all_company_types, get_available_company_types, abort, get_company_types_by_customer_id, remove_customer_company_type, insert_customer_company_type, get_sales_orders_by_customer_id, update_customer_apollo_id, get_customer_tags, get_templates_by_tags, update_contact, update_customer_enrichment, get_customer, get_customer_data, get_available_tags, get_customers_by_country, get_nested_tags, get_child_tags, get_customers_by_tag, get_customers_by_tags, get_customers_by_continent, get_available_countries, get_countries_by_continent, get_customer_statuses, get_continents, get_status_name, insert_customer_tag, get_all_customers, get_all_tags, get_customers_by_tag, get_latest_activity, get_customers_with_status_and_updates,  get_tag_description, insert_customer_tags, insert_customer_industry, delete_customer_industries, get_industries, get_customer_industry, update_customer_industry, delete_customer_tags, get_tags_by_customer_id, get_updates_by_customer_id, get_addresses_by_customer, insert_update, get_contact_by_id, get_customers, get_salespeople, get_currencies, get_salesperson_by_id, get_customer_by_id, get_contacts_by_customer, insert_customer, update_customer, insert_contact, get_call_list_contact_ids
 from jinja2 import TemplateNotFound
 from ai_helper import start_bulk_enrichment, start_perplexity_enrichment, enrich_customer_with_perplexity, apply_perplexity_enrichment, generate_industry_insights, generate_preview_prompt, enrich_customer_data, validate_enrichment_data, generate_industry_insights_with_custom_prompt
 from http import HTTPStatus
@@ -460,7 +460,6 @@ def edit_customer(customer_id):
     page = request.args.get('page', 1, type=int)
     per_page = 10
 
-    rfqs = get_rfqs_by_customer_id(customer_id, page, per_page)
     sales_orders = get_sales_orders_by_customer_id(customer_id, page, per_page)
 
     notes = request.form.get('notes', '')
@@ -496,7 +495,6 @@ def edit_customer(customer_id):
                            customer_tags=customer_tags,
                            company_types=company_types,
                            customer_company_types=customer_company_types,
-                           rfqs=rfqs,
                            customer_notes=get_customer_notes(customer_id),
                            sales_orders=sales_orders,
                            countries=countries,  # Add countries to template context
@@ -2189,23 +2187,6 @@ def bump_priority(customer_id):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-@customers_bp.route('/<int:customer_id>/rfqs_orders', methods=['GET'])
-def rfqs_orders(customer_id):
-    # Get pagination parameters from the query string
-    page = request.args.get('page', 1, type=int)
-    per_page = 10  # Number of items per page
-
-    # Fetch sorted and paginated RFQs and sales orders
-    rfqs = get_rfqs_by_customer_id(customer_id, page, per_page)
-    sales_orders = get_sales_orders_by_customer_id(customer_id, page, per_page)
-
-    return render_template('customer_rfqs_orders.html',
-                           rfqs=rfqs,
-                           sales_orders=sales_orders,
-                           page=page,
-                           per_page=per_page)
-
-
 @customers_bp.route('/search')
 def customer_search():
     # Support both 'query' and 'q' parameters for backward compatibility
@@ -2464,24 +2445,6 @@ def get_timeline(customer_id):
             email_rows = cursor.fetchall()
             current_app.logger.info(f"Email query returned {len(email_rows)} rows")
 
-            # Execute RFQ part separately
-            rfq_query = """
-                SELECT
-                    'rfq' as activity_type,
-                    id,
-                    entered_date as activity_date,
-                    customer_ref as description,
-                    NULL as sender_email,
-                    NULL as recipient_email,
-                    status,
-                    NULL as value
-                FROM rfqs
-                WHERE customer_id = ?
-            """
-            cursor.execute(rfq_query, (customer_id,))
-            rfq_rows = cursor.fetchall()
-            current_app.logger.info(f"RFQ query returned {len(rfq_rows)} rows")
-
             # Execute orders part separately
             order_query = """
                 SELECT
@@ -2521,7 +2484,7 @@ def get_timeline(customer_id):
             current_app.logger.info(f"Project query returned {len(project_rows)} rows")
 
             # Combine all results
-            all_rows = email_rows + rfq_rows + order_rows + project_rows
+            all_rows = email_rows + order_rows + project_rows
 
             # Sort by activity_date (index 2) in descending order
             all_rows.sort(key=lambda x: x[2] if x[2] is not None else "", reverse=True)
@@ -2560,10 +2523,6 @@ def get_timeline(customer_id):
             cursor.execute(f"SELECT COUNT(*) FROM emails WHERE {email_conditions_sql}", params)
             email_count = cursor.fetchone()[0]
 
-            # Count RFQs
-            cursor.execute("SELECT COUNT(*) FROM rfqs WHERE customer_id = ?", (customer_id,))
-            rfq_count = cursor.fetchone()[0]
-
             # Count orders
             cursor.execute("SELECT COUNT(*) FROM sales_orders WHERE customer_id = ?", (customer_id,))
             order_count = cursor.fetchone()[0]
@@ -2573,10 +2532,10 @@ def get_timeline(customer_id):
             project_count = cursor.fetchone()[0]
 
             # Total count
-            total_count = email_count + rfq_count + order_count + project_count
+            total_count = email_count + order_count + project_count
             current_app.logger.info(f"Count query completed in {time.time() - count_start:.2f}s")
             current_app.logger.info(
-                f"Counts - Emails: {email_count}, RFQs: {rfq_count}, Orders: {order_count}, Projects: {project_count}, Total: {total_count}")
+                f"Counts - Emails: {email_count}, Orders: {order_count}, Projects: {project_count}, Total: {total_count}")
 
             total_time = time.time() - start_time
             current_app.logger.info(f"Total timeline request completed in {total_time:.2f}s")
@@ -2788,58 +2747,6 @@ def get_emails(customer_id):
 
     except Exception as e:
         current_app.logger.error("Error fetching customer emails", exc_info=True)
-        return jsonify({'success': False, 'error': 'Internal server error'}), 500
-
-@customers_bp.route('/<int:customer_id>/activity/rfqs', methods=['GET'])
-def get_rfqs(customer_id):
-    page = request.args.get('page', 1, type=int)
-    per_page = 20
-    offset = (page - 1) * per_page
-
-    try:
-        with db_cursor() as cursor:
-            query = """
-                SELECT 
-                    id,
-                    entered_date,
-                    customer_ref,
-                    status
-                FROM rfqs 
-                WHERE customer_id = ?
-                ORDER BY entered_date DESC
-                LIMIT ? OFFSET ?
-            """
-
-            cursor.execute(query, (customer_id, per_page, offset))
-            rows = cursor.fetchall()
-
-            rfqs = [{
-                'id': row[0],
-                'date': row[1],
-                'reference': row[2],
-                'status': row[3]
-            } for row in rows]
-
-            # Count total for pagination
-            cursor.execute(
-                "SELECT COUNT(*) FROM rfqs WHERE customer_id = ?",
-                (customer_id,)
-            )
-            total_count = cursor.fetchone()[0]
-
-        return jsonify({
-            'success': True,
-            'rfqs': rfqs,
-            'pagination': {
-                'total': total_count,
-                'pages': (total_count + per_page - 1) // per_page,
-                'current_page': page,
-                'per_page': per_page
-            }
-        })
-
-    except Exception as e:
-        current_app.logger.error("Error fetching customer RFQs", exc_info=True)
         return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 @customers_bp.route('/api/customers')

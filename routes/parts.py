@@ -9,7 +9,7 @@ from models import (
     get_all_manufacturers, get_part_alternatives, create_part_alternative, get_all_manufacturers_with_association, update_part_number,
     delete_part_number, get_part_numbers, insert_part_number, create_base_part_number,
     get_associated_manufacturers, get_po_lines_by_part_number, get_part_number_by_id,
-    get_rfq_lines_by_part_number, get_requisitions_by_part_number, get_sales_order_lines_by_part_number,
+    get_requisitions_by_part_number, get_sales_order_lines_by_part_number,
     get_global_alternatives, add_global_alternative,
     get_parts_list_lines_by_part_number, get_supplier_quotes_by_part_number,
     get_bom_lines_by_part_number, get_excess_lines_by_part_number, get_manufacturer_approvals_by_part_number
@@ -939,7 +939,6 @@ def view_part_number(base_part_number):
         return redirect(url_for('parts.parts'))
 
     # Fetch associated data using helper functions
-    rfq_lines = get_rfq_lines_by_part_number(base_part_number)
     po_lines = get_po_lines_by_part_number(base_part_number)
     requisitions = get_requisitions_by_part_number(base_part_number)
     sales_order_lines = get_sales_order_lines_by_part_number(base_part_number)
@@ -1019,7 +1018,6 @@ def view_part_number(base_part_number):
 
     return render_template('view_part_number.html',
                            part_number=part_number,
-                           rfq_lines=rfq_lines,
                            po_lines=po_lines,
                            requisitions=requisitions,
                            sales_order_lines=sales_order_lines,

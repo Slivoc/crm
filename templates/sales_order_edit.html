@@ -55,14 +55,6 @@
         </div>
     </form>
 
-    <!-- Acknowledgments Section -->
-    <div class="card mb-4 shadow p-3 border-0">
-        <h2 class="h5">Acknowledgments</h2>
-        <div class="d-flex">
-            <a href="{{ url_for('sales_orders.generate_acknowledgment', sales_order_id=sales_order.id) }}" class="btn btn-primary me-2">Generate Acknowledgment</a>
-            <a href="{{ url_for('sales_orders.view_acknowledgments', sales_order_id=sales_order.id) }}" class="btn btn-secondary">View Acknowledgments</a>
-        </div>
-    </div>
 <!-- Add this just above the Sales Order Lines Section -->
 <div class="card mb-4 shadow p-3 border-0">
     <h2 class="h5">Shipping Actions</h2>
@@ -88,7 +80,6 @@
         <th>Promise Date</th>
         <th>Ship Date</th>
         <th>Requested Date</th>
-        <th>RFQ Line</th>
         <th>Assigned PO</th>
     </tr>
 </thead>
@@ -113,16 +104,6 @@
                             <span id="warning_ship_date_{{ line.id }}" class="warning-icon" style="display:none;">⚠️</span>
                         </td>
                         <td><input type="date" class="form-control" name="requested_date_{{ line.id }}" value="{{ line.requested_date or '' }}" onchange="updateLine({{ line.id }})"></td>
-                        <td>
-                            <select class="form-select" name="rfq_line_{{ line.id }}" onchange="updateLine({{ line.id }})">
-                                <option value="">Select RFQ line</option>
-                                {% for rfq_line in line.rfq_options %}
-                                    <option value="{{ rfq_line.id }}" {% if rfq_line.id == line.rfq_line_id %}selected{% endif %}>
-                                        RFQ #{{ rfq_line.id }} - {{ rfq_line.supplier_name }} - {{ rfq_line.cost }} - {{ rfq_line.supplier_lead_time }} weeks
-                                    </option>
-                                {% endfor %}
-                            </select>
-                        </td>
                         <td>
                             {% if line.purchase_order_id %}
                                 PO #{{ line.purchase_order_id }} - {{ line.supplier_name }}
@@ -225,7 +206,6 @@ function checkDatesOnLoad() {
 
 function updateLine(lineId) {
     // Get the values from the form inputs for the corresponding line
-    const rfqLineId = document.querySelector(`select[name="rfq_line_${lineId}"]`).value;
     const quantity = document.querySelector(`input[name="quantity_${lineId}"]`).value;
     const price = document.querySelector(`input[name="price_${lineId}"]`).value;
     const promiseDate = document.querySelector(`input[name="promise_date_${lineId}"]`).value;
@@ -240,7 +220,6 @@ function updateLine(lineId) {
             'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-            rfq_line_id: rfqLineId,
             quantity: quantity,
             price: price,
             promise_date: promiseDate,

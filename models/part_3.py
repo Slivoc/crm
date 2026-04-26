@@ -11,7 +11,6 @@ from sqlalchemy.orm import relationship, sessionmaker
 from datetime import date, datetime
 from collections import Counter
 from typing import List, Dict, Tuple, Optional, Any
-import pdfkit
 import datetime
 import os
 from werkzeug.utils import secure_filename
@@ -1081,21 +1080,6 @@ def get_templates_by_tags(customer_tags):
     db.close()
     return result
 
-# Helper function to get paginated RFQs with customer_ref
-def get_rfqs_by_customer_id(customer_id, page, per_page):
-    db = get_db_connection()
-    offset = (page - 1) * per_page
-    query = '''
-        SELECT id, status, entered_date, customer_ref
-        FROM rfqs
-        WHERE customer_id = ?
-        ORDER BY entered_date DESC
-        LIMIT ? OFFSET ?
-    '''
-    rfqs = db.execute(query, (customer_id, per_page, offset)).fetchall()
-    db.close()
-    return [dict(rfq) for rfq in rfqs]
-
 # Helper function to get paginated Sales Orders
 def get_sales_orders_by_customer_id(customer_id, page, per_page):
     db = get_db_connection()
@@ -1394,6 +1378,20 @@ def create_user(username, password, salesperson_id=None):
     except Exception as e:
         db.rollback()
         raise e
+    finally:
+        db.close()
+
+
+def update_user_password(user_id, new_password):
+    """Update a user's password hash."""
+    db = get_db_connection()
+    try:
+        password_hash = generate_password_hash(new_password)
+        db.execute(
+            'UPDATE users SET password_hash = ? WHERE id = ?',
+            (password_hash, user_id)
+        )
+        db.commit()
     finally:
         db.close()
 
@@ -1990,105 +1988,6 @@ def get_part_alternatives(base_part_number: str) -> List[Dict]:
         return []
 
 
-# ---- Invoice Functions ----
-
-
-def create_invoice(
-    sales_order_id,
-    customer_id,
-    billing_address_id,
-    invoice_date,
-    due_date,
-    currency_id,
-    total_amount,
-    status,
-):
-    """Creates a new invoice entry in the database.
-
-    Uses db helpers so it works on SQLite today and Postgres later.
-    """
-    row = db_execute(
-        """
-        INSERT INTO invoices (
-            sales_order_id,
-            customer_id,
-            billing_address_id,
-            invoice_date,
-            due_date,
-            currency_id,
-            total_amount,
-            status,
-            created_at,
-            updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        RETURNING id
-        """,
-        (
-            sales_order_id,
-            customer_id,
-            billing_address_id,
-            invoice_date,
-            due_date,
-            currency_id,
-            total_amount,
-            status,
-        ),
-        fetch="one",
-        commit=True,
-    )
-
-    if not row:
-        raise RuntimeError("Failed to create invoice")
-
-    return row.get("id", list(row.values())[0])
-
-
-def get_invoice_by_id(invoice_id):
-    """Retrieves an invoice by ID."""
-    row = db_execute(
-        "SELECT * FROM invoices WHERE id = ?",
-        (invoice_id,),
-        fetch="one",
-    )
-    return dict(row) if row else None
-
-
-def get_all_invoices():
-    """Retrieves all invoices with customer names."""
-    rows = db_execute(
-        """
-        SELECT i.*, c.name AS customer_name
-        FROM invoices i
-        LEFT JOIN customers c ON i.customer_id = c.id
-        """,
-        fetch="all",
-    ) or []
-    return [dict(r) for r in rows]
-
-
-def update_invoice_status(invoice_id, new_status):
-    """Updates the status of an invoice."""
-    db_execute(
-        """
-        UPDATE invoices
-        SET status = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-        """,
-        (new_status, invoice_id),
-        commit=True,
-    )
-
-
-def delete_invoice(invoice_id):
-    """Deletes an invoice from the database."""
-    db_execute(
-        "DELETE FROM invoices WHERE id = ?",
-        (invoice_id,),
-        commit=True,
-    )
-
-
 # Sales-order line status helpers
 #
 # IMPORTANT:
@@ -2258,58 +2157,6 @@ def set_conversion_mode(mode):
         commit=True,
     )
 
-
-
-
-def create_invoice_line(
-    invoice_id,
-    sales_order_line_id,
-    base_part_number,
-    quantity,
-    unit_price,
-    currency_id,
-):
-    """Create a new invoice line with the specified currency.
-
-    Uses db helpers so it works on SQLite today and Postgres later.
-    """
-    line_total = quantity * unit_price
-
-    row = db_execute(
-        """
-        INSERT INTO invoice_lines (
-            invoice_id,
-            sales_order_line_id,
-            base_part_number,
-            quantity,
-            unit_price,
-            line_total,
-            currency_id,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        RETURNING id
-        """,
-        (
-            invoice_id,
-            sales_order_line_id,
-            base_part_number,
-            quantity,
-            unit_price,
-            line_total,
-            currency_id,
-        ),
-        fetch="one",
-        commit=True,
-    )
-
-    if not row:
-        raise RuntimeError("Failed to create invoice line")
-
-    return row.get("id", list(row.values())[0])
-
-
-
 def convert_amount(amount, from_currency_id, to_currency_id):
     """Convert an amount from one currency to another.
 
@@ -2422,218 +2269,6 @@ def get_orders_for_calendar(start_date, end_date, date_type='ship_date', custome
 
     db.close()
     return orders
-
-def get_rfqs_for_project(project_id):
-    """
-    Retrieves all RFQs linked to a specific project.
-    """
-    try:
-        db = get_db_connection()
-        rfqs = db.execute('''
-            SELECT r.* 
-            FROM rfqs r
-            JOIN project_rfqs pr ON r.id = pr.rfq_id
-            WHERE pr.project_id = ?
-            ORDER BY r.entered_date DESC
-        ''', (project_id,)).fetchall()
-
-        # Convert row objects to dictionaries to ensure JSON serialization works
-        result = []
-        for rfq in rfqs:
-            rfq_dict = dict_from_row(rfq)
-            # Ensure dates are properly formatted as strings
-            if 'entered_date' in rfq_dict and rfq_dict['entered_date']:
-                if not isinstance(rfq_dict['entered_date'], str):
-                    rfq_dict['entered_date'] = rfq_dict['entered_date'].isoformat()
-            result.append(rfq_dict)
-
-        db.close()
-        return result
-    except Exception as e:
-        print(f"Error getting RFQs for project: {e}")
-        return []
-
-
-def get_projects_for_rfq(rfq_id):
-    """
-    Retrieves all projects linked to a specific RFQ.
-    """
-    try:
-        db = get_db_connection()
-        projects = db.execute('''
-            SELECT p.* 
-            FROM projects p
-            JOIN project_rfqs pr ON p.id = pr.project_id
-            WHERE pr.rfq_id = ?
-        ''', (rfq_id,)).fetchall()
-
-        result = [dict_from_row(project) for project in projects]
-        db.close()
-        return result
-    except Exception as e:
-        print(f"Error getting projects for RFQ: {e}")
-        return []
-
-
-def remove_rfq_from_project(project_id, rfq_id):
-    """
-    Removes the link between an RFQ and a project.
-    """
-    try:
-        db = get_db_connection()
-        db.execute('DELETE FROM project_rfqs WHERE project_id = ? AND rfq_id = ?', (project_id, rfq_id))
-        db.commit()
-        db.close()
-        return True
-    except Exception as e:
-        print(f"Error removing RFQ from project: {e}")
-        return False
-
-
-def recalculate_invoice_taxes(invoice_id, conn=None, cursor=None):
-    """Recalculate tax amounts for an invoice.
-
-    Postgres-friendly:
-    - Prefer shared `db_execute` helper.
-    - If an external caller passes a DB-API cursor/connection, we still support it.
-
-    Args:
-        invoice_id: Invoice ID
-        conn/cursor: Optional existing connection+cursor (SQLite-style). If provided,
-                     updates are executed on that cursor and caller controls commit.
-
-    Returns:
-        True
-    """
-    if cursor is not None:
-        # Legacy path: operate on the passed cursor (keeps backwards compatibility)
-        cursor.execute("SELECT total_amount FROM invoices WHERE id = ?", (invoice_id,))
-        invoice = cursor.fetchone()
-        if not invoice:
-            raise ValueError(f"Invoice with ID {invoice_id} not found")
-
-        invoice_total = invoice["total_amount"] if isinstance(invoice, dict) else invoice[0]
-
-        cursor.execute(
-            """
-            SELECT it.id, it.tax_rate_id, tr.tax_percentage
-            FROM invoice_taxes it
-            JOIN tax_rates tr ON it.tax_rate_id = tr.id
-            WHERE it.invoice_id = ?
-            """,
-            (invoice_id,),
-        )
-        taxes = cursor.fetchall() or []
-
-        for tax in taxes:
-            tax_id = tax["id"] if isinstance(tax, dict) else tax[0]
-            tax_percentage = tax["tax_percentage"] if isinstance(tax, dict) else tax[2]
-            new_tax_amount = round(invoice_total * (tax_percentage / 100), 2)
-            cursor.execute(
-                "UPDATE invoice_taxes SET tax_amount = ? WHERE id = ?",
-                (new_tax_amount, tax_id),
-            )
-        return True
-
-    # Preferred path: use db helpers (auto placeholder translation for Postgres)
-    invoice = db_execute(
-        "SELECT total_amount FROM invoices WHERE id = ?",
-        (invoice_id,),
-        fetch="one",
-    )
-    if not invoice:
-        raise ValueError(f"Invoice with ID {invoice_id} not found")
-
-    invoice_total = invoice.get("total_amount")
-
-    taxes = db_execute(
-        """
-        SELECT it.id, it.tax_rate_id, tr.tax_percentage
-        FROM invoice_taxes it
-        JOIN tax_rates tr ON it.tax_rate_id = tr.id
-        WHERE it.invoice_id = ?
-        """,
-        (invoice_id,),
-        fetch="all",
-    ) or []
-
-    with db_cursor(commit=True) as cur:
-        for tax in taxes:
-            tax_id = tax.get("id") if isinstance(tax, dict) else tax[0]
-            tax_percentage = tax.get("tax_percentage") if isinstance(tax, dict) else tax[2]
-            new_tax_amount = round(invoice_total * (tax_percentage / 100), 2)
-            _execute_with_cursor(
-                cur,
-                "UPDATE invoice_taxes SET tax_amount = ? WHERE id = ?",
-                (new_tax_amount, tax_id),
-            )
-
-    return True
-
-
-def calculate_invoice_total(conn, cursor, invoice_id):
-    """
-    Calculate the full invoice total including taxes and discounts.
-
-    Args:
-        conn: Database connection
-        cursor: Database cursor
-        invoice_id: ID of the invoice to calculate
-
-    Returns:
-        dict: Contains subtotal, tax_total, discount_total, and invoice_total
-    """
-    # Get invoice subtotal
-    cursor.execute("SELECT total_amount FROM invoices WHERE id = ?", (invoice_id,))
-    invoice = cursor.fetchone()
-
-    if not invoice:
-        return {
-            'subtotal': 0,
-            'tax_total': 0,
-            'discount_total': 0,
-            'invoice_total': 0
-        }
-
-    subtotal = invoice['total_amount']
-
-    # Calculate tax total
-    cursor.execute("""
-        SELECT SUM(tax_amount) as total_taxes
-        FROM invoice_taxes
-        WHERE invoice_id = ?
-    """, (invoice_id,))
-
-    tax_result = cursor.fetchone()
-    tax_total = tax_result['total_taxes'] if tax_result['total_taxes'] is not None else 0
-
-    # Calculate discount total
-    cursor.execute("""
-        SELECT discount_type, discount_value
-        FROM invoice_discounts
-        WHERE invoice_id = ?
-    """, (invoice_id,))
-
-    discounts = cursor.fetchall()
-    discount_total = 0
-
-    for discount in discounts:
-        if discount['discount_type'] == 'percentage':
-            discount_amount = round(subtotal * (discount['discount_value'] / 100), 2)
-        else:
-            discount_amount = discount['discount_value']
-        discount_total += discount_amount
-
-    # Calculate final invoice total
-    invoice_total = subtotal + tax_total - discount_total
-
-    return {
-        'subtotal': subtotal,
-        'tax_total': tax_total,
-        'discount_total': discount_total,
-        'invoice_total': invoice_total
-    }
-
 
 from datetime import datetime, timedelta
 
@@ -3270,60 +2905,3 @@ def get_communication_log(customer_id=None, contact_id=None, communication_type=
     return results
 
 
-def add_rfq_update(rfq_id, user_id, update_text=None, update_type='comment'):
-    """
-    Add an update to an RFQ
-
-    Args:
-        rfq_id: The ID of the RFQ
-        user_id: The ID of the user making the update
-        update_text: Optional text for the update
-        update_type: Type of update ('comment', 'chased', etc.)
-
-    Returns:
-        The ID of the newly created update
-    """
-    db = get_db_connection()
-    try:
-        cursor = db.execute(
-            'INSERT INTO rfq_updates (rfq_id, user_id, update_text, update_type) VALUES (?, ?, ?, ?)',
-            (rfq_id, user_id, update_text, update_type)
-        )
-        update_id = cursor.lastrowid
-        db.commit()
-        return update_id
-    except Exception as e:
-        db.rollback()
-        logging.error(f"Error adding RFQ update: {e}")
-        raise
-    finally:
-        db.close()
-
-
-def get_rfq_updates(rfq_id):
-    """
-    Get all updates for an RFQ
-
-    Args:
-        rfq_id: The ID of the RFQ
-
-    Returns:
-        List of updates with user information
-    """
-    db = get_db_connection()
-    try:
-        cursor = db.execute('''
-            SELECT ru.id, ru.rfq_id, ru.user_id, ru.update_text, ru.update_type, 
-                   ru.created_at, u.username as user_name
-            FROM rfq_updates ru
-            JOIN users u ON ru.user_id = u.id
-            WHERE ru.rfq_id = ?
-            ORDER BY ru.created_at DESC
-        ''', (rfq_id,))
-        updates = cursor.fetchall()
-        return [dict(update) for update in updates]
-    except Exception as e:
-        logging.error(f"Error getting RFQ updates: {e}")
-        return []
-    finally:
-        db.close()

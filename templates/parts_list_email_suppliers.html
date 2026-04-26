@@ -756,11 +756,8 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-outline-primary" id="sendViaSystemBtn">
-                    Send via System
-                </button>
-                <button type="button" class="btn btn-primary" id="copyAndOpenBtn">
-                    Copy & Open Outlook
+                <button type="button" class="btn btn-primary" id="sendViaSystemBtn">
+                    Send via Graph
                 </button>
             </div>
         </div>
@@ -2060,8 +2057,9 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
         };
     }
 
-    // ---- Copy & Open Outlook + Record -----------------------------
-    document.getElementById('copyAndOpenBtn').addEventListener('click', async function() {
+    // ---- Legacy Outlook path (disabled in Graph-only UI) ----------
+    const copyAndOpenBtn = document.getElementById('copyAndOpenBtn');
+    if (copyAndOpenBtn) copyAndOpenBtn.addEventListener('click', async function() {
         if (!currentEmailData) return;
 
         const btn = this;
@@ -2106,7 +2104,7 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
         }
     });
 
-    // ---- Send via System ------------------------------------------
+    // ---- Send via Graph -------------------------------------------
     document.getElementById('sendViaSystemBtn').addEventListener('click', async function() {
         if (!currentEmailData) return;
 
@@ -2141,18 +2139,18 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
             await recordEmailSent(editedEmailData);
 
             btn.innerHTML = 'Sent & Recorded!';
-            btn.classList.remove('btn-outline-primary');
+            btn.classList.remove('btn-primary');
             btn.classList.add('btn-success');
             setTimeout(() => {
                 bootstrap.Modal.getInstance('#supplierEmailModal').hide();
                 btn.innerHTML = origHTML;
                 btn.classList.remove('btn-success');
-                btn.classList.add('btn-outline-primary');
+                btn.classList.add('btn-primary');
                 btn.disabled = false;
             }, 1500);
         } catch (e) {
             console.error(e);
-            alert(e.message || 'Failed to send via system.');
+            alert(e.message || 'Failed to send via Graph.');
             btn.innerHTML = origHTML;
             btn.disabled = false;
         }

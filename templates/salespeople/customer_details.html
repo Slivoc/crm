@@ -222,9 +222,6 @@
                 </select>
               </div>
               <div class="mb-3">
-                <strong>Active RFQs:</strong> <span id="activeRfqsCount">{{ customer.active_rfqs }}</span>
-              </div>
-              <div class="mb-3">
                 <strong>Active Orders:</strong> <span id="activeOrdersCount">{{ customer.active_orders }}</span>
               </div>
               <!-- Add this new section for total sales -->
@@ -357,30 +354,9 @@
     </div>
   </div>
 
-  <!-- Recent RFQs and Orders -->
+  <!-- Recent Orders -->
   <div class="row mt-4">
-    <div class="col-md-6">
-      <h4>Recent RFQs</h4>
-      <hr>
-      {% if rfqs %}
-        <div class="list-group">
-          {% for rfq in rfqs %}
-            <div class="list-group-item">
-              <div class="d-flex justify-content-between">
-                <h5>{{ rfq.customer_ref }}</h5>
-                <small class="text-muted">{{ rfq.entered_date }}</small>
-              </div>
-              <p>Status: <span class="badge bg-secondary">{{ rfq.status }}</span></p>
-              <small>By {{ rfq.salesperson_name }} | {{ rfq.line_count }} line(s)</small>
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <p class="text-muted">No RFQs available</p>
-      {% endif %}
-    </div>
-
-    <div class="col-md-6">
+    <div class="col-md-12">
       <h4>Recent Orders</h4>
       <hr>
       {% if orders %}

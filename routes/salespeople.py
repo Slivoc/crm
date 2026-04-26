@@ -12,8 +12,8 @@ from models import (get_salespeople, get_all_salespeople_with_contact_counts, ge
     snooze_call_list_entry, get_call_list_with_communication_status, update_call_list_priority, update_call_list_notes, bulk_add_to_call_list, get_salesperson_recent_communications, get_communication_types_for_salesperson, delete_customer_tag, insert_customer_tags, get_all_tags, insert_customer_tag, get_engagement_settings, get_all_salespeople_with_customer_counts, get_priorities, save_engagement_settings, insert_salesperson, get_active_salespeople, get_engagement_metrics, toggle_salesperson_active, get_customer_contacts_with_communications, update_customer_field_value, get_all_contact_statuses, get_status_counts_for_salesperson, get_tags_by_customer_id, get_salesperson_customers_with_spend, get_salesperson_by_id, get_salesperson_contacts, get_contact_communications, get_salesperson_sales_by_date_range, get_salesperson_monthly_sales, get_accounts_monthly_sales,
                     update_salesperson, delete_salesperson, get_template_by_id,
                     get_customers_with_status_and_updates, get_customer_status_options, get_consolidated_customer_orders, get_consolidated_customer_ids,
-                    add_customer_status_update, get_customer_updates, get_customer_rfqs, get_customer_rfqs_by_date_range, get_customer_orders_by_date_range, get_customer_active_rfqs_count, get_customer_active_orders_count,
-                    get_customer_orders, Permission, get_salespeople_with_stats, get_total_customers, get_total_orders, get_total_active_orders, get_total_active_rfqs, get_salesperson_recent_activities, get_salesperson_active_rfqs, get_salesperson_customers, get_salesperson_pending_orders, get_customer_by_id,
+                    add_customer_status_update, get_customer_updates, get_customer_orders_by_date_range, get_customer_active_orders_count,
+                    get_customer_orders, Permission, get_salespeople_with_stats, get_total_customers, get_total_orders, get_total_active_orders, get_salesperson_recent_activities, get_salesperson_customers, get_salesperson_pending_orders, get_customer_by_id,
                     get_company_types_by_customer_id)
 from db import get_db_connection, execute as db_execute, db_cursor, _using_postgres, _execute_with_cursor
 
@@ -1914,9 +1914,6 @@ def customer_details(customer_id):
         customer_updates = get_customer_updates_consolidated(related_customer_ids)
         print(f"DEBUG: Retrieved {len(customer_updates) if customer_updates else 0} consolidated customer updates")
 
-        customer_rfqs = get_customer_rfqs_consolidated(related_customer_ids)
-        print(f"DEBUG: Retrieved {len(customer_rfqs) if customer_rfqs else 0} consolidated RFQs")
-
         customer_orders = get_customer_orders_consolidated(related_customer_ids)
         print(f"DEBUG: Retrieved {len(customer_orders) if customer_orders else 0} consolidated orders")
 
@@ -1934,7 +1931,6 @@ def customer_details(customer_id):
                 'salespeople/customer_details.html',
                 customer=customer,
                 updates=customer_updates,
-                rfqs=customer_rfqs,
                 orders=customer_orders,
                 tags=customer_tags,
                 contacts=contacts,
@@ -1947,7 +1943,6 @@ def customer_details(customer_id):
             'salespeople/customer_detail_page.html',
             customer=customer,
             updates=customer_updates,
-            rfqs=customer_rfqs,
             orders=customer_orders,
             tags=customer_tags,
             contacts=contacts,
@@ -2007,13 +2002,6 @@ def customer_data(customer_id):
         print(f"DEBUG customer_data: Date range: {start_date} to {end_date}")
 
         try:
-            rfqs = get_customer_rfqs_by_date_range_consolidated(related_customer_ids, start_date, end_date, time_period)
-            print(f"DEBUG customer_data: Retrieved {len(rfqs)} consolidated RFQs")
-        except Exception as e:
-            print(f"DEBUG customer_data: Error getting RFQs: {str(e)}")
-            rfqs = []
-
-        try:
             orders = get_customer_orders_by_date_range_consolidated(related_customer_ids, start_date, end_date,
                                                                     time_period)
             print(f"DEBUG customer_data: Retrieved {len(orders)} consolidated orders")
@@ -2026,11 +2014,10 @@ def customer_data(customer_id):
         print(f"DEBUG customer_data: Total sales calculated: {total_sales}")
 
         try:
-            active_rfqs = get_customer_active_rfqs_count_consolidated(related_customer_ids)
             active_orders = get_customer_active_orders_count_consolidated(related_customer_ids)
         except Exception as e:
             print(f"DEBUG customer_data: Error getting active counts: {str(e)}")
-            active_rfqs = active_orders = 0
+            active_orders = 0
 
         # Get customer tags for the response (only from main customer)
         customer_tags = get_tags_by_customer_id(customer_id)
@@ -2039,7 +2026,6 @@ def customer_data(customer_id):
         if time_period == 'yearly':
             # For yearly data, use the existing approach - data is already aggregated by year
             years = []
-            rfq_counts = []
             order_values = []
 
             # Extract data from orders which are already grouped by year
@@ -2048,19 +2034,14 @@ def customer_data(customer_id):
                 years.append(year)
                 order_values.append(float(order['total_value'] or 0))
 
-                # Try to match RFQs to the same years if possible
-                year_rfqs = sum(1 for r in rfqs if r.get('entered_date', '').startswith(year))
-                rfq_counts.append(year_rfqs)
-
             chart_data = {
                 'labels': years,
-                'rfqs': rfq_counts,
                 'orders': order_values
             }
 
         elif time_period == 'last_12_months':
             # Last 12 months - group by month
-            month_data = defaultdict(lambda: {'rfqs': 0, 'orders': 0})
+            month_data = defaultdict(lambda: {'orders': 0})
 
             # Generate all 12 month labels
             labels = []
@@ -2068,17 +2049,7 @@ def customer_data(customer_id):
                 month_date = today.replace(day=1) - timedelta(days=i * 30)  # Approximate
                 month_label = month_date.strftime('%b %Y')
                 labels.insert(0, month_label)
-                month_data[month_label] = {'rfqs': 0, 'orders': 0}
-
-            # Process RFQs
-            for rfq in rfqs:
-                try:
-                    date_obj = datetime.strptime(rfq['entered_date'], "%Y-%m-%d")
-                    month_label = date_obj.strftime('%b %Y')
-                    if month_label in month_data:
-                        month_data[month_label]['rfqs'] += 1
-                except Exception as e:
-                    print(f"DEBUG: Error processing RFQ date: {e}")
+                month_data[month_label] = {'orders': 0}
 
             # Process Orders
             for order in orders:
@@ -2091,18 +2062,16 @@ def customer_data(customer_id):
                     print(f"DEBUG: Error processing order date: {e}")
 
             # Create series data for chart
-            rfqs_series = [month_data[label]['rfqs'] for label in labels]
             orders_series = [month_data[label]['orders'] for label in labels]
 
             chart_data = {
                 'labels': labels,
-                'rfqs': rfqs_series,
                 'orders': orders_series
             }
 
         else:  # last_30_days
             # Last 30 days - group by day
-            day_data = defaultdict(lambda: {'rfqs': 0, 'orders': 0})
+            day_data = defaultdict(lambda: {'orders': 0})
 
             # Generate all 30 day labels
             labels = []
@@ -2110,17 +2079,7 @@ def customer_data(customer_id):
                 day_date = today - timedelta(days=i)
                 day_label = day_date.strftime('%d %b')
                 labels.insert(0, day_label)
-                day_data[day_label] = {'rfqs': 0, 'orders': 0}
-
-            # Process RFQs
-            for rfq in rfqs:
-                try:
-                    date_obj = datetime.strptime(rfq['entered_date'], "%Y-%m-%d")
-                    day_label = date_obj.strftime('%d %b')
-                    if day_label in day_data:
-                        day_data[day_label]['rfqs'] += 1
-                except Exception as e:
-                    print(f"DEBUG: Error processing RFQ date: {e}")
+                day_data[day_label] = {'orders': 0}
 
             # Process Orders
             for order in orders:
@@ -2133,19 +2092,15 @@ def customer_data(customer_id):
                     print(f"DEBUG: Error processing order date: {e}")
 
             # Create series data for chart
-            rfqs_series = [day_data[label]['rfqs'] for label in labels]
             orders_series = [day_data[label]['orders'] for label in labels]
 
             chart_data = {
                 'labels': labels,
-                'rfqs': rfqs_series,
                 'orders': orders_series
             }
 
         return jsonify({
-            'rfqs': rfqs,
             'orders': orders,
-            'active_rfqs': active_rfqs,
             'active_orders': active_orders,
             'total_sales': total_sales,
             'tags': customer_tags,
@@ -2174,24 +2129,6 @@ def get_customer_updates_consolidated(customer_ids):
 
     updates = db_execute(query, customer_ids, fetch='all') or []
     return [dict(update) for update in updates]
-
-
-def get_customer_rfqs_consolidated(customer_ids):
-    """Get RFQs from multiple customers consolidated"""
-    if not customer_ids:
-        return []
-
-    placeholders = ','.join('?' for _ in customer_ids)
-    query = f"""
-        SELECT r.*, c.name as customer_name
-        FROM rfqs r
-        LEFT JOIN customers c ON r.customer_id = c.id
-        WHERE r.customer_id IN ({placeholders})
-        ORDER BY r.entered_date DESC
-    """
-
-    rfqs = db_execute(query, customer_ids, fetch='all') or []
-    return [dict(rfq) for rfq in rfqs]
 
 
 def get_customer_orders_consolidated(customer_ids):
@@ -2230,29 +2167,6 @@ def get_customer_contacts_with_communications_consolidated(customer_ids):
 
     contacts = db_execute(query, customer_ids, fetch='all') or []
     return [dict(contact) for contact in contacts]
-
-
-def get_customer_rfqs_by_date_range_consolidated(customer_ids, start_date, end_date, time_period):
-    """Get RFQs for multiple customers within a given date range"""
-    if not customer_ids:
-        return []
-
-    placeholders = ','.join('?' for _ in customer_ids)
-    query = f"""
-        SELECT r.*, c.name as customer_name
-        FROM rfqs r
-        LEFT JOIN customers c ON r.customer_id = c.id
-        WHERE r.customer_id IN ({placeholders})
-    """
-
-    params = customer_ids.copy()
-    if start_date and end_date:
-        query += " AND r.entered_date BETWEEN ? AND ?"
-        params.extend([start_date, end_date])
-
-    query += " ORDER BY r.entered_date DESC LIMIT 200"
-    rfqs = db_execute(query, params, fetch='all') or []
-    return [dict(rfq) for rfq in rfqs]
 
 
 def get_customer_orders_by_date_range_consolidated(customer_ids, start_date, end_date, time_period):
@@ -2317,22 +2231,6 @@ def get_customer_orders_by_date_range_consolidated(customer_ids, start_date, end
         return orders
 
     return [dict(order) for order in orders_rows]
-
-
-def get_customer_active_rfqs_count_consolidated(customer_ids):
-    """Get active RFQ count from multiple customers"""
-    if not customer_ids:
-        return 0
-
-    placeholders = ','.join('?' for _ in customer_ids)
-    query = f"""
-        SELECT COUNT(*) as count
-        FROM rfqs 
-        WHERE customer_id IN ({placeholders}) AND status = 'open'
-    """
-
-    result = db_execute(query, customer_ids, fetch='one')
-    return result['count'] if result else 0
 
 
 def get_customer_active_orders_count_consolidated(customer_ids):

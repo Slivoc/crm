@@ -2907,18 +2907,12 @@ function refreshTableContent() {
             labels: data.chart.labels,
             datasets: [
               {
-                label: 'RFQs',
-                data: data.chart.rfqs,
-                backgroundColor: 'rgba(54, 162, 235, 0.6)',
-                yAxisID: 'y'
-              },
-              {
                 label: 'Order Value',
                 data: data.chart.orders,
                 backgroundColor: 'rgba(255, 99, 132, 0.6)',
                 borderColor: 'rgba(255, 99, 132, 1)',
                 type: 'line',
-                yAxisID: 'y1'
+                yAxisID: 'y'
               }
             ]
           },
@@ -2930,7 +2924,7 @@ function refreshTableContent() {
                 beginAtZero: true,
                 title: {
                   display: true,
-                  text: 'RFQs'
+                  text: 'Order Value (GBP)'
                 }
               },
               y1: {
@@ -2946,7 +2940,7 @@ function refreshTableContent() {
             plugins: {
               title: {
                 display: true,
-                text: `Performance: RFQs and Order Value`,
+                text: `Performance: Order Value`,
                 font: { size: 16 }
               },
               legend: {

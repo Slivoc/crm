@@ -27,7 +27,6 @@ class EmailModal {
         this.previewSection = this.modal.querySelector('.preview-section');
         this.previewBtn = this.modal.querySelector('.preview-btn');
         this.sendBtn = this.modal.querySelector('.send-btn');
-        this.outlookBtn = this.modal.querySelector('.outlook-btn');
         this.sendSystemBtn = this.modal.querySelector('.send-system-btn');
         this.loadingSpinner = this.modal.querySelector('.loading-spinner');
 
@@ -52,10 +51,6 @@ class EmailModal {
         this.aiStatus = this.modal.querySelector('#aiDraftStatus');
         this.aiNews = this.modal.querySelector('#aiDraftNews');
         this.aiUseNews = this.modal.querySelector('#ai_use_news');
-
-        if (this.context === 'mailbox' && this.outlookBtn) {
-            this.outlookBtn.classList.add('d-none');
-        }
 
         // Recipients elements
         this.recipientsList = this.modal.querySelector('.recipients-list');
@@ -998,14 +993,6 @@ class EmailModal {
             });
         }
 
-        // Outlook button click
-        if (this.outlookBtn) {
-            this.outlookBtn.addEventListener('click', function() {
-                console.log("Outlook button clicked");
-                self.openInOutlook();
-            });
-        }
-
         // Add recipient button click
         if (this.addRecipientBtn) {
             this.addRecipientBtn.addEventListener('click', function() {
@@ -1449,7 +1436,7 @@ class EmailModal {
     // FIXED: updateButtonVisibility method with null checks
     updateButtonVisibility() {
         // Safety check - if required elements don't exist, return early
-        if (!this.previewSection || !this.previewBtn || !this.outlookBtn) {
+        if (!this.previewSection || !this.previewBtn) {
             console.warn('Required button elements not found, skipping visibility update');
             return;
         }
@@ -1471,22 +1458,13 @@ class EmailModal {
             this.previewBtn.classList.add('d-none');
         }
 
-        // Always use Outlook button after preview (since direct send is disabled)
         if (hasPreview && hasRecipients) {
             if (this.sendBtn) this.sendBtn.classList.add('d-none');
-            if (this.context !== 'mailbox') {
-                this.outlookBtn.classList.remove('d-none');
-            }
             if (this.sendSystemBtn) {
-                if (this.replyMessageId || this.recipients.length > 1) {
-                    this.sendSystemBtn.classList.remove('d-none');
-                } else {
-                    this.sendSystemBtn.classList.add('d-none');
-                }
+                this.sendSystemBtn.classList.remove('d-none');
             }
         } else {
             if (this.sendBtn) this.sendBtn.classList.add('d-none');
-            this.outlookBtn.classList.add('d-none');
             if (this.sendSystemBtn) this.sendSystemBtn.classList.add('d-none');
         }
     }
@@ -1854,458 +1832,6 @@ class EmailModal {
             this.hideLoading();
         }
     }
-
-    // Enhanced openInOutlook method with individual recipient processing
-    async openInOutlook() {
-        try {
-            // Get the preview data
-            const emailSubject = this.modal.querySelector('.email-subject');
-            const emailBody = this.modal.querySelector('.email-body');
-
-            if (!emailSubject || !emailBody) {
-                alert('Please preview the email first');
-                return;
-            }
-
-            const baseSubject = emailSubject.textContent;
-            const baseBodyHtml = emailBody.innerHTML;
-
-            if (this.recipients.length === 1) {
-                // Single recipient - use simple approach
-                await this.openSingleRecipientOutlook(this.recipients[0], baseSubject, baseBodyHtml);
-            } else {
-                // Multiple recipients - show individual processing modal
-                await this.showMultipleRecipientsModal(this.recipients, baseSubject, baseBodyHtml);
-            }
-
-        } catch (error) {
-            console.error('Error opening Outlook:', error);
-            this.showToast('Error opening Outlook', 'error');
-        }
-    }
-
-    // Show modal for processing multiple recipients individually
-    async showMultipleRecipientsModal(recipients, baseSubject, baseBodyHtml) {
-        // Create the multiple recipients modal
-        const modalHtml = `
-            <div class="modal fade" id="multipleRecipientsModal" tabindex="-1" data-bs-backdrop="static">
-                <div class="modal-dialog modal-xl">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title">
-                                <i class="fas fa-envelope-open-text me-2"></i>
-                                Send to Multiple Recipients
-                            </h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div class="modal-body">
-                            <div class="row">
-                                <!-- Progress Panel -->
-                                <div class="col-md-4">
-                                    <div class="card h-100">
-                                        <div class="card-header">
-                                            <h6 class="mb-0">
-                                                <i class="fas fa-tasks me-2"></i>Progress
-                                            </h6>
-                                        </div>
-                                        <div class="card-body">
-                                            <div class="progress-summary mb-3">
-                                                <div class="d-flex justify-content-between align-items-center mb-2">
-                                                    <span>Total Recipients:</span>
-                                                    <span class="badge bg-primary">${recipients.length}</span>
-                                                </div>
-                                                <div class="d-flex justify-content-between align-items-center mb-2">
-                                                    <span>Completed:</span>
-                                                    <span class="badge bg-success completed-count">0</span>
-                                                </div>
-                                                <div class="d-flex justify-content-between align-items-center mb-2">
-                                                    <span>Remaining:</span>
-                                                    <span class="badge bg-secondary remaining-count">${recipients.length}</span>
-                                                </div>
-                                            </div>
-                                            <div class="progress mb-3">
-                                                <div class="progress-bar" role="progressbar" style="width: 0%"></div>
-                                            </div>
-                                            <div class="recipient-checklist">
-                                                <!-- Recipient checklist will be populated here -->
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- Current Recipient Panel -->
-                                <div class="col-md-8">
-                                    <div class="card h-100">
-                                        <div class="card-header d-flex justify-content-between align-items-center">
-                                            <h6 class="mb-0">
-                                                <i class="fas fa-user me-2"></i>
-                                                <span class="current-recipient-title">Current Recipient</span>
-                                            </h6>
-                                            <span class="recipient-counter badge bg-info">1 of ${recipients.length}</span>
-                                        </div>
-                                        <div class="card-body current-recipient-content">
-                                            <!-- Current recipient content will be populated here -->
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                            <button type="button" class="btn btn-success finish-btn d-none" data-bs-dismiss="modal">
-                                <i class="fas fa-check me-1"></i>All Done!
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        // Remove existing modal if present
-        const existingModal = document.getElementById('multipleRecipientsModal');
-        if (existingModal) {
-            existingModal.remove();
-        }
-
-        // Add new modal to DOM
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
-        const modal = document.getElementById('multipleRecipientsModal');
-
-        // Initialize the modal with recipient data
-        await this.initializeMultipleRecipientsModal(modal, recipients, baseSubject, baseBodyHtml);
-
-        // Show the modal
-        if (window.bootstrap && bootstrap.Modal) {
-            const modalInstance = new bootstrap.Modal(modal);
-            modalInstance.show();
-
-            // Close the original email modal when this one opens
-            this.closeModal();
-        }
-    }
-
-    // Initialize the multiple recipients modal with data and functionality
-    async initializeMultipleRecipientsModal(modal, recipients, baseSubject, baseBodyHtml) {
-        let currentIndex = 0;
-        let completedCount = 0;
-        const personalizedContents = new Map(); // Cache personalized content
-
-        // Initialize progress checklist
-        const checklist = modal.querySelector('.recipient-checklist');
-        recipients.forEach((recipient, index) => {
-            const checkItem = document.createElement('div');
-            checkItem.className = 'recipient-check-item d-flex align-items-center mb-2';
-            checkItem.innerHTML = `
-                <i class="fas fa-circle text-muted me-2 status-icon" data-index="${index}"></i>
-                <small class="text-truncate" title="${recipient.name || recipient.email} (${recipient.email})">
-                    ${recipient.name || recipient.email}
-                </small>
-            `;
-            checklist.appendChild(checkItem);
-        });
-
-
-        // Function to update progress
-        const updateProgress = () => {
-            const progressBar = modal.querySelector('.progress-bar');
-            const completedSpan = modal.querySelector('.completed-count');
-            const remainingSpan = modal.querySelector('.remaining-count');
-            const counterBadge = modal.querySelector('.recipient-counter');
-            const finishBtn = modal.querySelector('.finish-btn');
-
-            const percentage = (completedCount / recipients.length) * 100;
-            progressBar.style.width = `${percentage}%`;
-            progressBar.textContent = `${Math.round(percentage)}%`;
-
-            completedSpan.textContent = completedCount;
-            remainingSpan.textContent = recipients.length - completedCount;
-            counterBadge.textContent = `${currentIndex + 1} of ${recipients.length}`;
-
-            // Show finish button when all done
-            if (completedCount === recipients.length) {
-                finishBtn.classList.remove('d-none');
-            }
-        };
-
-        // Function to mark recipient as completed
-        const markCompleted = (index) => {
-            const statusIcon = modal.querySelector(`[data-index="${index}"]`);
-            if (statusIcon) {
-                statusIcon.className = 'fas fa-check-circle text-success me-2 status-icon';
-            }
-            completedCount++;
-            updateProgress();
-        };
-
-        // Function to show current recipient
-        const showCurrentRecipient = async (index) => {
-            if (index >= recipients.length) {
-                // All done
-                const content = modal.querySelector('.current-recipient-content');
-                content.innerHTML = `
-                    <div class="text-center py-5">
-                        <i class="fas fa-check-circle text-success" style="font-size: 3rem;"></i>
-                        <h4 class="mt-3 text-success">All Emails Processed!</h4>
-                        <p class="text-muted">You have successfully processed all ${recipients.length} recipients.</p>
-                    </div>
-                `;
-                return;
-            }
-
-            const recipient = recipients[index];
-            const content = modal.querySelector('.current-recipient-content');
-
-            // Show loading
-            content.innerHTML = `
-                <div class="text-center py-4">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <p class="mt-2 text-muted">Personalizing content for ${recipient.name || recipient.email}...</p>
-                </div>
-            `;
-
-            try {
-                // Get or create personalized content
-                let personalizedContent;
-                if (personalizedContents.has(index)) {
-                    personalizedContent = personalizedContents.get(index);
-                } else {
-                    personalizedContent = await this.personalizeContentForRecipient(recipient, baseSubject, baseBodyHtml);
-                    personalizedContents.set(index, personalizedContent);
-                }
-
-                // Show recipient details and content
-                content.innerHTML = `
-                    <div class="recipient-details mb-4">
-                        <div class="row">
-                            <div class="col-md-6">
-                                <h6><i class="fas fa-user me-2"></i>Recipient Details</h6>
-                                <div class="mb-2"><strong>Name:</strong> ${recipient.name || 'N/A'}</div>
-                                <div class="mb-2"><strong>Email:</strong> ${recipient.email}</div>
-                                ${recipient.title ? `<div class="mb-2"><strong>Title:</strong> ${recipient.title}</div>` : ''}
-                                ${recipient.company ? `<div class="mb-2"><strong>Company:</strong> ${recipient.company}</div>` : ''}
-                            </div>
-                            <div class="col-md-6">
-                                <h6><i class="fas fa-envelope me-2"></i>Email Details</h6>
-                                <div class="mb-2"><strong>Subject:</strong> ${personalizedContent.subject}</div>
-                                <div class="mb-2"><strong>Status:</strong>
-                                    <span class="badge bg-warning">Ready to Send</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="email-preview mb-4">
-                        <h6><i class="fas fa-eye me-2"></i>Email Preview</h6>
-                        <div class="border rounded p-3 bg-light" style="max-height: 300px; overflow-y: auto;">
-                            <div class="mb-2"><strong>To:</strong> ${recipient.email}</div>
-                            <div class="mb-2"><strong>Subject:</strong> ${personalizedContent.subject}</div>
-                            <hr>
-                            <div class="email-body-preview">${personalizedContent.bodyHtml}</div>
-                        </div>
-                    </div>
-
-                    <div class="action-buttons text-center">
-                        <button type="button" class="btn btn-lg btn-primary copy-and-open-btn me-3">
-                            <i class="fas fa-copy me-2"></i>
-                            <i class="fas fa-external-link-alt me-2"></i>
-                            Copy Content & Open Outlook
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary skip-btn">
-                            <i class="fas fa-forward me-2"></i>Skip This Recipient
-                        </button>
-                    </div>
-
-                    <div class="mt-3">
-                        <small class="text-muted">
-                            <i class="fas fa-info-circle me-1"></i>
-                            Clicking "Copy Content & Open Outlook" will copy the personalized email content to your clipboard
-                            and open Outlook with the recipient and subject pre-filled. Simply paste the content into the email body.
-                        </small>
-                    </div>
-                `;
-
-                // Bind button events
-                const copyOpenBtn = content.querySelector('.copy-and-open-btn');
-                const skipBtn = content.querySelector('.skip-btn');
-
-                copyOpenBtn.addEventListener('click', async () => {
-    try {
-        copyOpenBtn.disabled = true;
-        copyOpenBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Copying...';
-
-        // Copy to clipboard
-        await this.copyToClipboard(personalizedContent.bodyHtml);
-
-        // LOG THE CUSTOMER UPDATE
-        await this.logCustomerUpdate(recipient, personalizedContent.subject);
-
-        // Open Outlook
-        const mailtoUrl = `mailto:${encodeURIComponent(recipient.email)}?subject=${encodeURIComponent(personalizedContent.subject)}`;
-        window.open(mailtoUrl, '_blank');
-
-        // Mark as completed and move to next
-        markCompleted(index);
-        currentIndex++;
-
-        // Show success message briefly
-        copyOpenBtn.innerHTML = '<i class="fas fa-check me-2"></i>Opened!';
-        copyOpenBtn.className = 'btn btn-lg btn-success me-3';
-
-        setTimeout(() => {
-            showCurrentRecipient(currentIndex);
-        }, 1000);
-
-    } catch (error) {
-        console.error('Error copying and opening:', error);
-        copyOpenBtn.disabled = false;
-        copyOpenBtn.innerHTML = '<i class="fas fa-copy me-2"></i><i class="fas fa-external-link-alt me-2"></i>Copy Content & Open Outlook';
-        this.showToast('Error copying content. Please try again.', 'error');
-    }
-});
-
-            } catch (error) {
-                console.error('Error showing recipient:', error);
-                content.innerHTML = `
-                    <div class="alert alert-danger">
-                        <h6><i class="fas fa-exclamation-triangle me-2"></i>Error</h6>
-                        <p>Error loading content for ${recipient.name || recipient.email}: ${error.message}</p>
-                        <button type="button" class="btn btn-outline-danger btn-sm retry-btn">Retry</button>
-                        <button type="button" class="btn btn-outline-secondary btn-sm ms-2 skip-error-btn">Skip</button>
-                    </div>
-                `;
-
-                // Bind error buttons
-                content.querySelector('.retry-btn').addEventListener('click', () => {
-                    showCurrentRecipient(index);
-                });
-
-                content.querySelector('.skip-error-btn').addEventListener('click', () => {
-                    markCompleted(index);
-                    currentIndex++;
-                    showCurrentRecipient(currentIndex);
-                });
-            }
-        };
-
-        // Start with the first recipient
-        await showCurrentRecipient(currentIndex);
-        updateProgress();
-
-
-    }
- // FIXED: Enhanced logCustomerUpdate method with better error handling
-async logCustomerUpdate(recipient, emailSubject) {
-    try {
-        // Get customer ID from recipient data or fallback to stored customerData
-        let customerId = recipient.customerId || this.customerData?.id;
-
-        if (!customerId) {
-            console.warn('No customer ID available for recipient:', recipient);
-            return; // Don't block Outlook opening
-        }
-
-        const updateText = `Emailed ${recipient.name} (${recipient.email})`;
-
-        console.log('Logging customer update:', {
-            customerId,
-            updateText,
-            contactId: recipient.id
-        });
-
-        const response = await fetch(`/customers/${customerId}/add_update`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'X-Requested-With': 'XMLHttpRequest', // Important: This tells the server it's an AJAX request
-                'X-API-Key': 'dingleberry'
-            },
-            body: new URLSearchParams({
-                update_type: 'email',
-                update_text: updateText,
-                contact_id: recipient.id || ''
-            })
-        });
-
-        console.log('Response status:', response.status);
-        console.log('Response headers:', Object.fromEntries(response.headers.entries()));
-
-        if (!response.ok) {
-            // Log the actual response text for debugging
-            const responseText = await response.text();
-            console.error('Server response:', responseText);
-            throw new Error(`HTTP ${response.status}: ${responseText.substring(0, 200)}`);
-        }
-
-        // Check if the response is JSON
-        const contentType = response.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-            const responseText = await response.text();
-            console.error('Expected JSON but got:', contentType, responseText.substring(0, 200));
-
-            // If the response contains success indicators, treat it as success
-            if (responseText.includes('Update added successfully') || responseText.includes('success')) {
-                console.log('Update appears to have succeeded despite non-JSON response');
-                return;
-            }
-
-            throw new Error(`Expected JSON response but got ${contentType}`);
-        }
-
-        const result = await response.json();
-
-        if (!result.success) {
-            throw new Error(result.error || 'Server reported failure');
-        }
-
-        console.log('Customer update logged successfully for:', recipient.name);
-
-    } catch (error) {
-        console.error('Failed to log customer update:', error);
-
-        // More specific error messages
-        let errorMessage = 'Could not log email communication';
-        if (error.message.includes('Unexpected token')) {
-            errorMessage += ' (server returned HTML instead of JSON)';
-        } else if (error.message.includes('HTTP 4')) {
-            errorMessage += ' (client error)';
-        } else if (error.message.includes('HTTP 5')) {
-            errorMessage += ' (server error)';
-        }
-
-        this.showToast(`Warning: ${errorMessage} for ${recipient.name}`, 'warning');
-        // Don't throw - let Outlook opening continue
-    }
-}
-
-// Handle single recipient Outlook opening with logging
-async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
-    try {
-        // Personalize content for this recipient
-        const personalizedContent = await this.personalizeContentForRecipient(recipient, subject, bodyHtml);
-
-        // Copy styled content to clipboard
-        await this.copyToClipboard(personalizedContent.bodyHtml);
-
-        // LOG THE CUSTOMER UPDATE
-        await this.logCustomerUpdate(recipient, personalizedContent.subject);
-
-        // Open Outlook with recipient and subject
-        const mailtoUrl = `mailto:${encodeURIComponent(recipient.email)}?subject=${encodeURIComponent(personalizedContent.subject)}`;
-        window.open(mailtoUrl, '_self');
-
-        this.showToast('Styled content copied to clipboard! Paste into Outlook.', 'success');
-        this.closeModal();
-    } catch (error) {
-        console.error('Error opening single recipient Outlook:', error);
-        throw error;
-    }
-}
-
-
-
-
     // UPDATE: Simplified personalizeContentForRecipient
     async personalizeContentForRecipient(recipient, baseSubject, baseBodyHtml) {
         try {
@@ -2409,88 +1935,6 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
             return this.personalizeCustomContent(recipient, sourceSubject, sourceBody);
         }
     }
-
-    // Enhanced copyToClipboard method that preserves line breaks
-    async copyToClipboard(htmlContent) {
-        try {
-            // First, let's ensure the HTML has proper line break formatting
-            const normalizedHtml = this.normalizeHtmlLineBreaks(this.stripSignatureHtml(htmlContent));
-
-            // Try modern clipboard API with both HTML and plain text
-            if (navigator.clipboard && window.ClipboardItem) {
-                // Create both HTML and plain text versions
-                const plainText = this.htmlToPlainText(normalizedHtml);
-
-                await navigator.clipboard.write([
-                    new ClipboardItem({
-                        'text/html': new Blob([normalizedHtml], { type: 'text/html' }),
-                        'text/plain': new Blob([plainText], { type: 'text/plain' })
-                    })
-                ]);
-                console.log('Multi-format clipboard copy successful');
-                return;
-            }
-
-            // Fallback method with better line break preservation
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = normalizedHtml;
-
-            // Apply styles that help preserve formatting when copying
-            tempDiv.style.cssText = `
-                position: fixed;
-                left: -9999px;
-                top: -9999px;
-                opacity: 0;
-                white-space: pre-wrap;
-                font-family: Arial, sans-serif;
-                line-height: 1.4;
-            `;
-            tempDiv.contentEditable = true;
-
-            document.body.appendChild(tempDiv);
-
-            // Focus and select all content
-            tempDiv.focus();
-            const range = document.createRange();
-            range.selectNodeContents(tempDiv);
-            const selection = window.getSelection();
-            selection.removeAllRanges();
-            selection.addRange(range);
-
-            // Copy with execCommand
-            const success = document.execCommand('copy');
-
-            // Clean up
-            selection.removeAllRanges();
-            document.body.removeChild(tempDiv);
-
-            if (!success) {
-                throw new Error('Copy failed');
-            }
-
-            console.log('HTML clipboard copy successful (fallback method)');
-
-        } catch (error) {
-            console.error('HTML clipboard copy failed:', error);
-            // Show manual copy modal with properly formatted HTML
-            this.showManualCopyModalWithHTML(this.normalizeHtmlLineBreaks(htmlContent));
-            throw new Error('Automatic copying failed - manual copy required');
-        }
-    }
-
-    // Normalize HTML for Outlook copy without inflating line spacing.
-    normalizeHtmlLineBreaks(htmlContent) {
-        let normalized = htmlContent || '';
-
-        normalized = normalized.replace(/\r\n|\r/g, '\n');
-        normalized = normalized.replace(/\n/g, '<br>');
-
-        // Clean up any triple+ breaks that might have been created.
-        normalized = normalized.replace(/(<br\s*\/?>\s*){3,}/gi, '<br><br>');
-
-        return normalized;
-    }
-
     // NEW: Convert HTML to plain text while preserving line structure
     htmlToPlainText(htmlContent) {
         // Create a temporary div to parse HTML
@@ -2515,158 +1959,6 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
 
         return plainText;
     }
-
-    // UPDATED: Manual copy modal with better formatting preservation
-    showManualCopyModalWithHTML(htmlContent) {
-        const normalizedHtml = this.normalizeHtmlLineBreaks(htmlContent);
-        const plainText = this.htmlToPlainText(normalizedHtml);
-
-        const modalHtml = `
-            <div class="modal fade" id="manualCopyModal" tabindex="-1">
-                <div class="modal-dialog modal-xl">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title">
-                                <i class="fas fa-copy me-2"></i>Manual Copy Required
-                            </h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div class="modal-body">
-                            <div class="alert alert-info">
-                                <i class="fas fa-info-circle me-2"></i>
-                                Choose the format that works best for your email client:
-                            </div>
-
-                            <!-- Tabs for different formats -->
-                            <ul class="nav nav-tabs" id="copyTabs" role="tablist">
-                                <li class="nav-item" role="presentation">
-                                    <button class="nav-link active" id="html-tab" data-bs-toggle="tab"
-                                            data-bs-target="#html-content" type="button" role="tab">
-                                        <i class="fas fa-code me-1"></i>Rich Format (Outlook)
-                                    </button>
-                                </li>
-                                <li class="nav-item" role="presentation">
-                                    <button class="nav-link" id="plain-tab" data-bs-toggle="tab"
-                                            data-bs-target="#plain-content" type="button" role="tab">
-                                        <i class="fas fa-align-left me-1"></i>Plain Text
-                                    </button>
-                                </li>
-                            </ul>
-
-                            <div class="tab-content mt-3" id="copyTabsContent">
-                                <!-- HTML Format Tab -->
-                                <div class="tab-pane fade show active" id="html-content" role="tabpanel">
-                                    <div class="mb-3">
-                                        <label class="form-label fw-bold">Rich Format (preserves formatting):</label>
-                                        <div
-                                            id="htmlContentDiv"
-                                            class="border rounded p-3"
-                                            style="max-height: 400px; overflow-y: auto; background: white; cursor: text; white-space: pre-wrap; line-height: 1.5;"
-                                            contenteditable="true"
-                                        >${normalizedHtml}</div>
-                                    </div>
-                                    <button type="button" class="btn btn-primary" id="selectHtmlBtn">
-                                        <i class="fas fa-mouse-pointer me-1"></i>Select Rich Content
-                                    </button>
-                                </div>
-
-                                <!-- Plain Text Tab -->
-                                <div class="tab-pane fade" id="plain-content" role="tabpanel">
-                                    <div class="mb-3">
-                                        <label class="form-label fw-bold">Plain Text (line breaks preserved):</label>
-                                        <textarea
-                                            id="plainContentTextarea"
-                                            class="form-control"
-                                            rows="15"
-                                            style="white-space: pre-wrap; font-family: monospace;"
-                                            readonly
-                                        >${plainText}</textarea>
-                                    </div>
-                                    <button type="button" class="btn btn-secondary" id="selectPlainBtn">
-                                        <i class="fas fa-mouse-pointer me-1"></i>Select Plain Text
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div class="alert alert-success mt-3">
-                                <i class="fas fa-lightbulb me-1"></i>
-                                <strong>For Outlook:</strong> Use the Rich Format tab for best results.
-                                For other email clients, try Plain Text if formatting issues occur.
-                            </div>
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        // Remove existing modal if present
-        const existingModal = document.getElementById('manualCopyModal');
-        if (existingModal) {
-            existingModal.remove();
-        }
-
-        // Add new modal
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
-        const newModal = document.getElementById('manualCopyModal');
-
-        // Bind select buttons
-        const selectHtmlBtn = newModal.querySelector('#selectHtmlBtn');
-        const selectPlainBtn = newModal.querySelector('#selectPlainBtn');
-        const htmlContentDiv = newModal.querySelector('#htmlContentDiv');
-        const plainContentTextarea = newModal.querySelector('#plainContentTextarea');
-
-        selectHtmlBtn.addEventListener('click', function() {
-            const range = document.createRange();
-            range.selectNodeContents(htmlContentDiv);
-            const selection = window.getSelection();
-            selection.removeAllRanges();
-            selection.addRange(range);
-
-            // Try to copy
-            try {
-                const success = document.execCommand('copy');
-                if (success) {
-                    this.innerHTML = '<i class="fas fa-check me-1"></i>Rich Content Copied!';
-                    this.className = 'btn btn-success';
-                } else {
-                    this.innerHTML = '<i class="fas fa-hand-pointer me-1"></i>Selected - Copy with Ctrl+C';
-                    this.className = 'btn btn-warning';
-                }
-            } catch (err) {
-                this.innerHTML = '<i class="fas fa-hand-pointer me-1"></i>Selected - Copy with Ctrl+C';
-                this.className = 'btn btn-warning';
-            }
-        });
-
-        selectPlainBtn.addEventListener('click', function() {
-            plainContentTextarea.select();
-            plainContentTextarea.setSelectionRange(0, plainContentTextarea.value.length);
-
-            try {
-                const success = document.execCommand('copy');
-                if (success) {
-                    this.innerHTML = '<i class="fas fa-check me-1"></i>Plain Text Copied!';
-                    this.className = 'btn btn-success';
-                } else {
-                    this.innerHTML = '<i class="fas fa-hand-pointer me-1"></i>Selected - Copy with Ctrl+C';
-                    this.className = 'btn btn-warning';
-                }
-            } catch (err) {
-                this.innerHTML = '<i class="fas fa-hand-pointer me-1"></i>Selected - Copy with Ctrl+C';
-                this.className = 'btn btn-warning';
-            }
-        });
-
-        // Show modal
-        if (window.bootstrap && bootstrap.Modal) {
-            const modalInstance = new bootstrap.Modal(newModal);
-            modalInstance.show();
-        }
-    }
-
     // Enhanced showToast method
     showToast(message, type = 'info') {
         // If you have a global toast function, use it
@@ -2704,7 +1996,7 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
     }
 
     async sendEmail() {
-        alert('Direct send is not available. Please use "Open in Outlook" instead.');
+        alert('Direct send is not available. Please use "Send via Graph" instead.');
         return;
     }
 
@@ -2861,11 +2153,11 @@ async openSingleRecipientOutlook(recipient, subject, bodyHtml) {
             this.closeModal();
         } catch (error) {
             console.error('Send all via system failed:', error);
-            this.showToast(error.message || 'Failed to send via system', 'error');
+            this.showToast(error.message || 'Failed to send via Graph', 'error');
         } finally {
             if (this.sendSystemBtn) {
                 this.sendSystemBtn.disabled = false;
-                this.sendSystemBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i>Send All via System';
+                this.sendSystemBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i>Send via Graph';
             }
         }
     }
@@ -3076,3 +2368,4 @@ window.clearEmailRecipients = function() {
         console.error('EmailModal instance not found');
     }
 };
+

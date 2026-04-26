@@ -49,9 +49,6 @@
     <button type="button" class="btn btn-light btn-sm" id="saveBomBtn">
         <i class="fas fa-save"></i> Save Changes
     </button>
-    <button type="button" class="btn btn-primary btn-sm" id="createRfqBtn">
-        <i class="fas fa-file-alt"></i> Create RFQ
-    </button>
                         <button type="button" class="btn btn-light btn-sm dropdown-toggle" data-bs-toggle="dropdown">
                             <i class="fas fa-ellipsis-v"></i>
                         </button>
@@ -236,7 +233,7 @@ function getSelectedComponents() {
 }
 
 function initializeSelect2() {
-    $('#customer_id, #rfq_customer').select2({
+    $('#customer_id').select2({
         theme: 'bootstrap-5',
         ajax: {
             url: '{{ url_for("bom.search_customers") }}',
@@ -299,11 +296,6 @@ document.addEventListener('DOMContentLoaded', function() {
     $('#addCustomerModal').on('shown.bs.modal', function () {
         initializeSelect2();
     });
-
-    $('#createRfqModal').on('shown.bs.modal', function () {
-        initializeSelect2();
-    });
-
     // Add Customer Handler
     $('#addCustomerSubmitBtn').on('click', async function() {
         const customerId = $('#customer_id').val();
@@ -407,48 +399,6 @@ document.addEventListener('DOMContentLoaded', function() {
         hot.setDataAtRowProp(currentRowCount, 'guide_price', 0);
     });
 
-    // RFQ Creation Handler
-    $('#createRfqBtn').on('click', function() {
-        const selectedComponents = getSelectedComponents();
-        if (selectedComponents.length === 0) {
-            showAlert('Please select at least one component', 'warning');
-            return;
-        }
-        $('#createRfqModal').modal('show');
-    });
-
-    $('#createRfqSubmitBtn').on('click', function() {
-        const selectedComponents = getSelectedComponents();
-        const formData = {
-            customer_id: $('#rfq_customer').val(),
-            components: selectedComponents,
-            customer_ref: `RFQ for {{ bom.name }} BOM`,
-            entered_date: new Date().toISOString().split('T')[0]
-        };
-
-        showSpinner();
-        fetch('{{ url_for("rfqs.create_rfq_from_bom") }}', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(formData)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                throw new Error(data.error);
-            }
-            $('#createRfqModal').modal('hide');
-            showAlert('RFQ created successfully', 'success');
-            window.location.href = `/rfqs/${data.rfq_id}/edit`;
-        })
-        .catch(error => {
-            showAlert('Error creating RFQ: ' + error.message, 'danger');
-        })
-        .finally(() => {
-            hideSpinner();
-        });
-    });
-
     // Select All Handler
     $('#selectAll').on('change', function(e) {
         const checked = e.target.checked;
@@ -486,34 +436,4 @@ document.addEventListener('DOMContentLoaded', function() {
 
 </script>
 
-<!-- RFQ Creation Modal -->
-<div class="modal fade" id="createRfqModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Create RFQ from Selected Components</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <form id="createRfqForm">
-                    <div class="mb-3">
-    <label for="rfq_customer" class="form-label">Choose Customer:</label>
-    <select id="rfq_customer" class="form-select" required>
-        <option value="">Select a customer...</option>
-        {% for customer in customers %}
-            <option value="{{ customer.id }}">
-                {{ customer.name }}{% if customer.reference %} ({{ customer.reference }}){% endif %}
-            </option>
-        {% endfor %}
-    </select>
-</div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" id="createRfqSubmitBtn">Create RFQ</button>
-            </div>
-        </div>
-    </div>
-</div>
 {% endblock %}

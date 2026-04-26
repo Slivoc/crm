@@ -8,8 +8,6 @@ from models import (
     get_excess_stock_list_by_id,
     get_excess_list_line_by_id,
     get_excess_stock_lines,
-    match_rfq_lines,
-    match_sales_order_lines,
 )
 from db import db_cursor, execute as db_execute
 

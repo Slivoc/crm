@@ -73,7 +73,7 @@
                         </div>
                     </div>
 
-                    <!-- Files and RFQs Column -->
+                    <!-- Files Column -->
                     <div class="col-4 border-end">
                         <!-- Files Section -->
                         <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
@@ -84,34 +84,6 @@
                             <!-- Files List -->
                             <div class="list-group" id="filesList">
                                 <!-- Files will be populated here -->
-                            </div>
-                        </div>
-
-                        <!-- RFQs Section -->
-                        <div class="p-3 d-flex justify-content-between align-items-center border-bottom">
-                            <span class="text-muted">RFQs</span>
-                            <button class="btn btn-primary btn-sm" onclick="createNewRFQ()">Create RFQ</button>
-                        </div>
-                        <div class="p-3">
-                            <!-- RFQs List -->
-                            <div class="list-group" id="rfqsList">
-                                {% if project_rfqs %}
-                                    {% for rfq in project_rfqs %}
-                                    <div class="list-group-item d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <strong>RFQ #{{ rfq.id }}</strong><br>
-                                            <small class="text-muted">{{ rfq.customer_ref or 'No reference' }} - {{ rfq.entered_date }}</small>
-                                        </div>
-                                        <div>
-                                            <a href="{{ url_for('rfqs.edit_rfq', rfq_id=rfq.id) }}" class="btn btn-link btn-sm">
-                                                <i class="bi bi-pencil"></i>
-                                            </a>
-                                        </div>
-                                    </div>
-                                    {% endfor %}
-                                {% else %}
-                                    <p class="text-muted">No RFQs linked to this project.</p>
-                                {% endif %}
                             </div>
                         </div>
 
@@ -299,7 +271,6 @@ let stages = []; // Will hold our stages data
 document.addEventListener('DOMContentLoaded', function() {
     loadStages();
     initializeProjectFiles();
-    initializeRFQs();
 });
 
 // Load and render all stages
@@ -802,93 +773,6 @@ function downloadFile(fileId) {
         });
 }
 
-// RFQ functions (kept from original)
-function initializeRFQs() {
-    updateRFQsList();
-}
-
-function createNewRFQ() {
-    const projectId = "{{ project.id }}";
-    const customerId = "{{ project.customer_id }}";
-
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = "{{ url_for('rfqs.create_rfq') }}";
-    form.style.display = 'none';
-
-    const customerIdInput = document.createElement('input');
-    customerIdInput.type = 'hidden';
-    customerIdInput.name = 'customer_id';
-    customerIdInput.value = customerId;
-
-    const projectIdInput = document.createElement('input');
-    projectIdInput.type = 'hidden';
-    projectIdInput.name = 'project_id';
-    projectIdInput.value = projectId;
-
-    const todayDate = new Date().toISOString().split('T')[0];
-    const dateInput = document.createElement('input');
-    dateInput.type = 'hidden';
-    dateInput.name = 'entered_date';
-    dateInput.value = todayDate;
-
-    const refInput = document.createElement('input');
-    refInput.type = 'hidden';
-    refInput.name = 'customer_ref';
-    refInput.value = `Project #${projectId}`;
-
-    const salespersonInput = document.createElement('input');
-    salespersonInput.type = 'hidden';
-    salespersonInput.name = 'salesperson_id';
-    salespersonInput.value = "{{ project.salesperson_id or '' }}";
-
-    form.appendChild(customerIdInput);
-    form.appendChild(projectIdInput);
-    form.appendChild(dateInput);
-    form.appendChild(refInput);
-    form.appendChild(salespersonInput);
-
-    document.body.appendChild(form);
-    form.submit();
-}
-
-function updateRFQsList() {
-    const projectId = "{{ project.id }}";
-
-    fetch(`/projects/${projectId}/rfqs`)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            if (data.success) {
-                const rfqsList = document.getElementById('rfqsList');
-                if (!data.rfqs || data.rfqs.length === 0) {
-                    rfqsList.innerHTML = '<p class="text-muted">No RFQs linked to this project.</p>';
-                    return;
-                }
-
-                rfqsList.innerHTML = data.rfqs.map(rfq => `
-                    <div class="list-group-item d-flex justify-content-between align-items-center">
-                        <div>
-                            <strong>RFQ #${rfq.id}</strong><br>
-                            <small class="text-muted">${rfq.customer_ref || 'No reference'} - ${rfq.entered_date}</small>
-                        </div>
-                        <div>
-                            <a href="/rfqs/${rfq.id}/edit" class="btn btn-link btn-sm">
-                                <i class="bi bi-pencil"></i>
-                            </a>
-                        </div>
-                    </div>
-                `).join('');
-            }
-        })
-        .catch(error => {
-            console.error('Fetch error:', error);
-        });
-}
 
 // Enable description editing (simplified version)
 function enableEdit() {

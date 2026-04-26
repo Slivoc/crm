@@ -11,7 +11,6 @@ from sqlalchemy.orm import relationship, sessionmaker
 from datetime import date, datetime
 from collections import Counter
 from typing import List, Dict, Tuple, Optional, Any
-import pdfkit
 import datetime
 import os
 from werkzeug.utils import secure_filename
