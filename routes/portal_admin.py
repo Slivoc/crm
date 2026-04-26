@@ -67,6 +67,27 @@ def _last_inserted_id(cur, key='id'):
     return getattr(cur, 'lastrowid', None)
 
 
+def _upsert_portal_setting(cur, key, value, description=None):
+    _execute_with_cursor(
+        cur,
+        """
+        UPDATE portal_settings
+        SET setting_value = ?, date_modified = CURRENT_TIMESTAMP
+        WHERE setting_key = ?
+        """,
+        (value, key),
+    )
+    if getattr(cur, 'rowcount', 0) == 0:
+        _execute_with_cursor(
+            cur,
+            """
+            INSERT INTO portal_settings (setting_key, setting_value, description, date_modified)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (key, value, description),
+        )
+
+
 def _get_base_currency():
     base_code = (get_base_currency() or 'GBP').upper()
     row = db_execute(
@@ -186,6 +207,9 @@ def portal_admin_home():
     users_count = _extract_single_value(
         db_execute("SELECT COUNT(*) as count FROM portal_users WHERE is_active = TRUE", fetch='one')
     ) or 0
+    access_requests_pending = _extract_single_value(
+        db_execute("SELECT COUNT(*) as count FROM portal_access_requests WHERE status IN ('pending', 'reviewed')", fetch='one')
+    ) or 0
     recent_requests = db_execute("""
         SELECT
             pqr.*,
@@ -211,7 +235,10 @@ def portal_admin_home():
     return render_template('portal_admin.html',
                            breadcrumbs=breadcrumbs,
                            settings={s['setting_key']: dict(s) for s in settings},
+                           email_config=get_email_config(),
+                           email_password_set=bool(get_portal_setting('email_password', '')),
                            users_count=users_count,
+                           access_requests_pending=access_requests_pending,
                            recent_requests=[dict(r) for r in recent_requests])
 
 
@@ -219,22 +246,56 @@ def portal_admin_home():
 def update_settings():
     """Update portal settings"""
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
+        setting_descriptions = {
+            'smtp_server': 'SMTP hostname for portal/admin outbound email',
+            'smtp_port': 'SMTP port for portal/admin outbound email',
+            'smtp_username': 'SMTP username for portal/admin outbound email',
+            'email_password': 'SMTP password for portal/admin outbound email',
+            'from_email': 'From email address for portal/admin outbound email',
+            'from_name': 'From display name for portal/admin outbound email',
+            'notification_email': 'Notification recipient for portal/admin alerts',
+        }
 
         with db_cursor(commit=True) as cur:
             for key, value in data.items():
-                _execute_with_cursor(
-                    cur,
-                    """
-                    UPDATE portal_settings 
-                    SET setting_value = ?, date_modified = CURRENT_TIMESTAMP
-                    WHERE setting_key = ?
-                    """,
-                    (value, key),
-                )
+                if key == 'email_password' and value == '':
+                    continue
+                _upsert_portal_setting(cur, key, value, setting_descriptions.get(key))
 
         return jsonify({'success': True, 'message': 'Settings updated'})
 
+    except Exception as e:
+        logging.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@portal_admin_bp.route('/settings/test-email', methods=['POST'])
+def send_test_email():
+    """Send a test email using the current portal SMTP settings."""
+    try:
+        data = request.get_json() or {}
+        to_email = (data.get('to_email') or '').strip()
+        if not to_email:
+            return jsonify({'success': False, 'error': 'Recipient email is required'}), 400
+
+        config = get_email_config()
+        subject = 'Sproutt admin email test'
+        html_body = (
+            '<p>This is a test email from the portal admin settings page.</p>'
+            f'<p><strong>SMTP server:</strong> {config["smtp_server"]}:{config["smtp_port"]}</p>'
+            f'<p><strong>From:</strong> {config["from_name"]} &lt;{config["from_email"]}&gt;</p>'
+        )
+        text_body = (
+            'This is a test email from the portal admin settings page.\n\n'
+            f'SMTP server: {config["smtp_server"]}:{config["smtp_port"]}\n'
+            f'From: {config["from_name"]} <{config["from_email"]}>'
+        )
+
+        if not send_email(to_email, subject, html_body, text_body):
+            return jsonify({'success': False, 'error': 'Failed to send test email'}), 500
+
+        return jsonify({'success': True, 'message': f'Test email sent to {to_email}'})
     except Exception as e:
         logging.exception(e)
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -292,6 +353,80 @@ def portal_users():
                            breadcrumbs=breadcrumbs,
                            users=[dict(u) for u in users],
                            customers=[dict(c) for c in customers])
+
+
+@portal_admin_bp.route('/access-requests')
+def portal_access_requests():
+    """Review customer portal access requests."""
+    status_filter = (request.args.get('status') or '').strip().lower()
+    params = []
+    where_clause = ""
+    if status_filter:
+        where_clause = "WHERE par.status = ?"
+        params.append(status_filter)
+
+    requests = db_execute(f"""
+        SELECT
+            par.*,
+            u.username as processed_by_username
+        FROM portal_access_requests par
+        LEFT JOIN users u ON u.id = par.processed_by_user_id
+        {where_clause}
+        ORDER BY
+            CASE WHEN par.status IN ('pending', 'reviewed') THEN 0 ELSE 1 END,
+            par.date_submitted DESC
+    """, tuple(params), fetch='all') or []
+
+    status_counts_rows = db_execute("""
+        SELECT status, COUNT(*) as count
+        FROM portal_access_requests
+        GROUP BY status
+    """, fetch='all') or []
+    status_counts = {row['status']: row['count'] for row in status_counts_rows}
+
+    breadcrumbs = [
+        ('Home', url_for('index')),
+        ('Portal Admin', url_for('portal_admin.portal_admin_home')),
+        ('Access Requests', None)
+    ]
+
+    return render_template(
+        'portal_access_requests.html',
+        breadcrumbs=breadcrumbs,
+        requests=[dict(r) for r in requests],
+        status_filter=status_filter,
+        status_counts=status_counts
+    )
+
+
+@portal_admin_bp.route('/access-requests/<int:request_id>/status', methods=['POST'])
+def update_portal_access_request_status(request_id):
+    """Update portal access request review status."""
+    try:
+        data = request.get_json() or {}
+        status = (data.get('status') or '').strip().lower()
+        internal_notes = (data.get('internal_notes') or '').strip()
+
+        if status not in ('pending', 'reviewed', 'approved', 'rejected'):
+            return jsonify({'success': False, 'error': 'Invalid status'}), 400
+
+        reviewer_id = session.get('user_id')
+
+        with db_cursor(commit=True) as cur:
+            _execute_with_cursor(cur, """
+                UPDATE portal_access_requests
+                SET status = ?,
+                    internal_notes = ?,
+                    processed_by_user_id = ?,
+                    processed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (status, internal_notes, reviewer_id, request_id))
+
+        return jsonify({'success': True})
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @portal_admin_bp.route('/users/create', methods=['POST'])
@@ -2206,14 +2341,22 @@ def process_agreement_request(request_id):
 
 def get_email_config():
     """Get email configuration from portal settings"""
+    smtp_username = get_portal_setting('smtp_username', 'admin@sproutt.io')
+    from_email = get_portal_setting('from_email', smtp_username or 'admin@sproutt.io')
+    notification_email = get_portal_setting('notification_email', from_email or 'admin@sproutt.io')
+    smtp_port = get_portal_setting('smtp_port', 465)
+    try:
+        smtp_port = int(smtp_port)
+    except (TypeError, ValueError):
+        smtp_port = 465
     return {
-        'smtp_server': 'mail.privateemail.com',
-        'smtp_port': 465,
-        'smtp_username': 'tom@sproutt.app',
+        'smtp_server': get_portal_setting('smtp_server', 'mail.privateemail.com'),
+        'smtp_port': smtp_port,
+        'smtp_username': smtp_username,
         'smtp_password': get_portal_setting('email_password', ''),
-        'from_email': 'tom@sproutt.app',
-        'from_name': 'Sproutt admin',
-        'notification_email': get_portal_setting('notification_email', 'tom@sproutt.app')
+        'from_email': from_email,
+        'from_name': get_portal_setting('from_name', 'Sproutt admin'),
+        'notification_email': notification_email
     }
 
 
@@ -2251,6 +2394,68 @@ def send_email(to_email, subject, html_body, text_body=None):
     except Exception as e:
         logging.exception(f"Failed to send email to {to_email}: {e}")
         return False
+
+def notify_new_portal_access_request(request_id):
+    """Send email notification for a new portal access request."""
+    try:
+        req = db_execute("""
+            SELECT *
+            FROM portal_access_requests
+            WHERE id = ?
+        """, (request_id,), fetch='one')
+
+        if not req:
+            return False
+
+        config = get_email_config()
+        contact_name = f"{req.get('first_name', '').strip()} {req.get('last_name', '').strip()}".strip()
+
+        notes_html = f"<p><strong>Notes:</strong><br>{req['notes']}</p>" if req.get('notes') else ""
+        notes_text = f"Notes:\n{req['notes']}\n" if req.get('notes') else ""
+
+        html_body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <h2 style="color: #0066cc;">New Portal Access Request</h2>
+            <p>A customer requested access from the external portal login page.</p>
+
+            <table style="border-collapse: collapse; margin: 20px 0;">
+                <tr><td style="padding: 8px; font-weight: bold;">Company:</td><td style="padding: 8px;">{req['company_name']}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Contact:</td><td style="padding: 8px;">{contact_name or '-'}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Email:</td><td style="padding: 8px;">{req['email']}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Phone:</td><td style="padding: 8px;">{req.get('phone') or '-'}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Submitted:</td><td style="padding: 8px;">{req['date_submitted']}</td></tr>
+            </table>
+
+            {notes_html}
+
+            <p>Review it in Portal Admin under Access Requests.</p>
+        </body>
+        </html>
+        """
+
+        text_body = (
+            "New Portal Access Request\n\n"
+            f"Company: {req['company_name']}\n"
+            f"Contact: {contact_name or '-'}\n"
+            f"Email: {req['email']}\n"
+            f"Phone: {req.get('phone') or '-'}\n"
+            f"Submitted: {req['date_submitted']}\n\n"
+            f"{notes_text}"
+            "Review it in Portal Admin under Access Requests.\n"
+        )
+
+        return send_email(
+            config['notification_email'],
+            f"New portal access request: {req['company_name']}",
+            html_body,
+            text_body
+        )
+
+    except Exception as e:
+        logging.exception(f"Failed to send portal access request notification: {e}")
+        return False
+
 
 def notify_new_quote_request(request_id):
     """Send email notification for new quote request"""

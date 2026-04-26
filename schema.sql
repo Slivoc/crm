@@ -2272,6 +2272,36 @@ CREATE TABLE portal_users (
 
 );
 
+CREATE TABLE portal_access_requests (
+
+    id SERIAL PRIMARY KEY,
+
+    company_name TEXT NOT NULL,
+
+    first_name TEXT NOT NULL,
+
+    last_name TEXT NOT NULL,
+
+    email TEXT NOT NULL,
+
+    phone TEXT,
+
+    notes TEXT,
+
+    status TEXT DEFAULT 'pending',
+
+    internal_notes TEXT,
+
+    processed_by_user_id INTEGER,
+
+    processed_at TIMESTAMP,
+
+    date_submitted TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CHECK (status IN ('pending', 'reviewed', 'approved', 'rejected'))
+
+);
+
 CREATE TABLE price_breaks (
     id SERIAL PRIMARY KEY,
     price_list_item_id INTEGER,

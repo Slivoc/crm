@@ -188,6 +188,13 @@ def get_portal_setting(key, default=None):
         return default
 
 
+def _portal_api_key_valid():
+    """Allow unauthenticated portal endpoints to validate the shared API key."""
+    api_key = request.headers.get('X-API-Key')
+    stored_key = get_portal_setting('api_key')
+    return bool(api_key and stored_key and api_key == stored_key)
+
+
 def get_customer_margins(customer_id):
     """Get customer-specific margins or fall back to global defaults"""
     try:
@@ -403,6 +410,80 @@ def portal_login():
     except Exception as e:
         logging.exception(e)
         return jsonify({'success': False, 'error': 'Login failed'}), 500
+
+
+@portal_api_bp.route('/auth/request-access', methods=['POST'])
+def request_portal_access():
+    """Store a customer request for portal access without creating a user immediately."""
+    try:
+        if not _portal_api_key_valid():
+            return jsonify({'success': False, 'error': 'Invalid API key'}), 401
+
+        data = request.get_json() or {}
+        first_name = (data.get('first_name') or '').strip()
+        last_name = (data.get('last_name') or '').strip()
+        company_name = (data.get('company_name') or '').strip()
+        email = (data.get('email') or '').strip().lower()
+        phone = (data.get('phone') or '').strip()
+        notes = (data.get('notes') or '').strip()
+
+        if not first_name or not last_name or not company_name or not email:
+            return jsonify({'success': False, 'error': 'First name, last name, company, and email are required'}), 400
+
+        existing_user = db_execute(
+            "SELECT id, is_active FROM portal_users WHERE LOWER(email) = ?",
+            (email,),
+            fetch='one'
+        )
+        if existing_user:
+            if existing_user.get('is_active'):
+                return jsonify({'success': False, 'error': 'This email already has portal access. Please log in or contact support.'}), 400
+            return jsonify({'success': False, 'error': 'This email already exists but is inactive. Please contact your account manager.'}), 400
+
+        existing_request = db_execute("""
+            SELECT id, status
+            FROM portal_access_requests
+            WHERE LOWER(email) = ?
+            ORDER BY date_submitted DESC
+            LIMIT 1
+        """, (email,), fetch='one')
+        if existing_request and existing_request.get('status') in ('pending', 'reviewed'):
+            return jsonify({
+                'success': True,
+                'message': 'Your access request is already under review. We will contact you shortly.'
+            })
+
+        with db_cursor(commit=True) as cursor:
+            row = _execute_with_cursor(cursor, """
+                INSERT INTO portal_access_requests
+                (company_name, first_name, last_name, email, phone, notes, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+            """, (
+                company_name,
+                first_name,
+                last_name,
+                email,
+                phone,
+                notes,
+                'pending'
+            )).fetchone()
+            request_id = row['id']
+
+        log_api_call('/auth/request-access', 'POST', None, None, {'email': email, 'company_name': company_name}, 200, request.remote_addr)
+
+        from routes.portal_admin import notify_new_portal_access_request
+        notify_new_portal_access_request(request_id)
+
+        return jsonify({
+            'success': True,
+            'request_id': request_id,
+            'message': 'Access request submitted. The Sproutt team will review it and get back to you.'
+        })
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify({'success': False, 'error': 'Failed to submit access request'}), 500
 
 
 @portal_api_bp.route('/auth/refresh', methods=['POST'])

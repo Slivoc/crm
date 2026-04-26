@@ -875,14 +875,20 @@ input:-webkit-autofill {
                <i class="bi bi-people me-2"></i>Users
             </a>
         </li>
-        <li>
-            <a href="{{ url_for('portal_admin.portal_requests') }}"
-               class="link-dark rounded d-flex align-items-center ps-3 py-1">
-               <i class="bi bi-file-text me-2"></i>Quote Requests
-            </a>
-        </li>
-        <li>
-            <a href="{{ url_for('portal_admin.customer_portal_settings') }}"
+          <li>
+              <a href="{{ url_for('portal_admin.portal_requests') }}"
+                 class="link-dark rounded d-flex align-items-center ps-3 py-1">
+                 <i class="bi bi-file-text me-2"></i>Quote Requests
+              </a>
+          </li>
+          <li>
+              <a href="{{ url_for('portal_admin.portal_access_requests') }}"
+                 class="link-dark rounded d-flex align-items-center ps-3 py-1">
+                 <i class="bi bi-person-plus me-2"></i>Access Requests
+              </a>
+          </li>
+          <li>
+              <a href="{{ url_for('portal_admin.customer_portal_settings') }}"
                class="link-dark rounded d-flex align-items-center ps-3 py-1">
                <i class="bi bi-gear me-2"></i>Customer Settings
             </a>

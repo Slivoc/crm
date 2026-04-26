@@ -22,7 +22,16 @@
         <div class="col-md-3">
             <div class="card">
                 <div class="card-body">
-                    <h5 class="card-title">Pending Requests</h5>
+                    <h5 class="card-title">Access Requests</h5>
+                    <h2>{{ access_requests_pending }}</h2>
+                    <a href="{{ url_for('portal_admin.portal_access_requests') }}" class="btn btn-sm btn-dark">Review Queue</a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Pending Quotes</h5>
                     <h2>{{ recent_requests | selectattr('status', 'equalto', 'pending') | list | length }}</h2>
                     <a href="{{ url_for('portal_admin.portal_requests', status='pending') }}" class="btn btn-sm btn-warning">View Pending</a>
                 </div>
@@ -163,6 +172,86 @@
                                 <option value="0" {% if settings.require_quote_approval.setting_value == '0' %}selected{% endif %}>No - Auto-show estimates</option>
                             </select>
                             <small class="form-text text-muted">{{ settings.require_quote_approval.description }}</small>
+                        </div>
+                    </div>
+                </div>
+
+                <hr class="my-4">
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>Admin Email Settings</h5>
+
+                        <div class="mb-3">
+                            <label class="form-label">SMTP Server</label>
+                            <input type="text" class="form-control" name="smtp_server"
+                                   value="{{ email_config.smtp_server }}">
+                            <small class="form-text text-muted">SMTP host used for portal/admin automated emails.</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">SMTP Port</label>
+                            <input type="number" class="form-control" name="smtp_port"
+                                   value="{{ email_config.smtp_port }}">
+                            <small class="form-text text-muted">Use the port required by your mail provider, for example `465` for SSL.</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">SMTP Username</label>
+                            <input type="email" class="form-control" name="smtp_username"
+                                   value="{{ email_config.smtp_username }}">
+                            <small class="form-text text-muted">Mailbox login used to send automated emails.</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">SMTP Password</label>
+                            <input type="password" class="form-control" name="email_password"
+                                   placeholder="{% if email_password_set %}Leave blank to keep current password{% else %}Enter SMTP password{% endif %}">
+                            <small class="form-text text-muted">
+                                {% if email_password_set %}
+                                A password is already stored. Leave this blank to keep it unchanged.
+                                {% else %}
+                                No password is currently stored.
+                                {% endif %}
+                            </small>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <h5>&nbsp;</h5>
+
+                        <div class="mb-3">
+                            <label class="form-label">From Email</label>
+                            <input type="email" class="form-control" name="from_email"
+                                   value="{{ email_config.from_email }}">
+                            <small class="form-text text-muted">Shown as the sender address on outgoing emails.</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">From Name</label>
+                            <input type="text" class="form-control" name="from_name"
+                                   value="{{ email_config.from_name }}">
+                            <small class="form-text text-muted">Shown as the sender display name on outgoing emails.</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Notification Email</label>
+                            <input type="email" class="form-control" name="notification_email"
+                                   value="{{ email_config.notification_email }}">
+                            <small class="form-text text-muted">Recipient used for portal/admin system notifications.</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Send Test Email</label>
+                            <div class="input-group">
+                                <input type="email" class="form-control" id="testEmailRecipient"
+                                       value="{{ email_config.notification_email }}"
+                                       placeholder="recipient@example.com">
+                                <button type="button" class="btn btn-outline-primary" id="sendTestEmail">
+                                    Send Test
+                                </button>
+                            </div>
+                            <small class="form-text text-muted">Sends a test using the currently saved SMTP settings.</small>
                         </div>
                     </div>
                 </div>
@@ -322,6 +411,31 @@ document.getElementById('generateApiKey').addEventListener('click', async () => 
         }
     } catch (error) {
         alert('Error generating API key: ' + error);
+    }
+});
+
+document.getElementById('sendTestEmail').addEventListener('click', async () => {
+    const toEmail = document.getElementById('testEmailRecipient').value.trim();
+    if (!toEmail) {
+        alert('Enter a recipient email address first');
+        return;
+    }
+
+    try {
+        const response = await fetch('{{ url_for("portal_admin.send_test_email") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({to_email: toEmail})
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert(result.message);
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error sending test email: ' + error);
     }
 });
 </script>

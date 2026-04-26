@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}Portal Access Requests{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Portal Access Requests</h2>
+        <a href="{{ url_for('portal_admin.portal_users') }}" class="btn btn-outline-primary">
+            <i class="fas fa-users"></i> Manage Users
+        </a>
+    </div>
+
+    <div class="mb-3 d-flex gap-2 flex-wrap">
+        <a href="{{ url_for('portal_admin.portal_access_requests') }}" class="btn btn-sm {% if not status_filter %}btn-dark{% else %}btn-outline-dark{% endif %}">All</a>
+        <a href="{{ url_for('portal_admin.portal_access_requests', status='pending') }}" class="btn btn-sm {% if status_filter == 'pending' %}btn-warning{% else %}btn-outline-warning{% endif %}">Pending: {{ status_counts.get('pending', 0) }}</a>
+        <a href="{{ url_for('portal_admin.portal_access_requests', status='reviewed') }}" class="btn btn-sm {% if status_filter == 'reviewed' %}btn-info{% else %}btn-outline-info{% endif %}">Reviewed: {{ status_counts.get('reviewed', 0) }}</a>
+        <a href="{{ url_for('portal_admin.portal_access_requests', status='approved') }}" class="btn btn-sm {% if status_filter == 'approved' %}btn-success{% else %}btn-outline-success{% endif %}">Approved: {{ status_counts.get('approved', 0) }}</a>
+        <a href="{{ url_for('portal_admin.portal_access_requests', status='rejected') }}" class="btn btn-sm {% if status_filter == 'rejected' %}btn-danger{% else %}btn-outline-danger{% endif %}">Rejected: {{ status_counts.get('rejected', 0) }}</a>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>Submitted</th>
+                            <th>Company</th>
+                            <th>Contact</th>
+                            <th>Email</th>
+                            <th>Phone</th>
+                            <th>Notes</th>
+                            <th>Status</th>
+                            <th>Internal Notes</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for req in requests %}
+                        <tr>
+                            <td>{{ req.date_submitted }}</td>
+                            <td><strong>{{ req.company_name }}</strong></td>
+                            <td>{{ req.first_name }} {{ req.last_name }}</td>
+                            <td><a href="mailto:{{ req.email }}">{{ req.email }}</a></td>
+                            <td>{{ req.phone or '-' }}</td>
+                            <td style="min-width: 220px;">{{ req.notes or '-' }}</td>
+                            <td>
+                                <span class="badge {% if req.status == 'pending' %}bg-warning text-dark{% elif req.status == 'reviewed' %}bg-info{% elif req.status == 'approved' %}bg-success{% else %}bg-danger{% endif %}">
+                                    {{ req.status | title }}
+                                </span>
+                                {% if req.processed_by_username %}
+                                <div class="small text-muted mt-1">by {{ req.processed_by_username }}</div>
+                                {% endif %}
+                            </td>
+                            <td style="min-width: 240px;">
+                                <textarea class="form-control form-control-sm access-request-notes" rows="3" data-request-id="{{ req.id }}" placeholder="Internal notes">{{ req.internal_notes or '' }}</textarea>
+                            </td>
+                            <td style="min-width: 220px;">
+                                <div class="d-flex gap-2 flex-wrap">
+                                    <button class="btn btn-sm btn-outline-warning" onclick="updateAccessRequest({{ req.id }}, 'reviewed')">Mark Reviewed</button>
+                                    <button class="btn btn-sm btn-outline-success" onclick="updateAccessRequest({{ req.id }}, 'approved')">Approve</button>
+                                    <button class="btn btn-sm btn-outline-danger" onclick="updateAccessRequest({{ req.id }}, 'rejected')">Reject</button>
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="updateAccessRequest({{ req.id }}, 'pending')">Reopen</button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="9" class="text-center text-muted py-4">No access requests found.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function updateAccessRequest(requestId, status) {
+    const notesField = document.querySelector(`.access-request-notes[data-request-id="${requestId}"]`);
+    const internalNotes = notesField ? notesField.value : '';
+
+    try {
+        const response = await fetch(`{{ url_for("portal_admin.update_portal_access_request_status", request_id=0) }}`.replace('0', requestId), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({status, internal_notes: internalNotes})
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            alert(result.error || 'Failed to update request');
+            return;
+        }
+
+        location.reload();
+    } catch (error) {
+        alert('Error updating request: ' + error);
+    }
+}
+</script>
+{% endblock %}
