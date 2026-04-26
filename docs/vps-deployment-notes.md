@@ -17,6 +17,8 @@ This document is intended to be updated during the deployment.
 - Backups: `Enabled`
 - Region: `Manchester, GB`
 - Git repository: `https://github.com/Slivoc/crm`
+- Live hostname: `mgc.sproutt.io`
+- Public app URL: `https://mgc.sproutt.io`
 
 ## Recommended Settings
 
@@ -74,8 +76,8 @@ This document is intended to be updated during the deployment.
 
 - App server: Flask app on Linux
 - Database: PostgreSQL on same VPS initially
-- Reverse proxy: likely `nginx`
-- Python app runner: likely `gunicorn`
+- Reverse proxy: `nginx`
+- Python app runner: `waitress`
 - Service management: likely `systemd`
 
 ## To Fill In Next
@@ -84,15 +86,15 @@ This document is intended to be updated during the deployment.
 - Public IP address: `64.176.186.181`
 - SSH user: `linuxuser`
 - SSH key path / key name
-- PostgreSQL version
-- Database name
-- Database username
-- App directory on server
-- Virtualenv path
-- Systemd service name
-- Nginx site config path
-- Domain / subdomain
-- SSL method
+- PostgreSQL version: `18`
+- Database name: `sproutt`
+- Database username: `tom`
+- App directory on server: `/srv/sproutt`
+- Virtualenv path: `/srv/sproutt/.venv`
+- Systemd service name: `sproutt`
+- Nginx site config path: `/etc/nginx/sites-available/sproutt`
+- Domain / subdomain: `mgc.sproutt.io`
+- SSL method: `certbot` / Let's Encrypt
 - Backup/restore command history
 
 ## Command Log
@@ -113,6 +115,15 @@ Add important setup commands here as deployment progresses.
 - Database user: `tom`
 - PostgreSQL major version used for restore: `18`
 
+### Current Live Service State
+
+- `waitress` runs the app via `systemd`
+- `nginx` proxies public traffic to `127.0.0.1:5000`
+- Public HTTPS endpoint is working:
+  - `https://mgc.sproutt.io`
+- Expected unauthenticated response:
+  - redirect to `/auth/login`
+
 ### Restore Notes
 
 - The restore succeeded with two non-blocking default-privilege warnings:
@@ -124,13 +135,182 @@ Add important setup commands here as deployment progresses.
 
 ### Next Deployment Steps
 
-1. Install git / Python build tooling on the VPS
-2. Clone `https://github.com/Slivoc/crm`
-3. Create virtualenv
-4. Install Python requirements
-5. Create VPS `.env`
-6. Run app locally on server for smoke test
-7. Configure `gunicorn`
-8. Configure `nginx`
-9. Apply any additive schema fixes still needed
-10. Open public access last
+1. Verify login and key pages in browser
+2. Apply any additive schema fixes still needed
+3. Tighten production config / reduce debug logging if desired
+4. Record final backup and recovery process
+5. Optionally add deployment/update script
+
+## Operating Instructions
+
+### SSH In
+
+```bash
+ssh linuxuser@64.176.186.181
+```
+
+### App Directory
+
+```bash
+cd /srv/sproutt
+```
+
+### Do I Need To Activate The Virtualenv?
+
+- `Yes` if you are running Python or `pip` commands manually.
+- `No` if you are managing the app through `systemd`, because the service already points at the virtualenv Python.
+
+Activate manually:
+
+```bash
+cd /srv/sproutt
+source .venv/bin/activate
+```
+
+Deactivate:
+
+```bash
+deactivate
+```
+
+### Restart The App
+
+Use `systemd`, not a manual Python command:
+
+```bash
+sudo systemctl restart sproutt
+```
+
+Check status:
+
+```bash
+sudo systemctl status sproutt
+```
+
+Live logs:
+
+```bash
+sudo journalctl -u sproutt -f
+```
+
+### Start / Stop The App
+
+```bash
+sudo systemctl start sproutt
+sudo systemctl stop sproutt
+```
+
+### Update Code From Git
+
+```bash
+cd /srv/sproutt
+git pull
+source .venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart sproutt
+```
+
+### Nginx
+
+Test config:
+
+```bash
+sudo nginx -t
+```
+
+Reload after config change:
+
+```bash
+sudo systemctl reload nginx
+```
+
+Restart if needed:
+
+```bash
+sudo systemctl restart nginx
+```
+
+### Firewall
+
+Expected open ports:
+
+- `22/tcp`
+- `80/tcp`
+- `443/tcp`
+
+Check:
+
+```bash
+sudo ufw status
+```
+
+Note:
+- `5000` should not be publicly open after nginx is in front.
+
+### Database Access
+
+Connect to the app database:
+
+```bash
+psql -h localhost -U tom -d sproutt
+```
+
+Exit `psql`:
+
+```sql
+\q
+```
+
+Change DB password:
+
+```bash
+sudo -u postgres psql
+```
+
+Then:
+
+```sql
+ALTER USER tom WITH PASSWORD 'new-password';
+\q
+```
+
+### Environment File
+
+App env file:
+
+```bash
+/srv/sproutt/.env
+```
+
+After changing `.env`, restart the app:
+
+```bash
+sudo systemctl restart sproutt
+```
+
+### Waitress Service
+
+Current service model:
+
+- service name: `sproutt`
+- runner: `python -m waitress --host=127.0.0.1 --port=5000 app:app`
+
+The service already uses the venv Python. Manual activation is not required for normal operation.
+
+### Public URL Tests
+
+Expected HTTP behavior:
+
+```bash
+curl -I http://mgc.sproutt.io
+```
+
+- should redirect to HTTPS
+
+Expected HTTPS behavior:
+
+```bash
+curl -I https://mgc.sproutt.io
+```
+
+- should return a `302` redirect to `/auth/login` when not authenticated

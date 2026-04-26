@@ -133,6 +133,8 @@ typing_extensions==4.12.2
 tzdata==2024.2
 tzlocal==5.2
 urllib3==2.2.3
+watchdog==6.0.0
+waitress==3.0.0
 webencodings==0.5.1
 Werkzeug==3.0.4
 wheel==0.44.0
