@@ -20,7 +20,7 @@ env_path = parent_dir / '.env'
 load_dotenv(dotenv_path=env_path)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client = openai.Client(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 if client is None:
     logging.warning("OPENAI_API_KEY not found. AI-assisted features will run in fallback mode.")
 
@@ -201,7 +201,11 @@ def generate_industry_insights(customer_names, tag_description, continent=None, 
         logging.debug(f"Generated AI Prompt: {prompt}")
 
         # Call the OpenAI API with simpler system prompt
-        response = openai.ChatCompletion.create(
+        if client is None:
+            logging.warning("OPENAI_API_KEY is not set; skipping AI industry insight generation.")
+            return [], prompt
+
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system",
@@ -212,7 +216,7 @@ def generate_industry_insights(customer_names, tag_description, continent=None, 
             temperature=0.2,
         )
 
-        response_content = response.choices[0].message['content'].strip()
+        response_content = response.choices[0].message.content.strip()
         logging.debug(f"Raw AI response content: {response_content}")
 
         # Remove markdown code blocks if present
