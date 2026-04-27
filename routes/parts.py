@@ -336,10 +336,17 @@ def parts():
 
 @parts_bp.route('/stock-building', methods=['GET'])
 def stock_building():
+    page = max(request.args.get('page', 1, type=int) or 1, 1)
+    per_page = 100
     selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
     selected_bom_ids = [bid for bid in request.args.getlist('bom_ids', type=int) if bid]
     selected_qpl_manufacturers = [name.strip() for name in request.args.getlist('qpl_manufacturers') if (name or '').strip()]
     exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
+    only_qpl_mapped = str(request.args.get('only_qpl_mapped', '')).lower() in ('1', 'true', 'yes', 'on')
+    part_query = (request.args.get('part_query') or '').strip().upper()
+    min_sales_frequency = max(request.args.get('min_sales_frequency', 0, type=int) or 0, 0)
+    min_parts_list_frequency = max(request.args.get('min_parts_list_frequency', 0, type=int) or 0, 0)
+    min_bom_count = max(request.args.get('min_bom_count', 0, type=int) or 0, 0)
 
     customers = db_execute(
         '''
@@ -598,6 +605,9 @@ def stock_building():
             if not (mapped_keys & selected_qpl_keys):
                 continue
 
+        if only_qpl_mapped and not mapped_manufacturers:
+            continue
+
         bom_map = data.get('bom_map') or {}
         if selected_bom_id_set and not (set(bom_map.keys()) & selected_bom_id_set):
             continue
@@ -606,20 +616,35 @@ def stock_building():
         if exclude_in_stock and stock_quantity > 0:
             continue
 
+        part_number = part_number_map.get(base_part) or base_part
+        if part_query and part_query not in base_part and part_query not in (part_number or '').upper():
+            continue
+
+        sales_frequency = int(data.get('sales_frequency') or 0)
+        parts_list_frequency = int(data.get('parts_list_frequency') or 0)
+        bom_count = len(bom_map)
+
+        if sales_frequency < min_sales_frequency:
+            continue
+        if parts_list_frequency < min_parts_list_frequency:
+            continue
+        if bom_count < min_bom_count:
+            continue
+
         consolidated_rows.append({
             'base_part_number': base_part,
-            'part_number': part_number_map.get(base_part) or base_part,
-            'sales_frequency': int(data.get('sales_frequency') or 0),
+            'part_number': part_number,
+            'sales_frequency': sales_frequency,
             'sales_customer_count': int(data.get('sales_customer_count') or 0),
             'sales_customers': data.get('sales_customers') or '',
-            'parts_list_frequency': int(data.get('parts_list_frequency') or 0),
+            'parts_list_frequency': parts_list_frequency,
             'parts_list_customer_count': int(data.get('parts_list_customer_count') or 0),
             'parts_list_customers': data.get('parts_list_customers') or '',
             'stock_quantity': stock_quantity,
             'qpl_mappings': qpl_mappings,
             'qpl_manufacturers': mapped_manufacturers,
             'bom_map': bom_map,
-            'bom_count': len(bom_map),
+            'bom_count': bom_count,
         })
 
     consolidated_rows.sort(
@@ -632,11 +657,18 @@ def stock_building():
         )
     )
 
+    total_rows = len(consolidated_rows)
+    total_pages = max((total_rows + per_page - 1) // per_page, 1)
+    page = min(page, total_pages)
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    paged_rows = consolidated_rows[start_idx:end_idx]
+
     qpl_manufacturer_options = sorted(qpl_manufacturer_option_set, key=lambda name: name.lower())
 
     return render_template(
         'stock_building.html',
-        rows=consolidated_rows,
+        rows=paged_rows,
         customers=[dict(row) for row in customers],
         boms=[dict(row) for row in boms],
         bom_column_ids=all_bom_ids,
@@ -646,6 +678,17 @@ def stock_building():
         selected_bom_ids=selected_bom_ids,
         selected_qpl_manufacturers=selected_qpl_manufacturers,
         exclude_in_stock=exclude_in_stock,
+        only_qpl_mapped=only_qpl_mapped,
+        part_query=part_query,
+        min_sales_frequency=min_sales_frequency,
+        min_parts_list_frequency=min_parts_list_frequency,
+        min_bom_count=min_bom_count,
+        page=page,
+        per_page=per_page,
+        total_rows=total_rows,
+        total_pages=total_pages,
+        showing_start=(start_idx + 1) if total_rows else 0,
+        showing_end=min(end_idx, total_rows),
     )
 
 @parts_bp.route('/parts/create_part', methods=['POST'])

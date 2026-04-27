@@ -19,6 +19,7 @@
     <div class="card mb-3">
         <div class="card-body">
             <form method="get" action="{{ url_for('parts.stock_building') }}" class="row g-3 align-items-end">
+                <input type="hidden" name="page" value="1">
                 <div class="col-lg-4">
                     <label for="customerFilter" class="form-label fw-semibold">Customers (overall filter)</label>
                     <select class="form-select" id="customerFilter" name="customer_ids" multiple size="6">
@@ -57,6 +58,30 @@
                         </label>
                     </div>
                 </div>
+                <div class="col-12">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" value="1" id="onlyQplMappedToggle" name="only_qpl_mapped" {% if only_qpl_mapped %}checked{% endif %}>
+                        <label class="form-check-label fw-semibold" for="onlyQplMappedToggle">
+                            Show only parts with mapped QPL manufacturers
+                        </label>
+                    </div>
+                </div>
+                <div class="col-lg-4">
+                    <label for="partQuery" class="form-label fw-semibold">Part search</label>
+                    <input type="text" class="form-control" id="partQuery" name="part_query" value="{{ part_query or '' }}" placeholder="Part or base part number">
+                </div>
+                <div class="col-lg-2">
+                    <label for="minSalesFrequency" class="form-label fw-semibold">Min sales freq</label>
+                    <input type="number" min="0" class="form-control" id="minSalesFrequency" name="min_sales_frequency" value="{{ min_sales_frequency }}">
+                </div>
+                <div class="col-lg-2">
+                    <label for="minPartsListFrequency" class="form-label fw-semibold">Min parts list freq</label>
+                    <input type="number" min="0" class="form-control" id="minPartsListFrequency" name="min_parts_list_frequency" value="{{ min_parts_list_frequency }}">
+                </div>
+                <div class="col-lg-2">
+                    <label for="minBomCount" class="form-label fw-semibold">Min BOM count</label>
+                    <input type="number" min="0" class="form-control" id="minBomCount" name="min_bom_count" value="{{ min_bom_count }}">
+                </div>
                 <div class="col-12 d-flex gap-2">
                     <button type="submit" class="btn btn-primary">Apply filters</button>
                     <a href="{{ url_for('parts.stock_building') }}" class="btn btn-outline-secondary">Reset</a>
@@ -69,7 +94,11 @@
     <div class="card shadow-sm">
         <div class="card-header bg-light d-flex justify-content-between align-items-center">
             <strong>Consolidated stock building report</strong>
-            <span class="badge bg-secondary">{{ rows|length }} parts</span>
+            <span class="badge bg-secondary">{{ total_rows }} parts</span>
+        </div>
+        <div class="card-body border-bottom py-2 px-3 small text-muted d-flex justify-content-between flex-wrap gap-2">
+            <span>Showing {{ showing_start }}-{{ showing_end }} of {{ total_rows }} parts ({{ per_page }} per page)</span>
+            <span>Tip: use filters above before expanding BOM columns for easier scanning.</span>
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
@@ -121,13 +150,19 @@
                             <td class="text-center">
                                 {{ row.sales_frequency }} / {{ row.sales_customer_count }}
                                 {% if row.sales_customers %}
-                                <div class="small text-muted mt-1">{{ row.sales_customers }}</div>
+                                {% set sales_customer_list = row.sales_customers.split(', ') %}
+                                <div class="small text-muted mt-1" title="{{ row.sales_customers }}">
+                                    {{ sales_customer_list[:3]|join(', ') }}{% if sales_customer_list|length > 3 %} +{{ sales_customer_list|length - 3 }} more{% endif %}
+                                </div>
                                 {% endif %}
                             </td>
                             <td class="text-center">
                                 {{ row.parts_list_frequency }} / {{ row.parts_list_customer_count }}
                                 {% if row.parts_list_customers %}
-                                <div class="small text-muted mt-1">{{ row.parts_list_customers }}</div>
+                                {% set parts_list_customer_list = row.parts_list_customers.split(', ') %}
+                                <div class="small text-muted mt-1" title="{{ row.parts_list_customers }}">
+                                    {{ parts_list_customer_list[:3]|join(', ') }}{% if parts_list_customer_list|length > 3 %} +{{ parts_list_customer_list|length - 3 }} more{% endif %}
+                                </div>
                                 {% endif %}
                             </td>
                             <td class="text-center">{{ row.bom_count }}</td>
@@ -153,6 +188,21 @@
                 </table>
             </div>
         </div>
+        {% if total_pages > 1 %}
+        <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+            <div class="small text-muted">Page {{ page }} of {{ total_pages }}</div>
+            <div class="btn-group">
+                <a
+                    class="btn btn-outline-secondary btn-sm {% if page <= 1 %}disabled{% endif %}"
+                    href="{{ url_for('parts.stock_building', page=page-1, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
+                >Previous</a>
+                <a
+                    class="btn btn-outline-secondary btn-sm {% if page >= total_pages %}disabled{% endif %}"
+                    href="{{ url_for('parts.stock_building', page=page+1, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
+                >Next</a>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 
