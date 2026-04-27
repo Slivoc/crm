@@ -456,8 +456,8 @@
                         {% set line_status = 'no_bid' if line.customer_quote_is_no_bid else (line.customer_quote_status or 'created') %}
                         <button class="btn btn-sm line-status-btn {{ 'status-no-bid' if line_status == 'no_bid' else 'status-created' }}"
                                 data-line-id="{{ line.id }}"
-                                title="Toggle line status between Created and No Bid">
-                            {{ 'No Bid' if line_status == 'no_bid' else 'Created' }}
+                                title="Toggle line status between Bid and No Bid">
+                            {{ 'No Bid' if line_status == 'no_bid' else 'Bid' }}
                         </button>
                     </td>
 

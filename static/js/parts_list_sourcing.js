@@ -226,10 +226,12 @@ document.addEventListener('DOMContentLoaded', function() {
     // Filter functionality
     const filterType = document.getElementById('filter-type');
     const searchPart = document.getElementById('search-part');
+    const filterNoRelatedCost = document.getElementById('filter-no-related-cost');
 
     function applyFilters() {
         const filterValue = filterType.value;
         const searchValue = searchPart.value.toLowerCase();
+        const hideRelatedCosted = filterNoRelatedCost?.checked === true;
         const rows = document.querySelectorAll('.sourcing-table tbody tr.main-row');
 
         rows.forEach(row => {
@@ -269,6 +271,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
 
+            if (showRow && hideRelatedCosted) {
+                showRow = row.dataset.hasRelatedCost !== '1';
+            }
+
             if (showRow && searchValue) {
                 const partNumber = row.dataset.partNumber.toLowerCase();
                 showRow = partNumber.includes(searchValue);
@@ -292,6 +298,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (filterType) filterType.addEventListener('change', applyFilters);
     if (searchPart) searchPart.addEventListener('input', applyFilters);
+    if (filterNoRelatedCost) filterNoRelatedCost.addEventListener('change', applyFilters);
 
     const lineDataById = new Map(
         (window.LINE_DATA || []).map(line => [String(line.id), line])
@@ -1059,7 +1066,7 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
             btn.textContent = 'No Bid';
         } else {
             btn.classList.add('status-created');
-            btn.textContent = 'Created';
+            btn.textContent = 'Bid';
         }
     }
 
@@ -1092,7 +1099,7 @@ function updateCostBadge(lineId, cost, currencyCode, supplierName) {
                 }
                 row.dataset.lineStatus = nextStatus;
                 updateLineStatusButton(btn, nextStatus);
-                showToast(`Line status set to ${nextStatus === 'no_bid' ? 'No Bid' : 'Created'}`, 'success');
+                showToast(`Line status set to ${nextStatus === 'no_bid' ? 'No Bid' : 'Bid'}`, 'success');
             })
             .catch(error => {
                 console.error('Error updating line status:', error);

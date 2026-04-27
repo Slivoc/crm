@@ -7137,7 +7137,14 @@ def parts_list_sourcing(list_id):
                      FROM customer_quote_lines cql
                      WHERE cql.parts_list_line_id = pll.id
                      ORDER BY cql.date_modified DESC, cql.id DESC
-                     LIMIT 1) as customer_quote_is_no_bid
+                     LIMIT 1) as customer_quote_is_no_bid,
+                    EXISTS(
+                        SELECT 1
+                        FROM parts_list_lines related
+                        WHERE COALESCE(related.parent_line_id, related.id) = COALESCE(pll.parent_line_id, pll.id)
+                          AND related.id != pll.id
+                          AND related.chosen_cost IS NOT NULL
+                    ) as has_related_chosen_cost
                 FROM parts_list_lines pll
                 LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
                 WHERE pll.parts_list_id = ?

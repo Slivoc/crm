@@ -448,7 +448,7 @@ function updateLineStatusButton(btn, status) {
         btn.textContent = 'No Bid';
     } else {
         btn.classList.add('status-created');
-        btn.textContent = 'Created';
+        btn.textContent = 'Bid';
     }
 }
 
@@ -481,7 +481,7 @@ function toggleLineNoBidStatus(lineId, btn) {
             }
             row.dataset.lineStatus = nextStatus;
             updateLineStatusButton(btn, nextStatus);
-            showToast(`Line status set to ${nextStatus === 'no_bid' ? 'No Bid' : 'Created'}`, 'success');
+            showToast(`Line status set to ${nextStatus === 'no_bid' ? 'No Bid' : 'Bid'}`, 'success');
         })
         .catch(error => {
             console.error('Error updating line status:', error);

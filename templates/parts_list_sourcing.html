@@ -307,6 +307,14 @@
                            class="form-control form-control-sm"
                            placeholder="Type to search...">
                 </div>
+                <div class="col-md-3">
+                    <div class="form-check mt-md-4 pt-md-2">
+                        <input type="checkbox" id="filter-no-related-cost" class="form-check-input">
+                        <label for="filter-no-related-cost" class="form-check-label small fw-semibold">
+                            Hide parts with a related costed line
+                        </label>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -387,6 +395,7 @@
                             data-has-suggested="{{ '1' if line.suggested_suppliers else '0' }}"
                             data-contacted="{{ '1' if line.email_history else '0' }}"
                             data-has-cost="{{ '1' if line.chosen_cost else '0' }}"
+                            data-has-related-cost="{{ '1' if line.has_related_chosen_cost else '0' }}"
                             data-has-customer-quote="{{ '1' if line.has_customer_quote else '0' }}"
                             data-part-number="{{ line.customer_part_number }}">
 
@@ -397,8 +406,8 @@
     <div>
         <button class="btn btn-sm line-status-btn {{ 'status-no-bid' if line_status == 'no_bid' else 'status-created' }}"
                 data-line-id="{{ line.id }}"
-                title="Toggle line status between Created and No Bid">
-            {{ 'No Bid' if line_status == 'no_bid' else 'Created' }}
+                title="Toggle line status between Bid and No Bid">
+            {{ 'No Bid' if line_status == 'no_bid' else 'Bid' }}
         </button>
     </div>
     {% if line.chosen_cost %}
