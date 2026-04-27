@@ -1547,6 +1547,21 @@ def trigger_monroe_auto_check_with_status(list_id, line_ids, user_id, status_id,
     Used when manually triggering from Supplier Portal.
     """
     if not PLAYWRIGHT_AVAILABLE:
+        # Do not leave scrape sessions stuck in "queued" when Playwright isn't installed.
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE supplier_scrape_status
+                SET status = 'failed',
+                    error_message = 'Playwright is not installed. Run: pip install playwright && playwright install chromium',
+                    completed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (status_id,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            logging.exception("Failed to mark Monroe scrape status as failed when Playwright is unavailable")
         return
 
     try:
