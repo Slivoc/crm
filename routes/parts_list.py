@@ -9615,14 +9615,27 @@ def use_cost(list_id, line_id):
         currency_code = data.get('currency_code')
         lead_days = data.get('lead_days')
         chosen_qty = data.get('chosen_qty')
+        internal_notes = data.get('internal_notes')
         source_type = (data.get('source_type') or '').strip().lower() or None
         source_reference = data.get('source_reference')
         source_type_provided = 'source_type' in data
         source_reference_provided = 'source_reference' in data
 
-        if cost is None:
-            logging.warning(f"No cost provided in use_cost: {data}")
-            return jsonify(success=False, message="cost is required"), 400
+        has_any_update = any([
+            supplier_id is not None,
+            cost is not None,
+            price is not None,
+            currency_id is not None,
+            bool(currency_code),
+            lead_days is not None,
+            chosen_qty is not None,
+            internal_notes is not None,
+            source_type_provided,
+            source_reference_provided,
+        ])
+        if not has_any_update:
+            logging.warning(f"No updates provided in use_cost: {data}")
+            return jsonify(success=False, message="No updates provided"), 400
 
         with db_cursor(commit=True) as cur:
             if not currency_id and currency_code:
@@ -9636,7 +9649,7 @@ def use_cost(list_id, line_id):
                     logging.warning(f"Currency code {currency_code} not found in database")
 
             line = _execute_with_cursor(cur, """
-                SELECT id, chosen_source_type, chosen_source_reference
+                SELECT id, chosen_source_type, chosen_source_reference, internal_notes
                 FROM parts_list_lines 
                 WHERE id = ? AND parts_list_id = ?
             """, (line_id, list_id)).fetchone()
@@ -9649,6 +9662,7 @@ def use_cost(list_id, line_id):
                 f"Updating line {line_id} with supplier: {supplier_id}, cost: {cost}, price: {price}, currency: {currency_id}, lead_days: {lead_days}, qty: {chosen_qty}")
 
             update_source = source_type_provided or source_reference_provided
+            effective_internal_notes = internal_notes if 'internal_notes' in data else line['internal_notes']
             if update_source:
                 _execute_with_cursor(cur, """
                     UPDATE parts_list_lines
@@ -9658,11 +9672,12 @@ def use_cost(list_id, line_id):
                         chosen_currency_id = ?,
                         chosen_lead_days = ?,
                         chosen_qty = ?,
+                        internal_notes = ?,
                         chosen_source_type = ?,
                         chosen_source_reference = ?,
                         date_modified = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (supplier_id, cost, price, currency_id, lead_days, chosen_qty, source_type, source_reference, line_id))
+                """, (supplier_id, cost, price, currency_id, lead_days, chosen_qty, effective_internal_notes, source_type, source_reference, line_id))
             else:
                 _execute_with_cursor(cur, """
                     UPDATE parts_list_lines
@@ -9672,9 +9687,10 @@ def use_cost(list_id, line_id):
                         chosen_currency_id = ?,
                         chosen_lead_days = ?,
                         chosen_qty = ?,
+                        internal_notes = ?,
                         date_modified = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (supplier_id, cost, price, currency_id, lead_days, chosen_qty, line_id))
+                """, (supplier_id, cost, price, currency_id, lead_days, chosen_qty, effective_internal_notes, line_id))
 
             effective_source_type = source_type if update_source else line['chosen_source_type']
             effective_source_reference = source_reference if update_source else line['chosen_source_reference']
