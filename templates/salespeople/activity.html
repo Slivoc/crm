@@ -616,13 +616,9 @@
     <div class="col-md-3 mb-4">
       <div class="card bg-warning text-white h-100">
         <div class="card-body">
-          {% set pinned_total_value = namespace(amount=0) %}
-          {% for pinned_list in pinned_parts_lists or [] %}
-            {% set pinned_total_value.amount = pinned_total_value.amount + (pinned_list.quoted_value_gbp or 0) %}
-          {% endfor %}
           <h5 class="card-title">Pinned Parts Lists</h5>
-          <h2 class="display-6 mb-1">{{ format_currency(pinned_total_value.amount, '£') }}</h2>
-          <p class="mb-0">Lists: {{ (pinned_parts_lists or [])|length }}</p>
+          <h2 class="display-6 mb-1">{{ format_currency(pinned_parts_lists_value_gbp or 0, '£') }}</h2>
+          <p class="mb-0">Lists: {{ pinned_parts_lists_count or 0 }}</p>
         </div>
       </div>
     </div>

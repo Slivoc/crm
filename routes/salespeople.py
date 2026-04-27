@@ -1375,6 +1375,39 @@ def activity(salesperson_id):
             quotes_by_day = []
             this_month_quotes_value_gbp = 0.0
 
+        pinned_parts_lists_count = 0
+        pinned_parts_lists_value_gbp = 0.0
+        try:
+            pinned_summary_row = db_execute(
+                """
+                SELECT
+                    COUNT(DISTINCT pl.id) AS pinned_count,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN cql.quoted_status = 'quoted'
+                                 AND COALESCE(cql.is_no_bid::int, 0) = 0
+                                 AND cql.quote_price_gbp > 0
+                            THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                            ELSE 0
+                        END
+                    ), 0) AS pinned_value_gbp
+                FROM parts_lists pl
+                LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+                LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                WHERE COALESCE(pl.is_pinned, FALSE) = TRUE
+                  AND pl.salesperson_id = ?
+                """,
+                (salesperson_id,),
+                fetch='one'
+            )
+            if pinned_summary_row:
+                pinned_parts_lists_count = int(pinned_summary_row['pinned_count'] or 0)
+                pinned_parts_lists_value_gbp = float(pinned_summary_row['pinned_value_gbp'] or 0)
+        except Exception as e:
+            print(f"DEBUG: Error loading pinned parts lists summary: {e}")
+            pinned_parts_lists_count = 0
+            pinned_parts_lists_value_gbp = 0.0
+
         quoted_status_id = request.args.get('quoted_status_id', default=None, type=int)
         parts_date_range = request.args.get('parts_date_range', default='14days', type=str)
         parts_custom_date = request.args.get('parts_custom_date', default=None, type=str)
@@ -1572,7 +1605,9 @@ def activity(salesperson_id):
             parts_date_range=parts_date_range,
             parts_custom_date=parts_custom_date,
             tracker_step_customers=tracker_step_customers,
-            this_month_quotes_value_gbp=this_month_quotes_value_gbp
+            this_month_quotes_value_gbp=this_month_quotes_value_gbp,
+            pinned_parts_lists_count=pinned_parts_lists_count,
+            pinned_parts_lists_value_gbp=pinned_parts_lists_value_gbp
         )
         timings['render_template'] = time.perf_counter() - t_render
         return response
