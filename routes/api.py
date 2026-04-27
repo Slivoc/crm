@@ -57,6 +57,30 @@ def _get_default_signature(user_id=None):
         return signature
     return get_email_signature_by_id(1)
 
+
+def _log_email_communication(contact, customer, customer_id, subject):
+    """Insert an email communication row for contact timeline/metrics."""
+    if not contact:
+        return
+
+    resolved_customer_id = customer_id or contact.get('customer_id')
+    salesperson_id = None
+    if customer:
+        salesperson_id = customer.get('salesperson_id')
+    if not salesperson_id and current_user and getattr(current_user, "is_authenticated", False):
+        salesperson_id = current_user.id
+
+    notes = f"Email sent: {subject}" if subject else "Email sent"
+    db_execute(
+        '''
+        INSERT INTO contact_communications
+            (date, contact_id, customer_id, salesperson_id, communication_type, notes)
+        VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)
+        ''',
+        (contact.get('id'), resolved_customer_id, salesperson_id, 'email', notes),
+        commit=True
+    )
+
 from functools import wraps
 
 # Decorator for API Key validation
@@ -511,6 +535,11 @@ def send_email():
             except Exception as db_error:
                 print(f"Warning: Failed to log email to database for request {request_id}: {str(db_error)}")
                 # Continue execution even if database logging fails
+
+            try:
+                _log_email_communication(contact, customer, customer_id, subject)
+            except Exception as comm_error:
+                print(f"Warning: Failed to log contact communication for request {request_id}: {str(comm_error)}")
 
             # Try to log to HubSpot if we have IDs
             if hubspot_contact_id:
@@ -1347,6 +1376,11 @@ def send_custom_email():
             except Exception as db_error:
                 print(f"Warning: Failed to log email to database for request {request_id}: {str(db_error)}")
                 # Continue execution even if database logging fails
+
+            try:
+                _log_email_communication(contact, customer, customer_id, subject)
+            except Exception as comm_error:
+                print(f"Warning: Failed to log contact communication for request {request_id}: {str(comm_error)}")
 
             # Try to log to HubSpot if we have IDs
             if hubspot_contact_id:
