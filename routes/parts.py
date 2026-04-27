@@ -340,6 +340,7 @@ def stock_building():
     per_page = 100
     selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
     selected_bom_ids = [bid for bid in request.args.getlist('bom_ids', type=int) if bid]
+    selected_project_ids = [pid for pid in request.args.getlist('project_ids', type=int) if pid]
     selected_qpl_manufacturers = [name.strip() for name in request.args.getlist('qpl_manufacturers') if (name or '').strip()]
     exclude_in_stock = str(request.args.get('exclude_in_stock', '')).lower() in ('1', 'true', 'yes', 'on')
     only_qpl_mapped = str(request.args.get('only_qpl_mapped', '')).lower() in ('1', 'true', 'yes', 'on')
@@ -365,9 +366,19 @@ def stock_building():
         ''',
         fetch='all',
     ) or []
+    projects = db_execute(
+        '''
+        SELECT DISTINCT p.id, p.name
+        FROM projects p
+        JOIN parts_lists pl ON pl.project_id = p.id
+        ORDER BY p.name, p.id
+        ''',
+        fetch='all',
+    ) or []
 
     customer_clause, customer_params = _build_in_clause(selected_customer_ids)
     bom_clause, bom_params = _build_in_clause(selected_bom_ids)
+    project_clause, project_params = _build_in_clause(selected_project_ids)
 
     customer_agg_sql = (
         "STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name)"
@@ -391,8 +402,16 @@ def stock_building():
     if customer_clause:
         parts_list_query += f' AND pl.customer_id IN ({customer_clause})'
         parts_list_params.extend(customer_params)
+    if project_clause:
+        parts_list_query += f' AND pl.project_id IN ({project_clause})'
+        parts_list_params.extend(project_params)
     parts_list_query += ' GROUP BY pll.base_part_number'
     parts_list_rows = db_execute(parts_list_query, tuple(parts_list_params), fetch='all') or []
+    filtered_parts_list_base_parts = {
+        (row.get('base_part_number') or '').strip().upper()
+        for row in parts_list_rows
+        if (row.get('base_part_number') or '').strip()
+    }
 
     sales_query = f'''
         SELECT
@@ -456,11 +475,11 @@ def stock_building():
         mapped_qpl_candidates = db_execute(
             '''
             SELECT
-                UPPER(TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''), NULLIF(ma.base_part_number, '')))) AS base_part_number,
+                UPPER(COALESCE(NULLIF(TRIM(ma.airbus_material_base), ''), NULLIF(TRIM(ma.manufacturer_part_number_base), ''))) AS base_part_number,
                 ma.manufacturer_name
             FROM manufacturer_approvals ma
             WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
-              AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''), NULLIF(ma.base_part_number, ''))) <> ''
+              AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''))) <> ''
             ''',
             fetch='all',
         ) or []
@@ -586,19 +605,25 @@ def stock_building():
         for row in part_number_rows
     }
 
-    qpl_manufacturer_option_set = set()
+    qpl_manufacturer_option_set = {
+        (row.get('manufacturer_name') or '').strip()
+        for row in mapped_qpl_rows
+        if (row.get('manufacturer_name') or '').strip()
+    }
     consolidated_rows = []
     selected_qpl_keys = {name.lower() for name in selected_qpl_manufacturers}
     selected_bom_id_set = set(selected_bom_ids)
 
     for base_part, data in part_rows.items():
+        if selected_project_ids and base_part not in filtered_parts_list_base_parts:
+            continue
+
         qpl_mappings = data.get('qpl_mappings') or []
         mapped_manufacturers = sorted({
             (mapping.get('manufacturer_name') or '').strip()
             for mapping in qpl_mappings
             if (mapping.get('manufacturer_name') or '').strip()
         }, key=lambda name: name.lower())
-        qpl_manufacturer_option_set.update(mapped_manufacturers)
 
         if selected_qpl_keys:
             mapped_keys = {(name or '').lower() for name in mapped_manufacturers}
@@ -671,11 +696,13 @@ def stock_building():
         rows=paged_rows,
         customers=[dict(row) for row in customers],
         boms=[dict(row) for row in boms],
+        projects=[dict(row) for row in projects],
         bom_column_ids=all_bom_ids,
         bom_name_by_id=bom_name_by_id,
         qpl_manufacturer_options=qpl_manufacturer_options,
         selected_customer_ids=selected_customer_ids,
         selected_bom_ids=selected_bom_ids,
+        selected_project_ids=selected_project_ids,
         selected_qpl_manufacturers=selected_qpl_manufacturers,
         exclude_in_stock=exclude_in_stock,
         only_qpl_mapped=only_qpl_mapped,

@@ -22,6 +22,7 @@
                 <input type="hidden" name="page" value="1">
                 <div class="col-lg-4">
                     <label for="customerFilter" class="form-label fw-semibold">Customers (overall filter)</label>
+                    <input type="text" class="form-control mb-2 filter-search-input" data-target-select="customerFilter" placeholder="Filter customers...">
                     <select class="form-select" id="customerFilter" name="customer_ids" multiple size="6">
                         {% for customer in customers %}
                         <option value="{{ customer.id }}" {% if customer.id in selected_customer_ids %}selected{% endif %}>
@@ -32,6 +33,7 @@
                 </div>
                 <div class="col-lg-4">
                     <label for="bomFilter" class="form-label fw-semibold">BOMs (overall filter)</label>
+                    <input type="text" class="form-control mb-2 filter-search-input" data-target-select="bomFilter" placeholder="Filter BOMs...">
                     <select class="form-select" id="bomFilter" name="bom_ids" multiple size="6">
                         {% for bom in boms %}
                         <option value="{{ bom.id }}" {% if bom.id in selected_bom_ids %}selected{% endif %}>
@@ -41,7 +43,19 @@
                     </select>
                 </div>
                 <div class="col-lg-4">
+                    <label for="projectFilter" class="form-label fw-semibold">Projects</label>
+                    <input type="text" class="form-control mb-2 filter-search-input" data-target-select="projectFilter" placeholder="Filter projects...">
+                    <select class="form-select" id="projectFilter" name="project_ids" multiple size="6">
+                        {% for project in projects %}
+                        <option value="{{ project.id }}" {% if project.id in selected_project_ids %}selected{% endif %}>
+                            {{ project.name or ('Project #' ~ project.id) }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-lg-4">
                     <label for="qplFilter" class="form-label fw-semibold">QPL manufacturers (mapped only)</label>
+                    <input type="text" class="form-control mb-2 filter-search-input" data-target-select="qplFilter" placeholder="Filter QPL manufacturers...">
                     <select class="form-select" id="qplFilter" name="qpl_manufacturers" multiple size="6">
                         {% for manufacturer in qpl_manufacturer_options %}
                         <option value="{{ manufacturer }}" {% if manufacturer in selected_qpl_manufacturers %}selected{% endif %}>
@@ -194,11 +208,11 @@
             <div class="btn-group">
                 <a
                     class="btn btn-outline-secondary btn-sm {% if page <= 1 %}disabled{% endif %}"
-                    href="{{ url_for('parts.stock_building', page=page-1, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
+                    href="{{ url_for('parts.stock_building', page=page-1, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
                 >Previous</a>
                 <a
                     class="btn btn-outline-secondary btn-sm {% if page >= total_pages %}disabled{% endif %}"
-                    href="{{ url_for('parts.stock_building', page=page+1, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
+                    href="{{ url_for('parts.stock_building', page=page+1, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
                 >Next</a>
             </div>
         </div>
@@ -255,6 +269,25 @@ document.getElementById('toggleBomColumnsBtn')?.addEventListener('click', functi
     document.querySelectorAll('.bom-col').forEach(function (cell) {
         const isHidden = cell.style.display === 'none';
         cell.style.display = isHidden ? '' : 'none';
+    });
+});
+
+document.querySelectorAll('.filter-search-input').forEach(function (input) {
+    const selectId = input.dataset.targetSelect;
+    const select = selectId ? document.getElementById(selectId) : null;
+    if (!select) return;
+
+    Array.from(select.options).forEach(function (option) {
+        option.dataset.originalLabel = option.textContent || '';
+    });
+
+    input.addEventListener('input', function () {
+        const query = (input.value || '').trim().toLowerCase();
+
+        Array.from(select.options).forEach(function (option) {
+            const label = (option.dataset.originalLabel || option.textContent || '').toLowerCase();
+            option.hidden = Boolean(query) && !label.includes(query);
+        });
     });
 });
 </script>
