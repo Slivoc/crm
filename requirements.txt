@@ -79,6 +79,7 @@ pdfminer.six==20231228
 pdfplumber==0.11.4
 pillow==10.4.0
 platformdirs==4.3.6
+playwright>=1.46,<2
 portalocker==2.10.1
 protobuf==5.28.2
 psutil==6.0.0
