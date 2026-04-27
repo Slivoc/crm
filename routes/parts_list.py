@@ -111,6 +111,108 @@ def _convert_amount_to_gbp(amount, currency_code):
     return float(converted) if converted is not None else None
 
 
+def _get_customer_quote_line_metadata(cur, parts_list_line_id, supplier_id=None, source_type=None, source_reference=None):
+    condition = ''
+    certs = ''
+    manufacturer = ''
+
+    source_type_value = (source_type or '').strip().lower()
+    if source_type_value == 'quote' and source_reference is not None:
+        explicit_quote = _execute_with_cursor(cur, """
+            SELECT sql.condition_code, sql.certifications, sql.manufacturer
+            FROM parts_list_supplier_quote_lines sql
+            WHERE CAST(sql.id AS TEXT) = ?
+              AND sql.is_no_bid = FALSE
+            LIMIT 1
+        """, (str(source_reference),)).fetchone()
+
+        if explicit_quote:
+            condition = (explicit_quote['condition_code'] or '').strip()
+            certs = (explicit_quote['certifications'] or '').strip()
+            manufacturer = (explicit_quote['manufacturer'] or '').strip()
+
+    if supplier_id and (not condition or not certs or not manufacturer):
+        latest_quote = _execute_with_cursor(cur, """
+            SELECT sql.condition_code, sql.certifications, sql.manufacturer
+            FROM parts_list_supplier_quote_lines sql
+            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            WHERE sql.parts_list_line_id = ?
+              AND sq.supplier_id = ?
+              AND sql.is_no_bid = FALSE
+              AND (
+                    (sql.condition_code IS NOT NULL AND TRIM(sql.condition_code) != '')
+                 OR (sql.certifications IS NOT NULL AND TRIM(sql.certifications) != '')
+                 OR (sql.manufacturer IS NOT NULL AND TRIM(sql.manufacturer) != '')
+              )
+            ORDER BY sq.quote_date DESC, sql.date_modified DESC, sql.id DESC
+            LIMIT 1
+        """, (parts_list_line_id, supplier_id)).fetchone()
+
+        if latest_quote:
+            if not condition:
+                condition = (latest_quote['condition_code'] or '').strip()
+            if not certs:
+                certs = (latest_quote['certifications'] or '').strip()
+            if not manufacturer:
+                manufacturer = (latest_quote['manufacturer'] or '').strip()
+
+    if supplier_id and (not condition or not certs):
+        supplier_defaults = _execute_with_cursor(cur, """
+            SELECT standard_condition, standard_certs
+            FROM suppliers
+            WHERE id = ?
+        """, (supplier_id,)).fetchone()
+
+        if supplier_defaults:
+            if not condition:
+                condition = (supplier_defaults['standard_condition'] or '').strip()
+            if not certs:
+                certs = (supplier_defaults['standard_certs'] or '').strip()
+
+    return {
+        'condition': condition,
+        'certs': certs,
+        'manufacturer': manufacturer,
+    }
+
+
+def _sync_customer_quote_line_metadata(cur, parts_list_line_id, supplier_id=None, source_type=None, source_reference=None, clear=False):
+    quote_line = _execute_with_cursor(cur, """
+        SELECT id
+        FROM customer_quote_lines
+        WHERE parts_list_line_id = ?
+        LIMIT 1
+    """, (parts_list_line_id,)).fetchone()
+
+    if not quote_line:
+        return
+
+    if clear:
+        metadata = {'condition': '', 'certs': '', 'manufacturer': ''}
+    else:
+        metadata = _get_customer_quote_line_metadata(
+            cur,
+            parts_list_line_id,
+            supplier_id=supplier_id,
+            source_type=source_type,
+            source_reference=source_reference,
+        )
+
+    _execute_with_cursor(cur, """
+        UPDATE customer_quote_lines
+        SET standard_condition = ?,
+            standard_certs = ?,
+            manufacturer = ?,
+            date_modified = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (
+        metadata['condition'],
+        metadata['certs'],
+        metadata['manufacturer'],
+        quote_line['id'],
+    ))
+
+
 def _build_cost_anomaly_warning(cur, list_id, line_id, selected_cost, currency_id=None, currency_code=None):
     line = _execute_with_cursor(cur, """
         SELECT pll.base_part_number,
@@ -9527,7 +9629,8 @@ def use_cost(list_id, line_id):
                     logging.warning(f"Currency code {currency_code} not found in database")
 
             line = _execute_with_cursor(cur, """
-                SELECT id FROM parts_list_lines 
+                SELECT id, chosen_source_type, chosen_source_reference
+                FROM parts_list_lines 
                 WHERE id = ? AND parts_list_id = ?
             """, (line_id, list_id)).fetchone()
 
@@ -9565,6 +9668,16 @@ def use_cost(list_id, line_id):
                         date_modified = CURRENT_TIMESTAMP
                     WHERE id = ?
                 """, (supplier_id, cost, price, currency_id, lead_days, chosen_qty, line_id))
+
+            effective_source_type = source_type if update_source else line['chosen_source_type']
+            effective_source_reference = source_reference if update_source else line['chosen_source_reference']
+            _sync_customer_quote_line_metadata(
+                cur,
+                line_id,
+                supplier_id=supplier_id,
+                source_type=effective_source_type,
+                source_reference=effective_source_reference,
+            )
 
             logging.info(f"Update complete - rows affected: {cur.rowcount}")
 
@@ -9630,6 +9743,8 @@ def clear_cost(list_id, line_id):
                     date_modified = CURRENT_TIMESTAMP
                 WHERE id = ?
             """, (line_id,))
+
+            _sync_customer_quote_line_metadata(cur, line_id, clear=True)
 
         return jsonify(success=True, message="Cost cleared successfully")
 

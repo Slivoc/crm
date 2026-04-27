@@ -685,8 +685,6 @@
                             <th style="min-width: 120px;">Delivery/Line</th>
                             <th style="min-width: 100px;">Margin %</th>
                             <th style="min-width: 90px;">Lead Days</th>
-                            <th style="min-width: 80px;">No Bid</th>
-                            <th style="min-width: 50px;">Details</th>
                             <th style="min-width: 140px;" class="quote-price-header quote-price-separator sticky-right-2">Quote Price</th>
                             <th style="min-width: 130px;" class="target-price-header target-price-column sticky-right-1">Target Price</th>
                             <th style="min-width: 130px; background: linear-gradient(135deg, #198754 0%, #157347 100%); color: white; font-weight: 600;" class="sticky-right-0">Line Total</th>
@@ -842,18 +840,12 @@
                    data-field="lead_days"
                    value="{{ line.lead_days or '' }}"
                    min="0" step="1">
-        </td>
-
-        <td class="text-center">
-            <input type="checkbox" class="form-check-input editable-field"
+            <input type="checkbox"
+                   class="form-check-input editable-field d-none"
                    data-field="is_no_bid"
-                   {% if line.is_no_bid %}checked{% endif %}>
-        </td>
-
-        <td class="text-center">
-            <button type="button" class="btn expand-toggle-btn" data-line-id="{{ line.id }}" title="Show details">
-                <i class="bi bi-chevron-right"></i>
-            </button>
+                   {% if line.is_no_bid %}checked{% endif %}
+                   tabindex="-1"
+                   aria-hidden="true">
         </td>
 
         <td class="quote-price-cell quote-price-separator sticky-right-2">
@@ -879,7 +871,7 @@
     </tr>
     <!-- Expandable detail row -->
     <tr class="detail-row" data-parent-line-id="{{ line.id }}">
-        <td colspan="20">
+        <td colspan="19">
             <div class="detail-content">
                 <div class="detail-field">
                     <label>Condition</label>

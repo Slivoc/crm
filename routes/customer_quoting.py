@@ -1971,6 +1971,87 @@ def customer_quote_simple(list_id):
                     cql.line_notes,
                     cql.standard_condition,
                     cql.standard_certs,
+                    CASE
+                        WHEN pll.chosen_source_type = 'quote'
+                             AND pll.chosen_source_reference IS NOT NULL THEN (
+                            SELECT sql.condition_code
+                            FROM parts_list_supplier_quote_lines sql
+                            WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference
+                              AND sql.is_no_bid = FALSE
+                              AND sql.condition_code IS NOT NULL
+                              AND TRIM(sql.condition_code) != ''
+                            LIMIT 1
+                        )
+                        WHEN pll.chosen_supplier_id IS NOT NULL THEN (
+                            SELECT sql.condition_code
+                            FROM parts_list_supplier_quote_lines sql
+                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                            WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                              AND sq.supplier_id = pll.chosen_supplier_id
+                              AND sql.is_no_bid = FALSE
+                              AND sql.condition_code IS NOT NULL
+                              AND TRIM(sql.condition_code) != ''
+                            ORDER BY sq.quote_date DESC,
+                                     sql.date_modified DESC,
+                                     sql.id DESC
+                            LIMIT 1
+                        )
+                        ELSE NULL
+                    END AS chosen_quote_condition_code,
+                    CASE
+                        WHEN pll.chosen_source_type = 'quote'
+                             AND pll.chosen_source_reference IS NOT NULL THEN (
+                            SELECT sql.certifications
+                            FROM parts_list_supplier_quote_lines sql
+                            WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference
+                              AND sql.is_no_bid = FALSE
+                              AND sql.certifications IS NOT NULL
+                              AND TRIM(sql.certifications) != ''
+                            LIMIT 1
+                        )
+                        WHEN pll.chosen_supplier_id IS NOT NULL THEN (
+                            SELECT sql.certifications
+                            FROM parts_list_supplier_quote_lines sql
+                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                            WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                              AND sq.supplier_id = pll.chosen_supplier_id
+                              AND sql.is_no_bid = FALSE
+                              AND sql.certifications IS NOT NULL
+                              AND TRIM(sql.certifications) != ''
+                            ORDER BY sq.quote_date DESC,
+                                     sql.date_modified DESC,
+                                     sql.id DESC
+                            LIMIT 1
+                        )
+                        ELSE NULL
+                    END AS chosen_quote_certifications,
+                    CASE
+                        WHEN pll.chosen_source_type = 'quote'
+                             AND pll.chosen_source_reference IS NOT NULL THEN (
+                            SELECT sql.manufacturer
+                            FROM parts_list_supplier_quote_lines sql
+                            WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference
+                              AND sql.is_no_bid = FALSE
+                              AND sql.manufacturer IS NOT NULL
+                              AND TRIM(sql.manufacturer) != ''
+                            LIMIT 1
+                        )
+                        WHEN pll.chosen_supplier_id IS NOT NULL THEN (
+                            SELECT sql.manufacturer
+                            FROM parts_list_supplier_quote_lines sql
+                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                            WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                              AND sq.supplier_id = pll.chosen_supplier_id
+                              AND sql.is_no_bid = FALSE
+                              AND sql.manufacturer IS NOT NULL
+                              AND TRIM(sql.manufacturer) != ''
+                            ORDER BY sq.quote_date DESC,
+                                     sql.date_modified DESC,
+                                     sql.id DESC
+                            LIMIT 1
+                        )
+                        ELSE NULL
+                    END AS chosen_quote_manufacturer,
                     (
                         SELECT sql.condition_code
                         FROM parts_list_supplier_quote_lines sql
@@ -2072,17 +2153,20 @@ def customer_quote_simple(list_id):
 
                 line_dict['standard_condition'] = (
                     (line_dict.get('standard_condition') or '').strip()
+                    or (line_dict.get('chosen_quote_condition_code') or '').strip()
                     or (line_dict.get('supplier_condition_code') or '').strip()
                     or (line_dict.get('supplier_standard_condition') or '').strip()
                 )
                 line_dict['standard_certs'] = (
                     (line_dict.get('standard_certs') or '').strip()
+                    or (line_dict.get('chosen_quote_certifications') or '').strip()
                     or (line_dict.get('supplier_certifications') or '').strip()
                     or (line_dict.get('supplier_standard_certs') or '').strip()
                 )
 
                 line_dict['manufacturer'] = (
                     (line_dict.get('manufacturer') or '').strip()
+                    or (line_dict.get('chosen_quote_manufacturer') or '').strip()
                     or (line_dict.get('supplier_manufacturer') or '').strip()
                 )
 
