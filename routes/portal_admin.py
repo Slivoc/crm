@@ -831,12 +831,12 @@ def view_portal_request(request_id):
 
             -- Determine overall status for display
             CASE 
-                WHEN COALESCE(cql.is_no_bid, FALSE) = FALSE
+                WHEN COALESCE(cql.is_no_bid, 0) = 0
                      AND (
                          cql.quoted_status = 'quoted'
                          OR (cql.quote_price_gbp IS NOT NULL AND cql.quote_price_gbp > 0)
                      ) THEN 'customer_quoted'
-                WHEN COALESCE(cql.is_no_bid, FALSE) = TRUE
+                WHEN COALESCE(cql.is_no_bid, 0) <> 0
                      OR cql.quoted_status = 'no_bid' THEN 'no_bid'
                 WHEN cql.quoted_status IN ('created', 'in_progress')
                      OR cql.id IS NOT NULL THEN 'customer_created'
