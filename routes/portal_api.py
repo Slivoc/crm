@@ -546,6 +546,15 @@ def analyze_quote():
                 ip_address=request.remote_addr,
                 user_agent=request.headers.get('User-Agent'),
             )
+            from routes.portal_admin import notify_portal_search_to_account_manager
+            notify_portal_search_to_account_manager(
+                user['id'],
+                user['customer_id'],
+                'quote_analysis',
+                searchable_parts,
+                ip_address=request.remote_addr,
+                user_agent=request.headers.get('User-Agent'),
+            )
         except Exception:
             logging.exception("Failed to capture portal quote analysis search history")
 
