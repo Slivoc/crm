@@ -527,6 +527,28 @@ def analyze_quote():
         if not parts:
             return jsonify({'success': False, 'error': 'No parts provided'}), 400
 
+        # Track customer search usage for portal-admin analytics.
+        try:
+            searchable_parts = []
+            for part in parts:
+                part_number = (part.get('part_number') or '').strip()
+                if not part_number:
+                    continue
+                searchable_parts.append({
+                    'part_number': part_number,
+                    'quantity': int(part.get('quantity', 1)),
+                })
+            log_search_history(
+                user['id'],
+                user['customer_id'],
+                'quote_analysis',
+                searchable_parts,
+                ip_address=request.remote_addr,
+                user_agent=request.headers.get('User-Agent'),
+            )
+        except Exception:
+            logging.exception("Failed to capture portal quote analysis search history")
+
         base_currency = _get_base_currency()
         base_currency_id = base_currency.get('id')
         base_currency_code = base_currency.get('code')
