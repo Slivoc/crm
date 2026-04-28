@@ -206,6 +206,7 @@ def _normalize_line_number(value):
 
 def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
     """Create portal request lines for parts list rows that do not yet exist on the portal request."""
+    has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
     has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
     has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
     has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
@@ -214,6 +215,7 @@ def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
 
     parts_list_lines = _execute_with_cursor(cur, """
         SELECT
+            pll.id,
             pll.line_number,
             COALESCE(NULLIF(TRIM(pll.customer_part_number), ''), NULLIF(TRIM(pll.base_part_number), '')) AS part_number,
             pll.base_part_number,
@@ -224,11 +226,16 @@ def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
         ORDER BY pll.line_number
     """, (parts_list_id,)).fetchall() or []
 
-    existing_rows = _execute_with_cursor(cur, """
-        SELECT line_number
+    existing_rows = _execute_with_cursor(cur, f"""
+        SELECT id, line_number, {"parts_list_line_id" if has_parts_list_line_id else "NULL as parts_list_line_id"}
         FROM portal_quote_request_lines
         WHERE portal_quote_request_id = ?
     """, (request_id,)).fetchall() or []
+    existing_parts_list_line_ids = {
+        row.get('parts_list_line_id')
+        for row in existing_rows
+        if row.get('parts_list_line_id') is not None
+    }
     existing_line_numbers = {
         _normalize_line_number(row.get('line_number'))
         for row in existing_rows
@@ -242,7 +249,9 @@ def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
         if normalized_line_number is None:
             continue
 
-        if normalized_line_number in existing_line_numbers:
+        if has_parts_list_line_id and pll.get('id') in existing_parts_list_line_ids:
+            continue
+        if not has_parts_list_line_id and normalized_line_number in existing_line_numbers:
             continue
 
         raw_part_number = (pll.get('part_number') or '').strip().upper()
@@ -268,6 +277,9 @@ def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
             pll.get('quantity') or 0,
             'pending',
         ]
+        if has_parts_list_line_id:
+            columns.append("parts_list_line_id")
+            values.append(pll.get('id'))
 
         if has_quoted_part_number:
             columns.append("quoted_part_number")
@@ -296,6 +308,8 @@ def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
             cur.fetchone()
 
         existing_line_numbers.add(normalized_line_number)
+        if has_parts_list_line_id and pll.get('id') is not None:
+            existing_parts_list_line_ids.add(pll.get('id'))
         synced_count += 1
 
     return synced_count
@@ -783,11 +797,13 @@ def view_portal_request(request_id):
         return redirect(url_for('portal_admin.portal_requests'))
 
     has_portal_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+    has_portal_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
     has_portal_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
     has_portal_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
     has_portal_revision = _table_has_column('portal_quote_request_lines', 'revision')
     has_portal_certs = _table_has_column('portal_quote_request_lines', 'certs')
     portal_line_notes_select = "pqrl.line_notes as portal_line_notes," if has_portal_line_notes else "NULL as portal_line_notes,"
+    portal_parts_list_line_select = "pqrl.parts_list_line_id as portal_parts_list_line_id," if has_portal_parts_list_line_id else "NULL as portal_parts_list_line_id,"
     portal_quoted_part_select = "pqrl.quoted_part_number as portal_quoted_part_number," if has_portal_quoted_part_number else "NULL as portal_quoted_part_number,"
     portal_manufacturer_select = "pqrl.manufacturer as portal_manufacturer," if has_portal_manufacturer else "NULL as portal_manufacturer,"
     portal_revision_select = "pqrl.revision as portal_revision," if has_portal_revision else "NULL as portal_revision,"
@@ -797,6 +813,7 @@ def view_portal_request(request_id):
         SELECT 
             pqrl.*,
             {portal_line_notes_select}
+            {portal_parts_list_line_select}
             {portal_quoted_part_select}
             {portal_manufacturer_select}
             {portal_revision_select}
@@ -805,6 +822,7 @@ def view_portal_request(request_id):
 
             -- Parts List Line info
             pll.id as parts_list_line_id,
+            pll.line_number as parts_list_line_number,
             pll.chosen_price as parts_list_chosen_price,
             pll.chosen_cost as parts_list_chosen_cost,
             pll.chosen_lead_days as parts_list_lead_days,
@@ -854,7 +872,11 @@ def view_portal_request(request_id):
         -- Join to parts list lines
         LEFT JOIN parts_lists pl ON pl.id = ?
         LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pl.id 
-            AND pll.line_number = pqrl.line_number
+            AND (
+                ({'pqrl.parts_list_line_id IS NOT NULL AND pll.id = pqrl.parts_list_line_id' if has_portal_parts_list_line_id else 'FALSE'})
+                OR
+                ({'pqrl.parts_list_line_id IS NULL AND ' if has_portal_parts_list_line_id else ''}pll.line_number = pqrl.line_number)
+            )
         LEFT JOIN currencies pc ON pc.id = pll.chosen_currency_id
         LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
 
@@ -877,6 +899,7 @@ def view_portal_request(request_id):
             quoted_part_number = requested_part_number
 
         line['requested_part_number'] = requested_part_number
+        line['display_line_number'] = line.get('parts_list_line_number') or line.get('line_number')
         line['effective_quoted_part_number'] = quoted_part_number
         line['effective_line_notes'] = (
             (line.get('portal_line_notes') or '').strip()
@@ -1000,11 +1023,13 @@ def send_portal_request_update_email(request_id):
             return jsonify({'success': False, 'error': 'No recipient email is available for this request'}), 400
 
         has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+        has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
         has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
         has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
         has_revision = _table_has_column('portal_quote_request_lines', 'revision')
         has_certs = _table_has_column('portal_quote_request_lines', 'certs')
         line_notes_select = "pqrl.line_notes as portal_line_notes," if has_line_notes else "NULL as portal_line_notes,"
+        parts_list_line_select = "pqrl.parts_list_line_id as portal_parts_list_line_id," if has_parts_list_line_id else "NULL as portal_parts_list_line_id,"
         quoted_part_select = "pqrl.quoted_part_number as portal_quoted_part_number," if has_quoted_part_number else "NULL as portal_quoted_part_number,"
         manufacturer_select = "pqrl.manufacturer as portal_manufacturer," if has_manufacturer else "NULL as portal_manufacturer,"
         revision_select = "pqrl.revision as portal_revision," if has_revision else "NULL as portal_revision,"
@@ -1025,6 +1050,7 @@ def send_portal_request_update_email(request_id):
                 pqrl.quoted_price,
                 pqrl.quoted_lead_days,
                 pqrl.status,
+                {parts_list_line_select}
                 {quoted_part_select}
                 {line_notes_select}
                 {manufacturer_select}
@@ -1036,12 +1062,17 @@ def send_portal_request_update_email(request_id):
                 cql.line_notes as customer_quote_line_notes,
                 cql.manufacturer as customer_quote_manufacturer,
                 cql.standard_certs as customer_quote_certs,
-                pll.revision as parts_list_revision
+                pll.revision as parts_list_revision,
+                pll.line_number as parts_list_line_number
             FROM portal_quote_request_lines pqrl
             LEFT JOIN currencies c ON c.id = pqrl.quoted_currency_id
             LEFT JOIN parts_list_lines pll
                 ON pll.parts_list_id = ?
-               AND pll.line_number = pqrl.line_number
+               AND (
+                    ({'pqrl.parts_list_line_id IS NOT NULL AND pll.id = pqrl.parts_list_line_id' if has_parts_list_line_id else 'FALSE'})
+                    OR
+                    ({'pqrl.parts_list_line_id IS NULL AND ' if has_parts_list_line_id else ''}pll.line_number = pqrl.line_number)
+               )
             LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
             WHERE pqrl.portal_quote_request_id = ?
               AND pqrl.status IN ('quoted', 'no_bid')
@@ -1175,10 +1206,12 @@ def load_line_from_parts_list(request_id, line_id):
     """Load pricing from parts list for a single line - uses chosen_price (selling price)"""
     try:
         rate_column = get_currency_rate_column()
+        has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
         line_data = db_execute(f"""
             SELECT 
                 pqrl.base_part_number,
                 pqrl.line_number,
+                {"pqrl.parts_list_line_id," if has_parts_list_line_id else "NULL as parts_list_line_id,"}
                 pqr.parts_list_id,
                 pll.chosen_price,
                 pll.chosen_lead_days,
@@ -1187,7 +1220,11 @@ def load_line_from_parts_list(request_id, line_id):
             FROM portal_quote_request_lines pqrl
             JOIN portal_quote_requests pqr ON pqr.id = pqrl.portal_quote_request_id
             LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pqr.parts_list_id
-                AND pll.line_number = pqrl.line_number
+                AND (
+                    ({'pqrl.parts_list_line_id IS NOT NULL AND pll.id = pqrl.parts_list_line_id' if has_parts_list_line_id else 'FALSE'})
+                    OR
+                    ({'pqrl.parts_list_line_id IS NULL AND ' if has_parts_list_line_id else ''}pll.line_number = pqrl.line_number)
+                )
             LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
             WHERE pqrl.id = ? AND pqr.id = ?
         """, (line_id, request_id), fetch='one')
@@ -1265,6 +1302,7 @@ def load_all_from_parts_list(request_id):
         rate_column = get_currency_rate_column()
         parts_list_lines = db_execute(f"""
             SELECT 
+                pll.id,
                 pll.line_number,
                 pll.chosen_price, 
                 pll.chosen_lead_days, 
@@ -1280,15 +1318,19 @@ def load_all_from_parts_list(request_id):
         base_currency = _get_base_currency()
         base_currency_id = base_currency.get('id')
         with db_cursor(commit=True) as cur:
+            has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
             synced_count = _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id)
 
-            portal_rows = _execute_with_cursor(cur, """
-                SELECT id, line_number
+            portal_rows = _execute_with_cursor(cur, f"""
+                SELECT id, line_number, {"parts_list_line_id" if has_parts_list_line_id else "NULL as parts_list_line_id"}
                 FROM portal_quote_request_lines
                 WHERE portal_quote_request_id = ?
             """, (request_id,)).fetchall() or []
+            portal_line_id_by_parts_list_line_id = {}
             portal_line_id_by_number = {}
             for row in portal_rows:
+                if has_parts_list_line_id and row.get('parts_list_line_id') is not None:
+                    portal_line_id_by_parts_list_line_id[row['parts_list_line_id']] = row['id']
                 normalized_line_number = _normalize_line_number(row.get('line_number'))
                 if normalized_line_number is not None:
                     portal_line_id_by_number[normalized_line_number] = row['id']
@@ -1299,7 +1341,11 @@ def load_all_from_parts_list(request_id):
                 if line_number is None:
                     continue
 
-                portal_line_id = portal_line_id_by_number.get(line_number)
+                portal_line_id = None
+                if has_parts_list_line_id and pll.get('id') is not None:
+                    portal_line_id = portal_line_id_by_parts_list_line_id.get(pll['id'])
+                if not portal_line_id:
+                    portal_line_id = portal_line_id_by_number.get(line_number)
                 if not portal_line_id:
                     continue
 
@@ -1387,14 +1433,17 @@ def save_portal_line(request_id, line_id):
             currency_id = base_currency_id
 
         has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+        has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
         has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
         has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
         has_revision = _table_has_column('portal_quote_request_lines', 'revision')
         has_certs = _table_has_column('portal_quote_request_lines', 'certs')
 
         with db_cursor(commit=True) as cur:
-            line_row = _execute_with_cursor(cur, """
-                SELECT pqrl.base_part_number, pqrl.line_number, pqr.parts_list_id
+            line_row = _execute_with_cursor(cur, f"""
+                SELECT pqrl.base_part_number, pqrl.line_number,
+                       {"pqrl.parts_list_line_id," if has_parts_list_line_id else "NULL as parts_list_line_id,"}
+                       pqr.parts_list_id
                 FROM portal_quote_request_lines pqrl
                 JOIN portal_quote_requests pqr ON pqr.id = pqrl.portal_quote_request_id
                 WHERE pqrl.id = ? AND pqrl.portal_quote_request_id = ?
@@ -1444,17 +1493,29 @@ def save_portal_line(request_id, line_id):
                 return jsonify({'success': False, 'error': 'Line not found'}), 404
 
             if line_row['parts_list_id']:
-                _execute_with_cursor(
-                    cur,
-                    """
-                    UPDATE parts_list_lines
-                    SET quantity = ?,
-                        chosen_qty = ?
-                    WHERE parts_list_id = ?
-                      AND line_number = ?
-                    """,
-                    (quantity, quantity, line_row['parts_list_id'], line_row['line_number']),
-                )
+                if has_parts_list_line_id and line_row.get('parts_list_line_id'):
+                    _execute_with_cursor(
+                        cur,
+                        """
+                        UPDATE parts_list_lines
+                        SET quantity = ?,
+                            chosen_qty = ?
+                        WHERE id = ?
+                        """,
+                        (quantity, quantity, line_row['parts_list_line_id']),
+                    )
+                else:
+                    _execute_with_cursor(
+                        cur,
+                        """
+                        UPDATE parts_list_lines
+                        SET quantity = ?,
+                            chosen_qty = ?
+                        WHERE parts_list_id = ?
+                          AND line_number = ?
+                        """,
+                        (quantity, quantity, line_row['parts_list_id'], line_row['line_number']),
+                    )
 
         return jsonify({'success': True})
 
@@ -1583,6 +1644,7 @@ def load_line_from_customer_quote(request_id, line_id):
     """Load pricing from customer_quote_lines (this is the REAL quoted price with margin)"""
     try:
         has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+        has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
         has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
         has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
         has_revision = _table_has_column('portal_quote_request_lines', 'revision')
@@ -1592,6 +1654,7 @@ def load_line_from_customer_quote(request_id, line_id):
             SELECT 
                 pqrl.base_part_number,
                 pqrl.line_number,
+                {"pqrl.parts_list_line_id," if has_parts_list_line_id else "NULL as parts_list_line_id,"}
                 pqr.parts_list_id,
                 cql.quote_price_gbp,
                 pll.chosen_lead_days,
@@ -1605,7 +1668,11 @@ def load_line_from_customer_quote(request_id, line_id):
             FROM portal_quote_request_lines pqrl
             JOIN portal_quote_requests pqr ON pqr.id = pqrl.portal_quote_request_id
             LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pqr.parts_list_id
-                AND pll.line_number = pqrl.line_number
+                AND (
+                    ({'pqrl.parts_list_line_id IS NOT NULL AND pll.id = pqrl.parts_list_line_id' if has_parts_list_line_id else 'FALSE'})
+                    OR
+                    ({'pqrl.parts_list_line_id IS NULL AND ' if has_parts_list_line_id else ''}pll.line_number = pqrl.line_number)
+                )
             LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
             WHERE pqrl.id = ? AND pqr.id = ?
         """, (base_currency_id, line_id, request_id), fetch='one')
@@ -1642,6 +1709,7 @@ def load_all_from_customer_quote(request_id):
     """Load ALL quoted prices from customer_quote_lines (the proper way!)"""
     try:
         has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+        has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
         has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
         has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
         has_revision = _table_has_column('portal_quote_request_lines', 'revision')
@@ -1657,6 +1725,7 @@ def load_all_from_customer_quote(request_id):
 
         quote_lines = db_execute("""
             SELECT 
+                pll.id as parts_list_line_id,
                 pll.line_number,
                 cql.quote_price_gbp,
                 pll.chosen_lead_days,
@@ -1676,15 +1745,19 @@ def load_all_from_customer_quote(request_id):
 
         base_currency_id = _get_base_currency().get('id')
         with db_cursor(commit=True) as cur:
+            has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
             synced_count = _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id)
 
-            portal_rows = _execute_with_cursor(cur, """
-                SELECT id, line_number
+            portal_rows = _execute_with_cursor(cur, f"""
+                SELECT id, line_number, {"parts_list_line_id" if has_parts_list_line_id else "NULL as parts_list_line_id"}
                 FROM portal_quote_request_lines
                 WHERE portal_quote_request_id = ?
             """, (request_id,)).fetchall() or []
+            portal_line_id_by_parts_list_line_id = {}
             portal_line_id_by_number = {}
             for row in portal_rows:
+                if has_parts_list_line_id and row.get('parts_list_line_id') is not None:
+                    portal_line_id_by_parts_list_line_id[row['parts_list_line_id']] = row['id']
                 normalized_line_number = _normalize_line_number(row.get('line_number'))
                 if normalized_line_number is not None:
                     portal_line_id_by_number[normalized_line_number] = row['id']
@@ -1695,7 +1768,11 @@ def load_all_from_customer_quote(request_id):
                 if line_number is None:
                     continue
 
-                portal_line_id = portal_line_id_by_number.get(line_number)
+                portal_line_id = None
+                if has_parts_list_line_id and cql.get('parts_list_line_id') is not None:
+                    portal_line_id = portal_line_id_by_parts_list_line_id.get(cql['parts_list_line_id'])
+                if not portal_line_id:
+                    portal_line_id = portal_line_id_by_number.get(line_number)
                 if not portal_line_id:
                     continue
 
@@ -1792,15 +1869,17 @@ def add_portal_request_line(request_id):
                 WHERE portal_quote_request_id = ?
             """, (request_id,)).fetchone()
             next_line_number = int((max_line['max_line_number'] or 0)) + 1
+            new_parts_list_line_id = None
 
             if request_row.get('parts_list_id'):
-                _execute_with_cursor(
-                    cur,
-                    """
+                insert_parts_list_query = _with_returning_clause("""
                     INSERT INTO parts_list_lines
                     (parts_list_id, line_number, customer_part_number, base_part_number, quantity, chosen_qty)
                     VALUES (?, ?, ?, ?, ?, ?)
-                    """,
+                """)
+                _execute_with_cursor(
+                    cur,
+                    insert_parts_list_query,
                     (
                         request_row['parts_list_id'],
                         next_line_number,
@@ -1810,6 +1889,7 @@ def add_portal_request_line(request_id):
                         quantity,
                     ),
                 )
+                new_parts_list_line_id = _last_inserted_id(cur)
 
             columns = [
                 "portal_quote_request_id",
@@ -1820,6 +1900,9 @@ def add_portal_request_line(request_id):
                 "status",
             ]
             values = [request_id, next_line_number, part_number, base_part_number, quantity, 'pending']
+            if has_parts_list_line_id:
+                columns.append("parts_list_line_id")
+                values.append(new_parts_list_line_id)
             if has_quoted_part_number:
                 columns.append("quoted_part_number")
                 values.append(None)

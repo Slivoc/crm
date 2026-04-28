@@ -180,7 +180,7 @@
         <tbody>
             {% for line in lines %}
             <tr data-line-id="{{ line.id }}">
-                <td>{{ line.line_number }}</td>
+                <td>{{ line.display_line_number or line.line_number }}</td>
                 <td><strong>{{ line.requested_part_number }}</strong></td>
                 <td>
                     <input type="text"

@@ -1064,6 +1064,7 @@ def submit_quote_request():
         ref_number = f"PR-{datetime.now().strftime('%Y%m%d')}-{secrets.token_hex(4).upper()}"
 
         with db_cursor(commit=True) as cursor:
+            has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
             parts_list_row = _execute_with_cursor(cursor, """
                 INSERT INTO parts_lists 
                 (name, customer_id, salesperson_id, status_id, notes)
@@ -1117,6 +1118,7 @@ def submit_quote_request():
                     INSERT INTO parts_list_lines
                     (parts_list_id, line_number, customer_part_number, base_part_number, quantity)
                     VALUES (?, ?, ?, ?, ?)
+                    RETURNING id
                 """, (
                     parts_list_id,
                     idx,
@@ -1124,18 +1126,34 @@ def submit_quote_request():
                     base_part_number,
                     quantity,
                 ))
+                parts_list_line_row = cursor.fetchone()
+                parts_list_line_id = parts_list_line_row['id'] if parts_list_line_row else None
 
-                _execute_with_cursor(cursor, """
-                    INSERT INTO portal_quote_request_lines
-                    (portal_quote_request_id, line_number, part_number, base_part_number, quantity)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    request_id,
-                    idx,
-                    part_number,
-                    base_part_number,
-                    quantity,
-                ))
+                if has_parts_list_line_id:
+                    _execute_with_cursor(cursor, """
+                        INSERT INTO portal_quote_request_lines
+                        (portal_quote_request_id, line_number, part_number, base_part_number, quantity, parts_list_line_id)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        request_id,
+                        idx,
+                        part_number,
+                        base_part_number,
+                        quantity,
+                        parts_list_line_id,
+                    ))
+                else:
+                    _execute_with_cursor(cursor, """
+                        INSERT INTO portal_quote_request_lines
+                        (portal_quote_request_id, line_number, part_number, base_part_number, quantity)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        request_id,
+                        idx,
+                        part_number,
+                        base_part_number,
+                        quantity,
+                    ))
 
         from routes.portal_admin import notify_new_quote_request
         notify_new_quote_request(request_id)
@@ -1208,11 +1226,13 @@ def get_quote_request_details(request_id):
             return jsonify({'success': False, 'error': 'Request not found'}), 404
 
         has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+        has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
         has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
         has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
         has_revision = _table_has_column('portal_quote_request_lines', 'revision')
         has_certs = _table_has_column('portal_quote_request_lines', 'certs')
         line_notes_select = "pqrl.line_notes," if has_line_notes else "NULL as line_notes,"
+        parts_list_line_select = "pqrl.parts_list_line_id," if has_parts_list_line_id else "NULL as parts_list_line_id,"
         quoted_part_select = "pqrl.quoted_part_number," if has_quoted_part_number else "NULL as quoted_part_number,"
         manufacturer_select = "pqrl.manufacturer," if has_manufacturer else "NULL as manufacturer,"
         revision_select = "pqrl.revision," if has_revision else "NULL as revision,"
@@ -1221,6 +1241,7 @@ def get_quote_request_details(request_id):
         lines = db_execute(f"""
             SELECT 
                 pqrl.*,
+                {parts_list_line_select}
                 {quoted_part_select}
                 {line_notes_select}
                 {manufacturer_select}
@@ -1238,7 +1259,11 @@ def get_quote_request_details(request_id):
             LEFT JOIN currencies c ON c.id = pqrl.quoted_currency_id
             LEFT JOIN parts_list_lines pll
                 ON pll.parts_list_id = ?
-                AND pll.line_number = pqrl.line_number
+                AND (
+                    ({'pqrl.parts_list_line_id IS NOT NULL AND pll.id = pqrl.parts_list_line_id' if has_parts_list_line_id else 'FALSE'})
+                    OR
+                    ({'pqrl.parts_list_line_id IS NULL AND ' if has_parts_list_line_id else ''}pll.line_number = pqrl.line_number)
+                )
             LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
             WHERE pqrl.portal_quote_request_id = ?
             ORDER BY pqrl.line_number
