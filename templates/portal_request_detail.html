@@ -484,6 +484,14 @@
                         </div>
                     </div>
                     <div class="col-xl-4">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="portal-hide-empty-cols" checked>
+                            <label class="form-check-label" for="portal-hide-empty-cols">Auto-hide empty columns</label>
+                        </div>
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="portal-include-table" checked>
+                            <label class="form-check-label" for="portal-include-table">Include quote table</label>
+                        </div>
                         <label class="form-label fw-bold">Include Columns</label>
                         <div class="portal-email-column-list border rounded p-2 mb-3">
                             <div class="form-check">
@@ -729,9 +737,15 @@ function getSelectedPortalEmailColumns() {
     return Array.from(document.querySelectorAll('.portal-email-col-check:checked')).map(el => el.value);
 }
 
-function buildPortalEmailTableHtml() {
-    const selectedColumns = getSelectedPortalEmailColumns();
-    const columnDefinitions = [
+function hasMeaningfulPortalEmailValue(value) {
+    if (value === null || value === undefined) return false;
+    if (typeof value === 'number') return true;
+    const normalized = String(value).trim().toLowerCase();
+    return normalized !== '' && normalized !== '-';
+}
+
+function getPortalEmailColumnDefinitions() {
+    return [
         { key: 'line', label: 'Line', align: 'left', value: line => line.lineNumber || '-' },
         { key: 'requested_part', label: 'Requested Part', align: 'left', value: line => line.requestedPart || '-' },
         { key: 'quoted_part', label: 'Quoted Part', align: 'left', value: line => line.quotedPart || line.requestedPart || '-' },
@@ -744,9 +758,33 @@ function buildPortalEmailTableHtml() {
         { key: 'notes', label: 'Notes', align: 'left', value: line => line.notes || '-' },
         { key: 'status', label: 'Status', align: 'left', value: line => line.status === 'no_bid' ? 'No Bid' : (line.status === 'quoted' ? 'Quoted' : 'Pending') }
     ];
+}
 
+function syncPortalEmailColumnVisibility() {
+    const autoHide = document.getElementById('portal-hide-empty-cols')?.checked;
+    if (!autoHide) return;
+
+    const lines = getPortalEmailEditorLines();
+    const columns = getPortalEmailColumnDefinitions();
+
+    columns.forEach(col => {
+        const checkbox = document.querySelector(`.portal-email-col-check[value="${col.key}"]`);
+        if (!checkbox) return;
+        const hasAnyValue = lines.some(line => hasMeaningfulPortalEmailValue(col.value(line)));
+        checkbox.checked = hasAnyValue;
+    });
+}
+
+function buildPortalEmailTableHtml() {
+    syncPortalEmailColumnVisibility();
+    const selectedColumns = getSelectedPortalEmailColumns();
+    const columnDefinitions = getPortalEmailColumnDefinitions();
     const activeColumns = columnDefinitions.filter(col => selectedColumns.includes(col.key));
     const lines = getPortalEmailEditorLines();
+
+    if (!activeColumns.length || !lines.length) {
+        return '';
+    }
 
     const headerHtml = activeColumns.map(col => `
         <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:${col.align};background:#f8f9fa;">
@@ -778,20 +816,22 @@ function buildPortalEmailBodyHtml() {
     const referenceNumber = {{ request.reference_number | tojson }};
     const customerReference = {{ (request.customer_reference or '-') | tojson }};
     const requestStatus = {{ (request.status | title) | tojson }};
+    const requestPortalUrl = `https://portal.mgcaero.co.uk/quote/requests/${requestId}`;
+    const includeTable = document.getElementById('portal-include-table')?.checked !== false;
+    const tableHtml = includeTable ? buildPortalEmailTableHtml() : '';
+    const metadataParts = [
+        `<strong>Request:</strong> ${escapeHtml(referenceNumber)}`,
+        `<strong>Customer:</strong> ${escapeHtml(customerName)}`,
+        `<strong>Your Ref:</strong> ${escapeHtml(customerReference)}`,
+        `<strong>Status:</strong> ${escapeHtml(requestStatus)}`,
+        `<strong>Portal Link:</strong> <a href="${escapeAttr(requestPortalUrl)}">${escapeHtml(requestPortalUrl)}</a>`
+    ];
 
     return `
-        <p>Hello ${escapeHtml(({{ request.first_name | tojson }} || 'there'))},</p>
-        <p>Here is an update on your quote request <strong>${escapeHtml(referenceNumber)}</strong>.</p>
         ${comment ? `<p>${formatPortalEmailMessageHtml(comment)}</p>` : ''}
         <hr>
-        <p>
-            <strong>Request:</strong> ${escapeHtml(referenceNumber)}<br>
-            <strong>Customer:</strong> ${escapeHtml(customerName)}<br>
-            <strong>Your Ref:</strong> ${escapeHtml(customerReference)}<br>
-            <strong>Status:</strong> ${escapeHtml(requestStatus)}
-        </p>
-        <p><strong>Quoted lines</strong></p>
-        ${buildPortalEmailTableHtml()}
+        <p>${metadataParts.join('<br>')}</p>
+        ${tableHtml ? `<p><strong>Quoted lines</strong></p>${tableHtml}` : ''}
     `;
 }
 
@@ -815,6 +855,8 @@ document.getElementById('refreshPortalEmailPreviewBtn')?.addEventListener('click
 document.querySelectorAll('.portal-email-col-check').forEach(el => {
     el.addEventListener('change', refreshPortalEmailPreview);
 });
+document.getElementById('portal-hide-empty-cols')?.addEventListener('change', refreshPortalEmailPreview);
+document.getElementById('portal-include-table')?.addEventListener('change', refreshPortalEmailPreview);
 
 document.getElementById('portalEmailEditorBody')?.addEventListener('input', (event) => {
     const row = event.target.closest('tr[data-line-id]');

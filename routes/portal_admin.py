@@ -931,6 +931,7 @@ def send_portal_request_update_email(request_id):
 
         if not body_html:
             safe_comment = html.escape(comment).replace('\n', '<br>')
+            request_portal_url = f"https://portal.mgcaero.co.uk/quote/requests/{request_id}"
             table_rows = []
             for raw_line in lines:
                 line = dict(raw_line)
@@ -1017,14 +1018,13 @@ def send_portal_request_update_email(request_id):
                 """
 
             body_html = f"""
-                <p>Hello {html.escape((request_row.get('first_name') or '').strip() or 'there')},</p>
-                <p>Here is an update on your quote request <strong>{html.escape(request_row.get('reference_number') or '')}</strong>.</p>
                 <p>{safe_comment}</p>
                 <hr>
                 <p><strong>Request:</strong> {html.escape(request_row.get('reference_number') or '')}<br>
                 <strong>Customer:</strong> {html.escape(request_row.get('customer_name') or '')}<br>
                 <strong>Your Ref:</strong> {html.escape(request_row.get('customer_reference') or '-')}<br>
-                <strong>Status:</strong> {html.escape((request_row.get('status') or '').title())}</p>
+                <strong>Status:</strong> {html.escape((request_row.get('status') or '').title())}<br>
+                <strong>Portal Link:</strong> <a href="{html.escape(request_portal_url)}">{html.escape(request_portal_url)}</a></p>
                 {lines_table_html}
             """
 
