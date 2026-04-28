@@ -359,11 +359,77 @@ def log_api_call(endpoint, method, portal_user_id, customer_id, request_data, st
         logging.exception(f"Failed to log API call: {e}")
 
 
+def _normalize_search_parts(parts_list):
+    """Normalize portal search parts into a stable structure for dedupe checks."""
+    normalized_parts = []
+    for part in parts_list or []:
+        part_number = (part.get('part_number') or '').strip()
+        if not part_number:
+            continue
+        try:
+            quantity = int(part.get('quantity', 1))
+        except (TypeError, ValueError):
+            quantity = 1
+        normalized_parts.append({
+            'part_number': part_number,
+            'quantity': quantity,
+        })
+    return normalized_parts
+
+
+def _has_recent_duplicate_search(portal_user_id, customer_id, search_type, parts_json, ip_address=None, minutes=2):
+    """Return True when the same portal search was already logged very recently."""
+    if not parts_json:
+        return False
+
+    if _using_postgres():
+        sql = """
+            SELECT 1
+            FROM portal_search_history
+            WHERE portal_user_id = ?
+              AND customer_id = ?
+              AND search_type = ?
+              AND parts_searched = ?
+              AND COALESCE(ip_address, '') = COALESCE(?, '')
+              AND date_searched >= NOW() - (%s * INTERVAL '1 minute')
+            LIMIT 1
+        """
+    else:
+        sql = """
+            SELECT 1
+            FROM portal_search_history
+            WHERE portal_user_id = ?
+              AND customer_id = ?
+              AND search_type = ?
+              AND parts_searched = ?
+              AND COALESCE(ip_address, '') = COALESCE(?, '')
+              AND date_searched >= datetime('now', '-' || ? || ' minutes')
+            LIMIT 1
+        """
+
+    row = db_execute(
+        sql,
+        (portal_user_id, customer_id, search_type, parts_json, ip_address, minutes),
+        fetch='one'
+    )
+    return bool(row)
+
+
 def log_search_history(portal_user_id, customer_id, search_type, parts_list, ip_address=None, user_agent=None):
-    """Log customer search history for analytics"""
+    """Log customer search history for analytics. Returns True when inserted."""
     try:
-        parts_json = json.dumps(parts_list) if parts_list else None
-        parts_count = len(parts_list) if parts_list else 0
+        normalized_parts = _normalize_search_parts(parts_list)
+        parts_json = json.dumps(normalized_parts, separators=(',', ':')) if normalized_parts else None
+        parts_count = len(normalized_parts)
+
+        if _has_recent_duplicate_search(
+            portal_user_id,
+            customer_id,
+            search_type,
+            parts_json,
+            ip_address=ip_address,
+        ):
+            return False
 
         db_execute("""
             INSERT INTO portal_search_history 
@@ -378,8 +444,10 @@ def log_search_history(portal_user_id, customer_id, search_type, parts_list, ip_
             ip_address,
             user_agent,
         ), commit=True)
+        return True
     except Exception as e:
         logging.exception(f"Failed to log search history: {e}")
+        return False
 
 
 # ============================================================================
@@ -554,22 +622,16 @@ def analyze_quote():
         user = request.portal_user
         data = request.get_json()
         parts = data.get('parts', [])
+        search_source = (data.get('source') or '').strip()
+        notify_account_manager = search_source == 'manual_quote_search'
 
         if not parts:
             return jsonify({'success': False, 'error': 'No parts provided'}), 400
 
         # Track customer search usage for portal-admin analytics.
         try:
-            searchable_parts = []
-            for part in parts:
-                part_number = (part.get('part_number') or '').strip()
-                if not part_number:
-                    continue
-                searchable_parts.append({
-                    'part_number': part_number,
-                    'quantity': int(part.get('quantity', 1)),
-                })
-            log_search_history(
+            searchable_parts = _normalize_search_parts(parts)
+            did_log_search = log_search_history(
                 user['id'],
                 user['customer_id'],
                 'quote_analysis',
@@ -577,15 +639,16 @@ def analyze_quote():
                 ip_address=request.remote_addr,
                 user_agent=request.headers.get('User-Agent'),
             )
-            from routes.portal_admin import notify_portal_search_to_account_manager
-            notify_portal_search_to_account_manager(
-                user['id'],
-                user['customer_id'],
-                'quote_analysis',
-                searchable_parts,
-                ip_address=request.remote_addr,
-                user_agent=request.headers.get('User-Agent'),
-            )
+            if did_log_search and notify_account_manager:
+                from routes.portal_admin import notify_portal_search_to_account_manager
+                notify_portal_search_to_account_manager(
+                    user['id'],
+                    user['customer_id'],
+                    'quote_analysis',
+                    searchable_parts,
+                    ip_address=request.remote_addr,
+                    user_agent=request.headers.get('User-Agent'),
+                )
         except Exception:
             logging.exception("Failed to capture portal quote analysis search history")
 
