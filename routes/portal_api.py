@@ -1061,8 +1061,6 @@ def submit_quote_request():
         if not parts:
             return jsonify({'success': False, 'error': 'No parts provided'}), 400
 
-        ref_number = f"PR-{datetime.now().strftime('%Y%m%d')}-{secrets.token_hex(4).upper()}"
-
         with db_cursor(commit=True) as cursor:
             has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
             parts_list_row = _execute_with_cursor(cursor, """
@@ -1071,11 +1069,21 @@ def submit_quote_request():
                 VALUES (?, ?, 1, 1, ?)
                 RETURNING id
             """, (
-                f"Portal Request {ref_number}",
+                "Portal Request",
                 user['customer_id'],
                 f"Customer portal request from {user['first_name']} {user['last_name']}\\n\\n{notes}"
             )).fetchone()
             parts_list_id = parts_list_row['id']
+            ref_number = f"PR-{parts_list_id}"
+
+            _execute_with_cursor(cursor, """
+                UPDATE parts_lists
+                SET name = ?
+                WHERE id = ?
+            """, (
+                f"Portal Request {ref_number}",
+                parts_list_id,
+            ))
 
             if _portal_quote_requests_has_customer_reference():
                 request_row = _execute_with_cursor(cursor, """
