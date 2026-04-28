@@ -2,6 +2,7 @@
 
 import os
 import re
+from html import escape
 
 from flask import Blueprint, render_template, request, jsonify, flash, redirect, url_for, session
 from db import db_cursor, execute as db_execute, get_currency_rate_column
@@ -2628,6 +2629,101 @@ View in CRM: http://your-crm-domain.com/portal-admin/requests/{request_id}
 
     except Exception as e:
         logging.exception(f"Failed to send quote request notification: {e}")
+        return False
+
+
+def notify_portal_search_to_account_manager(portal_user_id, customer_id, search_type, parts_list, ip_address=None, user_agent=None):
+    """Send email notification to the customer's account manager for portal searches."""
+    try:
+        customer = db_execute("""
+            SELECT
+                c.id,
+                c.name AS customer_name,
+                c.salesperson_id,
+                s.name AS salesperson_name,
+                u.email AS account_manager_email
+            FROM customers c
+            LEFT JOIN salespeople s ON s.id = c.salesperson_id
+            LEFT JOIN salesperson_user_link sul ON sul.legacy_salesperson_id = c.salesperson_id
+            LEFT JOIN users u ON u.id = sul.user_id
+            WHERE c.id = ?
+            LIMIT 1
+        """, (customer_id,), fetch='one')
+
+        if not customer or not customer.get('account_manager_email'):
+            return False
+
+        portal_user = db_execute("""
+            SELECT first_name, last_name, email
+            FROM portal_users
+            WHERE id = ?
+            LIMIT 1
+        """, (portal_user_id,), fetch='one') or {}
+
+        part_rows = parts_list or []
+        part_count = len(part_rows)
+        preview_parts = part_rows[:10]
+
+        part_list_html = "<ul>"
+        part_list_text = ""
+        for part in preview_parts:
+            part_number = (part.get('part_number') or '-').strip()
+            quantity = part.get('quantity', 1)
+            part_list_html += f"<li><strong>{escape(str(part_number))}</strong> - Qty: {escape(str(quantity))}</li>"
+            part_list_text += f"  • {part_number} - Qty: {quantity}\n"
+        part_list_html += "</ul>"
+
+        if part_count > 10:
+            remaining = part_count - 10
+            part_list_html += f"<p><em>...and {remaining} more parts</em></p>"
+            part_list_text += f"  ...and {remaining} more parts\n"
+
+        submitted_by_name = f"{(portal_user.get('first_name') or '').strip()} {(portal_user.get('last_name') or '').strip()}".strip() or "-"
+        submitted_by_email = (portal_user.get('email') or '-').strip()
+        customer_name = customer.get('customer_name') or '-'
+        salesperson_name = customer.get('salesperson_name') or 'Account Manager'
+        search_type_label = (search_type or 'quote_analysis').replace('_', ' ').title()
+
+        html_body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <h2 style="color: #0066cc;">Portal Search Performed</h2>
+            <p>A customer portal search was performed.</p>
+
+            <table style="border-collapse: collapse; margin: 20px 0;">
+                <tr><td style="padding: 8px; font-weight: bold;">Customer:</td><td style="padding: 8px;">{escape(str(customer_name))}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Account Manager:</td><td style="padding: 8px;">{escape(str(salesperson_name))}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Search Type:</td><td style="padding: 8px;">{escape(str(search_type_label))}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Portal User:</td><td style="padding: 8px;">{escape(str(submitted_by_name))} ({escape(str(submitted_by_email))})</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Parts Count:</td><td style="padding: 8px;">{part_count}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">IP Address:</td><td style="padding: 8px;">{escape(str(ip_address or '-'))}</td></tr>
+            </table>
+
+            <h3>Parts Searched:</h3>
+            {part_list_html}
+
+            <p><strong>User Agent:</strong> {escape(str(user_agent or '-'))}</p>
+        </body>
+        </html>
+        """
+
+        text_body = (
+            "Portal Search Performed\n\n"
+            f"Customer: {customer_name}\n"
+            f"Account Manager: {salesperson_name}\n"
+            f"Search Type: {search_type_label}\n"
+            f"Portal User: {submitted_by_name} ({submitted_by_email})\n"
+            f"Parts Count: {part_count}\n"
+            f"IP Address: {ip_address or '-'}\n\n"
+            "Parts Searched:\n"
+            f"{part_list_text}\n"
+            f"User Agent: {user_agent or '-'}\n"
+        )
+
+        subject = f"Portal Search: {customer_name} ({part_count} parts)"
+        return send_email(customer['account_manager_email'], subject, html_body, text_body)
+    except Exception as e:
+        logging.exception(f"Failed to send portal search notification: {e}")
         return False
 
 
