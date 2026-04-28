@@ -831,9 +831,15 @@ def view_portal_request(request_id):
 
             -- Determine overall status for display
             CASE 
-                WHEN cql.quoted_status = 'quoted' THEN 'customer_quoted'
-                WHEN cql.quoted_status = 'no_bid' THEN 'no_bid'
-                WHEN cql.quoted_status = 'created' THEN 'customer_created'
+                WHEN COALESCE(cql.is_no_bid, FALSE) = FALSE
+                     AND (
+                         cql.quoted_status = 'quoted'
+                         OR (cql.quote_price_gbp IS NOT NULL AND cql.quote_price_gbp > 0)
+                     ) THEN 'customer_quoted'
+                WHEN COALESCE(cql.is_no_bid, FALSE) = TRUE
+                     OR cql.quoted_status = 'no_bid' THEN 'no_bid'
+                WHEN cql.quoted_status IN ('created', 'in_progress')
+                     OR cql.id IS NOT NULL THEN 'customer_created'
                 WHEN pll.chosen_price IS NOT NULL THEN 'parts_list_priced'
                 WHEN pll.chosen_cost IS NOT NULL THEN 'parts_list_costed'
                 WHEN (SELECT COUNT(*) FROM parts_list_supplier_quote_lines sql
