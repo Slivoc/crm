@@ -33,12 +33,17 @@
                             <th>Notes</th>
                             <th>Status</th>
                             <th>Internal Notes</th>
+                            <th>Matches</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for req in requests %}
-                        <tr>
+                        <tr data-request-id="{{ req.id }}"
+                            data-company-name="{{ req.company_name or '' }}"
+                            data-first-name="{{ req.first_name or '' }}"
+                            data-last-name="{{ req.last_name or '' }}"
+                            data-email="{{ req.email or '' }}">
                             <td>{{ req.date_submitted }}</td>
                             <td><strong>{{ req.company_name }}</strong></td>
                             <td>{{ req.first_name }} {{ req.last_name }}</td>
@@ -56,18 +61,25 @@
                             <td style="min-width: 240px;">
                                 <textarea class="form-control form-control-sm access-request-notes" rows="3" data-request-id="{{ req.id }}" placeholder="Internal notes">{{ req.internal_notes or '' }}</textarea>
                             </td>
+                            <td style="min-width: 320px;">
+                                <div id="request-matches-{{ req.id }}" class="small text-muted">
+                                    Click <em>Find matches</em> to search customers/contacts.
+                                </div>
+                            </td>
                             <td style="min-width: 220px;">
                                 <div class="d-flex gap-2 flex-wrap">
                                     <button class="btn btn-sm btn-outline-warning" onclick="updateAccessRequest({{ req.id }}, 'reviewed')">Mark Reviewed</button>
                                     <button class="btn btn-sm btn-outline-success" onclick="updateAccessRequest({{ req.id }}, 'approved')">Approve</button>
                                     <button class="btn btn-sm btn-outline-danger" onclick="updateAccessRequest({{ req.id }}, 'rejected')">Reject</button>
                                     <button class="btn btn-sm btn-outline-secondary" onclick="updateAccessRequest({{ req.id }}, 'pending')">Reopen</button>
+                                    <button class="btn btn-sm btn-outline-primary" onclick="findMatches({{ req.id }})">Find matches</button>
+                                    <button class="btn btn-sm btn-primary" onclick="openCreateUserModal({{ req.id }})">Create user</button>
                                 </div>
                             </td>
                         </tr>
                         {% else %}
                         <tr>
-                            <td colspan="9" class="text-center text-muted py-4">No access requests found.</td>
+                            <td colspan="10" class="text-center text-muted py-4">No access requests found.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -77,7 +89,65 @@
     </div>
 </div>
 
+<div class="modal fade" id="createAccessRequestUserModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create Portal User from Access Request</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="createAccessRequestUserForm">
+                    <input type="hidden" name="request_id" id="access-request-id-field">
+                    <input type="hidden" name="customer_id" id="access-request-customer-id" required>
+
+                    <div class="mb-2">
+                        <label class="form-label">Requested By</label>
+                        <input type="text" class="form-control" id="access-request-contact-name" readonly>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-control" name="email" id="access-request-email" required>
+                    </div>
+
+                    <div class="mb-2 position-relative">
+                        <label class="form-label">Customer *</label>
+                        <input type="text" class="form-control" id="access-request-customer-search" placeholder="Search customer by name/email/company" autocomplete="off" required>
+                        <div id="access-request-customer-results" class="list-group position-absolute w-100 mt-1 d-none" style="max-height: 240px; overflow-y: auto; z-index: 1060;"></div>
+                        <div id="access-request-selected-customer" class="form-text text-success"></div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">First Name</label>
+                            <input type="text" class="form-control" name="first_name" id="access-request-first-name">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Last Name</label>
+                            <input type="text" class="form-control" name="last_name" id="access-request-last-name">
+                        </div>
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label">Password *</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" name="password" id="access-request-password" required>
+                            <button class="btn btn-outline-secondary" type="button" onclick="generateAccessRequestPassword()">Generate</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary" type="button" onclick="createUserFromAccessRequest()">Create user</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
+const createAccessRequestUserModal = new bootstrap.Modal(document.getElementById('createAccessRequestUserModal'));
+
 async function updateAccessRequest(requestId, status) {
     const notesField = document.querySelector(`.access-request-notes[data-request-id="${requestId}"]`);
     const internalNotes = notesField ? notesField.value : '';
@@ -98,6 +168,216 @@ async function updateAccessRequest(requestId, status) {
         location.reload();
     } catch (error) {
         alert('Error updating request: ' + error);
+    }
+}
+
+function getRequestRow(requestId) {
+    return document.querySelector(`tr[data-request-id="${requestId}"]`);
+}
+
+function getRequestData(requestId) {
+    const row = getRequestRow(requestId);
+    if (!row) return null;
+    return {
+        requestId,
+        companyName: row.dataset.companyName || '',
+        firstName: row.dataset.firstName || '',
+        lastName: row.dataset.lastName || '',
+        fullName: `${row.dataset.firstName || ''} ${row.dataset.lastName || ''}`.trim(),
+        email: row.dataset.email || ''
+    };
+}
+
+function escapeHtml(value) {
+    const div = document.createElement('div');
+    div.textContent = value || '';
+    return div.innerHTML;
+}
+
+function setMatchedCustomer(customerId, customerName) {
+    document.getElementById('access-request-customer-id').value = customerId || '';
+    document.getElementById('access-request-selected-customer').textContent = customerId ? `Selected customer: ${customerName}` : '';
+}
+
+async function findMatches(requestId) {
+    const requestData = getRequestData(requestId);
+    const container = document.getElementById(`request-matches-${requestId}`);
+    if (!requestData || !container) return;
+
+    container.classList.remove('text-muted');
+    container.innerHTML = 'Searching...';
+
+    const customerTerms = [requestData.email, requestData.companyName, requestData.fullName].filter(Boolean);
+    const contactTerms = [requestData.email, requestData.fullName].filter(Boolean);
+
+    try {
+        const customerPromises = customerTerms.map((term) =>
+            fetch(`{{ url_for('customers.customer_search') }}?q=${encodeURIComponent(term)}&limit=5`).then((r) => r.json())
+        );
+        const contactPromises = contactTerms.map((term) =>
+            fetch(`{{ url_for('customers.contact_search') }}?query=${encodeURIComponent(term)}`).then((r) => r.json())
+        );
+
+        const customerResultsByTerm = await Promise.all(customerPromises);
+        const contactResultsByTerm = await Promise.all(contactPromises);
+
+        const customerMap = new Map();
+        customerResultsByTerm.flat().forEach((customer) => {
+            if (!customerMap.has(customer.id)) customerMap.set(customer.id, customer);
+        });
+
+        const contactMap = new Map();
+        contactResultsByTerm.flat().forEach((contact) => {
+            if (!contactMap.has(contact.id)) contactMap.set(contact.id, contact);
+        });
+
+        const customers = Array.from(customerMap.values());
+        const contacts = Array.from(contactMap.values());
+
+        if (!customers.length && !contacts.length) {
+            container.innerHTML = '<span class="text-muted">No obvious customer/contact match found.</span>';
+            return;
+        }
+
+        let html = '';
+        if (customers.length) {
+            html += '<div class="fw-semibold mb-1">Customer matches</div>';
+            html += customers.slice(0, 5).map((customer) => `
+                <div class="border rounded p-2 mb-1">
+                    <div><a href="/customers/${customer.id}/edit" target="_blank">${escapeHtml(customer.name)}</a></div>
+                    <div class="small text-muted">${escapeHtml(customer.primary_contact_email || '')}</div>
+                    <button class="btn btn-sm btn-outline-primary mt-1" onclick="setMatchedCustomer(${customer.id}, '${escapeHtml((customer.name || '').replace(/'/g, "\\'"))}')">Use customer</button>
+                </div>
+            `).join('');
+        }
+
+        if (contacts.length) {
+            html += '<div class="fw-semibold mb-1 mt-2">Contact matches</div>';
+            html += contacts.slice(0, 5).map((contact) => `
+                <div class="border rounded p-2 mb-1">
+                    <div><a href="/customers/contacts/${contact.id}" target="_blank">${escapeHtml(contact.full_name || '')}</a></div>
+                    <div class="small">${escapeHtml(contact.email || '')} · ${escapeHtml(contact.customer_name || '')}</div>
+                    ${contact.customer_id ? `<button class="btn btn-sm btn-outline-primary mt-1" onclick="setMatchedCustomer(${contact.customer_id}, '${escapeHtml((contact.customer_name || '').replace(/'/g, "\\'"))}')">Use ${escapeHtml(contact.customer_name || 'customer')}</button>` : ''}
+                </div>
+            `).join('');
+        }
+
+        container.innerHTML = html;
+    } catch (error) {
+        container.innerHTML = `<span class="text-danger">Error finding matches: ${escapeHtml(String(error))}</span>`;
+    }
+}
+
+function generateAccessRequestPassword() {
+    const random = Math.random().toString(36).slice(-8);
+    document.getElementById('access-request-password').value = `Portal!${random}`;
+}
+
+function openCreateUserModal(requestId) {
+    const requestData = getRequestData(requestId);
+    if (!requestData) return;
+
+    document.getElementById('access-request-id-field').value = requestData.requestId;
+    document.getElementById('access-request-contact-name').value = requestData.fullName;
+    document.getElementById('access-request-email').value = requestData.email;
+    document.getElementById('access-request-first-name').value = requestData.firstName;
+    document.getElementById('access-request-last-name').value = requestData.lastName;
+    document.getElementById('access-request-customer-search').value = requestData.companyName;
+    setMatchedCustomer('', '');
+    generateAccessRequestPassword();
+    createAccessRequestUserModal.show();
+}
+
+let customerSearchTimeout = null;
+document.getElementById('access-request-customer-search').addEventListener('input', function() {
+    const query = this.value.trim();
+    const resultsContainer = document.getElementById('access-request-customer-results');
+    setMatchedCustomer('', '');
+
+    if (customerSearchTimeout) clearTimeout(customerSearchTimeout);
+    if (!query) {
+        resultsContainer.classList.add('d-none');
+        resultsContainer.innerHTML = '';
+        return;
+    }
+
+    customerSearchTimeout = setTimeout(async () => {
+        try {
+            const response = await fetch(`{{ url_for('customers.customer_search') }}?q=${encodeURIComponent(query)}&limit=8`);
+            const customers = await response.json();
+            if (!Array.isArray(customers) || !customers.length) {
+                resultsContainer.classList.remove('d-none');
+                resultsContainer.innerHTML = '<div class="list-group-item text-muted">No customers found</div>';
+                return;
+            }
+
+            resultsContainer.classList.remove('d-none');
+            resultsContainer.innerHTML = customers.map((customer) => `
+                <button type="button" class="list-group-item list-group-item-action"
+                        data-customer-id="${customer.id}"
+                        data-customer-name="${escapeHtml(customer.name)}">
+                    <div class="fw-semibold">${escapeHtml(customer.name)}</div>
+                    <div class="small text-muted">${escapeHtml(customer.primary_contact_email || '')}</div>
+                </button>
+            `).join('');
+        } catch (error) {
+            resultsContainer.classList.remove('d-none');
+            resultsContainer.innerHTML = '<div class="list-group-item text-danger">Error loading customers</div>';
+        }
+    }, 220);
+});
+
+document.getElementById('access-request-customer-results').addEventListener('click', function(event) {
+    const item = event.target.closest('[data-customer-id]');
+    if (!item) return;
+    const customerId = item.dataset.customerId;
+    const customerName = item.dataset.customerName;
+    document.getElementById('access-request-customer-search').value = customerName;
+    setMatchedCustomer(customerId, customerName);
+    this.classList.add('d-none');
+    this.innerHTML = '';
+});
+
+document.addEventListener('click', function(event) {
+    if (!event.target.closest('#access-request-customer-search') && !event.target.closest('#access-request-customer-results')) {
+        const resultsContainer = document.getElementById('access-request-customer-results');
+        resultsContainer.classList.add('d-none');
+    }
+});
+
+async function createUserFromAccessRequest() {
+    const form = document.getElementById('createAccessRequestUserForm');
+    const formData = new FormData(form);
+    const requestId = formData.get('request_id');
+
+    const payload = {
+        customer_id: formData.get('customer_id'),
+        email: formData.get('email'),
+        first_name: formData.get('first_name'),
+        last_name: formData.get('last_name'),
+        password: formData.get('password')
+    };
+
+    if (!payload.customer_id) {
+        alert('Please select a customer first.');
+        return;
+    }
+
+    try {
+        const createResp = await fetch('{{ url_for("portal_admin.create_portal_user") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const createResult = await createResp.json();
+        if (!createResult.success) {
+            alert(createResult.error || 'Failed to create user');
+            return;
+        }
+
+        await updateAccessRequest(requestId, 'approved');
+    } catch (error) {
+        alert(`Error creating user: ${error}`);
     }
 }
 </script>

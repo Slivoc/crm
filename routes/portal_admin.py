@@ -2,6 +2,7 @@
 
 import os
 import re
+from html import escape
 
 from flask import Blueprint, render_template, request, jsonify, flash, redirect, url_for, session
 from flask_login import current_user
@@ -10,7 +11,7 @@ from models import create_base_part_number, get_base_currency
 from werkzeug.security import generate_password_hash
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, date
 from routes.portal_api import _analyze_quote_internal
 from routes.emails import send_graph_email, build_graph_inline_attachments
 from routes.email_signatures import get_user_default_signature
@@ -52,6 +53,32 @@ def _extract_single_value(row):
     if isinstance(row, dict):
         return next(iter(row.values()))
     return row[0]
+
+
+def _coerce_to_date(value):
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        return value.date()
+
+    if isinstance(value, date):
+        return value
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text).date()
+        except ValueError:
+            pass
+        try:
+            return datetime.strptime(text[:10], '%Y-%m-%d').date()
+        except ValueError:
+            return None
+
+    return None
 
 
 def _with_returning_clause(query, returning='id'):
@@ -370,12 +397,18 @@ def portal_users():
         SELECT 
             pu.*,
             c.name as customer_name,
-            COUNT(DISTINCT pqr.id) as quote_count,
-            MAX(pqr.date_submitted) as last_quote_date
+            COALESCE(pq.quote_count, 0) as quote_count,
+            pq.last_quote_date
         FROM portal_users pu
         JOIN customers c ON c.id = pu.customer_id
-        LEFT JOIN portal_quote_requests pqr ON pqr.portal_user_id = pu.id
-        GROUP BY pu.id
+        LEFT JOIN (
+            SELECT
+                portal_user_id,
+                COUNT(*) as quote_count,
+                MAX(date_submitted) as last_quote_date
+            FROM portal_quote_requests
+            GROUP BY portal_user_id
+        ) pq ON pq.portal_user_id = pu.id
         ORDER BY pu.date_created DESC
     """, fetch='all') or []
 
@@ -495,11 +528,11 @@ def create_portal_user():
         with db_cursor(commit=True) as cur:
             _execute_with_cursor(
                 cur,
-                """
+                _with_returning_clause("""
                 INSERT INTO portal_users 
                 (customer_id, email, password_hash, first_name, last_name)
                 VALUES (?, ?, ?, ?, ?)
-                """,
+                """),
                 (customer_id, email, password_hash, first_name, last_name),
             )
             user_id = _last_inserted_id(cur)
@@ -1665,7 +1698,7 @@ def view_customer_portal_settings(customer_id):
         fetch='one'
     )
 
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = date.today()
 
     pricing_agreements_raw = db_execute("""
         SELECT 
@@ -1683,12 +1716,14 @@ def view_customer_portal_settings(customer_id):
     pricing_agreements = []
     for pricing in pricing_agreements_raw:
         pricing_dict = dict(pricing)
+        valid_from = _coerce_to_date(pricing.get('valid_from'))
+        valid_until = _coerce_to_date(pricing.get('valid_until'))
 
         # Calculate status
         if pricing['is_active']:
-            if pricing['valid_from'] and pricing['valid_from'] > today:
+            if valid_from and valid_from > today:
                 pricing_dict['status'] = 'future'
-            elif pricing['valid_until'] and pricing['valid_until'] < today:
+            elif valid_until and valid_until < today:
                 pricing_dict['status'] = 'expired'
             else:
                 pricing_dict['status'] = 'active'
@@ -1719,6 +1754,7 @@ def view_customer_portal_settings(customer_id):
     currencies = db_execute("""
         SELECT id, currency_code FROM currencies ORDER BY id
     """, fetch='all') or []
+    base_currency = _get_base_currency()
 
     # Get global default margins
     global_margins = {
@@ -1733,6 +1769,7 @@ def view_customer_portal_settings(customer_id):
                            pricing_agreements=pricing_agreements,
                            suggested_parts=suggested_parts,
                            currencies=[dict(c) for c in currencies],
+                           base_currency=base_currency,
                            global_margins=global_margins)
 
 @portal_admin_bp.route('/customer-settings/<int:customer_id>/margins', methods=['POST'])
@@ -1808,15 +1845,18 @@ def add_customer_pricing(customer_id):
         data = request.get_json()
 
         part_number = data.get('part_number', '').strip()
-        price = data.get('price')
+        price = _to_float(data.get('price'))
         base_currency_id = _get_base_currency().get('id')
-        currency_id = data.get('currency_id', base_currency_id)
+        raw_currency_id = data.get('currency_id', base_currency_id)
+        currency_id = int(raw_currency_id) if raw_currency_id not in (None, '') else base_currency_id
         valid_from = data.get('valid_from')
         valid_until = data.get('valid_until')
         notes = data.get('notes', '')
 
-        if not part_number or not price:
+        if not part_number or price is None:
             return jsonify({'success': False, 'error': 'Part number and price required'}), 400
+        if currency_id is None:
+            return jsonify({'success': False, 'error': 'Currency is required'}), 400
 
         base_part_number = create_base_part_number(part_number)
 
@@ -1841,11 +1881,11 @@ def add_customer_pricing(customer_id):
         with db_cursor(commit=True) as cur:
             _execute_with_cursor(
                 cur,
-                """
+                _with_returning_clause("""
                 INSERT INTO portal_customer_pricing
                 (customer_id, base_part_number, price, currency_id, valid_from, valid_until, notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
+                """),
                 (customer_id, base_part_number, price, currency_id, valid_from, valid_until, notes),
             )
             pricing_id = _last_inserted_id(cur)
@@ -1863,15 +1903,20 @@ def update_customer_pricing(customer_id, pricing_id):
     try:
         data = request.get_json()
 
-        price = data.get('price')
-        currency_id = data.get('currency_id')
+        price = _to_float(data.get('price'))
+        raw_currency_id = data.get('currency_id')
+        currency_id = int(raw_currency_id) if raw_currency_id not in (None, '') else None
         valid_from = data.get('valid_from')
         valid_until = data.get('valid_until')
         notes = data.get('notes', '')
         is_active = data.get('is_active', 1)
 
-        if not price:
+        if price is None:
             return jsonify({'success': False, 'error': 'Price required'}), 400
+        if currency_id is None:
+            currency_id = _get_base_currency().get('id')
+        if currency_id is None:
+            return jsonify({'success': False, 'error': 'Currency is required'}), 400
 
         with db_cursor(commit=True) as cur:
             _execute_with_cursor(
@@ -1976,11 +2021,11 @@ def add_suggested_part(customer_id):
         with db_cursor(commit=True) as cur:
             _execute_with_cursor(
                 cur,
-                """
+                _with_returning_clause("""
                 INSERT INTO portal_suggested_parts
                 (customer_id, base_part_number, notes, priority, suggested_by_user_id)
                 VALUES (?, ?, ?, ?, ?)
-                """,
+                """),
                 (customer_id, base_part_number, notes, priority, session.get('user_id')),
             )
             suggestion_id = _last_inserted_id(cur)
@@ -3094,6 +3139,101 @@ View in CRM: http://your-crm-domain.com/portal-admin/requests/{request_id}
 
     except Exception as e:
         logging.exception(f"Failed to send quote request notification: {e}")
+        return False
+
+
+def notify_portal_search_to_account_manager(portal_user_id, customer_id, search_type, parts_list, ip_address=None, user_agent=None):
+    """Send email notification to the customer's account manager for portal searches."""
+    try:
+        customer = db_execute("""
+            SELECT
+                c.id,
+                c.name AS customer_name,
+                c.salesperson_id,
+                s.name AS salesperson_name,
+                u.email AS account_manager_email
+            FROM customers c
+            LEFT JOIN salespeople s ON s.id = c.salesperson_id
+            LEFT JOIN salesperson_user_link sul ON sul.legacy_salesperson_id = c.salesperson_id
+            LEFT JOIN users u ON u.id = sul.user_id
+            WHERE c.id = ?
+            LIMIT 1
+        """, (customer_id,), fetch='one')
+
+        if not customer or not customer.get('account_manager_email'):
+            return False
+
+        portal_user = db_execute("""
+            SELECT first_name, last_name, email
+            FROM portal_users
+            WHERE id = ?
+            LIMIT 1
+        """, (portal_user_id,), fetch='one') or {}
+
+        part_rows = parts_list or []
+        part_count = len(part_rows)
+        preview_parts = part_rows[:10]
+
+        part_list_html = "<ul>"
+        part_list_text = ""
+        for part in preview_parts:
+            part_number = (part.get('part_number') or '-').strip()
+            quantity = part.get('quantity', 1)
+            part_list_html += f"<li><strong>{escape(str(part_number))}</strong> - Qty: {escape(str(quantity))}</li>"
+            part_list_text += f"  • {part_number} - Qty: {quantity}\n"
+        part_list_html += "</ul>"
+
+        if part_count > 10:
+            remaining = part_count - 10
+            part_list_html += f"<p><em>...and {remaining} more parts</em></p>"
+            part_list_text += f"  ...and {remaining} more parts\n"
+
+        submitted_by_name = f"{(portal_user.get('first_name') or '').strip()} {(portal_user.get('last_name') or '').strip()}".strip() or "-"
+        submitted_by_email = (portal_user.get('email') or '-').strip()
+        customer_name = customer.get('customer_name') or '-'
+        salesperson_name = customer.get('salesperson_name') or 'Account Manager'
+        search_type_label = (search_type or 'quote_analysis').replace('_', ' ').title()
+
+        html_body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <h2 style="color: #0066cc;">Portal Search Performed</h2>
+            <p>A customer portal search was performed.</p>
+
+            <table style="border-collapse: collapse; margin: 20px 0;">
+                <tr><td style="padding: 8px; font-weight: bold;">Customer:</td><td style="padding: 8px;">{escape(str(customer_name))}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Account Manager:</td><td style="padding: 8px;">{escape(str(salesperson_name))}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Search Type:</td><td style="padding: 8px;">{escape(str(search_type_label))}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Portal User:</td><td style="padding: 8px;">{escape(str(submitted_by_name))} ({escape(str(submitted_by_email))})</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">Parts Count:</td><td style="padding: 8px;">{part_count}</td></tr>
+                <tr><td style="padding: 8px; font-weight: bold;">IP Address:</td><td style="padding: 8px;">{escape(str(ip_address or '-'))}</td></tr>
+            </table>
+
+            <h3>Parts Searched:</h3>
+            {part_list_html}
+
+            <p><strong>User Agent:</strong> {escape(str(user_agent or '-'))}</p>
+        </body>
+        </html>
+        """
+
+        text_body = (
+            "Portal Search Performed\n\n"
+            f"Customer: {customer_name}\n"
+            f"Account Manager: {salesperson_name}\n"
+            f"Search Type: {search_type_label}\n"
+            f"Portal User: {submitted_by_name} ({submitted_by_email})\n"
+            f"Parts Count: {part_count}\n"
+            f"IP Address: {ip_address or '-'}\n\n"
+            "Parts Searched:\n"
+            f"{part_list_text}\n"
+            f"User Agent: {user_agent or '-'}\n"
+        )
+
+        subject = f"Portal Search: {customer_name} ({part_count} parts)"
+        return send_email(customer['account_manager_email'], subject, html_body, text_body)
+    except Exception as e:
+        logging.exception(f"Failed to send portal search notification: {e}")
         return False
 
 
