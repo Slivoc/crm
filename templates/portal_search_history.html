@@ -112,7 +112,13 @@
                         {% for search in searches %}
                         <tr>
                             <td>
+                                {% if search.date_searched is string %}
                                 {{ search.date_searched[:16] }}
+                                {% elif search.date_searched %}
+                                {{ search.date_searched.strftime('%Y-%m-%d %H:%M') }}
+                                {% else %}
+                                -
+                                {% endif %}
                             </td>
                             <td>
                                 <a href="{{ url_for('portal_admin.view_customer_portal_settings', customer_id=search.customer_id) }}">
