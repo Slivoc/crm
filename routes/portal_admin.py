@@ -1215,6 +1215,7 @@ def view_customer_portal_settings(customer_id):
     currencies = db_execute("""
         SELECT id, currency_code FROM currencies ORDER BY id
     """, fetch='all') or []
+    base_currency = _get_base_currency()
 
     # Get global default margins
     global_margins = {
@@ -1229,6 +1230,7 @@ def view_customer_portal_settings(customer_id):
                            pricing_agreements=pricing_agreements,
                            suggested_parts=suggested_parts,
                            currencies=[dict(c) for c in currencies],
+                           base_currency=base_currency,
                            global_margins=global_margins)
 
 @portal_admin_bp.route('/customer-settings/<int:customer_id>/margins', methods=['POST'])
@@ -1304,15 +1306,18 @@ def add_customer_pricing(customer_id):
         data = request.get_json()
 
         part_number = data.get('part_number', '').strip()
-        price = data.get('price')
+        price = _to_float(data.get('price'))
         base_currency_id = _get_base_currency().get('id')
-        currency_id = data.get('currency_id', base_currency_id)
+        raw_currency_id = data.get('currency_id', base_currency_id)
+        currency_id = int(raw_currency_id) if raw_currency_id not in (None, '') else base_currency_id
         valid_from = data.get('valid_from')
         valid_until = data.get('valid_until')
         notes = data.get('notes', '')
 
-        if not part_number or not price:
+        if not part_number or price is None:
             return jsonify({'success': False, 'error': 'Part number and price required'}), 400
+        if currency_id is None:
+            return jsonify({'success': False, 'error': 'Currency is required'}), 400
 
         base_part_number = create_base_part_number(part_number)
 
@@ -1359,15 +1364,20 @@ def update_customer_pricing(customer_id, pricing_id):
     try:
         data = request.get_json()
 
-        price = data.get('price')
-        currency_id = data.get('currency_id')
+        price = _to_float(data.get('price'))
+        raw_currency_id = data.get('currency_id')
+        currency_id = int(raw_currency_id) if raw_currency_id not in (None, '') else None
         valid_from = data.get('valid_from')
         valid_until = data.get('valid_until')
         notes = data.get('notes', '')
         is_active = data.get('is_active', 1)
 
-        if not price:
+        if price is None:
             return jsonify({'success': False, 'error': 'Price required'}), 400
+        if currency_id is None:
+            currency_id = _get_base_currency().get('id')
+        if currency_id is None:
+            return jsonify({'success': False, 'error': 'Currency is required'}), 400
 
         with db_cursor(commit=True) as cur:
             _execute_with_cursor(

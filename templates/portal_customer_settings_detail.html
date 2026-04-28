@@ -311,7 +311,7 @@
                             <label class="form-label">Currency</label>
                             <select class="form-select" id="modal_currency">
                                 {% for currency in currencies %}
-                                <option value="{{ currency.id }}" {% if currency.id == 3 %}selected{% endif %}>
+                                <option value="{{ currency.id }}" {% if currency.id == base_currency.id %}selected{% endif %}>
                                     {{ currency.currency_code }}
                                 </option>
                                 {% endfor %}
@@ -419,6 +419,7 @@
 
 <script>
 const customerId = {{ customer.id }};
+const defaultCurrencyId = '{{ base_currency.id if base_currency and base_currency.id is not none else "" }}';
 let pricingModal;
 let suggestedPartModal;
 let partSearchTimeout;
@@ -570,7 +571,11 @@ function showAddPricingModal() {
     document.getElementById('modal_part_number').value = '';
     document.getElementById('modal_part_number').disabled = false;
     document.getElementById('modal_price').value = '';
-    document.getElementById('modal_currency').value = '3';
+    if (defaultCurrencyId) {
+        document.getElementById('modal_currency').value = defaultCurrencyId;
+    } else {
+        document.getElementById('modal_currency').selectedIndex = 0;
+    }
     document.getElementById('modal_valid_from').value = '';
     document.getElementById('modal_valid_until').value = '';
     document.getElementById('modal_notes').value = '';
