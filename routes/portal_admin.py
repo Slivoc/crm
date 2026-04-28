@@ -12,6 +12,7 @@ from werkzeug.security import generate_password_hash
 import logging
 import secrets
 from datetime import datetime, date
+from decimal import Decimal, InvalidOperation
 from routes.portal_api import _analyze_quote_internal
 from routes.emails import send_graph_email, build_graph_inline_attachments
 from routes.email_signatures import get_user_default_signature
@@ -188,6 +189,21 @@ def _convert_to_base_currency(amount, currency_id=None, currency_code=None, curr
     return amount / rate
 
 
+def _normalize_line_number(value):
+    if value is None:
+        return None
+    try:
+        normalized = Decimal(str(value)).normalize()
+    except (InvalidOperation, TypeError, ValueError):
+        text = str(value).strip()
+        return text or None
+
+    text = format(normalized, 'f')
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text
+
+
 def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
     """Create portal request lines for parts list rows that do not yet exist on the portal request."""
     has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
@@ -214,19 +230,19 @@ def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
         WHERE portal_quote_request_id = ?
     """, (request_id,)).fetchall() or []
     existing_line_numbers = {
-        int(row['line_number'])
+        _normalize_line_number(row.get('line_number'))
         for row in existing_rows
-        if row.get('line_number') is not None
+        if _normalize_line_number(row.get('line_number')) is not None
     }
 
     synced_count = 0
     for pll in parts_list_lines:
-        try:
-            line_number = int(pll['line_number'])
-        except (TypeError, ValueError):
+        raw_line_number = pll.get('line_number')
+        normalized_line_number = _normalize_line_number(raw_line_number)
+        if normalized_line_number is None:
             continue
 
-        if line_number in existing_line_numbers:
+        if normalized_line_number in existing_line_numbers:
             continue
 
         raw_part_number = (pll.get('part_number') or '').strip().upper()
@@ -246,7 +262,7 @@ def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
         ]
         values = [
             request_id,
-            line_number,
+            raw_line_number,
             raw_part_number or '',
             base_part_number or None,
             pll.get('quantity') or 0,
@@ -279,7 +295,7 @@ def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
         if _using_postgres():
             cur.fetchone()
 
-        existing_line_numbers.add(line_number)
+        existing_line_numbers.add(normalized_line_number)
         synced_count += 1
 
     return synced_count
@@ -1267,16 +1283,14 @@ def load_all_from_parts_list(request_id):
             """, (request_id,)).fetchall() or []
             portal_line_id_by_number = {}
             for row in portal_rows:
-                try:
-                    portal_line_id_by_number[int(row['line_number'])] = row['id']
-                except (TypeError, ValueError):
-                    continue
+                normalized_line_number = _normalize_line_number(row.get('line_number'))
+                if normalized_line_number is not None:
+                    portal_line_id_by_number[normalized_line_number] = row['id']
 
             loaded_count = 0
             for pll in parts_list_lines:
-                try:
-                    line_number = int(pll['line_number'])
-                except (TypeError, ValueError):
+                line_number = _normalize_line_number(pll.get('line_number'))
+                if line_number is None:
                     continue
 
                 portal_line_id = portal_line_id_by_number.get(line_number)
@@ -1665,16 +1679,14 @@ def load_all_from_customer_quote(request_id):
             """, (request_id,)).fetchall() or []
             portal_line_id_by_number = {}
             for row in portal_rows:
-                try:
-                    portal_line_id_by_number[int(row['line_number'])] = row['id']
-                except (TypeError, ValueError):
-                    continue
+                normalized_line_number = _normalize_line_number(row.get('line_number'))
+                if normalized_line_number is not None:
+                    portal_line_id_by_number[normalized_line_number] = row['id']
 
             loaded_count = 0
             for cql in quote_lines:
-                try:
-                    line_number = int(cql['line_number'])
-                except (TypeError, ValueError):
+                line_number = _normalize_line_number(cql.get('line_number'))
+                if line_number is None:
                     continue
 
                 portal_line_id = portal_line_id_by_number.get(line_number)

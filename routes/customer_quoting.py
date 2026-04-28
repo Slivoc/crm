@@ -234,7 +234,6 @@ def customer_quote(list_id):
                 if not header:
                     return "Parts list not found", 404
                 portal_request = _get_portal_request_for_parts_list(list_id)
-                portal_request = _get_portal_request_for_parts_list(list_id)
 
                 # Get all lines with their chosen costs and quote line data
                 lines = _execute_with_cursor(cur, """
@@ -1934,6 +1933,7 @@ def customer_quote_simple(list_id):
 
             if not header:
                 return "Parts list not found", 404
+            portal_request = _get_portal_request_for_parts_list(list_id)
 
             all_statuses = _execute_with_cursor(cur, """
                 SELECT id, name FROM parts_list_statuses ORDER BY id ASC
