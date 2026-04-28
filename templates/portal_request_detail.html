@@ -18,6 +18,11 @@
                 {% else %}bg-secondary{% endif %} fs-5">
                 {{ request.status | title }}
             </span>
+            <div class="mt-2">
+                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#sendUpdateEmailModal">
+                    <i class="fas fa-envelope"></i> Send Update Email
+                </button>
+            </div>
         </div>
     </div>
 
@@ -78,6 +83,9 @@
         <div class="card-header d-flex justify-content-between align-items-center">
             <h5>Quote Lines</h5>
             <div>
+                <button class="btn btn-sm btn-outline-primary" onclick="addLine()">
+                    <i class="fas fa-plus"></i> Add Line
+                </button>
                 <button class="btn btn-sm btn-primary" onclick="loadFromPartsListAll()">
                     <i class="fas fa-sync"></i> Load All from Parts List
                 </button>
@@ -91,8 +99,11 @@
         <thead>
             <tr>
                 <th style="width: 50px;">Line</th>
-                <th>Part Number</th>
-                <th style="width: 60px;">Qty</th>
+                <th>Requested Part</th>
+                <th style="width: 180px;">Quoted Part</th>
+                <th style="width: 140px;">Manufacturer</th>
+                <th style="width: 90px;">Rev</th>
+                <th style="width: 90px;">Qty</th>
                 <th style="width: 180px;">
                     Status
                     <br><small class="text-muted">What stage is this line at?</small>
@@ -104,6 +115,8 @@
                 <th style="width: 120px;">Portal Quote Price</th>
                 <th style="width: 100px;">Lead Time</th>
                 <th style="width: 80px;">Currency</th>
+                <th style="width: 180px;">Certs</th>
+                <th style="width: 220px;">Notes</th>
                 <th style="width: 100px;">Portal Status</th>
                 <th style="width: 200px;">Actions</th>
             </tr>
@@ -112,8 +125,32 @@
             {% for line in lines %}
             <tr data-line-id="{{ line.id }}">
                 <td>{{ line.line_number }}</td>
-                <td><strong>{{ line.part_number }}</strong></td>
-                <td>{{ line.quantity }}</td>
+                <td><strong>{{ line.requested_part_number }}</strong></td>
+                <td>
+                    <input type="text"
+                           class="form-control form-control-sm text-uppercase"
+                           id="quoted_part_{{ line.id }}"
+                           value="{{ line.effective_quoted_part_number }}">
+                </td>
+                <td>
+                    <input type="text"
+                           class="form-control form-control-sm"
+                           id="manufacturer_{{ line.id }}"
+                           value="{{ line.effective_manufacturer }}">
+                </td>
+                <td>
+                    <input type="text"
+                           class="form-control form-control-sm text-uppercase"
+                           id="revision_{{ line.id }}"
+                           value="{{ line.effective_revision }}">
+                </td>
+                <td>
+                    <input type="number"
+                           class="form-control form-control-sm"
+                           id="qty_{{ line.id }}"
+                           min="1"
+                           value="{{ line.quantity }}">
+                </td>
 
                 <!-- Overall Status Column -->
                 <td>
@@ -223,6 +260,20 @@
                     </select>
                 </td>
 
+                <td>
+                    <input type="text"
+                           class="form-control form-control-sm"
+                           id="certs_{{ line.id }}"
+                           value="{{ line.effective_certs }}">
+                </td>
+
+                <td>
+                    <textarea class="form-control form-control-sm"
+                              id="notes_{{ line.id }}"
+                              rows="2"
+                              placeholder="Shown to customer">{{ line.effective_line_notes }}</textarea>
+                </td>
+
                 <!-- Portal Status Badge -->
                 <td>
                     <span class="badge
@@ -312,6 +363,48 @@
     </div>
 </div>
 
+<div class="modal fade" id="sendUpdateEmailModal" tabindex="-1" aria-labelledby="sendUpdateEmailLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="sendUpdateEmailLabel">Send Update Email</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                {% if graph_user %}
+                <div class="alert alert-light border">
+                    Sending from <strong>{{ graph_user }}</strong>
+                </div>
+                {% else %}
+                <div class="alert alert-warning">
+                    No Graph mailbox is connected. Connect your mailbox on the <a href="{{ url_for('emails.mailbox_page') }}" target="_blank">mailbox page</a> first.
+                </div>
+                {% endif %}
+
+                <div class="mb-3">
+                    <label for="updateEmailTo" class="form-label">To</label>
+                    <input type="email" class="form-control" id="updateEmailTo" value="{{ request.user_email }}" readonly>
+                </div>
+                <div class="mb-3">
+                    <label for="updateEmailSubject" class="form-label">Subject</label>
+                    <input type="text" class="form-control" id="updateEmailSubject" value="Update on quote request {{ request.reference_number }}">
+                </div>
+                <div class="mb-3">
+                    <label for="updateEmailComment" class="form-label">Comment</label>
+                    <textarea class="form-control" id="updateEmailComment" rows="6" placeholder="Write the update you want to send to the customer."></textarea>
+                </div>
+                <div class="small text-muted" id="updateEmailFeedback"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="sendUpdateEmailBtn" {% if not graph_user %}disabled{% endif %} onclick="sendUpdateEmail()">
+                    <i class="fas fa-paper-plane"></i> Send via Graph
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 const requestId = {{ request.id }};
 
@@ -377,9 +470,19 @@ async function saveLine(lineId) {
     const price = document.getElementById(`price_${lineId}`).value;
     const leadDays = document.getElementById(`lead_${lineId}`).value;
     const currencyId = document.getElementById(`currency_${lineId}`).value;
+    const manufacturer = document.getElementById(`manufacturer_${lineId}`).value.trim();
+    const revision = document.getElementById(`revision_${lineId}`).value.trim().toUpperCase();
+    const quantity = document.getElementById(`qty_${lineId}`).value;
+    const certs = document.getElementById(`certs_${lineId}`).value.trim();
+    const quotedPartNumber = document.getElementById(`quoted_part_${lineId}`).value.trim().toUpperCase();
+    const lineNotes = document.getElementById(`notes_${lineId}`).value.trim();
 
     if (!price || parseFloat(price) <= 0) {
         alert('Please enter a valid price');
+        return;
+    }
+    if (!quantity || parseInt(quantity, 10) <= 0) {
+        alert('Please enter a valid quantity');
         return;
     }
 
@@ -389,8 +492,14 @@ async function saveLine(lineId) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 price: parseFloat(price),
+                quantity: parseInt(quantity, 10),
                 lead_days: leadDays ? parseInt(leadDays) : null,
-                currency_id: parseInt(currencyId)
+                currency_id: parseInt(currencyId),
+                manufacturer: manufacturer,
+                revision: revision,
+                certs: certs,
+                quoted_part_number: quotedPartNumber,
+                line_notes: lineNotes
             })
         });
 
@@ -558,6 +667,21 @@ async function loadFromCustomerQuote(lineId) {
         if (result.success) {
             document.getElementById(`price_${lineId}`).value = result.price || '';
             document.getElementById(`lead_${lineId}`).value = result.lead_days || '';
+            if (result.quoted_part_number) {
+                document.getElementById(`quoted_part_${lineId}`).value = result.quoted_part_number;
+            }
+            if (typeof result.manufacturer === 'string') {
+                document.getElementById(`manufacturer_${lineId}`).value = result.manufacturer;
+            }
+            if (typeof result.revision === 'string') {
+                document.getElementById(`revision_${lineId}`).value = result.revision;
+            }
+            if (typeof result.certs === 'string') {
+                document.getElementById(`certs_${lineId}`).value = result.certs;
+            }
+            if (typeof result.line_notes === 'string') {
+                document.getElementById(`notes_${lineId}`).value = result.line_notes;
+            }
 
             // Set currency (should be GBP from customer quote)
             if (result.currency_id) {
@@ -577,6 +701,87 @@ async function loadFromCustomerQuote(lineId) {
         }
     } catch (error) {
         alert('Error: ' + error);
+    }
+}
+
+async function addLine() {
+    const partNumber = (prompt('Part number for the new line:') || '').trim().toUpperCase();
+    if (!partNumber) return;
+
+    const quantityInput = prompt('Quantity for the new line:', '1');
+    if (quantityInput === null) return;
+
+    const quantity = parseInt(quantityInput, 10);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+        alert('Please enter a valid quantity');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/lines/add`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                part_number: partNumber,
+                quantity: quantity
+            })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            location.reload();
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error: ' + error);
+    }
+}
+
+async function sendUpdateEmail() {
+    const subject = document.getElementById('updateEmailSubject').value.trim();
+    const comment = document.getElementById('updateEmailComment').value.trim();
+    const feedback = document.getElementById('updateEmailFeedback');
+    const button = document.getElementById('sendUpdateEmailBtn');
+    const originalHtml = button.innerHTML;
+
+    if (!subject) {
+        feedback.textContent = 'Subject is required.';
+        feedback.className = 'small text-danger';
+        return;
+    }
+    if (!comment) {
+        feedback.textContent = 'Comment is required.';
+        feedback.className = 'small text-danger';
+        return;
+    }
+
+    feedback.textContent = '';
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending...';
+
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/send-update-email`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ subject, comment })
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            feedback.textContent = `Email sent to ${result.recipient_email}.`;
+            feedback.className = 'small text-success';
+            document.getElementById('updateEmailComment').value = '';
+        } else {
+            feedback.textContent = result.error || 'Failed to send email.';
+            feedback.className = 'small text-danger';
+        }
+    } catch (error) {
+        feedback.textContent = 'Failed to send email.';
+        feedback.className = 'small text-danger';
+    } finally {
+        button.disabled = false;
+        button.innerHTML = originalHtml;
     }
 }
 </script>

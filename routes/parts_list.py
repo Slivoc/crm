@@ -8087,8 +8087,9 @@ def get_line_quotes(list_id, line_id):
                 (list_id, line['base_part_number']),
             ).fetchall()
 
-            # Get latest 3 offers for this part from OTHER parts lists
-            # Use base_part_number for matching since that's normalized
+            # Get a larger recent slice of offers for this part from OTHER parts lists.
+            # Use base_part_number for matching since that's normalized, and sort by an
+            # effective recency timestamp so blank quote_date values still surface recent work.
             other_offers = _execute_with_cursor(
                 cur,
                 """
@@ -8109,6 +8110,7 @@ def get_line_quotes(list_id, line_id):
                     sq.id as quote_id,
                     sq.quote_reference,
                     sq.quote_date,
+                    COALESCE(sq.quote_date, sql.date_modified, sql.date_created, sq.date_created) as effective_quote_date,
                     sq.supplier_id,
                     s.name as supplier_name,
                     sq.currency_id,
@@ -8126,8 +8128,10 @@ def get_line_quotes(list_id, line_id):
                 AND pll.parts_list_id != ?
                 AND sql.is_no_bid = FALSE
                 AND sql.unit_price IS NOT NULL
-                ORDER BY sq.quote_date DESC
-                LIMIT 3
+                ORDER BY
+                    COALESCE(sq.quote_date, sql.date_modified, sql.date_created, sq.date_created) DESC,
+                    sql.id DESC
+                LIMIT 12
                 """,
                 (line['base_part_number'], list_id),
             ).fetchall()

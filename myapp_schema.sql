@@ -3356,9 +3356,14 @@ CREATE TABLE public.portal_quote_request_lines (
     part_number text NOT NULL,
     base_part_number text,
     quantity integer NOT NULL,
+    quoted_part_number text,
+    manufacturer text,
+    revision text,
     quoted_price numeric,
     quoted_currency_id integer,
     quoted_lead_days integer,
+    line_notes text,
+    certs text,
     status text DEFAULT 'pending'::text
 );
 

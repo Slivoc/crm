@@ -1508,13 +1508,26 @@ function getQplBadgeLabelsForManufacturer(manufacturer, approvals) {
 function displayOtherOffers(offers, lineId, requiredQty) {
     const container = document.getElementById('other-offers-section');
     if (!container) return;
+    const countBadge = document.getElementById('other-offers-count-badge');
+    const footnote = document.getElementById('other-offers-footnote');
 
     if (!offers || offers.length === 0) {
         container.style.display = 'none';
+        if (countBadge) countBadge.style.display = 'none';
         return;
     }
 
     container.style.display = 'block';
+    if (countBadge) {
+        countBadge.textContent = `${offers.length} recent`;
+        countBadge.style.display = 'inline-block';
+    }
+    if (footnote) {
+        footnote.innerHTML = `
+            <i class="bi bi-info-circle me-1"></i>
+            Showing the ${offers.length} most recent supplier quotes for this part from other parts lists
+        `;
+    }
     const tbody = document.getElementById('other-offers-table-body');
     if (!tbody) return;
 
@@ -1538,7 +1551,7 @@ function displayOtherOffers(offers, lineId, requiredQty) {
         const row = document.createElement('tr');
         const offerNotes = offer.line_notes || '';
         const encodedOfferNotes = offerNotes ? encodeURIComponent(offerNotes) : '';
-        const offerDateBadge = renderQuoteDateBadge(offer.quote_date);
+        const offerDateBadge = renderQuoteDateBadge(offer.effective_quote_date || offer.quote_date);
         row.innerHTML = `
             <td style="padding: 0.6rem;">
                 <div style="font-weight: 500;">${offer.supplier_name}</div>

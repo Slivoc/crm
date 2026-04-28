@@ -782,9 +782,12 @@
 
                     <!-- Other Offers Section -->
                     <div id="other-offers-section" class="mt-4" style="display: none;">
-                        <div class="d-flex align-items-center gap-2 mb-3">
-                            <i class="bi bi-clock-history" style="color: #6c757d;"></i>
-                            <h6 class="mb-0" style="font-weight: 600; color: #6c757d;">Recent Offers from Other Parts Lists</h6>
+                        <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
+                            <div class="d-flex align-items-center gap-2">
+                                <i class="bi bi-clock-history" style="color: #6c757d;"></i>
+                                <h6 class="mb-0" style="font-weight: 600; color: #6c757d;">Recent Quotes from Other Parts Lists</h6>
+                            </div>
+                            <span id="other-offers-count-badge" class="badge bg-light text-dark border" style="display: none; font-weight: 600;"></span>
                         </div>
                         <div class="table-responsive" style="border: 1px solid #e9ecef; border-radius: 6px;">
                             <table class="table table-hover mb-0" style="font-size: 0.85rem;">
@@ -809,9 +812,9 @@
                                 </tbody>
                             </table>
                         </div>
-                        <small class="text-muted mt-2 d-block">
+                        <small id="other-offers-footnote" class="text-muted mt-2 d-block">
                             <i class="bi bi-info-circle me-1"></i>
-                            Recent offers for this part from other parts lists
+                            Recent supplier quotes for this part from other parts lists, newest first
                         </small>
                     </div>
                 </div>

@@ -4,6 +4,7 @@ import os
 import re
 
 from flask import Blueprint, render_template, request, jsonify, flash, redirect, url_for, session
+from flask_login import current_user
 from db import db_cursor, execute as db_execute, get_currency_rate_column
 from models import create_base_part_number, get_base_currency
 from werkzeug.security import generate_password_hash
@@ -11,12 +12,16 @@ import logging
 import secrets
 from datetime import datetime
 from routes.portal_api import _analyze_quote_internal
+from routes.emails import send_graph_email, build_graph_inline_attachments
+from routes.email_signatures import get_user_default_signature
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr
+import html
 
 portal_admin_bp = Blueprint('portal_admin', __name__, url_prefix='/portal-admin')
+_PORTAL_SCHEMA_COLUMN_CACHE = {}
 
 
 def _using_postgres():
@@ -65,6 +70,39 @@ def _last_inserted_id(cur, key='id'):
             return row.get(key)
         return row[0]
     return getattr(cur, 'lastrowid', None)
+
+
+def _table_has_column(table_name, column_name):
+    cache_key = (table_name, column_name, 'postgres' if _using_postgres() else 'sqlite')
+    if cache_key in _PORTAL_SCHEMA_COLUMN_CACHE:
+        return _PORTAL_SCHEMA_COLUMN_CACHE[cache_key]
+
+    try:
+        if _using_postgres():
+            row = db_execute(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = ?
+                  AND column_name = ?
+                LIMIT 1
+                """,
+                (table_name, column_name),
+                fetch='one',
+            )
+            exists = row is not None
+        else:
+            rows = db_execute(f"PRAGMA table_info({table_name})", fetch='all') or []
+            exists = any(
+                (row.get('name') if isinstance(row, dict) else (row[1] if len(row) > 1 else None)) == column_name
+                for row in rows
+            )
+    except Exception:
+        exists = False
+
+    _PORTAL_SCHEMA_COLUMN_CACHE[cache_key] = exists
+    return exists
 
 
 def _upsert_portal_setting(cur, key, value, description=None):
@@ -598,9 +636,25 @@ def view_portal_request(request_id):
         flash('Request not found', 'error')
         return redirect(url_for('portal_admin.portal_requests'))
 
-    lines = db_execute("""
+    has_portal_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+    has_portal_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
+    has_portal_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
+    has_portal_revision = _table_has_column('portal_quote_request_lines', 'revision')
+    has_portal_certs = _table_has_column('portal_quote_request_lines', 'certs')
+    portal_line_notes_select = "pqrl.line_notes as portal_line_notes," if has_portal_line_notes else "NULL as portal_line_notes,"
+    portal_quoted_part_select = "pqrl.quoted_part_number as portal_quoted_part_number," if has_portal_quoted_part_number else "NULL as portal_quoted_part_number,"
+    portal_manufacturer_select = "pqrl.manufacturer as portal_manufacturer," if has_portal_manufacturer else "NULL as portal_manufacturer,"
+    portal_revision_select = "pqrl.revision as portal_revision," if has_portal_revision else "NULL as portal_revision,"
+    portal_certs_select = "pqrl.certs as portal_certs," if has_portal_certs else "NULL as portal_certs,"
+
+    lines = db_execute(f"""
         SELECT 
             pqrl.*,
+            {portal_line_notes_select}
+            {portal_quoted_part_select}
+            {portal_manufacturer_select}
+            {portal_revision_select}
+            {portal_certs_select}
             c.currency_code,
 
             -- Parts List Line info
@@ -617,6 +671,7 @@ def view_portal_request(request_id):
             cql.id as customer_quote_line_id,
             cql.display_part_number,
             cql.quoted_part_number,
+            cql.manufacturer as customer_quote_manufacturer,
             cql.base_cost_gbp,
             cql.delivery_per_unit,
             cql.delivery_per_line,
@@ -625,6 +680,8 @@ def view_portal_request(request_id):
             cql.quoted_status,
             cql.is_no_bid as customer_quote_no_bid,
             cql.line_notes as customer_quote_notes,
+            cql.standard_certs as customer_quote_certs,
+            pll.revision as parts_list_revision,
 
             -- Determine overall status for display
             CASE 
@@ -645,7 +702,7 @@ def view_portal_request(request_id):
         -- Join to parts list lines
         LEFT JOIN parts_lists pl ON pl.id = ?
         LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pl.id 
-            AND pll.base_part_number = pqrl.base_part_number
+            AND pll.line_number = pqrl.line_number
         LEFT JOIN currencies pc ON pc.id = pll.chosen_currency_id
         LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
 
@@ -657,6 +714,34 @@ def view_portal_request(request_id):
     """, (request_data['parts_list_id'], request_id), fetch='all') or []
 
     lines = [dict(l) for l in lines]
+    for line in lines:
+        requested_part_number = (line.get('part_number') or '').strip()
+        quoted_part_number = (
+            (line.get('portal_quoted_part_number') or '').strip()
+            or (line.get('quoted_part_number') or '').strip()
+            or (line.get('display_part_number') or '').strip()
+        )
+        if not quoted_part_number:
+            quoted_part_number = requested_part_number
+
+        line['requested_part_number'] = requested_part_number
+        line['effective_quoted_part_number'] = quoted_part_number
+        line['effective_line_notes'] = (
+            (line.get('portal_line_notes') or '').strip()
+            or (line.get('customer_quote_notes') or '').strip()
+        )
+        line['effective_manufacturer'] = (
+            (line.get('portal_manufacturer') or '').strip()
+            or (line.get('customer_quote_manufacturer') or '').strip()
+        )
+        line['effective_revision'] = (
+            (line.get('portal_revision') or '').strip()
+            or (line.get('parts_list_revision') or '').strip()
+        )
+        line['effective_certs'] = (
+            (line.get('portal_certs') or '').strip()
+            or (line.get('customer_quote_certs') or '').strip()
+        )
 
     portal_estimates = {}
     try:
@@ -711,7 +796,217 @@ def view_portal_request(request_id):
                            breadcrumbs=breadcrumbs,
                            request=dict(request_data),
                            lines=lines,
-                           currencies=[dict(c) for c in currencies])
+                           currencies=[dict(c) for c in currencies],
+                           graph_user=(session.get('graph_last_user') or '').strip())
+
+
+@portal_admin_bp.route('/requests/<int:request_id>/send-update-email', methods=['POST'])
+def send_portal_request_update_email(request_id):
+    """Send a Graph email update to the portal request contact from the logged-in salesperson mailbox."""
+    try:
+        if not current_user or not getattr(current_user, "is_authenticated", False):
+            return jsonify({'success': False, 'error': 'You must be logged in to send emails'}), 401
+
+        payload = request.get_json(silent=True) or {}
+        subject = (payload.get('subject') or '').strip()
+        comment = (payload.get('comment') or '').strip()
+
+        if not subject:
+            return jsonify({'success': False, 'error': 'Subject is required'}), 400
+        if not comment:
+            return jsonify({'success': False, 'error': 'Comment is required'}), 400
+
+        request_row = db_execute("""
+            SELECT
+                pqr.reference_number,
+                pqr.customer_reference,
+                pqr.status,
+                pqr.date_submitted,
+                pu.email as user_email,
+                pu.first_name,
+                pu.last_name,
+                c.name as customer_name
+            FROM portal_quote_requests pqr
+            JOIN portal_users pu ON pu.id = pqr.portal_user_id
+            JOIN customers c ON c.id = pqr.customer_id
+            WHERE pqr.id = ?
+        """, (request_id,), fetch='one')
+
+        if not request_row:
+            return jsonify({'success': False, 'error': 'Request not found'}), 404
+
+        recipient_email = (request_row.get('user_email') or '').strip()
+        if not recipient_email:
+            return jsonify({'success': False, 'error': 'No recipient email is available for this request'}), 400
+
+        has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+        has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
+        has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
+        has_revision = _table_has_column('portal_quote_request_lines', 'revision')
+        has_certs = _table_has_column('portal_quote_request_lines', 'certs')
+        line_notes_select = "pqrl.line_notes as portal_line_notes," if has_line_notes else "NULL as portal_line_notes,"
+        quoted_part_select = "pqrl.quoted_part_number as portal_quoted_part_number," if has_quoted_part_number else "NULL as portal_quoted_part_number,"
+        manufacturer_select = "pqrl.manufacturer as portal_manufacturer," if has_manufacturer else "NULL as portal_manufacturer,"
+        revision_select = "pqrl.revision as portal_revision," if has_revision else "NULL as portal_revision,"
+        certs_select = "pqrl.certs as portal_certs," if has_certs else "NULL as portal_certs,"
+
+        line_rows = db_execute("""
+            SELECT parts_list_id
+            FROM portal_quote_requests
+            WHERE id = ?
+        """, (request_id,), fetch='one')
+        parts_list_id = line_rows.get('parts_list_id') if line_rows else None
+
+        lines = db_execute(f"""
+            SELECT
+                pqrl.line_number,
+                pqrl.part_number,
+                pqrl.quantity,
+                pqrl.quoted_price,
+                pqrl.quoted_lead_days,
+                pqrl.status,
+                {quoted_part_select}
+                {line_notes_select}
+                {manufacturer_select}
+                {revision_select}
+                {certs_select}
+                c.currency_code,
+                cql.display_part_number,
+                cql.quoted_part_number as customer_quote_quoted_part_number,
+                cql.line_notes as customer_quote_line_notes,
+                cql.manufacturer as customer_quote_manufacturer,
+                cql.standard_certs as customer_quote_certs,
+                pll.revision as parts_list_revision
+            FROM portal_quote_request_lines pqrl
+            LEFT JOIN currencies c ON c.id = pqrl.quoted_currency_id
+            LEFT JOIN parts_list_lines pll
+                ON pll.parts_list_id = ?
+               AND pll.line_number = pqrl.line_number
+            LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+            WHERE pqrl.portal_quote_request_id = ?
+              AND pqrl.status IN ('quoted', 'no_bid')
+            ORDER BY pqrl.line_number
+        """, (parts_list_id, request_id), fetch='all') or []
+
+        safe_comment = html.escape(comment).replace('\n', '<br>')
+        table_rows = []
+        for raw_line in lines:
+            line = dict(raw_line)
+            requested_part_number = (line.get('part_number') or '').strip()
+            quoted_part_number = (
+                (line.get('portal_quoted_part_number') or '').strip()
+                or (line.get('customer_quote_quoted_part_number') or '').strip()
+                or (line.get('display_part_number') or '').strip()
+                or requested_part_number
+            )
+            line_notes = (
+                (line.get('portal_line_notes') or '').strip()
+                or (line.get('customer_quote_line_notes') or '').strip()
+            )
+            manufacturer = (
+                (line.get('portal_manufacturer') or '').strip()
+                or (line.get('customer_quote_manufacturer') or '').strip()
+            )
+            revision = (
+                (line.get('portal_revision') or '').strip()
+                or (line.get('parts_list_revision') or '').strip()
+            )
+            certs = (
+                (line.get('portal_certs') or '').strip()
+                or (line.get('customer_quote_certs') or '').strip()
+            )
+            status = (line.get('status') or '').strip().lower()
+            quantity = line.get('quantity') or ''
+            lead_days = line.get('quoted_lead_days')
+            currency_code = (line.get('currency_code') or 'GBP').strip()
+            quoted_price = _to_float(line.get('quoted_price'))
+
+            if status == 'no_bid':
+                price_display = 'No Bid'
+            elif quoted_price is not None:
+                price_display = f"{html.escape(currency_code)} {quoted_price:.2f}"
+            else:
+                price_display = '-'
+
+            lead_display = '-' if lead_days in (None, '') else html.escape(str(lead_days))
+            notes_display = html.escape(line_notes) if line_notes else '-'
+            status_display = 'No Bid' if status == 'no_bid' else 'Quoted'
+
+            table_rows.append(f"""
+                <tr>
+                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(str(line.get('line_number') or ''))}</td>
+                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(requested_part_number)}</td>
+                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(quoted_part_number)}</td>
+                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(manufacturer) if manufacturer else '-'}</td>
+                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(revision) if revision else '-'}</td>
+                    <td style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">{html.escape(str(quantity))}</td>
+                    <td style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">{price_display}</td>
+                    <td style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">{lead_display}</td>
+                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(certs) if certs else '-'}</td>
+                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{notes_display}</td>
+                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{status_display}</td>
+                </tr>
+            """)
+
+        lines_table_html = ""
+        if table_rows:
+            lines_table_html = f"""
+                <p><strong>Quoted lines</strong></p>
+                <table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;width:100%;max-width:960px;">
+                    <thead>
+                        <tr style="background:#f8f9fa;">
+                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Line</th>
+                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Requested Part</th>
+                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Quoted Part</th>
+                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Manufacturer</th>
+                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Rev</th>
+                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">Qty</th>
+                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">Unit Price</th>
+                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">Lead Days</th>
+                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Certs</th>
+                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Notes</th>
+                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {''.join(table_rows)}
+                    </tbody>
+                </table>
+            """
+
+        body_html = f"""
+            <p>Hello {html.escape((request_row.get('first_name') or '').strip() or 'there')},</p>
+            <p>Here is an update on your quote request <strong>{html.escape(request_row.get('reference_number') or '')}</strong>.</p>
+            <p>{safe_comment}</p>
+            <hr>
+            <p><strong>Request:</strong> {html.escape(request_row.get('reference_number') or '')}<br>
+            <strong>Customer:</strong> {html.escape(request_row.get('customer_name') or '')}<br>
+            <strong>Your Ref:</strong> {html.escape(request_row.get('customer_reference') or '-')}<br>
+            <strong>Status:</strong> {html.escape((request_row.get('status') or '').title())}</p>
+            {lines_table_html}
+        """
+
+        signature = get_user_default_signature(current_user.id)
+        if signature and signature.get('signature_html'):
+            body_html += signature['signature_html']
+
+        attachments = build_graph_inline_attachments()
+        result = send_graph_email(
+            subject=subject,
+            html_body=body_html,
+            to_emails=[recipient_email],
+            attachments=attachments,
+            user_id=current_user.id,
+        )
+
+        if not result.get('success'):
+            return jsonify({'success': False, 'error': result.get('error', 'Graph send failed')}), 500
+
+        return jsonify({'success': True, 'recipient_email': recipient_email})
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @portal_admin_bp.route('/requests/<int:request_id>/lines/<int:line_id>/load-from-parts-list', methods=['POST'])
@@ -722,6 +1017,7 @@ def load_line_from_parts_list(request_id, line_id):
         line_data = db_execute(f"""
             SELECT 
                 pqrl.base_part_number,
+                pqrl.line_number,
                 pqr.parts_list_id,
                 pll.chosen_price,
                 pll.chosen_lead_days,
@@ -730,7 +1026,7 @@ def load_line_from_parts_list(request_id, line_id):
             FROM portal_quote_request_lines pqrl
             JOIN portal_quote_requests pqr ON pqr.id = pqrl.portal_quote_request_id
             LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pqr.parts_list_id
-                AND pll.base_part_number = pqrl.base_part_number
+                AND pll.line_number = pqrl.line_number
             LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
             WHERE pqrl.id = ? AND pqr.id = ?
         """, (line_id, request_id), fetch='one')
@@ -781,7 +1077,7 @@ def load_all_from_parts_list(request_id):
         rate_column = get_currency_rate_column()
         parts_list_lines = db_execute(f"""
             SELECT 
-                pll.base_part_number, 
+                pll.line_number,
                 pll.chosen_price, 
                 pll.chosen_lead_days, 
                 pll.chosen_currency_id,
@@ -815,14 +1111,14 @@ def load_all_from_parts_list(request_id):
                         quoted_currency_id = ?,
                         status = 'quoted'
                     WHERE portal_quote_request_id = ?
-                    AND base_part_number = ?
+                    AND line_number = ?
                     """,
                     (
                         price_in_base,
                         pll['chosen_lead_days'],
                         base_currency_id,
                         request_id,
-                        pll['base_part_number']
+                        pll['line_number']
                     ),
                 )
 
@@ -844,9 +1140,22 @@ def save_portal_line(request_id, line_id):
         price = data.get('price')
         lead_days = data.get('lead_days')
         currency_id = data.get('currency_id')
+        quantity_raw = data.get('quantity')
+        quoted_part_number = (data.get('quoted_part_number') or '').strip().upper()
+        line_notes = (data.get('line_notes') or '').strip()
+        manufacturer = (data.get('manufacturer') or '').strip()
+        revision = (data.get('revision') or '').strip()
+        certs = (data.get('certs') or '').strip()
+
+        try:
+            quantity = int(quantity_raw)
+        except (TypeError, ValueError):
+            quantity = 0
 
         if not price:
             return jsonify({'success': False, 'error': 'Price required'}), 400
+        if quantity <= 0:
+            return jsonify({'success': False, 'error': 'Quantity must be greater than zero'}), 400
 
         base_currency = _get_base_currency()
         base_currency_id = base_currency.get('id')
@@ -868,23 +1177,75 @@ def save_portal_line(request_id, line_id):
         elif currency_id is None:
             currency_id = base_currency_id
 
+        has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+        has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
+        has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
+        has_revision = _table_has_column('portal_quote_request_lines', 'revision')
+        has_certs = _table_has_column('portal_quote_request_lines', 'certs')
+
         with db_cursor(commit=True) as cur:
+            line_row = _execute_with_cursor(cur, """
+                SELECT pqrl.base_part_number, pqrl.line_number, pqr.parts_list_id
+                FROM portal_quote_request_lines pqrl
+                JOIN portal_quote_requests pqr ON pqr.id = pqrl.portal_quote_request_id
+                WHERE pqrl.id = ? AND pqrl.portal_quote_request_id = ?
+            """, (line_id, request_id)).fetchone()
+
+            if not line_row:
+                return jsonify({'success': False, 'error': 'Line not found'}), 404
+
+            fields = [
+                "quantity = ?",
+                "quoted_price = ?",
+                "quoted_lead_days = ?",
+                "quoted_currency_id = ?",
+                "status = 'quoted'",
+            ]
+            params = [quantity, price_in_base, lead_days, currency_id]
+
+            if has_quoted_part_number:
+                fields.append("quoted_part_number = ?")
+                params.append(quoted_part_number or None)
+            if has_line_notes:
+                fields.append("line_notes = ?")
+                params.append(line_notes or None)
+            if has_manufacturer:
+                fields.append("manufacturer = ?")
+                params.append(manufacturer or None)
+            if has_revision:
+                fields.append("revision = ?")
+                params.append(revision or None)
+            if has_certs:
+                fields.append("certs = ?")
+                params.append(certs or None)
+
+            params.extend([line_id, request_id])
             _execute_with_cursor(
                 cur,
-                """
+                f"""
                 UPDATE portal_quote_request_lines
-                SET quoted_price = ?,
-                    quoted_lead_days = ?,
-                    quoted_currency_id = ?,
-                    status = 'quoted'
+                SET {', '.join(fields)}
                 WHERE id = ?
                 AND portal_quote_request_id = ?
                 """,
-                (price_in_base, lead_days, currency_id, line_id, request_id),
+                params,
             )
 
             if cur.rowcount == 0:
                 return jsonify({'success': False, 'error': 'Line not found'}), 404
+
+            if line_row['parts_list_id']:
+                _execute_with_cursor(
+                    cur,
+                    """
+                    UPDATE parts_list_lines
+                    SET quantity = ?,
+                        chosen_qty = ?
+                    WHERE parts_list_id = ?
+                      AND line_number = ?
+                    """,
+                    (quantity, quantity, line_row['parts_list_id'], line_row['line_number']),
+                )
 
         return jsonify({'success': True})
 
@@ -1012,18 +1373,30 @@ def decline_portal_request(request_id):
 def load_line_from_customer_quote(request_id, line_id):
     """Load pricing from customer_quote_lines (this is the REAL quoted price with margin)"""
     try:
+        has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+        has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
+        has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
+        has_revision = _table_has_column('portal_quote_request_lines', 'revision')
+        has_certs = _table_has_column('portal_quote_request_lines', 'certs')
         base_currency_id = _get_base_currency().get('id')
         line_data = db_execute("""
             SELECT 
                 pqrl.base_part_number,
+                pqrl.line_number,
                 pqr.parts_list_id,
                 cql.quote_price_gbp,
                 pll.chosen_lead_days,
-                ? as currency_id
+                ? as currency_id,
+                cql.line_notes,
+                cql.quoted_part_number,
+                cql.display_part_number,
+                cql.manufacturer,
+                cql.standard_certs,
+                pll.revision
             FROM portal_quote_request_lines pqrl
             JOIN portal_quote_requests pqr ON pqr.id = pqrl.portal_quote_request_id
             LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pqr.parts_list_id
-                AND pll.base_part_number = pqrl.base_part_number
+                AND pll.line_number = pqrl.line_number
             LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
             WHERE pqrl.id = ? AND pqr.id = ?
         """, (base_currency_id, line_id, request_id), fetch='one')
@@ -1033,13 +1406,21 @@ def load_line_from_customer_quote(request_id, line_id):
 
         if not line_data['quote_price_gbp']:
             return jsonify({'success': False, 'error': 'No customer quote price available'}), 400
-
+        quoted_part_number = (
+            (line_data.get('quoted_part_number') or '').strip()
+            or (line_data.get('display_part_number') or '').strip()
+        )
 
         return jsonify({
             'success': True,
             'price': line_data['quote_price_gbp'],
             'lead_days': line_data['chosen_lead_days'],
-            'currency_id': line_data['currency_id']
+            'currency_id': line_data['currency_id'],
+            'line_notes': line_data.get('line_notes') or '',
+            'quoted_part_number': quoted_part_number if has_quoted_part_number else '',
+            'manufacturer': (line_data.get('manufacturer') or '').strip() if has_manufacturer else '',
+            'revision': (line_data.get('revision') or '').strip() if has_revision else '',
+            'certs': (line_data.get('standard_certs') or '').strip() if has_certs else ''
         })
 
     except Exception as e:
@@ -1051,6 +1432,8 @@ def load_line_from_customer_quote(request_id, line_id):
 def load_all_from_customer_quote(request_id):
     """Load ALL quoted prices from customer_quote_lines (the proper way!)"""
     try:
+        has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+        has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
         request_data = db_execute("""
             SELECT parts_list_id FROM portal_quote_requests WHERE id = ?
         """, (request_id,), fetch='one')
@@ -1062,9 +1445,15 @@ def load_all_from_customer_quote(request_id):
 
         quote_lines = db_execute("""
             SELECT 
-                pll.base_part_number,
+                pll.line_number,
                 cql.quote_price_gbp,
-                pll.chosen_lead_days
+                pll.chosen_lead_days,
+                cql.line_notes,
+                cql.quoted_part_number,
+                cql.display_part_number,
+                cql.manufacturer,
+                cql.standard_certs,
+                pll.revision
             FROM customer_quote_lines cql
             JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
             WHERE pll.parts_list_id = ?
@@ -1078,30 +1467,151 @@ def load_all_from_customer_quote(request_id):
         base_currency_id = _get_base_currency().get('id')
         with db_cursor(commit=True) as cur:
             for cql in quote_lines:
+                fields = [
+                    "quoted_price = ?",
+                    "quoted_lead_days = ?",
+                    "quoted_currency_id = ?",
+                    "status = 'quoted'",
+                ]
+                params = [
+                    cql['quote_price_gbp'],
+                    cql['chosen_lead_days'],
+                    base_currency_id,
+                ]
+                if has_line_notes:
+                    fields.append("line_notes = ?")
+                    params.append((cql.get('line_notes') or '').strip() or None)
+                if has_quoted_part_number:
+                    quoted_part_number = (
+                        (cql.get('quoted_part_number') or '').strip()
+                        or (cql.get('display_part_number') or '').strip()
+                    )
+                    fields.append("quoted_part_number = ?")
+                    params.append(quoted_part_number or None)
+                if has_manufacturer:
+                    fields.append("manufacturer = ?")
+                    params.append((cql.get('manufacturer') or '').strip() or None)
+                if has_revision:
+                    fields.append("revision = ?")
+                    params.append((cql.get('revision') or '').strip() or None)
+                if has_certs:
+                    fields.append("certs = ?")
+                    params.append((cql.get('standard_certs') or '').strip() or None)
+
+                params.extend([request_id, cql['line_number']])
                 _execute_with_cursor(
                     cur,
-                    """
+                    f"""
                     UPDATE portal_quote_request_lines
-                    SET quoted_price = ?,
-                        quoted_lead_days = ?,
-                        quoted_currency_id = ?,
-                        status = 'quoted'
+                    SET {', '.join(fields)}
                     WHERE portal_quote_request_id = ?
-                    AND base_part_number = ?
+                    AND line_number = ?
                     """,
-                    (
-                        cql['quote_price_gbp'],
-                        cql['chosen_lead_days'],
-                        base_currency_id,
-                        request_id,
-                        cql['base_part_number']
-                    ),
+                    params,
                 )
 
                 if cur.rowcount > 0:
                     loaded_count += 1
 
         return jsonify({'success': True, 'loaded_count': loaded_count})
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@portal_admin_bp.route('/requests/<int:request_id>/lines/add', methods=['POST'])
+def add_portal_request_line(request_id):
+    """Add a new line to a portal quote request and linked parts list."""
+    try:
+        data = request.get_json() or {}
+        part_number = (data.get('part_number') or '').strip().upper()
+        try:
+            quantity = int(data.get('quantity') or 0)
+        except (TypeError, ValueError):
+            quantity = 0
+
+        if not part_number:
+            return jsonify({'success': False, 'error': 'Part number required'}), 400
+        if quantity <= 0:
+            return jsonify({'success': False, 'error': 'Quantity must be greater than zero'}), 400
+
+        request_row = db_execute("""
+            SELECT id, parts_list_id
+            FROM portal_quote_requests
+            WHERE id = ?
+        """, (request_id,), fetch='one')
+        if not request_row:
+            return jsonify({'success': False, 'error': 'Request not found'}), 404
+
+        has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+        has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
+        has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
+        has_revision = _table_has_column('portal_quote_request_lines', 'revision')
+        has_certs = _table_has_column('portal_quote_request_lines', 'certs')
+        base_part_number = create_base_part_number(part_number)
+
+        with db_cursor(commit=True) as cur:
+            max_line = _execute_with_cursor(cur, """
+                SELECT COALESCE(MAX(line_number), 0) AS max_line_number
+                FROM portal_quote_request_lines
+                WHERE portal_quote_request_id = ?
+            """, (request_id,)).fetchone()
+            next_line_number = int((max_line['max_line_number'] or 0)) + 1
+
+            if request_row.get('parts_list_id'):
+                _execute_with_cursor(
+                    cur,
+                    """
+                    INSERT INTO parts_list_lines
+                    (parts_list_id, line_number, customer_part_number, base_part_number, quantity, chosen_qty)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        request_row['parts_list_id'],
+                        next_line_number,
+                        part_number,
+                        base_part_number,
+                        quantity,
+                        quantity,
+                    ),
+                )
+
+            columns = [
+                "portal_quote_request_id",
+                "line_number",
+                "part_number",
+                "base_part_number",
+                "quantity",
+                "status",
+            ]
+            values = [request_id, next_line_number, part_number, base_part_number, quantity, 'pending']
+            if has_quoted_part_number:
+                columns.append("quoted_part_number")
+                values.append(None)
+            if has_line_notes:
+                columns.append("line_notes")
+                values.append(None)
+            if has_manufacturer:
+                columns.append("manufacturer")
+                values.append(None)
+            if has_revision:
+                columns.append("revision")
+                values.append(None)
+            if has_certs:
+                columns.append("certs")
+                values.append(None)
+
+            placeholders = ", ".join(["?"] * len(values))
+            insert_query = _with_returning_clause(f"""
+                INSERT INTO portal_quote_request_lines
+                ({', '.join(columns)})
+                VALUES ({placeholders})
+            """)
+            _execute_with_cursor(cur, insert_query, tuple(values))
+            line_id = _last_inserted_id(cur)
+
+        return jsonify({'success': True, 'line_id': line_id, 'line_number': next_line_number})
 
     except Exception as e:
         logging.exception(e)

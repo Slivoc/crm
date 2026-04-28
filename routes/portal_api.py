@@ -123,6 +123,7 @@ def _convert_to_base_currency(amount, currency_id=None, currency_code=None, curr
 
 
 _PORTAL_QUOTE_REQUESTS_HAS_CUSTOMER_REFERENCE = None
+_PORTAL_QUOTE_REQUEST_LINES_COLUMN_CACHE = {}
 
 
 def _portal_quote_requests_has_customer_reference():
@@ -153,6 +154,36 @@ def _portal_quote_requests_has_customer_reference():
         has_column = False
 
     _PORTAL_QUOTE_REQUESTS_HAS_CUSTOMER_REFERENCE = has_column
+    return has_column
+
+
+def _table_has_column(table_name, column_name):
+    cache_key = (table_name, column_name)
+    if cache_key in _PORTAL_QUOTE_REQUEST_LINES_COLUMN_CACHE:
+        return _PORTAL_QUOTE_REQUEST_LINES_COLUMN_CACHE[cache_key]
+
+    has_column = False
+    try:
+        if _using_postgres():
+            result = db_execute("""
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = ?
+                  AND column_name = ?
+                LIMIT 1
+            """, (table_name, column_name), fetch='one')
+            has_column = bool(result)
+        else:
+            columns = db_execute(f"PRAGMA table_info({table_name})", fetch='all') or []
+            has_column = any(
+                (col.get('name') if isinstance(col, dict) else col['name']) == column_name
+                for col in columns
+            )
+    except Exception:
+        has_column = False
+
+    _PORTAL_QUOTE_REQUEST_LINES_COLUMN_CACHE[cache_key] = has_column
     return has_column
 
 
@@ -1044,7 +1075,7 @@ def submit_quote_request():
             request_id = request_row['id']
 
             for idx, part in enumerate(parts, 1):
-                part_number = part.get('part_number', '').strip()
+                part_number = (part.get('part_number') or '').strip().upper()
                 if not part_number:
                     continue
 
@@ -1145,13 +1176,33 @@ def get_quote_request_details(request_id):
         if not request_data:
             return jsonify({'success': False, 'error': 'Request not found'}), 404
 
+        has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+        has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
+        has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
+        has_revision = _table_has_column('portal_quote_request_lines', 'revision')
+        has_certs = _table_has_column('portal_quote_request_lines', 'certs')
+        line_notes_select = "pqrl.line_notes," if has_line_notes else "NULL as line_notes,"
+        quoted_part_select = "pqrl.quoted_part_number," if has_quoted_part_number else "NULL as quoted_part_number,"
+        manufacturer_select = "pqrl.manufacturer," if has_manufacturer else "NULL as manufacturer,"
+        revision_select = "pqrl.revision," if has_revision else "NULL as revision,"
+        certs_select = "pqrl.certs," if has_certs else "NULL as certs,"
+
         lines = db_execute(f"""
             SELECT 
                 pqrl.*,
+                {quoted_part_select}
+                {line_notes_select}
+                {manufacturer_select}
+                {revision_select}
+                {certs_select}
                 c.currency_code,
                 c.{rate_column} as currency_rate,
                 cql.display_part_number,
-                cql.quoted_part_number
+                cql.quoted_part_number as customer_quote_quoted_part_number,
+                cql.line_notes as customer_quote_line_notes,
+                cql.manufacturer as customer_quote_manufacturer,
+                cql.standard_certs as customer_quote_certs,
+                pll.revision as parts_list_revision
             FROM portal_quote_request_lines pqrl
             LEFT JOIN currencies c ON c.id = pqrl.quoted_currency_id
             LEFT JOIN parts_list_lines pll
@@ -1166,11 +1217,36 @@ def get_quote_request_details(request_id):
         for line in lines:
             line_dict = dict(line)
             requested_part_number = line_dict.get('part_number')
-            quoted_part_number = line_dict.get('quoted_part_number') or line_dict.get('display_part_number')
+            quoted_part_number = (
+                line_dict.get('quoted_part_number')
+                or line_dict.get('customer_quote_quoted_part_number')
+                or line_dict.get('display_part_number')
+            )
             if quoted_part_number and requested_part_number and quoted_part_number != requested_part_number:
                 line_dict['requested_part_number'] = requested_part_number
                 line_dict['part_number'] = quoted_part_number
                 line_dict['quoted_part_number'] = quoted_part_number
+
+            line_dict['line_notes'] = (
+                line_dict.get('line_notes')
+                or line_dict.get('customer_quote_line_notes')
+                or ''
+            )
+            line_dict['manufacturer'] = (
+                line_dict.get('manufacturer')
+                or line_dict.get('customer_quote_manufacturer')
+                or ''
+            )
+            line_dict['revision'] = (
+                line_dict.get('revision')
+                or line_dict.get('parts_list_revision')
+                or ''
+            )
+            line_dict['certs'] = (
+                line_dict.get('certs')
+                or line_dict.get('customer_quote_certs')
+                or ''
+            )
 
             line_dict['quoted_price'] = _convert_to_base_currency(
                 line_dict.get('quoted_price'),
@@ -1183,6 +1259,11 @@ def get_quote_request_details(request_id):
                 line_dict['quoted_currency_id'] = base_currency_id
             line_dict['currency_code'] = base_currency_code
             line_dict.pop('currency_rate', None)
+            line_dict.pop('customer_quote_line_notes', None)
+            line_dict.pop('customer_quote_quoted_part_number', None)
+            line_dict.pop('customer_quote_manufacturer', None)
+            line_dict.pop('customer_quote_certs', None)
+            line_dict.pop('parts_list_revision', None)
             normalized_lines.append(line_dict)
 
         return jsonify({

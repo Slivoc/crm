@@ -2134,11 +2134,21 @@ CREATE TABLE portal_quote_request_lines (
 
     quantity INTEGER NOT NULL,
 
+    quoted_part_number TEXT,
+
+    manufacturer TEXT,
+
+    revision TEXT,
+
     quoted_price NUMERIC,
 
     quoted_currency_id INTEGER,
 
     quoted_lead_days INTEGER,
+
+    line_notes TEXT,
+
+    certs TEXT,
 
     status TEXT DEFAULT 'pending', -- pending, quoted, no_bid
 
