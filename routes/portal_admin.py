@@ -9,7 +9,7 @@ from models import create_base_part_number, get_base_currency
 from werkzeug.security import generate_password_hash
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, date
 from routes.portal_api import _analyze_quote_internal
 import smtplib
 from email.mime.text import MIMEText
@@ -47,6 +47,32 @@ def _extract_single_value(row):
     if isinstance(row, dict):
         return next(iter(row.values()))
     return row[0]
+
+
+def _coerce_to_date(value):
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        return value.date()
+
+    if isinstance(value, date):
+        return value
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text).date()
+        except ValueError:
+            pass
+        try:
+            return datetime.strptime(text[:10], '%Y-%m-%d').date()
+        except ValueError:
+            return None
+
+    return None
 
 
 def _with_returning_clause(query, returning='id'):
@@ -1161,7 +1187,7 @@ def view_customer_portal_settings(customer_id):
         fetch='one'
     )
 
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = date.today()
 
     pricing_agreements_raw = db_execute("""
         SELECT 
@@ -1179,12 +1205,14 @@ def view_customer_portal_settings(customer_id):
     pricing_agreements = []
     for pricing in pricing_agreements_raw:
         pricing_dict = dict(pricing)
+        valid_from = _coerce_to_date(pricing.get('valid_from'))
+        valid_until = _coerce_to_date(pricing.get('valid_until'))
 
         # Calculate status
         if pricing['is_active']:
-            if pricing['valid_from'] and pricing['valid_from'] > today:
+            if valid_from and valid_from > today:
                 pricing_dict['status'] = 'future'
-            elif pricing['valid_until'] and pricing['valid_until'] < today:
+            elif valid_until and valid_until < today:
                 pricing_dict['status'] = 'expired'
             else:
                 pricing_dict['status'] = 'active'
