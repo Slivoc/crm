@@ -3234,6 +3234,30 @@ def send_email(to_email, subject, html_body, text_body=None):
         logging.exception(f"Failed to send email to {to_email}: {e}")
         return False
 
+
+def get_customer_account_manager(customer_id):
+    """Resolve the assigned salesperson user/email for a customer."""
+    if not customer_id:
+        return None
+
+    customer = db_execute("""
+        SELECT
+            c.id,
+            c.name AS customer_name,
+            c.salesperson_id,
+            s.name AS salesperson_name,
+            u.email AS account_manager_email
+        FROM customers c
+        LEFT JOIN salespeople s ON s.id = c.salesperson_id
+        LEFT JOIN salesperson_user_link sul ON sul.legacy_salesperson_id = c.salesperson_id
+        LEFT JOIN users u ON u.id = sul.user_id
+        WHERE c.id = ?
+        LIMIT 1
+    """, (customer_id,), fetch='one')
+
+    return dict(customer) if customer else None
+
+
 def notify_new_portal_access_request(request_id):
     """Send email notification for a new portal access request."""
     try:
@@ -3306,6 +3330,7 @@ def notify_new_quote_request(request_id):
                 pu.first_name,
                 pu.last_name,
                 c.name as customer_name,
+                c.salesperson_id,
                 (
                     SELECT COUNT(*)
                     FROM portal_quote_request_lines pqrl
@@ -3329,6 +3354,12 @@ def notify_new_quote_request(request_id):
         """, (request_id,), fetch='all') or []
 
         config = get_email_config()
+        account_manager = get_customer_account_manager(req['customer_id'])
+        recipient_email = (
+            (account_manager or {}).get('account_manager_email')
+            or config['notification_email']
+        )
+        account_manager_name = (account_manager or {}).get('salesperson_name') or 'Unassigned'
 
         # Build parts list for email
         parts_list_html = "<ul>"
@@ -3367,6 +3398,10 @@ def notify_new_quote_request(request_id):
                     <td style="padding: 8px;">{req['customer_name']}</td>
                 </tr>
                 <tr>
+                    <td style="padding: 8px; font-weight: bold;">Salesperson:</td>
+                    <td style="padding: 8px;">{account_manager_name}</td>
+                </tr>
+                <tr>
                     <td style="padding: 8px; font-weight: bold;">Submitted By:</td>
                     <td style="padding: 8px;">{req['first_name']} {req['last_name']} ({req['user_email']})</td>
                 </tr>
@@ -3401,6 +3436,7 @@ New Quote Request Received
 
 Reference: {req['reference_number']}
 Customer: {req['customer_name']}
+Salesperson: {account_manager_name}
 Submitted By: {req['first_name']} {req['last_name']} ({req['user_email']})
 Parts Count: {req['line_count']}
 Date: {req['date_submitted']}
@@ -3415,7 +3451,7 @@ View in CRM: http://your-crm-domain.com/portal-admin/requests/{request_id}
 
         # Send email
         return send_email(
-            config['notification_email'],
+            recipient_email,
             f"New Quote Request: {req['reference_number']} - {req['customer_name']}",
             html_body,
             text_body
@@ -3429,20 +3465,7 @@ View in CRM: http://your-crm-domain.com/portal-admin/requests/{request_id}
 def notify_portal_search_to_account_manager(portal_user_id, customer_id, search_type, parts_list, ip_address=None, user_agent=None):
     """Send email notification to the customer's account manager for portal searches."""
     try:
-        customer = db_execute("""
-            SELECT
-                c.id,
-                c.name AS customer_name,
-                c.salesperson_id,
-                s.name AS salesperson_name,
-                u.email AS account_manager_email
-            FROM customers c
-            LEFT JOIN salespeople s ON s.id = c.salesperson_id
-            LEFT JOIN salesperson_user_link sul ON sul.legacy_salesperson_id = c.salesperson_id
-            LEFT JOIN users u ON u.id = sul.user_id
-            WHERE c.id = ?
-            LIMIT 1
-        """, (customer_id,), fetch='one')
+        customer = get_customer_account_manager(customer_id)
 
         if not customer or not customer.get('account_manager_email'):
             return False
@@ -3531,6 +3554,7 @@ def notify_new_pricing_agreement_request(request_id):
                 pu.first_name,
                 pu.last_name,
                 c.name as customer_name,
+                c.salesperson_id,
                 pn.part_number as full_part_number
             FROM portal_pricing_agreement_requests par
             JOIN portal_users pu ON pu.id = par.portal_user_id
@@ -3543,6 +3567,12 @@ def notify_new_pricing_agreement_request(request_id):
             return False
 
         config = get_email_config()
+        account_manager = get_customer_account_manager(req['customer_id'])
+        recipient_email = (
+            (account_manager or {}).get('account_manager_email')
+            or config['notification_email']
+        )
+        account_manager_name = (account_manager or {}).get('salesperson_name') or 'Unassigned'
 
         # FIXED: Check if customer_notes exists and has content
         customer_notes_html = ''
@@ -3563,6 +3593,10 @@ def notify_new_pricing_agreement_request(request_id):
                 <tr>
                     <td style="padding: 8px; font-weight: bold;">Customer:</td>
                     <td style="padding: 8px;">{req['customer_name']}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px; font-weight: bold;">Salesperson:</td>
+                    <td style="padding: 8px;">{account_manager_name}</td>
                 </tr>
                 <tr>
                     <td style="padding: 8px; font-weight: bold;">Requested By:</td>
@@ -3599,6 +3633,7 @@ def notify_new_pricing_agreement_request(request_id):
 New Pricing Agreement Request
 
 Customer: {req['customer_name']}
+Salesperson: {account_manager_name}
 Requested By: {req['first_name']} {req['last_name']} ({req['user_email']})
 Part Number: {req['full_part_number'] or req['base_part_number']}
 Expected Quantity: {req['expected_quantity']}
@@ -3611,7 +3646,7 @@ View in CRM: http://your-crm-domain.com/portal-admin/pricing-agreement-requests
 
         # Send email
         return send_email(
-            config['notification_email'],
+            recipient_email,
             f"Pricing Agreement Request: {req['full_part_number'] or req['base_part_number']} - {req['customer_name']}",
             html_body,
             text_body
