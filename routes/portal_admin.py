@@ -843,11 +843,12 @@ def send_portal_request_update_email(request_id):
         payload = request.get_json(silent=True) or {}
         subject = (payload.get('subject') or '').strip()
         comment = (payload.get('comment') or '').strip()
+        body_html = (payload.get('body_html') or '').strip()
 
         if not subject:
             return jsonify({'success': False, 'error': 'Subject is required'}), 400
-        if not comment:
-            return jsonify({'success': False, 'error': 'Comment is required'}), 400
+        if not comment and not body_html:
+            return jsonify({'success': False, 'error': 'Message or preview body is required'}), 400
 
         has_customer_reference = _table_has_column('portal_quote_requests', 'customer_reference')
         customer_reference_select = (
@@ -928,103 +929,104 @@ def send_portal_request_update_email(request_id):
             ORDER BY pqrl.line_number
         """, (parts_list_id, request_id), fetch='all') or []
 
-        safe_comment = html.escape(comment).replace('\n', '<br>')
-        table_rows = []
-        for raw_line in lines:
-            line = dict(raw_line)
-            requested_part_number = (line.get('part_number') or '').strip()
-            quoted_part_number = (
-                (line.get('portal_quoted_part_number') or '').strip()
-                or (line.get('customer_quote_quoted_part_number') or '').strip()
-                or (line.get('display_part_number') or '').strip()
-                or requested_part_number
-            )
-            line_notes = (
-                (line.get('portal_line_notes') or '').strip()
-                or (line.get('customer_quote_line_notes') or '').strip()
-            )
-            manufacturer = (
-                (line.get('portal_manufacturer') or '').strip()
-                or (line.get('customer_quote_manufacturer') or '').strip()
-            )
-            revision = (
-                (line.get('portal_revision') or '').strip()
-                or (line.get('parts_list_revision') or '').strip()
-            )
-            certs = (
-                (line.get('portal_certs') or '').strip()
-                or (line.get('customer_quote_certs') or '').strip()
-            )
-            status = (line.get('status') or '').strip().lower()
-            quantity = line.get('quantity') or ''
-            lead_days = line.get('quoted_lead_days')
-            currency_code = (line.get('currency_code') or 'GBP').strip()
-            quoted_price = _to_float(line.get('quoted_price'))
+        if not body_html:
+            safe_comment = html.escape(comment).replace('\n', '<br>')
+            table_rows = []
+            for raw_line in lines:
+                line = dict(raw_line)
+                requested_part_number = (line.get('part_number') or '').strip()
+                quoted_part_number = (
+                    (line.get('portal_quoted_part_number') or '').strip()
+                    or (line.get('customer_quote_quoted_part_number') or '').strip()
+                    or (line.get('display_part_number') or '').strip()
+                    or requested_part_number
+                )
+                line_notes = (
+                    (line.get('portal_line_notes') or '').strip()
+                    or (line.get('customer_quote_line_notes') or '').strip()
+                )
+                manufacturer = (
+                    (line.get('portal_manufacturer') or '').strip()
+                    or (line.get('customer_quote_manufacturer') or '').strip()
+                )
+                revision = (
+                    (line.get('portal_revision') or '').strip()
+                    or (line.get('parts_list_revision') or '').strip()
+                )
+                certs = (
+                    (line.get('portal_certs') or '').strip()
+                    or (line.get('customer_quote_certs') or '').strip()
+                )
+                status = (line.get('status') or '').strip().lower()
+                quantity = line.get('quantity') or ''
+                lead_days = line.get('quoted_lead_days')
+                currency_code = (line.get('currency_code') or 'GBP').strip()
+                quoted_price = _to_float(line.get('quoted_price'))
 
-            if status == 'no_bid':
-                price_display = 'No Bid'
-            elif quoted_price is not None:
-                price_display = f"{html.escape(currency_code)} {quoted_price:.2f}"
-            else:
-                price_display = '-'
+                if status == 'no_bid':
+                    price_display = 'No Bid'
+                elif quoted_price is not None:
+                    price_display = f"{html.escape(currency_code)} {quoted_price:.2f}"
+                else:
+                    price_display = '-'
 
-            lead_display = '-' if lead_days in (None, '') else html.escape(str(lead_days))
-            notes_display = html.escape(line_notes) if line_notes else '-'
-            status_display = 'No Bid' if status == 'no_bid' else 'Quoted'
+                lead_display = '-' if lead_days in (None, '') else html.escape(str(lead_days))
+                notes_display = html.escape(line_notes) if line_notes else '-'
+                status_display = 'No Bid' if status == 'no_bid' else 'Quoted'
 
-            table_rows.append(f"""
-                <tr>
-                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(str(line.get('line_number') or ''))}</td>
-                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(requested_part_number)}</td>
-                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(quoted_part_number)}</td>
-                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(manufacturer) if manufacturer else '-'}</td>
-                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(revision) if revision else '-'}</td>
-                    <td style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">{html.escape(str(quantity))}</td>
-                    <td style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">{price_display}</td>
-                    <td style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">{lead_display}</td>
-                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(certs) if certs else '-'}</td>
-                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{notes_display}</td>
-                    <td style="padding:6px 8px;border:1px solid #dee2e6;">{status_display}</td>
-                </tr>
-            """)
+                table_rows.append(f"""
+                    <tr>
+                        <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(str(line.get('line_number') or ''))}</td>
+                        <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(requested_part_number)}</td>
+                        <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(quoted_part_number)}</td>
+                        <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(manufacturer) if manufacturer else '-'}</td>
+                        <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(revision) if revision else '-'}</td>
+                        <td style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">{html.escape(str(quantity))}</td>
+                        <td style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">{price_display}</td>
+                        <td style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">{lead_display}</td>
+                        <td style="padding:6px 8px;border:1px solid #dee2e6;">{html.escape(certs) if certs else '-'}</td>
+                        <td style="padding:6px 8px;border:1px solid #dee2e6;">{notes_display}</td>
+                        <td style="padding:6px 8px;border:1px solid #dee2e6;">{status_display}</td>
+                    </tr>
+                """)
 
-        lines_table_html = ""
-        if table_rows:
-            lines_table_html = f"""
-                <p><strong>Quoted lines</strong></p>
-                <table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;width:100%;max-width:960px;">
-                    <thead>
-                        <tr style="background:#f8f9fa;">
-                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Line</th>
-                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Requested Part</th>
-                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Quoted Part</th>
-                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Manufacturer</th>
-                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Rev</th>
-                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">Qty</th>
-                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">Unit Price</th>
-                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">Lead Days</th>
-                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Certs</th>
-                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Notes</th>
-                            <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {''.join(table_rows)}
-                    </tbody>
-                </table>
+            lines_table_html = ""
+            if table_rows:
+                lines_table_html = f"""
+                    <p><strong>Quoted lines</strong></p>
+                    <table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;width:100%;max-width:960px;">
+                        <thead>
+                            <tr style="background:#f8f9fa;">
+                                <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Line</th>
+                                <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Requested Part</th>
+                                <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Quoted Part</th>
+                                <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Manufacturer</th>
+                                <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Rev</th>
+                                <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">Qty</th>
+                                <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">Unit Price</th>
+                                <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:right;">Lead Days</th>
+                                <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Certs</th>
+                                <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Notes</th>
+                                <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:left;">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join(table_rows)}
+                        </tbody>
+                    </table>
+                """
+
+            body_html = f"""
+                <p>Hello {html.escape((request_row.get('first_name') or '').strip() or 'there')},</p>
+                <p>Here is an update on your quote request <strong>{html.escape(request_row.get('reference_number') or '')}</strong>.</p>
+                <p>{safe_comment}</p>
+                <hr>
+                <p><strong>Request:</strong> {html.escape(request_row.get('reference_number') or '')}<br>
+                <strong>Customer:</strong> {html.escape(request_row.get('customer_name') or '')}<br>
+                <strong>Your Ref:</strong> {html.escape(request_row.get('customer_reference') or '-')}<br>
+                <strong>Status:</strong> {html.escape((request_row.get('status') or '').title())}</p>
+                {lines_table_html}
             """
-
-        body_html = f"""
-            <p>Hello {html.escape((request_row.get('first_name') or '').strip() or 'there')},</p>
-            <p>Here is an update on your quote request <strong>{html.escape(request_row.get('reference_number') or '')}</strong>.</p>
-            <p>{safe_comment}</p>
-            <hr>
-            <p><strong>Request:</strong> {html.escape(request_row.get('reference_number') or '')}<br>
-            <strong>Customer:</strong> {html.escape(request_row.get('customer_name') or '')}<br>
-            <strong>Your Ref:</strong> {html.escape(request_row.get('customer_reference') or '-')}<br>
-            <strong>Status:</strong> {html.escape((request_row.get('status') or '').title())}</p>
-            {lines_table_html}
-        """
 
         signature = get_user_default_signature(current_user.id)
         if signature and signature.get('signature_html'):

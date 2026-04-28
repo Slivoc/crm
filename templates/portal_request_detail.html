@@ -3,6 +3,59 @@
 {% block title %}{{ request.reference_number }}{% endblock %}
 
 {% block content %}
+<style>
+.portal-email-modal .modal-dialog {
+    max-width: 1400px;
+}
+
+.portal-email-editor-wrap,
+.portal-email-preview-wrap {
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    background: #fff;
+}
+
+.portal-email-editor-scroll,
+.portal-email-preview-scroll,
+.portal-email-column-list {
+    overflow: auto;
+}
+
+.portal-email-editor-scroll {
+    max-height: 45vh;
+}
+
+.portal-email-preview-scroll {
+    max-height: 38vh;
+    background: #f8f9fa;
+}
+
+.portal-email-column-list {
+    max-height: 220px;
+    background: #f8f9fa;
+}
+
+#portalEmailEditorTable th {
+    position: sticky;
+    top: 0;
+    background: #f8f9fa;
+    z-index: 1;
+}
+
+#portalEmailEditorTable input,
+#portalEmailEditorTable select,
+#portalEmailEditorTable textarea {
+    min-width: 90px;
+}
+
+#portalEmailEditorTable textarea {
+    min-width: 180px;
+}
+
+#portalEmailPreviewBody table {
+    min-width: 900px;
+}
+</style>
 <div class="container-fluid mt-4">
 
 
@@ -363,8 +416,8 @@
     </div>
 </div>
 
-<div class="modal fade" id="sendUpdateEmailModal" tabindex="-1" aria-labelledby="sendUpdateEmailLabel" aria-hidden="true">
-    <div class="modal-dialog">
+<div class="modal fade portal-email-modal" id="sendUpdateEmailModal" tabindex="-1" aria-labelledby="sendUpdateEmailLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="sendUpdateEmailLabel">Send Update Email</h5>
@@ -390,10 +443,108 @@
                     <input type="text" class="form-control" id="updateEmailSubject" value="Update on quote request {{ request.reference_number }}">
                 </div>
                 <div class="mb-3">
-                    <label for="updateEmailComment" class="form-label">Comment</label>
-                    <textarea class="form-control" id="updateEmailComment" rows="6" placeholder="Write the update you want to send to the customer."></textarea>
+                    <label for="updateEmailComment" class="form-label">Message</label>
+                    <textarea class="form-control" id="updateEmailComment" rows="5" placeholder="Write the update you want to send to the customer."></textarea>
+                    <div class="form-text">This appears above the quote table in the email.</div>
                 </div>
-                <div class="small text-muted" id="updateEmailFeedback"></div>
+
+                <div class="row g-3">
+                    <div class="col-xl-8">
+                        <div class="portal-email-editor-wrap">
+                            <div class="d-flex justify-content-between align-items-center px-3 py-2 border-bottom">
+                                <div>
+                                    <strong>Quoted Lines</strong>
+                                    <div class="small text-muted">Edit the values you want shown in the email table. These changes update the page fields, but are only persisted when you save the line.</div>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshPortalEmailPreviewBtn">
+                                    <i class="fas fa-sync"></i> Refresh Preview
+                                </button>
+                            </div>
+                            <div class="portal-email-editor-scroll">
+                                <table class="table table-sm table-bordered mb-0" id="portalEmailEditorTable">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 60px;">Line</th>
+                                            <th style="width: 180px;">Requested Part</th>
+                                            <th style="width: 180px;">Quoted Part</th>
+                                            <th style="width: 150px;">Manufacturer</th>
+                                            <th style="width: 90px;">Rev</th>
+                                            <th style="width: 90px;">Qty</th>
+                                            <th style="width: 130px;">Unit Price</th>
+                                            <th style="width: 100px;">Lead Days</th>
+                                            <th style="width: 100px;">Currency</th>
+                                            <th style="width: 150px;">Certs</th>
+                                            <th style="width: 220px;">Notes</th>
+                                            <th style="width: 110px;">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="portalEmailEditorBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-4">
+                        <label class="form-label fw-bold">Include Columns</label>
+                        <div class="portal-email-column-list border rounded p-2 mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input portal-email-col-check" type="checkbox" id="portal-col-line" value="line" checked>
+                                <label class="form-check-label" for="portal-col-line">Line</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input portal-email-col-check" type="checkbox" id="portal-col-requested-part" value="requested_part" checked>
+                                <label class="form-check-label" for="portal-col-requested-part">Requested Part</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input portal-email-col-check" type="checkbox" id="portal-col-quoted-part" value="quoted_part" checked>
+                                <label class="form-check-label" for="portal-col-quoted-part">Quoted Part</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input portal-email-col-check" type="checkbox" id="portal-col-manufacturer" value="manufacturer" checked>
+                                <label class="form-check-label" for="portal-col-manufacturer">Manufacturer</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input portal-email-col-check" type="checkbox" id="portal-col-revision" value="revision" checked>
+                                <label class="form-check-label" for="portal-col-revision">Rev</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input portal-email-col-check" type="checkbox" id="portal-col-qty" value="qty" checked>
+                                <label class="form-check-label" for="portal-col-qty">Qty</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input portal-email-col-check" type="checkbox" id="portal-col-unit-price" value="unit_price" checked>
+                                <label class="form-check-label" for="portal-col-unit-price">Unit Price</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input portal-email-col-check" type="checkbox" id="portal-col-lead-days" value="lead_days" checked>
+                                <label class="form-check-label" for="portal-col-lead-days">Lead Days</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input portal-email-col-check" type="checkbox" id="portal-col-certs" value="certs" checked>
+                                <label class="form-check-label" for="portal-col-certs">Certs</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input portal-email-col-check" type="checkbox" id="portal-col-notes" value="notes" checked>
+                                <label class="form-check-label" for="portal-col-notes">Notes</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input portal-email-col-check" type="checkbox" id="portal-col-status" value="status" checked>
+                                <label class="form-check-label" for="portal-col-status">Status</label>
+                            </div>
+                        </div>
+                        <div class="alert alert-info small mb-0">
+                            The preview below is the exact table that will be sent.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-3">
+                    <label class="form-label fw-bold">Preview</label>
+                    <div class="portal-email-preview-wrap">
+                        <div class="portal-email-preview-scroll p-3" id="portalEmailPreviewBody"></div>
+                    </div>
+                </div>
+
+                <div class="small text-muted mt-2" id="updateEmailFeedback"></div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
@@ -407,6 +558,279 @@
 
 <script>
 const requestId = {{ request.id }};
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function escapeAttr(value) {
+    return escapeHtml(value);
+}
+
+function formatPortalEmailMessageHtml(text) {
+    const escaped = escapeHtml(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    return escaped.split('\n').join('<br>');
+}
+
+function getMainLineRow(lineId) {
+    return document.querySelector(`#quoteTable tbody tr[data-line-id="${lineId}"]`);
+}
+
+function getMainLineStatus(lineId) {
+    const badge = document.getElementById(`status_badge_${lineId}`);
+    const statusText = (badge?.textContent || '').trim().toLowerCase();
+    if (statusText === 'no bid') return 'no_bid';
+    if (statusText === 'quoted') return 'quoted';
+    return 'pending';
+}
+
+function setMainLineStatusUi(lineId, status) {
+    updateStatusBadge(lineId, status);
+    const disabled = status === 'no_bid';
+    const priceInput = document.getElementById(`price_${lineId}`);
+    const leadInput = document.getElementById(`lead_${lineId}`);
+    const currencySelect = document.getElementById(`currency_${lineId}`);
+    if (priceInput) priceInput.disabled = disabled;
+    if (leadInput) leadInput.disabled = disabled;
+    if (currencySelect) currencySelect.disabled = disabled;
+
+    const btn = document.getElementById(`nobid_btn_${lineId}`);
+    if (btn) {
+        if (disabled) {
+            btn.innerHTML = '<i class="fas fa-undo"></i>';
+            btn.classList.remove('btn-secondary');
+            btn.classList.add('btn-warning');
+        } else {
+            btn.innerHTML = 'No Bid';
+            btn.classList.remove('btn-warning');
+            btn.classList.add('btn-secondary');
+        }
+    }
+}
+
+function getPortalEmailLinesFromPage() {
+    return Array.from(document.querySelectorAll('#quoteTable tbody tr[data-line-id]')).map(row => {
+        const lineId = row.dataset.lineId;
+        const currencySelect = document.getElementById(`currency_${lineId}`);
+        return {
+            lineId,
+            lineNumber: row.children[0]?.textContent.trim() || '',
+            requestedPart: row.children[1]?.textContent.trim() || '',
+            quotedPart: document.getElementById(`quoted_part_${lineId}`)?.value.trim() || '',
+            manufacturer: document.getElementById(`manufacturer_${lineId}`)?.value.trim() || '',
+            revision: document.getElementById(`revision_${lineId}`)?.value.trim() || '',
+            qty: document.getElementById(`qty_${lineId}`)?.value.trim() || '',
+            unitPrice: document.getElementById(`price_${lineId}`)?.value.trim() || '',
+            leadDays: document.getElementById(`lead_${lineId}`)?.value.trim() || '',
+            currencyCode: currencySelect?.selectedOptions?.[0]?.textContent.trim() || 'GBP',
+            currencyId: currencySelect?.value || '',
+            certs: document.getElementById(`certs_${lineId}`)?.value.trim() || '',
+            notes: document.getElementById(`notes_${lineId}`)?.value.trim() || '',
+            status: getMainLineStatus(lineId)
+        };
+    });
+}
+
+function renderPortalEmailEditorTable() {
+    const body = document.getElementById('portalEmailEditorBody');
+    if (!body) return;
+
+    const lines = getPortalEmailLinesFromPage();
+    body.innerHTML = lines.map(line => `
+        <tr data-line-id="${escapeAttr(line.lineId)}">
+            <td>${escapeHtml(line.lineNumber)}</td>
+            <td>${escapeHtml(line.requestedPart)}</td>
+            <td><input type="text" class="form-control form-control-sm portal-email-edit" data-field="quotedPart" value="${escapeAttr(line.quotedPart)}"></td>
+            <td><input type="text" class="form-control form-control-sm portal-email-edit" data-field="manufacturer" value="${escapeAttr(line.manufacturer)}"></td>
+            <td><input type="text" class="form-control form-control-sm portal-email-edit text-uppercase" data-field="revision" value="${escapeAttr(line.revision)}"></td>
+            <td><input type="number" class="form-control form-control-sm portal-email-edit" data-field="qty" min="1" value="${escapeAttr(line.qty)}"></td>
+            <td><input type="number" class="form-control form-control-sm portal-email-edit" data-field="unitPrice" step="0.01" min="0" value="${escapeAttr(line.unitPrice)}"></td>
+            <td><input type="number" class="form-control form-control-sm portal-email-edit" data-field="leadDays" step="1" min="0" value="${escapeAttr(line.leadDays)}"></td>
+            <td><input type="text" class="form-control form-control-sm portal-email-edit" data-field="currencyCode" value="${escapeAttr(line.currencyCode)}"></td>
+            <td><input type="text" class="form-control form-control-sm portal-email-edit" data-field="certs" value="${escapeAttr(line.certs)}"></td>
+            <td><textarea class="form-control form-control-sm portal-email-edit" data-field="notes" rows="2">${escapeHtml(line.notes)}</textarea></td>
+            <td>
+                <select class="form-select form-select-sm portal-email-edit" data-field="status">
+                    <option value="pending" ${line.status === 'pending' ? 'selected' : ''}>Pending</option>
+                    <option value="quoted" ${line.status === 'quoted' ? 'selected' : ''}>Quoted</option>
+                    <option value="no_bid" ${line.status === 'no_bid' ? 'selected' : ''}>No Bid</option>
+                </select>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function syncModalRowToMain(modalRow) {
+    const lineId = modalRow.dataset.lineId;
+    const field = name => modalRow.querySelector(`[data-field="${name}"]`);
+    const quotedPart = field('quotedPart')?.value.trim().toUpperCase() || '';
+    const manufacturer = field('manufacturer')?.value.trim() || '';
+    const revision = field('revision')?.value.trim().toUpperCase() || '';
+    const qty = field('qty')?.value.trim() || '';
+    const unitPrice = field('unitPrice')?.value.trim() || '';
+    const leadDays = field('leadDays')?.value.trim() || '';
+    const certs = field('certs')?.value.trim() || '';
+    const notes = field('notes')?.value.trim() || '';
+    const status = field('status')?.value || 'pending';
+
+    const quotedPartInput = document.getElementById(`quoted_part_${lineId}`);
+    const manufacturerInput = document.getElementById(`manufacturer_${lineId}`);
+    const revisionInput = document.getElementById(`revision_${lineId}`);
+    const qtyInput = document.getElementById(`qty_${lineId}`);
+    const priceInput = document.getElementById(`price_${lineId}`);
+    const leadInput = document.getElementById(`lead_${lineId}`);
+    const certsInput = document.getElementById(`certs_${lineId}`);
+    const notesInput = document.getElementById(`notes_${lineId}`);
+
+    if (quotedPartInput) quotedPartInput.value = quotedPart;
+    if (manufacturerInput) manufacturerInput.value = manufacturer;
+    if (revisionInput) revisionInput.value = revision;
+    if (qtyInput) qtyInput.value = qty;
+    if (priceInput) priceInput.value = status === 'no_bid' ? '' : unitPrice;
+    if (leadInput) leadInput.value = status === 'no_bid' ? '' : leadDays;
+    if (certsInput) certsInput.value = certs;
+    if (notesInput) notesInput.value = notes;
+
+    setMainLineStatusUi(lineId, status);
+}
+
+function syncAllPortalEmailEditsToMain() {
+    document.querySelectorAll('#portalEmailEditorBody tr[data-line-id]').forEach(syncModalRowToMain);
+}
+
+function getPortalEmailEditorLines() {
+    syncAllPortalEmailEditsToMain();
+    return Array.from(document.querySelectorAll('#portalEmailEditorBody tr[data-line-id]')).map(row => {
+        const field = name => row.querySelector(`[data-field="${name}"]`);
+        return {
+            lineId: row.dataset.lineId,
+            lineNumber: row.children[0]?.textContent.trim() || '',
+            requestedPart: row.children[1]?.textContent.trim() || '',
+            quotedPart: field('quotedPart')?.value.trim().toUpperCase() || '',
+            manufacturer: field('manufacturer')?.value.trim() || '',
+            revision: field('revision')?.value.trim().toUpperCase() || '',
+            qty: field('qty')?.value.trim() || '',
+            unitPrice: field('unitPrice')?.value.trim() || '',
+            leadDays: field('leadDays')?.value.trim() || '',
+            currencyCode: field('currencyCode')?.value.trim() || 'GBP',
+            certs: field('certs')?.value.trim() || '',
+            notes: field('notes')?.value.trim() || '',
+            status: field('status')?.value || 'pending'
+        };
+    });
+}
+
+function getSelectedPortalEmailColumns() {
+    return Array.from(document.querySelectorAll('.portal-email-col-check:checked')).map(el => el.value);
+}
+
+function buildPortalEmailTableHtml() {
+    const selectedColumns = getSelectedPortalEmailColumns();
+    const columnDefinitions = [
+        { key: 'line', label: 'Line', align: 'left', value: line => line.lineNumber || '-' },
+        { key: 'requested_part', label: 'Requested Part', align: 'left', value: line => line.requestedPart || '-' },
+        { key: 'quoted_part', label: 'Quoted Part', align: 'left', value: line => line.quotedPart || line.requestedPart || '-' },
+        { key: 'manufacturer', label: 'Manufacturer', align: 'left', value: line => line.manufacturer || '-' },
+        { key: 'revision', label: 'Rev', align: 'left', value: line => line.revision || '-' },
+        { key: 'qty', label: 'Qty', align: 'right', value: line => line.qty || '-' },
+        { key: 'unit_price', label: 'Unit Price', align: 'right', value: line => line.status === 'no_bid' ? 'No Bid' : (line.unitPrice ? `${line.currencyCode || 'GBP'} ${Number(line.unitPrice).toFixed(2)}` : '-') },
+        { key: 'lead_days', label: 'Lead Days', align: 'right', value: line => line.status === 'no_bid' ? '-' : (line.leadDays || '-') },
+        { key: 'certs', label: 'Certs', align: 'left', value: line => line.certs || '-' },
+        { key: 'notes', label: 'Notes', align: 'left', value: line => line.notes || '-' },
+        { key: 'status', label: 'Status', align: 'left', value: line => line.status === 'no_bid' ? 'No Bid' : (line.status === 'quoted' ? 'Quoted' : 'Pending') }
+    ];
+
+    const activeColumns = columnDefinitions.filter(col => selectedColumns.includes(col.key));
+    const lines = getPortalEmailEditorLines();
+
+    const headerHtml = activeColumns.map(col => `
+        <th style="padding:6px 8px;border:1px solid #dee2e6;text-align:${col.align};background:#f8f9fa;">
+            ${escapeHtml(col.label)}
+        </th>
+    `).join('');
+
+    const rowHtml = lines.map(line => `
+        <tr>
+            ${activeColumns.map(col => `
+                <td style="padding:6px 8px;border:1px solid #dee2e6;text-align:${col.align};">
+                    ${escapeHtml(col.value(line))}
+                </td>
+            `).join('')}
+        </tr>
+    `).join('');
+
+    return `
+        <table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;width:100%;max-width:1200px;">
+            <thead><tr>${headerHtml}</tr></thead>
+            <tbody>${rowHtml}</tbody>
+        </table>
+    `;
+}
+
+function buildPortalEmailBodyHtml() {
+    const comment = document.getElementById('updateEmailComment')?.value.trim() || '';
+    const customerName = {{ request.customer_name | tojson }};
+    const referenceNumber = {{ request.reference_number | tojson }};
+    const customerReference = {{ (request.customer_reference or '-') | tojson }};
+    const requestStatus = {{ (request.status | title) | tojson }};
+
+    return `
+        <p>Hello ${escapeHtml(({{ request.first_name | tojson }} || 'there'))},</p>
+        <p>Here is an update on your quote request <strong>${escapeHtml(referenceNumber)}</strong>.</p>
+        ${comment ? `<p>${formatPortalEmailMessageHtml(comment)}</p>` : ''}
+        <hr>
+        <p>
+            <strong>Request:</strong> ${escapeHtml(referenceNumber)}<br>
+            <strong>Customer:</strong> ${escapeHtml(customerName)}<br>
+            <strong>Your Ref:</strong> ${escapeHtml(customerReference)}<br>
+            <strong>Status:</strong> ${escapeHtml(requestStatus)}
+        </p>
+        <p><strong>Quoted lines</strong></p>
+        ${buildPortalEmailTableHtml()}
+    `;
+}
+
+function refreshPortalEmailPreview() {
+    const preview = document.getElementById('portalEmailPreviewBody');
+    if (!preview) return;
+    preview.innerHTML = buildPortalEmailBodyHtml();
+}
+
+function initializePortalEmailModal() {
+    renderPortalEmailEditorTable();
+    refreshPortalEmailPreview();
+}
+
+const sendUpdateEmailModalEl = document.getElementById('sendUpdateEmailModal');
+if (sendUpdateEmailModalEl) {
+    sendUpdateEmailModalEl.addEventListener('show.bs.modal', initializePortalEmailModal);
+}
+
+document.getElementById('refreshPortalEmailPreviewBtn')?.addEventListener('click', refreshPortalEmailPreview);
+document.querySelectorAll('.portal-email-col-check').forEach(el => {
+    el.addEventListener('change', refreshPortalEmailPreview);
+});
+
+document.getElementById('portalEmailEditorBody')?.addEventListener('input', (event) => {
+    const row = event.target.closest('tr[data-line-id]');
+    if (!row) return;
+    syncModalRowToMain(row);
+    refreshPortalEmailPreview();
+});
+
+document.getElementById('portalEmailEditorBody')?.addEventListener('change', (event) => {
+    const row = event.target.closest('tr[data-line-id]');
+    if (!row) return;
+    syncModalRowToMain(row);
+    refreshPortalEmailPreview();
+});
+
+document.getElementById('updateEmailComment')?.addEventListener('input', refreshPortalEmailPreview);
 
 // Load price/lead time from parts list for a single line
 async function loadFromPartsList(lineId) {
@@ -741,17 +1165,13 @@ async function addLine() {
 async function sendUpdateEmail() {
     const subject = document.getElementById('updateEmailSubject').value.trim();
     const comment = document.getElementById('updateEmailComment').value.trim();
+    const bodyHtml = buildPortalEmailBodyHtml();
     const feedback = document.getElementById('updateEmailFeedback');
     const button = document.getElementById('sendUpdateEmailBtn');
     const originalHtml = button.innerHTML;
 
     if (!subject) {
         feedback.textContent = 'Subject is required.';
-        feedback.className = 'small text-danger';
-        return;
-    }
-    if (!comment) {
-        feedback.textContent = 'Comment is required.';
         feedback.className = 'small text-danger';
         return;
     }
@@ -764,7 +1184,7 @@ async function sendUpdateEmail() {
         const response = await fetch(`/portal-admin/requests/${requestId}/send-update-email`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ subject, comment })
+            body: JSON.stringify({ subject, comment, body_html: bodyHtml })
         });
         const result = await response.json();
 
