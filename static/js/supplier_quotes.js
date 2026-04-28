@@ -7,6 +7,7 @@ let showSentOnly = false;
 let partNumberFilterValue = '';
 let emailedSuppliersCache = null;
 let activePdfPreviewUrl = null;
+let latestExtractionMatchDebug = null;
 
 function getPdfPreviewElements() {
     return {
@@ -346,10 +347,25 @@ function ensureQuoteLinesToolbar(container) {
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="clear-part-filter-btn">
                     <i class="bi bi-eraser me-1"></i>Clear Part Filter
                 </button>
+                <button type="button" class="btn btn-sm btn-outline-dark" id="toggle-match-debug-btn">
+                    <i class="bi bi-bug me-1"></i>Match Debug
+                </button>
             </div>
             <small class="text-muted" id="quote-filter-indicator" style="display:none;">Filters active</small>
         `;
         parent.insertBefore(toolbar, target);
+        const debugPanel = document.createElement('div');
+        debugPanel.id = 'quote-match-debug-panel';
+        debugPanel.className = 'px-3 py-2 border-bottom bg-light';
+        debugPanel.style.display = 'none';
+        debugPanel.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center">
+                <strong class="small">Extraction Match Debug</strong>
+                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" id="clear-match-debug-btn">Clear</button>
+            </div>
+            <pre id="quote-match-debug-output" class="mb-0 mt-2 small" style="white-space: pre-wrap; max-height: 220px; overflow: auto;">No extraction debug data yet.</pre>
+        `;
+        parent.insertBefore(debugPanel, target);
 
         document.getElementById('toggle-sent-filter-btn').addEventListener('click', function() {
             showSentOnly = !showSentOnly;
@@ -364,6 +380,20 @@ function ensureQuoteLinesToolbar(container) {
             if (input) input.value = '';
             applyVisibilityFilters();
         });
+
+        document.getElementById('toggle-match-debug-btn').addEventListener('click', function() {
+            const panel = document.getElementById('quote-match-debug-panel');
+            if (!panel) return;
+            const showing = panel.style.display !== 'none';
+            panel.style.display = showing ? 'none' : 'block';
+            this.classList.toggle('btn-dark', !showing);
+            this.classList.toggle('btn-outline-dark', showing);
+        });
+
+        document.getElementById('clear-match-debug-btn').addEventListener('click', function() {
+            latestExtractionMatchDebug = null;
+            renderExtractionMatchDebug();
+        });
     }
 
     const toggleBtn = document.getElementById('toggle-sent-filter-btn');
@@ -371,6 +401,35 @@ function ensureQuoteLinesToolbar(container) {
         toggleBtn.classList.toggle('btn-info', showSentOnly);
         toggleBtn.classList.toggle('btn-outline-info', !showSentOnly);
     }
+
+    renderExtractionMatchDebug();
+}
+
+function renderExtractionMatchDebug() {
+    const output = document.getElementById('quote-match-debug-output');
+    if (!output) return;
+
+    if (!latestExtractionMatchDebug) {
+        output.textContent = 'No extraction debug data yet.';
+        return;
+    }
+
+    const lines = [];
+    lines.push(`run_at=${latestExtractionMatchDebug.runAt}`);
+    lines.push(`extracted_lines=${latestExtractionMatchDebug.extractedLines}, matched=${latestExtractionMatchDebug.matchedCount}, unmatched=${latestExtractionMatchDebug.unmatchedCount}`);
+    lines.push(`auto_match_threshold=${latestExtractionMatchDebug.threshold}`);
+
+    latestExtractionMatchDebug.entries.forEach((entry, idx) => {
+        lines.push('');
+        lines.push(`[${idx + 1}] requested="${entry.requestedPN || ''}" quoted="${entry.quotedPN || ''}"`);
+        lines.push(`  strategy=${entry.strategy}, selected_row=${entry.selectedRow}, selected_score=${entry.selectedScore}`);
+        lines.push(`  exact_requested_row=${entry.exactRequestedRow}, exact_quoted_row=${entry.exactQuotedRow}`);
+        if (Array.isArray(entry.topCandidates) && entry.topCandidates.length > 0) {
+            lines.push(`  top_candidates=${entry.topCandidates.join(' | ')}`);
+        }
+    });
+
+    output.textContent = lines.join('\n');
 }
 
 function applyVisibilityFilters() {
@@ -577,6 +636,7 @@ function showQuoteInputView(quoteId = null) {
     currentSupplierId = window.PRESELECTED_SUPPLIER_ID || null;
     showSentOnly = false;
     partNumberFilterValue = '';
+    latestExtractionMatchDebug = null;
 
     document.getElementById('quotes-list-view').style.display = 'none';
     document.getElementById('quote-input-view').style.display = 'block';
@@ -616,6 +676,8 @@ function showQuotesListView() {
         quoteLinesTable.destroy();
         quoteLinesTable = null;
     }
+    latestExtractionMatchDebug = null;
+    renderExtractionMatchDebug();
 
     loadSupplierQuotes();
 }
@@ -1179,35 +1241,91 @@ function applyExtractedDataToTable(extractedLines) {
 
     let matchedCount = 0;
     const unmatched = [];
+    const debugEntries = [];
 
     extractedLines.forEach(extracted => {
         // Use match_part_number if available (the original/requested part number before substitution)
         // Otherwise fall back to part_number
         const matchPN = extracted.match_part_number || extracted.part_number || '';
         const quotedPN = extracted.part_number || '';
+        const normalizedMatchPN = normalizePN(matchPN);
+        const normalizedQuotedPN = normalizePN(quotedPN);
 
-        if (!matchPN && !quotedPN) {
+        if (!normalizedMatchPN && !normalizedQuotedPN) {
             unmatched.push('(no part number)');
             return;
         }
 
+        const exactMatchIndex = normalizedMatchPN
+            ? quoteLinesData.findIndex(line => normalizePN(line.customer_part_number || '') === normalizedMatchPN)
+            : -1;
+        const exactQuotedIndex = normalizedQuotedPN
+            ? quoteLinesData.findIndex(line => normalizePN(line.customer_part_number || '') === normalizedQuotedPN)
+            : -1;
+
         let bestIndex = -1;
         let bestScore = 0;
+        let bestStrategy = 'none';
+        const candidateScores = [];
 
-        for (let i = 0; i < quoteLinesData.length; i++) {
-            const line = quoteLinesData[i];
-            const candidatePN = line.customer_part_number || '';
+        // If the quoted PN exactly matches a row and points to a different row than match_part_number,
+        // prefer the quoted part number row. This avoids mis-applying when extraction includes
+        // "requested PN" and "quoted as" values that both exist in the list.
+        if (
+            exactQuotedIndex !== -1 &&
+            exactQuotedIndex !== exactMatchIndex &&
+            normalizedQuotedPN &&
+            normalizedMatchPN &&
+            normalizedQuotedPN !== normalizedMatchPN
+        ) {
+            bestIndex = exactQuotedIndex;
+            bestScore = 1;
+            bestStrategy = 'exact_quoted_override';
+        } else {
+            for (let i = 0; i < quoteLinesData.length; i++) {
+                const line = quoteLinesData[i];
+                const candidatePN = line.customer_part_number || '';
 
-            if (!candidatePN) continue;
+                if (!candidatePN) continue;
 
-            // Match against the original/requested part number, not the quoted one
-            const score = pnSimilarity(candidatePN, matchPN);
+                // Primary match against the original/requested part number.
+                const requestedScore = pnSimilarity(candidatePN, matchPN);
+                // If requested PN is weak/missing, allow the quoted PN to guide matching.
+                const quotedScore = pnSimilarity(candidatePN, quotedPN);
+                const score = Math.max(requestedScore, quotedScore);
+                candidateScores.push({
+                    row: i,
+                    pn: candidatePN,
+                    requestedScore,
+                    quotedScore,
+                    score
+                });
 
-            if (score > bestScore) {
-                bestScore = score;
-                bestIndex = i;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestIndex = i;
+                    bestStrategy = quotedScore > requestedScore ? 'fuzzy_quoted' : 'fuzzy_requested';
+                }
             }
         }
+
+        const topCandidates = candidateScores
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 3)
+            .map(candidate =>
+                `r${candidate.row}:${candidate.pn}:score=${candidate.score.toFixed(2)}(req=${candidate.requestedScore.toFixed(2)},quoted=${candidate.quotedScore.toFixed(2)})`
+            );
+
+        debugEntries.push({
+            requestedPN: matchPN,
+            quotedPN,
+            exactRequestedRow: exactMatchIndex,
+            exactQuotedRow: exactQuotedIndex,
+            strategy: bestStrategy,
+            selectedRow: bestIndex,
+            selectedScore: bestScore.toFixed(2),
+            topCandidates
+        });
 
         if (bestIndex !== -1 && bestScore >= AUTO_MATCH_THRESHOLD) {
             matchedCount++;
@@ -1238,6 +1356,15 @@ function applyExtractedDataToTable(extractedLines) {
     });
 
     console.log(`Matched ${matchedCount} line(s). Unmatched:`, unmatched);
+    latestExtractionMatchDebug = {
+        runAt: new Date().toISOString(),
+        threshold: AUTO_MATCH_THRESHOLD.toFixed(2),
+        extractedLines: extractedLines.length,
+        matchedCount,
+        unmatchedCount: unmatched.length,
+        entries: debugEntries
+    };
+    renderExtractionMatchDebug();
 
     if (matchedCount === 0) {
         showToast('No extracted lines could be confidently matched to your parts list.', 'warning');
