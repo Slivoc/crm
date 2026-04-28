@@ -97,6 +97,21 @@ def _to_float(value):
         return None
 
 
+def _get_portal_request_for_parts_list(list_id):
+    row = db_execute(
+        """
+        SELECT id, reference_number
+        FROM portal_quote_requests
+        WHERE parts_list_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (list_id,),
+        fetch='one',
+    )
+    return dict(row) if row else None
+
+
 def _convert_amount_to_gbp(amount, currency_code):
     numeric_amount = _to_float(amount)
     if numeric_amount is None:
@@ -1137,6 +1152,7 @@ def manage_supplier_quotes(list_id):
     """
     Simple management page for supplier quotes cleanup.
     """
+    portal_request = _get_portal_request_for_parts_list(list_id)
     header = db_execute(
         """
         SELECT 
@@ -1174,6 +1190,8 @@ def manage_supplier_quotes(list_id):
         nav_is_pinned=bool(header.get('is_pinned')),
         status_id=header.get('status_id'),
         status_name=header.get('status_name'),
+        portal_request_id=portal_request.get('id') if portal_request else None,
+        portal_request_reference=portal_request.get('reference_number') if portal_request else None,
         cache_bust=cache_bust,
     )
 
@@ -3388,6 +3406,7 @@ def parts_list_costing(list_id):
 
 
         open_quote_id = request.args.get('open_quote_id', type=int)
+        portal_request = _get_portal_request_for_parts_list(list_id)
 
         return render_template('parts_list_costing.html',
                                list_id=list_id,
@@ -3399,6 +3418,8 @@ def parts_list_costing(list_id):
                                project_name=header.get('project_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
+                               portal_request_id=portal_request.get('id') if portal_request else None,
+                               portal_request_reference=portal_request.get('reference_number') if portal_request else None,
                                lines=[dict(l) for l in lines],
                                suppliers=[dict(s) for s in suppliers],
                                currencies=[dict(c) for c in currencies],
@@ -3639,6 +3660,8 @@ def email_suppliers():
     for s in suppliers_list:
         logging.info(f"Supplier: {s['supplier_name']}, Parts: {len(s['parts'])}, Email: {s['contact_email']}")
 
+    portal_request = _get_portal_request_for_parts_list(list_id)
+
     return render_template('parts_list_email_suppliers.html',
                            breadcrumbs=breadcrumbs,
                            suppliers=suppliers_list,
@@ -3657,6 +3680,8 @@ def email_suppliers():
                            project_name=list_header.get('project_name') if list_header else None,
                            status_id=list_header['status_id'] if list_header else None,
                            status_name=list_header['status_name'] if list_header else None,
+                           portal_request_id=portal_request.get('id') if portal_request else None,
+                           portal_request_reference=portal_request.get('reference_number') if portal_request else None,
                            currencies=[dict(c) for c in currencies])
 
 
@@ -4575,6 +4600,7 @@ def table_view(list_id):
         (header['name'], url_for('parts_list.view_parts_list', list_id=list_id)),
         ('Excel View', None)
     ]
+    portal_request = _get_portal_request_for_parts_list(list_id)
 
     return render_template('parts_list_table.html',
                            breadcrumbs=breadcrumbs,
@@ -4587,6 +4613,8 @@ def table_view(list_id):
                            project_name=header.get('project_name'),
                            status_id=header.get('status_id'),
                            status_name=header.get('status_name'),
+                           portal_request_id=portal_request.get('id') if portal_request else None,
+                           portal_request_reference=portal_request.get('reference_number') if portal_request else None,
                            lines=lines)
 
 
@@ -7481,6 +7509,7 @@ def parts_list_sourcing(list_id):
             (header['name'], url_for('parts_list.parts_list', list_id=list_id)),
             ('Sourcing', None)
         ]
+        portal_request = _get_portal_request_for_parts_list(list_id)
 
         return render_template('parts_list_sourcing.html',
                                list_id=list_id,
@@ -7492,6 +7521,8 @@ def parts_list_sourcing(list_id):
                                project_name=header.get('project_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
+                               portal_request_id=portal_request.get('id') if portal_request else None,
+                               portal_request_reference=portal_request.get('reference_number') if portal_request else None,
                                lines=lines_with_data,
                                total_lines=total_lines,
                                lines_with_vq=lines_with_vq,
@@ -8372,6 +8403,7 @@ def view_parts_list(list_id):
         ('Parts Lists', url_for('parts_list.view_parts_lists')),
         (header['name'], None)
     ]
+    portal_request = _get_portal_request_for_parts_list(list_id)
 
     template = 'view_parts_list_mobile.html' if _is_mobile() else 'view_parts_list.html'
     return render_template(template,
@@ -8386,6 +8418,8 @@ def view_parts_list(list_id):
                            project_name=header.get('project_name'),
                            status_id=header.get('status_id'),
                            status_name=header.get('status_name'),
+                           portal_request_id=portal_request.get('id') if portal_request else None,
+                           portal_request_reference=portal_request.get('reference_number') if portal_request else None,
                            lines=[dict(line) for line in lines])
 
 

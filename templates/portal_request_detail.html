@@ -139,6 +139,9 @@
                 <button class="btn btn-sm btn-outline-primary" onclick="addLine()">
                     <i class="fas fa-plus"></i> Add Line
                 </button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="syncLinesFromPartsList()">
+                    <i class="fas fa-link"></i> Sync Lines from Parts List
+                </button>
                 <button class="btn btn-sm btn-primary" onclick="loadFromPartsListAll()">
                     <i class="fas fa-sync"></i> Load All from Parts List
                 </button>
@@ -921,8 +924,37 @@ async function loadFromPartsListAll() {
 
         const result = await response.json();
         if (result.success) {
-            alert(`Loaded ${result.loaded_count} lines from parts list`);
+            const syncedCount = Number(result.synced_count || 0);
+            const syncMessage = syncedCount > 0 ? ` and synced ${syncedCount} new portal line${syncedCount === 1 ? '' : 's'}` : '';
+            alert(`Loaded ${result.loaded_count} lines from parts list${syncMessage}`);
             location.reload();
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error: ' + error);
+    }
+}
+
+async function syncLinesFromPartsList() {
+    if (!confirm('Create portal request lines for any new parts list lines that are not yet shown here?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/sync-lines-from-parts-list`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            const syncedCount = Number(result.synced_count || 0);
+            if (syncedCount > 0) {
+                alert(`Synced ${syncedCount} new portal line${syncedCount === 1 ? '' : 's'} from the parts list`);
+                location.reload();
+            } else {
+                alert('No new parts list lines needed syncing');
+            }
         } else {
             alert('Error: ' + result.error);
         }

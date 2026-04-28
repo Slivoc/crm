@@ -101,6 +101,21 @@ def _to_decimal(value, default):
     return parsed if parsed is not None else default
 
 
+def _get_portal_request_for_parts_list(list_id):
+    row = db_execute(
+        """
+        SELECT id, reference_number
+        FROM portal_quote_requests
+        WHERE parts_list_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (list_id,),
+        fetch='one',
+    )
+    return dict(row) if row else None
+
+
 def _get_supplier_quote_metadata(cur, parts_list_line_id, supplier_id, source_type=None, source_reference=None):
     """Resolve supplier metadata for a line, preferring the explicitly chosen quote line."""
     condition = None
@@ -218,6 +233,8 @@ def customer_quote(list_id):
 
                 if not header:
                     return "Parts list not found", 404
+                portal_request = _get_portal_request_for_parts_list(list_id)
+                portal_request = _get_portal_request_for_parts_list(list_id)
 
                 # Get all lines with their chosen costs and quote line data
                 lines = _execute_with_cursor(cur, """
@@ -425,6 +442,8 @@ def customer_quote(list_id):
                                project_name=header.get('project_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
+                               portal_request_id=portal_request.get('id') if portal_request else None,
+                               portal_request_reference=portal_request.get('reference_number') if portal_request else None,
                                customer_system_code=header.get('customer_system_code'),
                                customer_currency_id=header.get('customer_currency_id'),
                                contact_name=contact_name,
@@ -2218,6 +2237,8 @@ def customer_quote_simple(list_id):
                                project_name=header.get('project_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
+                               portal_request_id=portal_request.get('id') if portal_request else None,
+                               portal_request_reference=portal_request.get('reference_number') if portal_request else None,
                                customer_system_code=header.get('customer_system_code'),
                                customer_currency_id=header.get('customer_currency_id'),
                                contact_name=contact_name,

@@ -188,6 +188,103 @@ def _convert_to_base_currency(amount, currency_id=None, currency_code=None, curr
     return amount / rate
 
 
+def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
+    """Create portal request lines for parts list rows that do not yet exist on the portal request."""
+    has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
+    has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
+    has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
+    has_revision = _table_has_column('portal_quote_request_lines', 'revision')
+    has_certs = _table_has_column('portal_quote_request_lines', 'certs')
+
+    parts_list_lines = _execute_with_cursor(cur, """
+        SELECT
+            pll.line_number,
+            COALESCE(NULLIF(TRIM(pll.customer_part_number), ''), NULLIF(TRIM(pll.base_part_number), '')) AS part_number,
+            pll.base_part_number,
+            COALESCE(pll.chosen_qty, pll.quantity) AS quantity,
+            pll.revision
+        FROM parts_list_lines pll
+        WHERE pll.parts_list_id = ?
+        ORDER BY pll.line_number
+    """, (parts_list_id,)).fetchall() or []
+
+    existing_rows = _execute_with_cursor(cur, """
+        SELECT line_number
+        FROM portal_quote_request_lines
+        WHERE portal_quote_request_id = ?
+    """, (request_id,)).fetchall() or []
+    existing_line_numbers = {
+        int(row['line_number'])
+        for row in existing_rows
+        if row.get('line_number') is not None
+    }
+
+    synced_count = 0
+    for pll in parts_list_lines:
+        try:
+            line_number = int(pll['line_number'])
+        except (TypeError, ValueError):
+            continue
+
+        if line_number in existing_line_numbers:
+            continue
+
+        raw_part_number = (pll.get('part_number') or '').strip().upper()
+        base_part_number = (pll.get('base_part_number') or '').strip().upper()
+        if not raw_part_number and base_part_number:
+            raw_part_number = base_part_number
+        if not base_part_number and raw_part_number:
+            base_part_number = create_base_part_number(raw_part_number)
+
+        columns = [
+            "portal_quote_request_id",
+            "line_number",
+            "part_number",
+            "base_part_number",
+            "quantity",
+            "status",
+        ]
+        values = [
+            request_id,
+            line_number,
+            raw_part_number or '',
+            base_part_number or None,
+            pll.get('quantity') or 0,
+            'pending',
+        ]
+
+        if has_quoted_part_number:
+            columns.append("quoted_part_number")
+            values.append(None)
+        if has_line_notes:
+            columns.append("line_notes")
+            values.append(None)
+        if has_manufacturer:
+            columns.append("manufacturer")
+            values.append(None)
+        if has_revision:
+            columns.append("revision")
+            values.append((pll.get('revision') or '').strip() or None)
+        if has_certs:
+            columns.append("certs")
+            values.append(None)
+
+        placeholders = ", ".join(["?"] * len(values))
+        insert_query = _with_returning_clause(f"""
+            INSERT INTO portal_quote_request_lines
+            ({', '.join(columns)})
+            VALUES ({placeholders})
+        """)
+        _execute_with_cursor(cur, insert_query, tuple(values))
+        if _using_postgres():
+            cur.fetchone()
+
+        existing_line_numbers.add(line_number)
+        synced_count += 1
+
+    return synced_count
+
+
 def get_portal_setting(key, default=None):
     """Get a portal setting value"""
     try:
@@ -1100,6 +1197,33 @@ def load_line_from_parts_list(request_id, line_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@portal_admin_bp.route('/requests/<int:request_id>/sync-lines-from-parts-list', methods=['POST'])
+def sync_portal_lines_from_parts_list(request_id):
+    """Create any missing portal request lines from the linked parts list without loading prices."""
+    try:
+        request_data = db_execute("""
+            SELECT parts_list_id
+            FROM portal_quote_requests
+            WHERE id = ?
+        """, (request_id,), fetch='one')
+
+        if not request_data or not request_data.get('parts_list_id'):
+            return jsonify({'success': False, 'error': 'No parts list linked'}), 404
+
+        with db_cursor(commit=True) as cur:
+            synced_count = _sync_missing_portal_lines_from_parts_list(
+                cur,
+                request_id,
+                request_data['parts_list_id'],
+            )
+
+        return jsonify({'success': True, 'synced_count': synced_count})
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @portal_admin_bp.route('/requests/<int:request_id>/load-all-from-parts-list', methods=['POST'])
 def load_all_from_parts_list(request_id):
     """
@@ -1131,12 +1255,34 @@ def load_all_from_parts_list(request_id):
             AND pll.chosen_price > 0
         """, (parts_list_id,), fetch='all') or []
 
-        loaded_count = 0
-
         base_currency = _get_base_currency()
         base_currency_id = base_currency.get('id')
         with db_cursor(commit=True) as cur:
+            synced_count = _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id)
+
+            portal_rows = _execute_with_cursor(cur, """
+                SELECT id, line_number
+                FROM portal_quote_request_lines
+                WHERE portal_quote_request_id = ?
+            """, (request_id,)).fetchall() or []
+            portal_line_id_by_number = {}
+            for row in portal_rows:
+                try:
+                    portal_line_id_by_number[int(row['line_number'])] = row['id']
+                except (TypeError, ValueError):
+                    continue
+
+            loaded_count = 0
             for pll in parts_list_lines:
+                try:
+                    line_number = int(pll['line_number'])
+                except (TypeError, ValueError):
+                    continue
+
+                portal_line_id = portal_line_id_by_number.get(line_number)
+                if not portal_line_id:
+                    continue
+
                 price_in_base = _convert_to_base_currency(
                     pll['chosen_price'],
                     currency_id=pll['chosen_currency_id'],
@@ -1152,22 +1298,23 @@ def load_all_from_parts_list(request_id):
                         quoted_lead_days = ?,
                         quoted_currency_id = ?,
                         status = 'quoted'
-                    WHERE portal_quote_request_id = ?
-                    AND line_number = ?
+                    WHERE id = ?
                     """,
                     (
                         price_in_base,
                         pll['chosen_lead_days'],
                         base_currency_id,
-                        request_id,
-                        pll['line_number']
+                        portal_line_id,
                     ),
                 )
 
-                if cur.rowcount > 0:
-                    loaded_count += 1
+                loaded_count += 1
 
-        return jsonify({'success': True, 'loaded_count': loaded_count})
+        return jsonify({
+            'success': True,
+            'loaded_count': loaded_count,
+            'synced_count': synced_count,
+        })
 
     except Exception as e:
         logging.exception(e)
@@ -1476,6 +1623,9 @@ def load_all_from_customer_quote(request_id):
     try:
         has_line_notes = _table_has_column('portal_quote_request_lines', 'line_notes')
         has_quoted_part_number = _table_has_column('portal_quote_request_lines', 'quoted_part_number')
+        has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
+        has_revision = _table_has_column('portal_quote_request_lines', 'revision')
+        has_certs = _table_has_column('portal_quote_request_lines', 'certs')
         request_data = db_execute("""
             SELECT parts_list_id FROM portal_quote_requests WHERE id = ?
         """, (request_id,), fetch='one')
@@ -1504,11 +1654,33 @@ def load_all_from_customer_quote(request_id):
             AND cql.quote_price_gbp > 0
         """, (parts_list_id,), fetch='all') or []
 
-        loaded_count = 0
-
         base_currency_id = _get_base_currency().get('id')
         with db_cursor(commit=True) as cur:
+            synced_count = _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id)
+
+            portal_rows = _execute_with_cursor(cur, """
+                SELECT id, line_number
+                FROM portal_quote_request_lines
+                WHERE portal_quote_request_id = ?
+            """, (request_id,)).fetchall() or []
+            portal_line_id_by_number = {}
+            for row in portal_rows:
+                try:
+                    portal_line_id_by_number[int(row['line_number'])] = row['id']
+                except (TypeError, ValueError):
+                    continue
+
+            loaded_count = 0
             for cql in quote_lines:
+                try:
+                    line_number = int(cql['line_number'])
+                except (TypeError, ValueError):
+                    continue
+
+                portal_line_id = portal_line_id_by_number.get(line_number)
+                if not portal_line_id:
+                    continue
+
                 fields = [
                     "quoted_price = ?",
                     "quoted_lead_days = ?",
@@ -1540,22 +1712,24 @@ def load_all_from_customer_quote(request_id):
                     fields.append("certs = ?")
                     params.append((cql.get('standard_certs') or '').strip() or None)
 
-                params.extend([request_id, cql['line_number']])
+                params.append(portal_line_id)
                 _execute_with_cursor(
                     cur,
                     f"""
                     UPDATE portal_quote_request_lines
                     SET {', '.join(fields)}
-                    WHERE portal_quote_request_id = ?
-                    AND line_number = ?
+                    WHERE id = ?
                     """,
                     params,
                 )
 
-                if cur.rowcount > 0:
-                    loaded_count += 1
+                loaded_count += 1
 
-        return jsonify({'success': True, 'loaded_count': loaded_count})
+        return jsonify({
+            'success': True,
+            'loaded_count': loaded_count,
+            'synced_count': synced_count,
+        })
 
     except Exception as e:
         logging.exception(e)
