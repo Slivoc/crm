@@ -849,10 +849,17 @@ def send_portal_request_update_email(request_id):
         if not comment:
             return jsonify({'success': False, 'error': 'Comment is required'}), 400
 
-        request_row = db_execute("""
+        has_customer_reference = _table_has_column('portal_quote_requests', 'customer_reference')
+        customer_reference_select = (
+            "pqr.customer_reference"
+            if has_customer_reference
+            else "NULL as customer_reference"
+        )
+
+        request_row = db_execute(f"""
             SELECT
                 pqr.reference_number,
-                pqr.customer_reference,
+                {customer_reference_select},
                 pqr.status,
                 pqr.date_submitted,
                 pu.email as user_email,
