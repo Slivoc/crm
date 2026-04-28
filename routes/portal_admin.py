@@ -332,12 +332,18 @@ def portal_users():
         SELECT 
             pu.*,
             c.name as customer_name,
-            COUNT(DISTINCT pqr.id) as quote_count,
-            MAX(pqr.date_submitted) as last_quote_date
+            COALESCE(pq.quote_count, 0) as quote_count,
+            pq.last_quote_date
         FROM portal_users pu
         JOIN customers c ON c.id = pu.customer_id
-        LEFT JOIN portal_quote_requests pqr ON pqr.portal_user_id = pu.id
-        GROUP BY pu.id
+        LEFT JOIN (
+            SELECT
+                portal_user_id,
+                COUNT(*) as quote_count,
+                MAX(date_submitted) as last_quote_date
+            FROM portal_quote_requests
+            GROUP BY portal_user_id
+        ) pq ON pq.portal_user_id = pu.id
         ORDER BY pu.date_created DESC
     """, fetch='all') or []
 
