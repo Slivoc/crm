@@ -1650,7 +1650,7 @@ def load_line_from_customer_quote(request_id, line_id):
         has_revision = _table_has_column('portal_quote_request_lines', 'revision')
         has_certs = _table_has_column('portal_quote_request_lines', 'certs')
         base_currency_id = _get_base_currency().get('id')
-        line_data = db_execute("""
+        line_data = db_execute(f"""
             SELECT 
                 pqrl.base_part_number,
                 pqrl.line_number,
