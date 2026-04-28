@@ -463,11 +463,11 @@ def create_portal_user():
         with db_cursor(commit=True) as cur:
             _execute_with_cursor(
                 cur,
-                """
+                _with_returning_clause("""
                 INSERT INTO portal_users 
                 (customer_id, email, password_hash, first_name, last_name)
                 VALUES (?, ?, ?, ?, ?)
-                """,
+                """),
                 (customer_id, email, password_hash, first_name, last_name),
             )
             user_id = _last_inserted_id(cur)
@@ -1337,11 +1337,11 @@ def add_customer_pricing(customer_id):
         with db_cursor(commit=True) as cur:
             _execute_with_cursor(
                 cur,
-                """
+                _with_returning_clause("""
                 INSERT INTO portal_customer_pricing
                 (customer_id, base_part_number, price, currency_id, valid_from, valid_until, notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
+                """),
                 (customer_id, base_part_number, price, currency_id, valid_from, valid_until, notes),
             )
             pricing_id = _last_inserted_id(cur)
@@ -1472,11 +1472,11 @@ def add_suggested_part(customer_id):
         with db_cursor(commit=True) as cur:
             _execute_with_cursor(
                 cur,
-                """
+                _with_returning_clause("""
                 INSERT INTO portal_suggested_parts
                 (customer_id, base_part_number, notes, priority, suggested_by_user_id)
                 VALUES (?, ?, ?, ?, ?)
-                """,
+                """),
                 (customer_id, base_part_number, notes, priority, session.get('user_id')),
             )
             suggestion_id = _last_inserted_id(cur)
