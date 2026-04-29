@@ -142,6 +142,9 @@
                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="syncLinesFromPartsList()">
                     <i class="fas fa-link"></i> Sync Lines from Parts List
                 </button>
+                <button type="button" class="btn btn-sm btn-outline-success" onclick="loadFromCustomerQuoteAll()">
+                    <i class="fas fa-file-invoice-dollar"></i> Load All from Customer Quote
+                </button>
                 <button type="button" class="btn btn-sm btn-primary" onclick="loadFromPartsListAll()">
                     <i class="fas fa-sync"></i> Load All from Parts List
                 </button>
@@ -1008,6 +1011,30 @@ function formatLoadAllPartsListDebug(debug) {
     });
 
     return summaryLines.join('\n');
+}
+
+async function loadFromCustomerQuoteAll() {
+    if (!confirm('Load pricing from customer quote for all quoted lines?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/portal-admin/requests/${requestId}/load-all-from-customer-quote`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            const syncedCount = Number(result.synced_count || 0);
+            const syncMessage = syncedCount > 0 ? ` and synced ${syncedCount} new portal line${syncedCount === 1 ? '' : 's'}` : '';
+            alert(`Loaded ${result.loaded_count} lines from customer quote${syncMessage}`);
+            location.reload();
+        } else {
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        alert('Error: ' + error);
+    }
 }
 
 async function syncLinesFromPartsList() {
