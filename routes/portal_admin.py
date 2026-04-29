@@ -1301,61 +1301,42 @@ def load_all_from_parts_list(request_id):
 
         parts_list_id = request_data['parts_list_id']
 
-        rate_column = get_currency_rate_column()
-        parts_list_lines = db_execute(f"""
-            SELECT 
-                pll.id,
-                pll.line_number,
-                pll.chosen_price, 
-                pll.chosen_lead_days, 
-                pll.chosen_currency_id,
-                COALESCE(pll.chosen_qty, pll.quantity) AS chosen_quantity,
-                c.{rate_column} as currency_rate
-            FROM parts_list_lines pll
-            LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
-            WHERE pll.parts_list_id = ? 
-            AND pll.chosen_price IS NOT NULL
-            AND pll.chosen_price > 0
-        """, (parts_list_id,), fetch='all') or []
-
         base_currency = _get_base_currency()
         base_currency_id = base_currency.get('id')
         with db_cursor(commit=True) as cur:
             has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
             synced_count = _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id)
 
-            portal_rows = _execute_with_cursor(cur, f"""
-                SELECT id, line_number, {"parts_list_line_id" if has_parts_list_line_id else "NULL as parts_list_line_id"}
-                FROM portal_quote_request_lines
-                WHERE portal_quote_request_id = ?
-            """, (request_id,)).fetchall() or []
-            portal_line_id_by_parts_list_line_id = {}
-            portal_line_id_by_number = {}
-            for row in portal_rows:
-                if has_parts_list_line_id and row.get('parts_list_line_id') is not None:
-                    portal_line_id_by_parts_list_line_id[row['parts_list_line_id']] = row['id']
-                normalized_line_number = _normalize_line_number(row.get('line_number'))
-                if normalized_line_number is not None:
-                    portal_line_id_by_number[normalized_line_number] = row['id']
+            rate_column = get_currency_rate_column()
+            matched_rows = _execute_with_cursor(cur, f"""
+                SELECT
+                    pqrl.id AS portal_line_id,
+                    pll.chosen_price,
+                    pll.chosen_lead_days,
+                    pll.chosen_currency_id,
+                    COALESCE(pll.chosen_qty, pll.quantity) AS chosen_quantity,
+                    c.{rate_column} AS currency_rate
+                FROM portal_quote_request_lines pqrl
+                JOIN portal_quote_requests pqr ON pqr.id = pqrl.portal_quote_request_id
+                LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pqr.parts_list_id
+                    AND (
+                        ({'pqrl.parts_list_line_id IS NOT NULL AND pll.id = pqrl.parts_list_line_id' if has_parts_list_line_id else 'FALSE'})
+                        OR
+                        ({'pqrl.parts_list_line_id IS NULL AND ' if has_parts_list_line_id else ''}pll.line_number = pqrl.line_number)
+                    )
+                LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
+                WHERE pqrl.portal_quote_request_id = ?
+                  AND pqr.parts_list_id = ?
+                  AND pll.chosen_price IS NOT NULL
+                  AND pll.chosen_price > 0
+            """, (request_id, parts_list_id)).fetchall() or []
 
             loaded_count = 0
-            for pll in parts_list_lines:
-                line_number = _normalize_line_number(pll.get('line_number'))
-                if line_number is None:
-                    continue
-
-                portal_line_id = None
-                if has_parts_list_line_id and pll.get('id') is not None:
-                    portal_line_id = portal_line_id_by_parts_list_line_id.get(pll['id'])
-                if not portal_line_id:
-                    portal_line_id = portal_line_id_by_number.get(line_number)
-                if not portal_line_id:
-                    continue
-
+            for row in matched_rows:
                 price_in_base = _convert_to_base_currency(
-                    pll['chosen_price'],
-                    currency_id=pll['chosen_currency_id'],
-                    currency_rate=pll['currency_rate'],
+                    row['chosen_price'],
+                    currency_id=row['chosen_currency_id'],
+                    currency_rate=row['currency_rate'],
                     base_currency=base_currency
                 )
 
@@ -1372,10 +1353,10 @@ def load_all_from_parts_list(request_id):
                     """,
                     (
                         price_in_base,
-                        pll['chosen_lead_days'],
+                        row['chosen_lead_days'],
                         base_currency_id,
-                        pll.get('chosen_quantity'),
-                        portal_line_id,
+                        row.get('chosen_quantity'),
+                        row['portal_line_id'],
                     ),
                 )
 
@@ -1663,6 +1644,7 @@ def load_line_from_customer_quote(request_id, line_id):
                 pqr.parts_list_id,
                 cql.quote_price_gbp,
                 pll.chosen_lead_days,
+                COALESCE(pll.chosen_qty, pll.quantity) AS chosen_quantity,
                 ? as currency_id,
                 cql.line_notes,
                 cql.quoted_part_number,
@@ -1697,6 +1679,7 @@ def load_line_from_customer_quote(request_id, line_id):
             'price': line_data['quote_price_gbp'],
             'lead_days': line_data['chosen_lead_days'],
             'currency_id': line_data['currency_id'],
+            'quantity': line_data.get('chosen_quantity'),
             'line_notes': line_data.get('line_notes') or '',
             'quoted_part_number': quoted_part_number if has_quoted_part_number else '',
             'manufacturer': (line_data.get('manufacturer') or '').strip() if has_manufacturer else '',
@@ -1734,6 +1717,7 @@ def load_all_from_customer_quote(request_id):
                 pll.line_number,
                 cql.quote_price_gbp,
                 pll.chosen_lead_days,
+                COALESCE(pll.chosen_qty, pll.quantity) AS chosen_quantity,
                 cql.line_notes,
                 cql.quoted_part_number,
                 cql.display_part_number,
@@ -1792,6 +1776,8 @@ def load_all_from_customer_quote(request_id):
                     cql['chosen_lead_days'],
                     base_currency_id,
                 ]
+                fields.append("quantity = COALESCE(?, quantity)")
+                params.append(cql.get('chosen_quantity'))
                 if has_line_notes:
                     fields.append("line_notes = ?")
                     params.append((cql.get('line_notes') or '').strip() or None)
