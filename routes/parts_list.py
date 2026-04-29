@@ -3582,7 +3582,7 @@ def email_suppliers():
             supplier_data['preferred'] = False
             supplier_data['used_by_customer'] = supplier_id in customer_used_supplier_ids
             supplier_info = _execute_with_cursor(cursor, '''
-                SELECT contact_name, contact_email, warning, preferred
+                SELECT contact_name, contact_email, warning, preferred, mov
                 FROM suppliers
                 WHERE id = ?
             ''', (supplier_id,)).fetchone()
@@ -3592,6 +3592,7 @@ def email_suppliers():
                 supplier_data['contact_email'] = supplier_info['contact_email']
                 supplier_data['warning'] = supplier_info['warning']
                 supplier_data['preferred'] = bool(supplier_info['preferred'])
+                supplier_data['mov'] = supplier_info['mov']
 
         recent_no_bid_lookup = _get_recent_no_bid_lookup(
             cursor,

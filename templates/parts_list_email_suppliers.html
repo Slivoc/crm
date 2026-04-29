@@ -61,6 +61,17 @@
     margin-left: 0.5rem;
     display: inline-block;
 }
+.supplier-mov {
+    color: #084298;
+    background: #cfe2ff;
+    border: 1px solid #9ec5fe;
+    border-radius: 0.25rem;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    margin-left: 0.5rem;
+    display: inline-block;
+}
 .supplier-score-pill {
     display: inline-flex;
     align-items: center;
@@ -447,6 +458,11 @@
                         {% if supplier.warning %}
                             <span class="supplier-warning">
                                 ⚠ {{ supplier.warning }}
+                            </span>
+                        {% endif %}
+                        {% if supplier.mov %}
+                            <span class="supplier-mov" title="Minimum order value">
+                                MOV {{ supplier.mov }}
                             </span>
                         {% endif %}
                         {% if supplier.used_by_customer %}

@@ -138,13 +138,15 @@ def search_suppliers():
         search_term = f'%{query}%'
 
         suppliers = db_execute('''
-            SELECT s.id, s.name, s.currency_id, s.currency_code
+            SELECT s.id, s.name, s.currency_id, s.currency_code, s.warning, s.mov
             FROM (
                 SELECT DISTINCT
                     s.id,
                     s.name,
                     c.id as currency_id,
                     c.currency_code,
+                    s.warning,
+                    s.mov,
                     CASE
                         WHEN LOWER(s.name) LIKE LOWER(?) THEN 1
                         WHEN LOWER(s.name) LIKE LOWER(?) THEN 2
