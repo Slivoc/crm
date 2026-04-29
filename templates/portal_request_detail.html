@@ -888,6 +888,9 @@ async function loadFromPartsList(lineId) {
         if (result.success) {
             document.getElementById(`price_${lineId}`).value = result.price || '';
             document.getElementById(`lead_${lineId}`).value = result.lead_days || '';
+            if (result.quantity !== null && result.quantity !== undefined && result.quantity !== '') {
+                document.getElementById(`qty_${lineId}`).value = result.quantity;
+            }
 
             // Set currency if provided
             if (result.currency_id) {
