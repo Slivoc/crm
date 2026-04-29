@@ -283,10 +283,14 @@
                     <input type="number"
                            class="form-control form-control-sm"
                            id="price_{{ line.id }}"
+                           data-portal-view-price="{{ line.portal_estimated_price if line.portal_estimated_price is not none else '' }}"
                            value="{{ line.quoted_price or '' }}"
                            step="0.01"
                            placeholder="0.00"
                            {% if line.status == 'no_bid' %}disabled{% endif %}>
+                    <small class="text-warning d-none" id="price_warning_{{ line.id }}">
+                        <i class="fas fa-exclamation-triangle"></i> Above customer portal view price
+                    </small>
                     {% if line.quote_price_gbp and line.overall_status == 'customer_quoted' %}
                     <small class="text-muted">Suggested: £{{ "%.2f"|format(line.quote_price_gbp) }}</small>
                     {% endif %}
@@ -588,6 +592,29 @@ function formatPortalEmailMessageHtml(text) {
     return escaped.split('\n').join('<br>');
 }
 
+function updatePortalPriceWarning(lineId) {
+    const priceInput = document.getElementById(`price_${lineId}`);
+    const warningEl = document.getElementById(`price_warning_${lineId}`);
+    if (!priceInput || !warningEl) return;
+
+    const portalViewPrice = Number(priceInput.dataset.portalViewPrice);
+    const quotedPrice = Number(priceInput.value);
+    const hasPortalView = Number.isFinite(portalViewPrice) && portalViewPrice > 0;
+    const hasQuotedPrice = Number.isFinite(quotedPrice) && quotedPrice > 0;
+    warningEl.classList.toggle('d-none', !(hasPortalView && hasQuotedPrice && quotedPrice > portalViewPrice));
+}
+
+function initializePortalPriceWarnings() {
+    document.querySelectorAll('#quoteTable tbody tr[data-line-id]').forEach((row) => {
+        const lineId = row.dataset.lineId;
+        updatePortalPriceWarning(lineId);
+        const priceInput = document.getElementById(`price_${lineId}`);
+        if (priceInput) {
+            priceInput.addEventListener('input', () => updatePortalPriceWarning(lineId));
+        }
+    });
+}
+
 function getMainLineRow(lineId) {
     return document.querySelector(`#quoteTable tbody tr[data-line-id="${lineId}"]`);
 }
@@ -622,6 +649,7 @@ function setMainLineStatusUi(lineId, status) {
             btn.classList.add('btn-secondary');
         }
     }
+    updatePortalPriceWarning(lineId);
 }
 
 function getPortalEmailLinesFromPage() {
@@ -708,6 +736,7 @@ function syncModalRowToMain(modalRow) {
     if (notesInput) notesInput.value = notes;
 
     setMainLineStatusUi(lineId, status);
+    updatePortalPriceWarning(lineId);
 }
 
 function syncAllPortalEmailEditsToMain() {
@@ -904,6 +933,7 @@ async function loadFromPartsList(lineId) {
 
             // Update status badge
             updateStatusBadge(lineId, 'pending');
+            updatePortalPriceWarning(lineId);
 
             alert('Loaded from parts list');
         } else {
@@ -1007,6 +1037,7 @@ async function saveLine(lineId) {
         const result = await response.json();
         if (result.success) {
             updateStatusBadge(lineId, 'quoted');
+            updatePortalPriceWarning(lineId);
             alert('Line saved');
         } else {
             alert('Error: ' + result.error);
@@ -1036,6 +1067,7 @@ async function toggleNoBid(lineId) {
             document.getElementById(`price_${lineId}`).disabled = disabled;
             document.getElementById(`lead_${lineId}`).disabled = disabled;
             document.getElementById(`currency_${lineId}`).disabled = disabled;
+            updatePortalPriceWarning(lineId);
 
             // Update button
             const btn = document.getElementById(`nobid_btn_${lineId}`);
@@ -1281,5 +1313,7 @@ async function sendUpdateEmail() {
         button.innerHTML = originalHtml;
     }
 }
+
+initializePortalPriceWarnings();
 </script>
 {% endblock %}
