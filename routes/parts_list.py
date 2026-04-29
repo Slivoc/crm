@@ -4839,6 +4839,7 @@ def view_parts_lists():
         salesperson_id_param = request.args.get('salesperson_id', type=int)
         salesperson_id = salesperson_id_param
         part_search = (request.args.get('q') or '').strip()
+        include_portal_search_lists = request.args.get('include_portal_search_lists') in ('1', 'true', 'yes', 'on')
         quoted_date = (request.args.get('quoted_date') or '').strip()
         quoted_date_filter = None
         if quoted_date:
@@ -4956,6 +4957,9 @@ def view_parts_lists():
 
             where_clauses = []
             params = []
+
+            if not include_portal_search_lists:
+                where_clauses.append("COALESCE(pl.name, '') NOT LIKE 'Portal Search %'")
 
             if status_id:
                 where_clauses.append("pl.status_id = ?")
@@ -8280,6 +8284,7 @@ def search_parts_lists_by_part_number():
 
         # Optional filters
         customer_id = request.args.get('customer_id', type=int)
+        include_portal_search_lists = request.args.get('include_portal_search_lists') in ('1', 'true', 'yes', 'on')
         limit = request.args.get('limit', default=200, type=int)
         if limit <= 0:
             limit = 200
@@ -8331,6 +8336,9 @@ def search_parts_lists_by_part_number():
         if customer_id:
             sql += " AND pl.customer_id = ?"
             params.append(customer_id)
+
+        if not include_portal_search_lists:
+            sql += " AND COALESCE(pl.name, '') NOT LIKE 'Portal Search %'"
 
         sql += """
             ORDER BY
@@ -10197,19 +10205,24 @@ def create_from_email():
             list_id = list_row['id'] if list_row else getattr(cur, 'lastrowid', None)
             logging.info(f"Created parts list ID {list_id}")
 
+            created_line_ids = []
+
             if extracted:
                 for idx, part in enumerate(extracted):
-                    _execute_with_cursor(cur, """
+                    line_row = _execute_with_cursor(cur, """
                         INSERT INTO parts_list_lines 
                         (parts_list_id, line_number, customer_part_number, base_part_number, quantity)
                         VALUES (?, ?, ?, ?, ?)
+                        RETURNING id
                     """, (
                         list_id,
                         idx + 1,
                         part['part_number'],
                         create_base_part_number(part['part_number']),
                         part.get('quantity', 1)
-                    ))
+                    )).fetchone()
+                    if line_row:
+                        created_line_ids.append(line_row['id'] if isinstance(line_row, dict) else line_row[0])
                 logging.info(f"Inserted {len(extracted)} lines")
             else:
                 logging.info("No parts extracted - created empty list")
@@ -10221,6 +10234,10 @@ def create_from_email():
             contact_id,
             salesperson_id,
         )
+
+        if created_line_ids:
+            user_id = current_user.id if current_user.is_authenticated else session.get('user_id')
+            trigger_monroe_auto_check(list_id, created_line_ids, user_id=user_id)
 
         redirect_url = url_for('parts_list.view_parts_list', list_id=list_id, _external=True)
         logging.info(f"Returning redirect to: {redirect_url}")
@@ -10346,19 +10363,24 @@ def outlook_macro():
             list_id = list_row['id'] if list_row else getattr(cur, 'lastrowid', None)
             logging.info(f"Outlook macro created parts list ID {list_id}")
 
+            created_line_ids = []
+
             if extracted:
                 for idx, part in enumerate(extracted):
-                    _execute_with_cursor(cur, """
+                    line_row = _execute_with_cursor(cur, """
                         INSERT INTO parts_list_lines 
                         (parts_list_id, line_number, customer_part_number, base_part_number, quantity)
                         VALUES (?, ?, ?, ?, ?)
+                        RETURNING id
                     """, (
                         list_id,
                         idx + 1,
                         part['part_number'],
                         create_base_part_number(part['part_number']),
                         part.get('quantity', 1)
-                    ))
+                    )).fetchone()
+                    if line_row:
+                        created_line_ids.append(line_row['id'] if isinstance(line_row, dict) else line_row[0])
                 logging.info(f"Outlook macro inserted {len(extracted)} lines")
             else:
                 logging.info("Outlook macro: no parts extracted")
@@ -10370,6 +10392,10 @@ def outlook_macro():
             contact_id,
             salesperson_id,
         )
+
+        if created_line_ids:
+            user_id = current_user.id if current_user.is_authenticated else session.get('user_id')
+            trigger_monroe_auto_check(list_id, created_line_ids, user_id=user_id)
 
         redirect_url = url_for('parts_list.view_parts_list', list_id=list_id, _external=True)
 

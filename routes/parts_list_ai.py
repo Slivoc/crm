@@ -1115,6 +1115,36 @@ def _set_user_monroe_settings(cur, user_id, auto_search_new_parts=None, auto_cre
         ))
 
 
+def _get_recent_monroe_result(cur, base_part_number, hours=24):
+    """Return the most recent Monroe result for a part within the freshness window."""
+    if not base_part_number:
+        return None
+
+    if _using_postgres():
+        recent_query = f"""
+            SELECT id, unit_price, error_message, search_date
+            FROM monroe_search_results
+            WHERE base_part_number = ?
+              AND search_date > CURRENT_TIMESTAMP - INTERVAL '{int(hours)} hours'
+            ORDER BY search_date DESC, id DESC
+            LIMIT 1
+        """
+    else:
+        recent_query = """
+            SELECT id, unit_price, error_message, search_date
+            FROM monroe_search_results
+            WHERE base_part_number = ?
+              AND search_date > datetime('now', ?)
+            ORDER BY search_date DESC, id DESC
+            LIMIT 1
+        """
+
+    params = (base_part_number,) if _using_postgres() else (base_part_number, f'-{int(hours)} hours')
+    cur.execute(recent_query, params)
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+
 def _run_monroe_check_background(list_id, line_ids, user_id=None, auto_create_offer=False):
     """
     Run Monroe check in background thread for specified line IDs.
@@ -1159,28 +1189,14 @@ def _run_monroe_check_background(list_id, line_ids, user_id=None, auto_create_of
             if not part_number:
                 continue
 
-            # Check if we already have a recent result for this part (within 24 hours)
-            # Use database-agnostic date comparison
-            if _using_postgres():
-                recent_query = """
-                    SELECT id FROM monroe_search_results
-                    WHERE base_part_number = ?
-                      AND search_date > CURRENT_TIMESTAMP - INTERVAL '24 hours'
-                      AND unit_price IS NOT NULL
-                    LIMIT 1
-                """
-            else:
-                recent_query = """
-                    SELECT id FROM monroe_search_results
-                    WHERE base_part_number = ?
-                      AND search_date > datetime('now', '-24 hours')
-                      AND unit_price IS NOT NULL
-                    LIMIT 1
-                """
-            cur.execute(recent_query, (line['base_part_number'],))
-            existing = cur.fetchone()
-            if existing:
-                logging.debug(f"Monroe auto-check: Skipping {part_number}, recent result exists")
+            recent_result = _get_recent_monroe_result(cur, line['base_part_number'])
+            if recent_result:
+                logging.info(
+                    "Monroe auto-check: Skipping %s because a recent result already exists (price=%s, error=%s)",
+                    part_number,
+                    recent_result.get('unit_price'),
+                    recent_result.get('error_message'),
+                )
                 continue
 
             logging.info(f"Monroe auto-check: Checking {part_number}")
@@ -1592,7 +1608,7 @@ def trigger_monroe_auto_check_with_status(list_id, line_ids, user_id, status_id,
         # Run in background thread with status tracking
         thread = threading.Thread(
             target=_run_monroe_check_with_status,
-            args=(list_id, line_ids, user_id, auto_create_offer, status_id),
+            args=(list_id, line_ids, user_id, auto_create_offer, status_id, force),
             daemon=True
         )
         thread.start()
@@ -1602,7 +1618,7 @@ def trigger_monroe_auto_check_with_status(list_id, line_ids, user_id, status_id,
         logging.exception(f"Failed to trigger Monroe check with status: {e}")
 
 
-def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer, status_id):
+def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer, status_id, force=False):
     """
     Run Monroe check with status updates.
     """
@@ -1655,6 +1671,25 @@ def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer,
                 processed += 1
                 failed += 1
                 continue
+
+            if not force:
+                recent_result = _get_recent_monroe_result(cur, line['base_part_number'])
+                if recent_result:
+                    processed += 1
+                    logging.info(
+                        "Monroe status %s: Skipping %s because a recent result already exists (price=%s, error=%s)",
+                        status_id,
+                        part_number,
+                        recent_result.get('unit_price'),
+                        recent_result.get('error_message'),
+                    )
+                    cur.execute("""
+                        UPDATE supplier_scrape_status
+                        SET processed_lines = ?, current_part_number = ?
+                        WHERE id = ?
+                    """, (processed, part_number, status_id))
+                    conn.commit()
+                    continue
 
             # Update current part number
             cur.execute("""

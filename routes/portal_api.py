@@ -450,6 +450,79 @@ def log_search_history(portal_user_id, customer_id, search_type, parts_list, ip_
         return False
 
 
+def _create_parts_list_for_portal_search(portal_user, parts_list, search_source='manual_quote_search'):
+    """
+    Create an internal parts list for a customer portal search so Monroe results
+    have a real list/line target and can auto-create supplier quotes.
+    """
+    normalized_parts = _normalize_search_parts(parts_list)
+    if not normalized_parts:
+        return None
+
+    created_line_ids = []
+    timestamp_label = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+    portal_name = f"{portal_user.get('first_name', '').strip()} {portal_user.get('last_name', '').strip()}".strip()
+    portal_email = (portal_user.get('email') or '').strip()
+    notes_lines = [
+        f"Auto-created from customer portal search on {timestamp_label}",
+        f"Search source: {search_source}",
+    ]
+    if portal_name:
+        notes_lines.append(f"Portal user: {portal_name}")
+    if portal_email:
+        notes_lines.append(f"Portal email: {portal_email}")
+
+    with db_cursor(commit=True) as cursor:
+        customer_row = _execute_with_cursor(cursor, """
+            SELECT salesperson_id
+            FROM customers
+            WHERE id = ?
+        """, (portal_user['customer_id'],)).fetchone()
+        salesperson_id = (
+            customer_row['salesperson_id']
+            if customer_row and customer_row.get('salesperson_id') is not None
+            else 1
+        )
+
+        header_row = _execute_with_cursor(cursor, """
+            INSERT INTO parts_lists
+            (name, customer_id, salesperson_id, status_id, notes)
+            VALUES (?, ?, ?, 1, ?)
+            RETURNING id
+        """, (
+            f"Portal Search {timestamp_label}",
+            portal_user['customer_id'],
+            salesperson_id,
+            "\n".join(notes_lines),
+        )).fetchone()
+        parts_list_id = header_row['id'] if header_row else None
+
+        for idx, part in enumerate(normalized_parts, 1):
+            part_number = part['part_number']
+            quantity = part['quantity']
+            row = _execute_with_cursor(cursor, """
+                INSERT INTO parts_list_lines
+                (parts_list_id, line_number, customer_part_number, base_part_number, quantity, chosen_qty)
+                VALUES (?, ?, ?, ?, ?, ?)
+                RETURNING id
+            """, (
+                parts_list_id,
+                idx,
+                part_number,
+                create_base_part_number(part_number),
+                quantity,
+                quantity,
+            )).fetchone()
+            if row:
+                created_line_ids.append(row['id'] if isinstance(row, dict) else row[0])
+
+    if created_line_ids and parts_list_id:
+        from routes.parts_list_ai import trigger_monroe_auto_check
+        trigger_monroe_auto_check(parts_list_id, created_line_ids)
+
+    return parts_list_id
+
+
 # ============================================================================
 # AUTHENTICATION ENDPOINTS
 # ============================================================================
@@ -623,25 +696,19 @@ def analyze_quote():
         data = request.get_json()
         parts = data.get('parts', [])
         search_source = (data.get('source') or '').strip()
-        notify_account_manager = search_source == 'manual_quote_search'
+        is_manual_quote_search = search_source == 'manual_quote_search'
 
         if not parts:
             return jsonify({'success': False, 'error': 'No parts provided'}), 400
 
-        # Track customer search usage for portal-admin analytics.
-        try:
-            searchable_parts = _normalize_search_parts(parts)
-            did_log_search = log_search_history(
-                user['id'],
-                user['customer_id'],
-                'quote_analysis',
-                searchable_parts,
-                ip_address=request.remote_addr,
-                user_agent=request.headers.get('User-Agent'),
-            )
-            if did_log_search and notify_account_manager:
-                from routes.portal_admin import notify_portal_search_to_account_manager
-                notify_portal_search_to_account_manager(
+        manual_search_logged = False
+        monroe_parts_list_id = None
+
+        # Only treat explicit manual portal quote searches as searchable activity.
+        if is_manual_quote_search:
+            try:
+                searchable_parts = _normalize_search_parts(parts)
+                manual_search_logged = log_search_history(
                     user['id'],
                     user['customer_id'],
                     'quote_analysis',
@@ -649,8 +716,18 @@ def analyze_quote():
                     ip_address=request.remote_addr,
                     user_agent=request.headers.get('User-Agent'),
                 )
-        except Exception:
-            logging.exception("Failed to capture portal quote analysis search history")
+                if manual_search_logged:
+                    from routes.portal_admin import notify_portal_search_to_account_manager
+                    notify_portal_search_to_account_manager(
+                        user['id'],
+                        user['customer_id'],
+                        'quote_analysis',
+                        searchable_parts,
+                        ip_address=request.remote_addr,
+                        user_agent=request.headers.get('User-Agent'),
+                    )
+            except Exception:
+                logging.exception("Failed to capture portal quote analysis search history")
 
         base_currency = _get_base_currency()
         base_currency_id = base_currency.get('id')
@@ -1092,10 +1169,22 @@ def analyze_quote():
                             pass
                     continue
 
+        if is_manual_quote_search and manual_search_logged:
+            try:
+                monroe_parts_list_id = _create_parts_list_for_portal_search(
+                    user,
+                    parts,
+                    search_source=search_source or 'manual_quote_search',
+                )
+            except Exception:
+                logging.exception("Failed to create internal parts list for portal Monroe search")
+
         return jsonify({
             'success': True,
             'results': results,
-            'settings': {'show_stock_quantities': show_quantities}
+            'settings': {'show_stock_quantities': show_quantities},
+            'monroe_scrape_started': bool(monroe_parts_list_id),
+            'monroe_parts_list_id': monroe_parts_list_id,
         })
 
     except Exception as e:
@@ -1165,20 +1254,33 @@ def submit_quote_request():
         except Exception:
             logging.exception("Failed to capture submitted portal estimate snapshot")
 
+        created_line_ids = []
+
         with db_cursor(commit=True) as cursor:
             has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
             has_submitted_estimated_price = _table_has_column('portal_quote_request_lines', 'submitted_estimated_price')
             has_submitted_estimated_currency = _table_has_column('portal_quote_request_lines', 'submitted_estimated_currency')
             has_submitted_estimated_lead_days = _table_has_column('portal_quote_request_lines', 'submitted_estimated_lead_days')
             has_submitted_price_source = _table_has_column('portal_quote_request_lines', 'submitted_price_source')
+            customer_row = _execute_with_cursor(cursor, """
+                SELECT salesperson_id
+                FROM customers
+                WHERE id = ?
+            """, (user['customer_id'],)).fetchone()
+            salesperson_id = (
+                customer_row['salesperson_id']
+                if customer_row and customer_row.get('salesperson_id') is not None
+                else 1
+            )
             parts_list_row = _execute_with_cursor(cursor, """
                 INSERT INTO parts_lists 
                 (name, customer_id, salesperson_id, status_id, notes)
-                VALUES (?, ?, 1, 1, ?)
+                VALUES (?, ?, ?, 1, ?)
                 RETURNING id
             """, (
                 "Portal Request",
                 user['customer_id'],
+                salesperson_id,
                 f"Customer portal request from {user['first_name']} {user['last_name']}\\n\\n{notes}"
             )).fetchone()
             parts_list_id = parts_list_row['id']
@@ -1243,6 +1345,8 @@ def submit_quote_request():
                 ))
                 parts_list_line_row = cursor.fetchone()
                 parts_list_line_id = parts_list_line_row['id'] if parts_list_line_row else None
+                if parts_list_line_id:
+                    created_line_ids.append(parts_list_line_id)
 
                 columns = [
                     "portal_quote_request_id",
@@ -1284,6 +1388,10 @@ def submit_quote_request():
                     """,
                     tuple(values),
                 )
+
+        if created_line_ids:
+            from routes.parts_list_ai import trigger_monroe_auto_check
+            trigger_monroe_auto_check(parts_list_id, created_line_ids)
 
         from routes.portal_admin import notify_new_quote_request
         notify_new_quote_request(request_id)

@@ -1991,6 +1991,10 @@ def add_portal_request_line(request_id):
             _execute_with_cursor(cur, insert_query, tuple(values))
             line_id = _last_inserted_id(cur)
 
+        if request_row.get('parts_list_id') and new_parts_list_line_id:
+            from routes.parts_list_ai import trigger_monroe_auto_check
+            trigger_monroe_auto_check(request_row['parts_list_id'], [new_parts_list_line_id])
+
         return jsonify({'success': True, 'line_id': line_id, 'line_number': next_line_number})
 
     except Exception as e:
