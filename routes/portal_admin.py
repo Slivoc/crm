@@ -1216,6 +1216,7 @@ def load_line_from_parts_list(request_id, line_id):
                 pll.chosen_price,
                 pll.chosen_lead_days,
                 pll.chosen_currency_id,
+                COALESCE(pll.chosen_qty, pll.quantity) AS chosen_quantity,
                 c.{rate_column} as currency_rate
             FROM portal_quote_request_lines pqrl
             JOIN portal_quote_requests pqr ON pqr.id = pqrl.portal_quote_request_id
@@ -1248,7 +1249,8 @@ def load_line_from_parts_list(request_id, line_id):
             'success': True,
             'price': price_in_base,
             'lead_days': line_data['chosen_lead_days'],
-            'currency_id': base_currency_id
+            'currency_id': base_currency_id,
+            'quantity': line_data.get('chosen_quantity')
         })
 
     except Exception as e:
@@ -1307,6 +1309,7 @@ def load_all_from_parts_list(request_id):
                 pll.chosen_price, 
                 pll.chosen_lead_days, 
                 pll.chosen_currency_id,
+                COALESCE(pll.chosen_qty, pll.quantity) AS chosen_quantity,
                 c.{rate_column} as currency_rate
             FROM parts_list_lines pll
             LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
@@ -1363,6 +1366,7 @@ def load_all_from_parts_list(request_id):
                     SET quoted_price = ?,
                         quoted_lead_days = ?,
                         quoted_currency_id = ?,
+                        quantity = COALESCE(?, quantity),
                         status = 'quoted'
                     WHERE id = ?
                     """,
@@ -1370,6 +1374,7 @@ def load_all_from_parts_list(request_id):
                         price_in_base,
                         pll['chosen_lead_days'],
                         base_currency_id,
+                        pll.get('chosen_quantity'),
                         portal_line_id,
                     ),
                 )
