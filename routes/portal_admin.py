@@ -802,12 +802,20 @@ def view_portal_request(request_id):
     has_portal_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
     has_portal_revision = _table_has_column('portal_quote_request_lines', 'revision')
     has_portal_certs = _table_has_column('portal_quote_request_lines', 'certs')
+    has_submitted_estimated_price = _table_has_column('portal_quote_request_lines', 'submitted_estimated_price')
+    has_submitted_estimated_currency = _table_has_column('portal_quote_request_lines', 'submitted_estimated_currency')
+    has_submitted_estimated_lead_days = _table_has_column('portal_quote_request_lines', 'submitted_estimated_lead_days')
+    has_submitted_price_source = _table_has_column('portal_quote_request_lines', 'submitted_price_source')
     portal_line_notes_select = "pqrl.line_notes as portal_line_notes," if has_portal_line_notes else "NULL as portal_line_notes,"
     portal_parts_list_line_select = "pqrl.parts_list_line_id as portal_parts_list_line_id," if has_portal_parts_list_line_id else "NULL as portal_parts_list_line_id,"
     portal_quoted_part_select = "pqrl.quoted_part_number as portal_quoted_part_number," if has_portal_quoted_part_number else "NULL as portal_quoted_part_number,"
     portal_manufacturer_select = "pqrl.manufacturer as portal_manufacturer," if has_portal_manufacturer else "NULL as portal_manufacturer,"
     portal_revision_select = "pqrl.revision as portal_revision," if has_portal_revision else "NULL as portal_revision,"
     portal_certs_select = "pqrl.certs as portal_certs," if has_portal_certs else "NULL as portal_certs,"
+    submitted_estimated_price_select = "pqrl.submitted_estimated_price as portal_estimated_price," if has_submitted_estimated_price else "NULL as portal_estimated_price,"
+    submitted_estimated_currency_select = "pqrl.submitted_estimated_currency as portal_estimated_currency," if has_submitted_estimated_currency else "NULL as portal_estimated_currency,"
+    submitted_estimated_lead_days_select = "pqrl.submitted_estimated_lead_days as portal_estimated_lead_days," if has_submitted_estimated_lead_days else "NULL as portal_estimated_lead_days,"
+    submitted_price_source_select = "pqrl.submitted_price_source as portal_price_source," if has_submitted_price_source else "NULL as portal_price_source,"
 
     lines = db_execute(f"""
         SELECT 
@@ -818,6 +826,10 @@ def view_portal_request(request_id):
             {portal_manufacturer_select}
             {portal_revision_select}
             {portal_certs_select}
+            {submitted_estimated_price_select}
+            {submitted_estimated_currency_select}
+            {submitted_estimated_lead_days_select}
+            {submitted_price_source_select}
             c.currency_code,
 
             -- Parts List Line info
@@ -917,46 +929,6 @@ def view_portal_request(request_id):
             (line.get('portal_certs') or '').strip()
             or (line.get('customer_quote_certs') or '').strip()
         )
-
-    portal_estimates = {}
-    try:
-        parts_payload = [
-            {'part_number': line.get('part_number'), 'quantity': line.get('quantity')}
-            for line in lines
-            if line.get('part_number')
-        ]
-        if parts_payload:
-            estimate_response = _analyze_quote_internal(request_data['customer_id'], parts_payload)
-            estimate_data = (
-                estimate_response[0].get_json()
-                if isinstance(estimate_response, tuple)
-                else estimate_response.get_json()
-            )
-            if estimate_data and estimate_data.get('success'):
-                for item in estimate_data.get('results', []):
-                    key = (item.get('base_part_number') or item.get('part_number') or '').strip()
-                    if key:
-                        portal_estimates[key] = item
-    except Exception as e:
-        logging.exception(e)
-
-    if portal_estimates:
-        for line in lines:
-            key = line.get('base_part_number') or line.get('part_number')
-            estimate = portal_estimates.get(key) if key else None
-            if estimate:
-                estimated_price = estimate.get('estimated_price')
-                if estimated_price is not None:
-                    try:
-                        estimated_price = float(estimated_price)
-                    except (TypeError, ValueError):
-                        estimated_price = None
-
-                line['portal_estimated_price'] = estimated_price
-                line['portal_estimated_currency'] = estimate.get('currency')
-                line['portal_estimated_lead_days'] = estimate.get('estimated_lead_days')
-                line['portal_estimated_status'] = estimate.get('status')
-                line['portal_price_source'] = estimate.get('price_source')
 
     currencies = db_execute("SELECT id, currency_code FROM currencies ORDER BY id", fetch='all') or []
 

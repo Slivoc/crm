@@ -2134,6 +2134,14 @@ CREATE TABLE portal_quote_request_lines (
 
     quantity INTEGER NOT NULL,
 
+    submitted_estimated_price NUMERIC,
+
+    submitted_estimated_currency TEXT,
+
+    submitted_estimated_lead_days INTEGER,
+
+    submitted_price_source TEXT,
+
     quoted_part_number TEXT,
 
     manufacturer TEXT,

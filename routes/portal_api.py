@@ -1124,8 +1124,53 @@ def submit_quote_request():
         if not parts:
             return jsonify({'success': False, 'error': 'No parts provided'}), 400
 
+        normalized_parts = []
+        for idx, part in enumerate(parts, 1):
+            part_number = (part.get('part_number') or '').strip().upper()
+            if not part_number:
+                continue
+
+            try:
+                quantity = int(part.get('quantity', 1))
+            except (TypeError, ValueError):
+                quantity = 1
+            if quantity <= 0:
+                quantity = 1
+
+            normalized_parts.append({
+                'line_number': idx,
+                'part_number': part_number,
+                'quantity': quantity,
+                'base_part_number': create_base_part_number(part_number),
+            })
+
+        if not normalized_parts:
+            return jsonify({'success': False, 'error': 'No valid parts provided'}), 400
+
+        submitted_estimates_by_line_number = {}
+        try:
+            estimate_response = _analyze_quote_internal(
+                user['customer_id'],
+                [{'part_number': part['part_number'], 'quantity': part['quantity']} for part in normalized_parts],
+            )
+            estimate_data = (
+                estimate_response[0].get_json()
+                if isinstance(estimate_response, tuple)
+                else estimate_response.get_json()
+            )
+            if estimate_data and estimate_data.get('success'):
+                estimate_results = estimate_data.get('results', []) or []
+                for part, estimate in zip(normalized_parts, estimate_results):
+                    submitted_estimates_by_line_number[part['line_number']] = estimate or {}
+        except Exception:
+            logging.exception("Failed to capture submitted portal estimate snapshot")
+
         with db_cursor(commit=True) as cursor:
             has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
+            has_submitted_estimated_price = _table_has_column('portal_quote_request_lines', 'submitted_estimated_price')
+            has_submitted_estimated_currency = _table_has_column('portal_quote_request_lines', 'submitted_estimated_currency')
+            has_submitted_estimated_lead_days = _table_has_column('portal_quote_request_lines', 'submitted_estimated_lead_days')
+            has_submitted_price_source = _table_has_column('portal_quote_request_lines', 'submitted_price_source')
             parts_list_row = _execute_with_cursor(cursor, """
                 INSERT INTO parts_lists 
                 (name, customer_id, salesperson_id, status_id, notes)
@@ -1177,13 +1222,12 @@ def submit_quote_request():
                 )).fetchone()
             request_id = request_row['id']
 
-            for idx, part in enumerate(parts, 1):
-                part_number = (part.get('part_number') or '').strip().upper()
-                if not part_number:
-                    continue
-
-                quantity = int(part.get('quantity', 1))
-                base_part_number = create_base_part_number(part_number)
+            for part in normalized_parts:
+                idx = part['line_number']
+                part_number = part['part_number']
+                quantity = part['quantity']
+                base_part_number = part['base_part_number']
+                submitted_estimate = submitted_estimates_by_line_number.get(idx) or {}
 
                 _execute_with_cursor(cursor, """
                     INSERT INTO parts_list_lines
@@ -1200,31 +1244,46 @@ def submit_quote_request():
                 parts_list_line_row = cursor.fetchone()
                 parts_list_line_id = parts_list_line_row['id'] if parts_list_line_row else None
 
+                columns = [
+                    "portal_quote_request_id",
+                    "line_number",
+                    "part_number",
+                    "base_part_number",
+                    "quantity",
+                ]
+                values = [
+                    request_id,
+                    idx,
+                    part_number,
+                    base_part_number,
+                    quantity,
+                ]
                 if has_parts_list_line_id:
-                    _execute_with_cursor(cursor, """
+                    columns.append("parts_list_line_id")
+                    values.append(parts_list_line_id)
+                if has_submitted_estimated_price:
+                    columns.append("submitted_estimated_price")
+                    values.append(submitted_estimate.get('estimated_price'))
+                if has_submitted_estimated_currency:
+                    columns.append("submitted_estimated_currency")
+                    values.append(submitted_estimate.get('currency'))
+                if has_submitted_estimated_lead_days:
+                    columns.append("submitted_estimated_lead_days")
+                    values.append(submitted_estimate.get('estimated_lead_days'))
+                if has_submitted_price_source:
+                    columns.append("submitted_price_source")
+                    values.append(submitted_estimate.get('price_source'))
+
+                placeholders = ", ".join(["?"] * len(values))
+                _execute_with_cursor(
+                    cursor,
+                    f"""
                         INSERT INTO portal_quote_request_lines
-                        (portal_quote_request_id, line_number, part_number, base_part_number, quantity, parts_list_line_id)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (
-                        request_id,
-                        idx,
-                        part_number,
-                        base_part_number,
-                        quantity,
-                        parts_list_line_id,
-                    ))
-                else:
-                    _execute_with_cursor(cursor, """
-                        INSERT INTO portal_quote_request_lines
-                        (portal_quote_request_id, line_number, part_number, base_part_number, quantity)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (
-                        request_id,
-                        idx,
-                        part_number,
-                        base_part_number,
-                        quantity,
-                    ))
+                        ({', '.join(columns)})
+                        VALUES ({placeholders})
+                    """,
+                    tuple(values),
+                )
 
         from routes.portal_admin import notify_new_quote_request
         notify_new_quote_request(request_id)
