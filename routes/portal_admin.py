@@ -1358,6 +1358,31 @@ def load_all_from_parts_list(request_id):
                 for row in priced_parts_list_rows[:10]
             ]
 
+            customer_quote_rows = _execute_with_cursor(cur, """
+                SELECT
+                    cql.id,
+                    pll.id AS parts_list_line_id,
+                    pll.line_number,
+                    cql.quote_price_gbp
+                FROM customer_quote_lines cql
+                JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+                WHERE pll.parts_list_id = ?
+                  AND cql.quoted_status = 'quoted'
+                  AND cql.quote_price_gbp IS NOT NULL
+                  AND cql.quote_price_gbp > 0
+                ORDER BY pll.line_number
+            """, (parts_list_id,)).fetchall() or []
+            debug_info['customer_quote_line_count'] = len(customer_quote_rows)
+            debug_info['customer_quote_lines_sample'] = [
+                {
+                    'customer_quote_line_id': row.get('id'),
+                    'parts_list_line_id': row.get('parts_list_line_id'),
+                    'line_number': str(row.get('line_number')) if row.get('line_number') is not None else None,
+                    'quote_price_gbp': row.get('quote_price_gbp'),
+                }
+                for row in customer_quote_rows[:10]
+            ]
+
             rate_column = get_currency_rate_column()
             matched_rows = _execute_with_cursor(cur, f"""
                 SELECT
@@ -1399,6 +1424,11 @@ def load_all_from_parts_list(request_id):
                 }
                 for row in matched_rows[:10]
             ]
+            debug_info['hint'] = None
+            if not priced_parts_list_rows and customer_quote_rows:
+                debug_info['hint'] = 'No parts list chosen_price values were found, but quoted customer quote lines do exist. Use Load All from Customer Quote for this request.'
+            elif not priced_parts_list_rows:
+                debug_info['hint'] = 'No parts list chosen_price values were found for this request.'
 
             loaded_count = 0
             for row in matched_rows:
@@ -1713,7 +1743,7 @@ def load_line_from_customer_quote(request_id, line_id):
                 {"pqrl.parts_list_line_id," if has_parts_list_line_id else "NULL as parts_list_line_id,"}
                 pqr.parts_list_id,
                 cql.quote_price_gbp,
-                pll.chosen_lead_days,
+                COALESCE(cql.lead_days, pll.chosen_lead_days) AS quoted_lead_days,
                 COALESCE(pll.chosen_qty, pll.quantity) AS chosen_quantity,
                 ? as currency_id,
                 cql.line_notes,
@@ -1747,7 +1777,7 @@ def load_line_from_customer_quote(request_id, line_id):
         return jsonify({
             'success': True,
             'price': line_data['quote_price_gbp'],
-            'lead_days': line_data['chosen_lead_days'],
+            'lead_days': line_data['quoted_lead_days'],
             'currency_id': line_data['currency_id'],
             'quantity': line_data.get('chosen_quantity'),
             'line_notes': line_data.get('line_notes') or '',
@@ -1786,7 +1816,7 @@ def load_all_from_customer_quote(request_id):
                 pll.id as parts_list_line_id,
                 pll.line_number,
                 cql.quote_price_gbp,
-                pll.chosen_lead_days,
+                COALESCE(cql.lead_days, pll.chosen_lead_days) AS quoted_lead_days,
                 COALESCE(pll.chosen_qty, pll.quantity) AS chosen_quantity,
                 cql.line_notes,
                 cql.quoted_part_number,
@@ -1843,7 +1873,7 @@ def load_all_from_customer_quote(request_id):
                 ]
                 params = [
                     cql['quote_price_gbp'],
-                    cql['chosen_lead_days'],
+                    cql['quoted_lead_days'],
                     base_currency_id,
                 ]
                 fields.append("quantity = COALESCE(?, quantity)")

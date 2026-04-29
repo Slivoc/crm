@@ -145,9 +145,6 @@
                 <button type="button" class="btn btn-sm btn-outline-success" onclick="loadFromCustomerQuoteAll()">
                     <i class="fas fa-file-invoice-dollar"></i> Load All from Customer Quote
                 </button>
-                <button type="button" class="btn btn-sm btn-primary" onclick="loadFromPartsListAll()">
-                    <i class="fas fa-sync"></i> Load All from Parts List
-                </button>
                 <button type="button" class="btn btn-sm btn-success" onclick="publishQuote()">
                     <i class="fas fa-paper-plane"></i> Publish to Customer
                 </button>
@@ -945,72 +942,6 @@ async function loadFromPartsList(lineId) {
     } catch (error) {
         alert('Error: ' + error);
     }
-}
-
-// Load ALL lines from parts list
-async function loadFromPartsListAll() {
-    if (!confirm('Load pricing from parts list for all lines that have been costed?')) {
-        return;
-    }
-
-    try {
-        const response = await fetch(`/portal-admin/requests/${requestId}/load-all-from-parts-list`, {
-            method: 'POST'
-        });
-
-        const result = await response.json();
-        if (result.success) {
-            const syncedCount = Number(result.synced_count || 0);
-            const syncMessage = syncedCount > 0 ? ` and synced ${syncedCount} new portal line${syncedCount === 1 ? '' : 's'}` : '';
-            if (result.debug) {
-                console.log('Load All From Parts List debug', result.debug);
-            }
-
-            if (Number(result.loaded_count || 0) === 0 && result.debug) {
-                const debugSummary = formatLoadAllPartsListDebug(result.debug);
-                console.warn('Load All From Parts List returned zero lines.\n' + debugSummary);
-                alert(`Loaded 0 lines from parts list${syncMessage}\n\nDebug:\n${debugSummary}\n\nPlease send me this debug text.`);
-                return;
-            }
-
-            alert(`Loaded ${result.loaded_count} lines from parts list${syncMessage}`);
-            location.reload();
-        } else {
-            alert('Error: ' + result.error);
-        }
-    } catch (error) {
-        alert('Error: ' + error);
-    }
-}
-
-function formatLoadAllPartsListDebug(debug) {
-    const summaryLines = [
-        `request_id=${debug.request_id ?? ''}`,
-        `parts_list_id=${debug.parts_list_id ?? ''}`,
-        `has_parts_list_line_id=${debug.has_parts_list_line_id ?? ''}`,
-        `synced_count=${debug.synced_count ?? 0}`,
-        `portal_line_count=${debug.portal_line_count ?? 0}`,
-        `priced_parts_list_line_count=${debug.priced_parts_list_line_count ?? 0}`,
-        `matched_line_count=${debug.matched_line_count ?? 0}`
-    ];
-
-    const sampleSections = [
-        ['portal_lines_sample', debug.portal_lines_sample],
-        ['priced_parts_list_lines_sample', debug.priced_parts_list_lines_sample],
-        ['matched_lines_sample', debug.matched_lines_sample]
-    ];
-
-    sampleSections.forEach(([label, rows]) => {
-        if (!Array.isArray(rows) || rows.length === 0) {
-            summaryLines.push(`${label}=[]`);
-            return;
-        }
-
-        const renderedRows = rows.map(row => JSON.stringify(row)).join(' | ');
-        summaryLines.push(`${label}=${renderedRows}`);
-    });
-
-    return summaryLines.join('\n');
 }
 
 async function loadFromCustomerQuoteAll() {
