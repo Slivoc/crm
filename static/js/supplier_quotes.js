@@ -8,6 +8,27 @@ let partNumberFilterValue = '';
 let emailedSuppliersCache = null;
 let activePdfPreviewUrl = null;
 let latestExtractionMatchDebug = null;
+let supplierMetaById = {};
+
+function renderSupplierMovWarning(meta) {
+    const warningEl = document.getElementById('supplier-mov-warning');
+    if (!warningEl) return;
+
+    const messages = [];
+    if (meta?.warning) messages.push(`Warning: ${meta.warning}`);
+    if (meta?.mov !== null && meta?.mov !== undefined && meta?.mov !== '') {
+        messages.push(`MOV: ${meta.mov}`);
+    }
+
+    if (!messages.length) {
+        warningEl.classList.add('d-none');
+        warningEl.textContent = '';
+        return;
+    }
+
+    warningEl.textContent = messages.join(' | ');
+    warningEl.classList.remove('d-none');
+}
 
 function getPdfPreviewElements() {
     return {
@@ -704,7 +725,9 @@ function loadSuppliersForQuote() {
                             id: item.id.toString(),
                             text: item.name,
                             currency_id: item.currency_id,
-                            similarity_score: item.similarity_score
+                            similarity_score: item.similarity_score,
+                            warning: item.warning || '',
+                            mov: item.mov
                         };
                     })
                 };
@@ -721,12 +744,15 @@ function loadSuppliersForQuote() {
         if (data.currency_id) {
             document.getElementById('quote-currency-select').value = data.currency_id;
         }
+        supplierMetaById[data.id] = { warning: data.warning, mov: data.mov };
+        renderSupplierMovWarning(supplierMetaById[data.id]);
         if (!currentQuoteId) {
             currentSupplierId = parseInt(data.id);
             initializeEmptyQuoteLines(currentSupplierId);
         }
         updateQuoteDropZoneUI();
     }).on('select2:clear', function () {
+        renderSupplierMovWarning(null);
         if (!currentQuoteId) {
             currentSupplierId = null;
             initializeEmptyQuoteLines();
@@ -764,7 +790,9 @@ function initializeQuickQuoteSuppliers() {
                         return {
                             id: item.id.toString(),
                             text: item.name,
-                            currency_id: item.currency_id
+                            currency_id: item.currency_id,
+                            warning: item.warning || '',
+                            mov: item.mov
                         };
                     })
                 };
@@ -783,12 +811,15 @@ function initializeQuickQuoteSuppliers() {
                 currencySelect.value = data.currency_id;
             }
         }
+        supplierMetaById[data.id] = { warning: data.warning, mov: data.mov };
+        renderSupplierMovWarning(supplierMetaById[data.id]);
         if (!currentQuoteId) {
             currentSupplierId = parseInt(data.id);
             initializeEmptyQuoteLines(currentSupplierId);
         }
         updateQuoteDropZoneUI();
     }).on('select2:clear', function () {
+        renderSupplierMovWarning(null);
         if (!currentQuoteId) {
             currentSupplierId = null;
             initializeEmptyQuoteLines();
@@ -805,6 +836,7 @@ function initializeQuickQuoteSuppliers() {
             .then(data => {
                 if (data.success && data.supplier) {
                     const supplier = data.supplier;
+                    supplierMetaById[String(supplier.id)] = { warning: supplier.warning, mov: supplier.mov };
 
                     // Create and append the option
                     const newOption = new Option(supplier.name, supplier.id, true, true);
@@ -813,6 +845,7 @@ function initializeQuickQuoteSuppliers() {
                     // Trigger change to update Select2
                     $supplierSelect.trigger('change');
                     currentSupplierId = supplier.id;
+                    renderSupplierMovWarning(supplierMetaById[String(supplier.id)]);
                     updateQuoteDropZoneUI();
 
                     // Set the currency AFTER Select2 is fully initialized
@@ -866,6 +899,7 @@ function initializeEmailedSupplierSelect() {
         const selectedOption = this.options[this.selectedIndex];
         const supplierName = selectedOption ? selectedOption.textContent : '';
         const currencyId = selectedOption?.dataset.currencyId;
+        const meta = supplierMetaById[supplierId];
 
         const supplierSelect = $('#quote-supplier-select');
         if (supplierSelect.find(`option[value="${supplierId}"]`).length === 0) {
@@ -875,6 +909,7 @@ function initializeEmailedSupplierSelect() {
             supplierSelect.val(supplierId);
         }
         supplierSelect.trigger('change');
+        renderSupplierMovWarning(meta);
         updateQuoteDropZoneUI();
 
         if (currencyId) {

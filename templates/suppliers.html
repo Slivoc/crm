@@ -118,6 +118,7 @@
           <th>Buffer</th>
           <th>Currency</th>
           <th>Delivery Cost</th>
+          <th>MOV</th>
           <th>System ID</th>
           <th>Standard Condition</th>
           <th>Standard Certs</th>
@@ -149,6 +150,7 @@
             </select>
           </td>
           <td><input type="number" step="0.01" value="{{ supplier.delivery_cost or '' }}" data-supplier-id="{{ supplier.id }}" data-field="delivery_cost" class="form-control form-control-sm editable-field"></td>
+          <td><input type="number" step="0.01" value="{{ supplier.mov or '' }}" data-supplier-id="{{ supplier.id }}" data-field="mov" class="form-control form-control-sm editable-field"></td>
           <td><input type="text" value="{{ supplier.fornitore }}" data-supplier-id="{{ supplier.id }}" data-field="fornitore" class="form-control form-control-sm editable-field"></td>
           <td><input type="text" value="{{ supplier.standard_condition or '' }}" data-supplier-id="{{ supplier.id }}" data-field="standard_condition" class="form-control form-control-sm editable-field"></td>
           <td><input type="text" value="{{ supplier.standard_certs or '' }}" data-supplier-id="{{ supplier.id }}" data-field="standard_certs" class="form-control form-control-sm editable-field"></td>
@@ -214,6 +216,10 @@
           <div class="mb-3">
             <label for="delivery_cost" class="form-label">Delivery Cost</label>
             <input type="number" step="0.01" id="delivery_cost" name="delivery_cost" class="form-control">
+          </div>
+          <div class="mb-3">
+            <label for="mov" class="form-label">MOV</label>
+            <input type="number" step="0.01" id="mov" name="mov" class="form-control" placeholder="Minimum order value">
           </div>
           <div class="mb-3">
             <label for="fornitore" class="form-label">System ID</label>

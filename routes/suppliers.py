@@ -120,6 +120,7 @@ def create_supplier():
             standard_condition = data.get('standard_condition')
             standard_certs = data.get('standard_certs')
             warning = data.get('warning')
+            mov = data.get('mov')
 
             if not name:
                 return jsonify({
@@ -130,8 +131,8 @@ def create_supplier():
         try:
             insert_query = _with_returning_clause('''
                 INSERT INTO suppliers 
-                (name, contact_name, contact_email, contact_phone, buffer, currency, delivery_cost, fornitore, standard_condition, standard_certs, warning)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (name, contact_name, contact_email, contact_phone, buffer, currency, delivery_cost, fornitore, standard_condition, standard_certs, warning, mov)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''')
             params = (
                 name,
@@ -144,7 +145,8 @@ def create_supplier():
                 '',
                 standard_condition,
                 standard_certs,
-                warning
+                warning,
+                mov
             )
             with db_cursor(commit=True) as cur:
                 _execute_with_cursor(cur, insert_query, params)
@@ -198,6 +200,7 @@ def update_supplier_route(supplier_id):
         standard_condition = request.form.get('standard_condition')
         standard_certs = request.form.get('standard_certs')
         warning = request.form.get('warning')
+        mov = request.form.get('mov')
         auto_email = 'auto_email' in request.form
         preferred = 'preferred' in request.form
 
@@ -220,6 +223,7 @@ def update_supplier_route(supplier_id):
             standard_certs,
             warning
         )
+        update_supplier_field(supplier_id, 'mov', mov or None)
 
         # Update the new boolean fields separately
         update_supplier_field(supplier_id, 'auto_email', auto_email)
@@ -263,7 +267,7 @@ def update_field(supplier_id):
 
     valid_fields = [
         'name', 'contact_name', 'contact_email', 'contact_phone', 'buffer', 'currency',
-        'delivery_cost', 'fornitore', 'standard_condition', 'standard_certs', 'warning', 'auto_email', 'preferred'
+        'delivery_cost', 'fornitore', 'standard_condition', 'standard_certs', 'warning', 'mov', 'auto_email', 'preferred'
     ]
 
     if field_name not in valid_fields:
