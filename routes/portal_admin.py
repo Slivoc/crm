@@ -1301,16 +1301,71 @@ def load_all_from_parts_list(request_id):
 
         parts_list_id = request_data['parts_list_id']
 
+        debug_info = {
+            'request_id': request_id,
+            'parts_list_id': parts_list_id,
+        }
+
         base_currency = _get_base_currency()
         base_currency_id = base_currency.get('id')
         with db_cursor(commit=True) as cur:
             has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
+            debug_info['has_parts_list_line_id'] = has_parts_list_line_id
             synced_count = _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id)
+            debug_info['synced_count'] = synced_count
+
+            portal_rows = _execute_with_cursor(cur, f"""
+                SELECT
+                    id,
+                    line_number,
+                    {"parts_list_line_id" if has_parts_list_line_id else "NULL as parts_list_line_id"}
+                FROM portal_quote_request_lines
+                WHERE portal_quote_request_id = ?
+                ORDER BY line_number
+            """, (request_id,)).fetchall() or []
+            debug_info['portal_line_count'] = len(portal_rows)
+            debug_info['portal_lines_sample'] = [
+                {
+                    'portal_line_id': row.get('id'),
+                    'line_number': str(row.get('line_number')) if row.get('line_number') is not None else None,
+                    'parts_list_line_id': row.get('parts_list_line_id'),
+                }
+                for row in portal_rows[:10]
+            ]
+
+            priced_parts_list_rows = _execute_with_cursor(cur, f"""
+                SELECT
+                    pll.id,
+                    pll.line_number,
+                    pll.chosen_price,
+                    pll.chosen_currency_id,
+                    COALESCE(pll.chosen_qty, pll.quantity) AS chosen_quantity
+                FROM parts_list_lines pll
+                WHERE pll.parts_list_id = ?
+                  AND pll.chosen_price IS NOT NULL
+                  AND pll.chosen_price > 0
+                ORDER BY pll.line_number
+            """, (parts_list_id,)).fetchall() or []
+            debug_info['priced_parts_list_line_count'] = len(priced_parts_list_rows)
+            debug_info['priced_parts_list_lines_sample'] = [
+                {
+                    'parts_list_line_id': row.get('id'),
+                    'line_number': str(row.get('line_number')) if row.get('line_number') is not None else None,
+                    'chosen_price': row.get('chosen_price'),
+                    'chosen_currency_id': row.get('chosen_currency_id'),
+                    'chosen_quantity': row.get('chosen_quantity'),
+                }
+                for row in priced_parts_list_rows[:10]
+            ]
 
             rate_column = get_currency_rate_column()
             matched_rows = _execute_with_cursor(cur, f"""
                 SELECT
                     pqrl.id AS portal_line_id,
+                    pqrl.line_number AS portal_line_number,
+                    {"pqrl.parts_list_line_id AS portal_parts_list_line_id," if has_parts_list_line_id else "NULL AS portal_parts_list_line_id,"}
+                    pll.id AS matched_parts_list_line_id,
+                    pll.line_number AS parts_list_line_number,
                     pll.chosen_price,
                     pll.chosen_lead_days,
                     pll.chosen_currency_id,
@@ -1329,7 +1384,21 @@ def load_all_from_parts_list(request_id):
                   AND pqr.parts_list_id = ?
                   AND pll.chosen_price IS NOT NULL
                   AND pll.chosen_price > 0
+                ORDER BY pqrl.line_number
             """, (request_id, parts_list_id)).fetchall() or []
+            debug_info['matched_line_count'] = len(matched_rows)
+            debug_info['matched_lines_sample'] = [
+                {
+                    'portal_line_id': row.get('portal_line_id'),
+                    'portal_line_number': str(row.get('portal_line_number')) if row.get('portal_line_number') is not None else None,
+                    'portal_parts_list_line_id': row.get('portal_parts_list_line_id'),
+                    'matched_parts_list_line_id': row.get('matched_parts_list_line_id'),
+                    'parts_list_line_number': str(row.get('parts_list_line_number')) if row.get('parts_list_line_number') is not None else None,
+                    'chosen_price': row.get('chosen_price'),
+                    'chosen_quantity': row.get('chosen_quantity'),
+                }
+                for row in matched_rows[:10]
+            ]
 
             loaded_count = 0
             for row in matched_rows:
@@ -1366,6 +1435,7 @@ def load_all_from_parts_list(request_id):
             'success': True,
             'loaded_count': loaded_count,
             'synced_count': synced_count,
+            'debug': debug_info,
         })
 
     except Exception as e:
