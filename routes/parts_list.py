@@ -4959,7 +4959,11 @@ def view_parts_lists():
             params = []
 
             if not include_portal_search_lists:
-                where_clauses.append("COALESCE(pl.name, '') NOT LIKE 'Portal Search %'")
+                where_clauses.append("""
+                    COALESCE(pl.name, '') NOT LIKE 'Portal Search %'
+                    AND COALESCE(pl.notes, '') NOT LIKE 'Auto-created from customer portal search%'
+                    AND COALESCE(pl.notes, '') NOT LIKE '%Search source: background_monroe_scrape%'
+                """)
 
             if status_id:
                 where_clauses.append("pl.status_id = ?")
@@ -8338,7 +8342,11 @@ def search_parts_lists_by_part_number():
             params.append(customer_id)
 
         if not include_portal_search_lists:
-            sql += " AND COALESCE(pl.name, '') NOT LIKE 'Portal Search %'"
+            sql += """
+                AND COALESCE(pl.name, '') NOT LIKE 'Portal Search %'
+                AND COALESCE(pl.notes, '') NOT LIKE 'Auto-created from customer portal search%'
+                AND COALESCE(pl.notes, '') NOT LIKE '%Search source: background_monroe_scrape%'
+            """
 
         sql += """
             ORDER BY
