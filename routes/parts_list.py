@@ -8362,10 +8362,15 @@ def search_parts_lists_by_part_number():
 
         if not include_portal_search_lists:
             sql += """
-                AND COALESCE(pl.name, '') NOT LIKE 'Portal Search %'
-                AND COALESCE(pl.notes, '') NOT LIKE 'Auto-created from customer portal search%'
-                AND COALESCE(pl.notes, '') NOT LIKE '%Search source: background_monroe_scrape%'
+                AND COALESCE(pl.name, '') NOT LIKE %s
+                AND COALESCE(pl.notes, '') NOT LIKE %s
+                AND COALESCE(pl.notes, '') NOT LIKE %s
             """
+            params.extend([
+                'Portal Search %',
+                'Auto-created from customer portal search%',
+                '%Search source: background_monroe_scrape%',
+            ])
 
         sql += """
             ORDER BY
