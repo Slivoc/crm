@@ -1113,6 +1113,8 @@ def bulk_update_quote_lines(list_id):
                     quote_line_id = line['quote_line_id']
                     base_cost_gbp = line['base_cost_gbp']
 
+                # Build updates by column name so later assignments replace earlier
+                # ones instead of generating duplicate SET clauses in PostgreSQL.
                 field_assignments = {}
 
                 def set_field(column, value):
@@ -1172,13 +1174,13 @@ def bulk_update_quote_lines(list_id):
                     set_field("target_price_gbp", float(target_price) if target_price not in (None, '') else None)
                     logging.debug(f"Line {parts_list_line_id}: target_price_gbp = {target_price}")
 
-                if 'delivery_per_unit' in update and not is_locked:
-                    set_field("delivery_per_unit", float(update['delivery_per_unit'] or 0))
-                    logging.debug(f"Line {parts_list_line_id}: delivery_per_unit = {update['delivery_per_unit']}")
-
                 if 'delivery_per_line' in update and not is_locked:
                     set_field("delivery_per_line", float(update['delivery_per_line'] or 0))
                     logging.debug(f"Line {parts_list_line_id}: delivery_per_line = {update['delivery_per_line']}")
+
+                if 'delivery_per_unit' in update and not is_locked:
+                    set_field("delivery_per_unit", float(update['delivery_per_unit'] or 0))
+                    logging.debug(f"Line {parts_list_line_id}: delivery_per_unit = {update['delivery_per_unit']}")
 
                 if 'lead_days' in update:
                     set_field("lead_days", int(update['lead_days'] or 0))
