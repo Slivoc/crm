@@ -340,7 +340,14 @@ def customer_quote(list_id):
                     LEFT JOIN parts_list_lines parent ON parent.id = pll.parent_line_id
                     LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
                     LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
-                    LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                    LEFT JOIN customer_quote_lines cql
+                        ON cql.id = (
+                            SELECT cql_latest.id
+                            FROM customer_quote_lines cql_latest
+                            WHERE cql_latest.parts_list_line_id = pll.id
+                            ORDER BY cql_latest.date_modified DESC NULLS LAST, cql_latest.id DESC
+                            LIMIT 1
+                        )
                     WHERE pll.parts_list_id = ?
                     ORDER BY pll.line_number ASC
                 """, (list_id,)).fetchall()
@@ -1156,7 +1163,9 @@ def bulk_update_quote_lines(list_id):
                     params.append(float(update['quote_price_gbp'] or 0))
                     logging.debug(f"Line {parts_list_line_id}: quote_price_gbp = {update['quote_price_gbp']}")
 
-                if 'target_price_gbp' in update and not is_locked:
+                # Target price is planning metadata and should remain editable even
+                # when a line is otherwise locked in quoted status.
+                if 'target_price_gbp' in update:
                     fields.append("target_price_gbp = ?")
                     target_price = update.get('target_price_gbp')
                     params.append(float(target_price) if target_price not in (None, '') else None)
@@ -2140,7 +2149,14 @@ def customer_quote_simple(list_id):
                   LEFT JOIN parts_list_lines parent ON parent.id = pll.parent_line_id
                   LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
                   LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
-                  LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                  LEFT JOIN customer_quote_lines cql
+                    ON cql.id = (
+                        SELECT cql_latest.id
+                        FROM customer_quote_lines cql_latest
+                        WHERE cql_latest.parts_list_line_id = pll.id
+                        ORDER BY cql_latest.date_modified DESC NULLS LAST, cql_latest.id DESC
+                        LIMIT 1
+                    )
                   WHERE pll.parts_list_id = ?
                 ORDER BY pll.line_number ASC
             """, (list_id,)).fetchall()
