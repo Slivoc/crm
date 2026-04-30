@@ -8342,22 +8342,22 @@ def search_parts_lists_by_part_number():
             LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
             WHERE
                 (
-                    UPPER(pll.customer_part_number) LIKE ?
-                    OR UPPER(pll.base_part_number) LIKE ?
+                    UPPER(pll.customer_part_number) LIKE %s
+                    OR UPPER(pll.base_part_number) LIKE %s
         """
 
         params = [like_param, like_param]
 
         # Optional exact base PN match if we got one
         if base_query:
-            sql += " OR pll.base_part_number = ?"
+            sql += " OR pll.base_part_number = %s"
             params.append(base_query)
 
         sql += ")"
 
         # Optional customer filter
         if customer_id:
-            sql += " AND pl.customer_id = ?"
+            sql += " AND pl.customer_id = %s"
             params.append(customer_id)
 
         if not include_portal_search_lists:
@@ -8372,11 +8372,11 @@ def search_parts_lists_by_part_number():
                 pl.date_modified DESC,
                 pl.date_created DESC,
                 pll.line_number ASC
-            LIMIT ?
+            LIMIT %s
         """
         params.append(limit)
 
-        rows = db_execute(sql, params, fetch='all')
+        rows = db_execute(sql, tuple(params), fetch='all')
 
         return jsonify(
             success=True,
