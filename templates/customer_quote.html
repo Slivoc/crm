@@ -91,6 +91,7 @@ function markSaved() {
 async function autoSave() {
     const updates = hot.getSourceData().map((row) => ({
         parts_list_line_id: row.id,
+        delivery_per_line: Number.parseFloat(row.delivery_per_line) || 0,
         quoted_status: row.quoted_status,
         is_no_bid: row.quoted_status === 'no_bid' ? 1 : 0,
         line_notes: row.line_notes
@@ -122,6 +123,7 @@ const tableData = LINES_DATA.map((line) => ({
     line_number: line.line_number,
     customer_part_number: (line.requested_part_number || line.customer_part_number || '').toString().trim(),
     quantity: line.quantity,
+    effective_quantity: Number.parseFloat(line.chosen_qty ?? line.quantity) || 0,
     delivery_per_line: (() => {
         const explicit = Number.parseFloat(line.delivery_per_line);
         if (Number.isFinite(explicit)) return explicit;
@@ -167,7 +169,7 @@ hot = new Handsontable(container, {
         { data: 'line_number', type: 'numeric', readOnly: true, width: 60 },
         { data: 'customer_part_number', readOnly: true, width: 220 },
         { data: 'quantity', type: 'numeric', readOnly: true, width: 70 },
-        { data: 'delivery_per_line', type: 'numeric', readOnly: true, width: 120, numericFormat: { pattern: '0,0.00' } },
+        { data: 'delivery_per_line', type: 'numeric', readOnly: false, width: 120, numericFormat: { pattern: '0,0.00' } },
         { data: 'quoted_status', type: 'dropdown', source: ['created', 'in_progress', 'quoted', 'no_bid'], width: 120 },
         { data: 'line_notes', type: 'text', width: 240 }
     ],
