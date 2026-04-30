@@ -1113,8 +1113,13 @@ def bulk_update_quote_lines(list_id):
                     quote_line_id = line['quote_line_id']
                     base_cost_gbp = line['base_cost_gbp']
 
-                fields = []
-                params = []
+                field_assignments = {}
+
+                def set_field(column, value):
+                    field_assignments[column] = (f"{column} = ?", value)
+
+                def set_raw_field(column, expression):
+                    field_assignments[column] = (f"{column} = {expression}", None)
 
                 new_status = current_status if is_locked else None
                 is_no_bid = update.get('is_no_bid', 0)
@@ -1131,14 +1136,13 @@ def bulk_update_quote_lines(list_id):
                     new_status = requested_status
 
                 if new_status:
-                    fields.append("quoted_status = ?")
-                    params.append(new_status)
+                    set_field("quoted_status", new_status)
                     logging.debug(f"Line {parts_list_line_id}: quoted_status = {new_status}")
                     if new_status != current_status:
                         if new_status == 'quoted':
-                            fields.append("quoted_on = CURRENT_TIMESTAMP")
+                            set_raw_field("quoted_on", "CURRENT_TIMESTAMP")
                         elif current_status == 'quoted':
-                            fields.append("quoted_on = NULL")
+                            set_raw_field("quoted_on", "NULL")
 
                 if new_status == 'quoted' and not is_no_bid:
                     part_value = (
@@ -1154,51 +1158,48 @@ def bulk_update_quote_lines(list_id):
                         _ensure_part_number(cur, base_part_number, part_value)
 
                 if 'margin_percent' in update and not is_locked:
-                    fields.append("margin_percent = ?")
-                    params.append(float(update['margin_percent'] or 0))
+                    set_field("margin_percent", float(update['margin_percent'] or 0))
                     logging.debug(f"Line {parts_list_line_id}: margin_percent = {update['margin_percent']}")
 
                 if 'quote_price_gbp' in update and not is_locked:
-                    fields.append("quote_price_gbp = ?")
-                    params.append(float(update['quote_price_gbp'] or 0))
+                    set_field("quote_price_gbp", float(update['quote_price_gbp'] or 0))
                     logging.debug(f"Line {parts_list_line_id}: quote_price_gbp = {update['quote_price_gbp']}")
 
                 # Target price is planning metadata and should remain editable even
                 # when a line is otherwise locked in quoted status.
                 if 'target_price_gbp' in update:
-                    fields.append("target_price_gbp = ?")
                     target_price = update.get('target_price_gbp')
-                    params.append(float(target_price) if target_price not in (None, '') else None)
+                    set_field("target_price_gbp", float(target_price) if target_price not in (None, '') else None)
                     logging.debug(f"Line {parts_list_line_id}: target_price_gbp = {target_price}")
 
                 if 'delivery_per_unit' in update and not is_locked:
-                    fields.append("delivery_per_unit = ?")
-                    params.append(float(update['delivery_per_unit'] or 0))
+                    set_field("delivery_per_unit", float(update['delivery_per_unit'] or 0))
                     logging.debug(f"Line {parts_list_line_id}: delivery_per_unit = {update['delivery_per_unit']}")
 
                 if 'delivery_per_line' in update and not is_locked:
-                    fields.append("delivery_per_line = ?")
-                    params.append(float(update['delivery_per_line'] or 0))
+                    set_field("delivery_per_line", float(update['delivery_per_line'] or 0))
                     logging.debug(f"Line {parts_list_line_id}: delivery_per_line = {update['delivery_per_line']}")
 
                 if 'lead_days' in update:
-                    fields.append("lead_days = ?")
-                    params.append(int(update['lead_days'] or 0))
+                    set_field("lead_days", int(update['lead_days'] or 0))
                     logging.debug(f"Line {parts_list_line_id}: lead_days = {update['lead_days']}")
 
                 for field in ['display_part_number', 'quoted_part_number', 'line_notes', 'standard_condition', 'standard_certs']:
                     if field in update:
-                        fields.append(f"{field} = ?")
-                        params.append(update[field])
+                        set_field(field, update[field])
                 if 'manufacturer' in update:
-                    fields.append("manufacturer = ?")
-                    params.append(update['manufacturer'])
+                    set_field("manufacturer", update['manufacturer'])
 
                 if 'is_no_bid' in update and not is_locked:
-                    fields.append("is_no_bid = ?")
-                    params.append(update['is_no_bid'])
+                    set_field("is_no_bid", update['is_no_bid'])
 
-                if fields:
+                if field_assignments:
+                    fields = []
+                    params = []
+                    for assignment, value in field_assignments.values():
+                        fields.append(assignment)
+                        if value is not None or assignment.endswith("= ?"):
+                            params.append(value)
                     params.append(quote_line_id)
                     sql = f"""
                         UPDATE customer_quote_lines
