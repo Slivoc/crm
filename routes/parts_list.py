@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, url_for, redirect, session, flash, abort, Response
+from flask import Blueprint, render_template, request, jsonify, url_for, redirect, session, flash, abort, Response, g
 from models import create_base_part_number, get_global_alternatives, insert_update, convert_currency
 from db import execute as db_execute, db_cursor
 import logging
@@ -4855,8 +4855,14 @@ def view_parts_lists():
                 (current_user.id,),
                 fetch='one',
             )
-            if user_salesperson:
-                current_user_salesperson_id = user_salesperson['legacy_salesperson_id']
+            if user_salesperson and user_salesperson['legacy_salesperson_id']:
+                salesperson_exists = db_execute(
+                    'SELECT id FROM salespeople WHERE id = ?',
+                    (user_salesperson['legacy_salesperson_id'],),
+                    fetch='one',
+                )
+                if salesperson_exists:
+                    current_user_salesperson_id = user_salesperson['legacy_salesperson_id']
 
         # Default to current user's salesperson if no explicit filter
         if not salesperson_id and current_user_salesperson_id:
@@ -4885,6 +4891,17 @@ def view_parts_lists():
             """,
             fetch='all',
         )
+        if not all_salespeople:
+            fallback_salespeople = getattr(g, 'salespeople', []) or []
+            all_salespeople = [
+                {
+                    'id': sp.get('id'),
+                    'name': sp.get('name'),
+                    'parts_list_count': 0,
+                }
+                for sp in fallback_salespeople
+                if sp and sp.get('id')
+            ]
 
         # Get current salesperson if filtered
         current_salesperson = None
@@ -4894,6 +4911,8 @@ def view_parts_lists():
                 (salesperson_id,),
                 fetch='one',
             )
+            if not current_salesperson:
+                salesperson_id = None
         elif current_user_salesperson_id:
             # If user is a salesperson but no filter selected, get their info
             current_salesperson = db_execute(
@@ -8323,22 +8342,22 @@ def search_parts_lists_by_part_number():
             LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
             WHERE
                 (
-                    UPPER(pll.customer_part_number) LIKE ?
-                    OR UPPER(pll.base_part_number) LIKE ?
+                    UPPER(pll.customer_part_number) LIKE %s
+                    OR UPPER(pll.base_part_number) LIKE %s
         """
 
         params = [like_param, like_param]
 
         # Optional exact base PN match if we got one
         if base_query:
-            sql += " OR pll.base_part_number = ?"
+            sql += " OR pll.base_part_number = %s"
             params.append(base_query)
 
         sql += ")"
 
         # Optional customer filter
         if customer_id:
-            sql += " AND pl.customer_id = ?"
+            sql += " AND pl.customer_id = %s"
             params.append(customer_id)
 
         if not include_portal_search_lists:
@@ -8353,11 +8372,11 @@ def search_parts_lists_by_part_number():
                 pl.date_modified DESC,
                 pl.date_created DESC,
                 pll.line_number ASC
-            LIMIT ?
+            LIMIT %s
         """
         params.append(limit)
 
-        rows = db_execute(sql, params, fetch='all')
+        rows = db_execute(sql, tuple(params), fetch='all')
 
         return jsonify(
             success=True,
