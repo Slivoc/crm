@@ -1177,9 +1177,38 @@ def bulk_update_quote_lines(list_id):
                     logging.debug(f"Line {parts_list_line_id}: delivery_per_unit = {update['delivery_per_unit']}")
 
                 if 'delivery_per_line' in update and not is_locked:
+                    delivery_per_line_value = float(update['delivery_per_line'] or 0)
+                    qty_row = _execute_with_cursor(cur, """
+                        SELECT COALESCE(chosen_qty, quantity) AS effective_quantity
+                        FROM parts_list_lines
+                        WHERE id = ?
+                    """, (parts_list_line_id,)).fetchone()
+                    effective_quantity = float((qty_row['effective_quantity'] if qty_row else 0) or 0)
+                    delivery_per_unit_value = (delivery_per_line_value / effective_quantity) if effective_quantity > 0 else 0
+
                     fields.append("delivery_per_line = ?")
-                    params.append(float(update['delivery_per_line'] or 0))
-                    logging.debug(f"Line {parts_list_line_id}: delivery_per_line = {update['delivery_per_line']}")
+                    params.append(delivery_per_line_value)
+                    fields.append("delivery_per_unit = ?")
+                    params.append(delivery_per_unit_value)
+
+                    margin_for_calc = float(update.get('margin_percent', 0) or 0)
+                    if 'margin_percent' not in update:
+                        margin_row = _execute_with_cursor(cur, """
+                            SELECT margin_percent
+                            FROM customer_quote_lines
+                            WHERE id = ?
+                        """, (quote_line_id,)).fetchone()
+                        margin_for_calc = float((margin_row['margin_percent'] if margin_row else 0) or 0)
+
+                    base_cost_for_calc = float(base_cost_gbp or 0)
+                    if margin_for_calc > 0 and margin_for_calc < 100 and base_cost_for_calc > 0:
+                        price_before_delivery = base_cost_for_calc / (1 - margin_for_calc / 100)
+                    else:
+                        price_before_delivery = base_cost_for_calc
+                    quote_price_from_delivery = price_before_delivery + delivery_per_unit_value
+                    fields.append("quote_price_gbp = ?")
+                    params.append(quote_price_from_delivery)
+                    logging.debug(f"Line {parts_list_line_id}: delivery_per_line = {delivery_per_line_value}, delivery_per_unit = {delivery_per_unit_value}, quote_price_gbp = {quote_price_from_delivery}")
 
                 if 'lead_days' in update:
                     fields.append("lead_days = ?")
