@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, url_for, redirect, session, flash, abort, Response
+from flask import Blueprint, render_template, request, jsonify, url_for, redirect, session, flash, abort, Response, g
 from models import create_base_part_number, get_global_alternatives, insert_update, convert_currency
 from db import execute as db_execute, db_cursor
 import logging
@@ -4855,8 +4855,14 @@ def view_parts_lists():
                 (current_user.id,),
                 fetch='one',
             )
-            if user_salesperson:
-                current_user_salesperson_id = user_salesperson['legacy_salesperson_id']
+            if user_salesperson and user_salesperson['legacy_salesperson_id']:
+                salesperson_exists = db_execute(
+                    'SELECT id FROM salespeople WHERE id = ?',
+                    (user_salesperson['legacy_salesperson_id'],),
+                    fetch='one',
+                )
+                if salesperson_exists:
+                    current_user_salesperson_id = user_salesperson['legacy_salesperson_id']
 
         # Default to current user's salesperson if no explicit filter
         if not salesperson_id and current_user_salesperson_id:
@@ -4885,6 +4891,17 @@ def view_parts_lists():
             """,
             fetch='all',
         )
+        if not all_salespeople:
+            fallback_salespeople = getattr(g, 'salespeople', []) or []
+            all_salespeople = [
+                {
+                    'id': sp.get('id'),
+                    'name': sp.get('name'),
+                    'parts_list_count': 0,
+                }
+                for sp in fallback_salespeople
+                if sp and sp.get('id')
+            ]
 
         # Get current salesperson if filtered
         current_salesperson = None
@@ -4894,6 +4911,8 @@ def view_parts_lists():
                 (salesperson_id,),
                 fetch='one',
             )
+            if not current_salesperson:
+                salesperson_id = None
         elif current_user_salesperson_id:
             # If user is a salesperson but no filter selected, get their info
             current_salesperson = db_execute(
