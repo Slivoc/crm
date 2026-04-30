@@ -2017,11 +2017,71 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    function setupTableSorting() {
+        const tableBody = document.getElementById('quoteTableBody');
+        const sortHeader = document.querySelector('th[data-sort-key="delivery_per_line"]');
+        if (!tableBody || !sortHeader) return;
+
+        let sortDirection = null; // null -> desc -> asc -> null
+
+        function getDeliveryValue(row) {
+            const input = row.querySelector('[data-field="delivery_per_line"]');
+            return parseFloat(input?.value) || 0;
+        }
+
+        function getLineNumber(row) {
+            const raw = row.dataset.lineNumber || '0';
+            const parsed = parseFloat(raw);
+            return Number.isFinite(parsed) ? parsed : 0;
+        }
+
+        function updateSortIndicator() {
+            const indicator = sortHeader.querySelector('[data-sort-indicator-for="delivery_per_line"]');
+            if (!indicator) return;
+            indicator.textContent = sortDirection === 'desc' ? '↓' : sortDirection === 'asc' ? '↑' : '↕';
+        }
+
+        function applySort() {
+            const quoteRows = Array.from(tableBody.querySelectorAll('tr.quote-row'));
+            const detailRowsByLineId = new Map(
+                Array.from(tableBody.querySelectorAll('tr.detail-row')).map(row => [row.dataset.parentLineId, row])
+            );
+
+            const sortedRows = quoteRows.sort((a, b) => {
+                if (!sortDirection) {
+                    return getLineNumber(a) - getLineNumber(b);
+                }
+                const aVal = getDeliveryValue(a);
+                const bVal = getDeliveryValue(b);
+                if (aVal === bVal) return getLineNumber(a) - getLineNumber(b);
+                return sortDirection === 'desc' ? bVal - aVal : aVal - bVal;
+            });
+
+            sortedRows.forEach(row => {
+                tableBody.appendChild(row);
+                const detailRow = detailRowsByLineId.get(row.dataset.lineId);
+                if (detailRow) tableBody.appendChild(detailRow);
+            });
+        }
+
+        sortHeader.addEventListener('click', function() {
+            sortDirection = sortDirection === null ? 'desc' : sortDirection === 'desc' ? 'asc' : null;
+            updateSortIndicator();
+            applySort();
+        });
+
+        tableBody.addEventListener('input', function(e) {
+            if (!e.target.matches('[data-field="delivery_per_line"]') || !sortDirection) return;
+            applySort();
+        });
+    }
+
     // START
     setSummaryCurrencyLabels();
     applyLineGroupingVisuals();
     setTargetPriceColumnVisibility(hasExistingTargetPrices());
     initializeTable();
+    setupTableSorting();
     setupDuplicateLineButtons();
     setupCopyPartNumberButtons();
     setupExpandToggle();
