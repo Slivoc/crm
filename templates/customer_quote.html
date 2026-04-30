@@ -91,6 +91,7 @@ function markSaved() {
 async function autoSave() {
     const updates = hot.getSourceData().map((row) => ({
         parts_list_line_id: row.id,
+        delivery_per_line: Number.parseFloat(row.delivery_per_line) || 0,
         quoted_status: row.quoted_status,
         is_no_bid: row.quoted_status === 'no_bid' ? 1 : 0,
         line_notes: row.line_notes
@@ -122,18 +123,53 @@ const tableData = LINES_DATA.map((line) => ({
     line_number: line.line_number,
     customer_part_number: (line.requested_part_number || line.customer_part_number || '').toString().trim(),
     quantity: line.quantity,
+    effective_quantity: Number.parseFloat(line.chosen_qty ?? line.quantity) || 0,
+    delivery_per_line: (() => {
+        const explicit = Number.parseFloat(line.delivery_per_line);
+        if (Number.isFinite(explicit)) return explicit;
+
+        const deliveryPerUnit = Number.parseFloat(line.delivery_per_unit);
+        const effectiveQty = Number.parseFloat(line.chosen_qty ?? line.quantity);
+        if (Number.isFinite(deliveryPerUnit) && Number.isFinite(effectiveQty) && effectiveQty > 0) {
+            return deliveryPerUnit * effectiveQty;
+        }
+        return 0;
+    })(),
     quoted_status: line.quoted_status || (line.is_no_bid ? 'no_bid' : 'created'),
     line_notes: line.line_notes || ''
 }));
 
+async function autoRecalculateDeliveryOnce() {
+    const sessionKey = `cq_delivery_recalc_${LIST_ID}`;
+    if (sessionStorage.getItem(sessionKey) === 'done') {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/calculate-delivery-costs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            return;
+        }
+        sessionStorage.setItem(sessionKey, 'done');
+        window.location.reload();
+    } catch (error) {
+        console.warn('Auto delivery recalculation failed:', error);
+    }
+}
+
 const container = document.getElementById('hot-container');
 hot = new Handsontable(container, {
     data: tableData,
-    colHeaders: ['Line', 'Part Number', 'Qty', 'Status', 'Notes'],
+    colHeaders: ['Line', 'Part Number', 'Qty', 'Delivery/Line', 'Status', 'Notes'],
     columns: [
         { data: 'line_number', type: 'numeric', readOnly: true, width: 60 },
         { data: 'customer_part_number', readOnly: true, width: 220 },
         { data: 'quantity', type: 'numeric', readOnly: true, width: 70 },
+        { data: 'delivery_per_line', type: 'numeric', readOnly: false, width: 120, numericFormat: { pattern: '0,0.00' } },
         { data: 'quoted_status', type: 'dropdown', source: ['created', 'in_progress', 'quoted', 'no_bid'], width: 120 },
         { data: 'line_notes', type: 'text', width: 240 }
     ],
@@ -142,6 +178,7 @@ hot = new Handsontable(container, {
     height: 'auto',
     stretchH: 'all',
     manualColumnResize: true,
+    columnSorting: true,
     licenseKey: 'non-commercial-and-evaluation',
     afterChange: function(changes, source) {
         if (!changes || source === 'loadData') {
@@ -174,6 +211,8 @@ window.addEventListener('beforeunload', function(event) {
         event.returnValue = '';
     }
 });
+
+autoRecalculateDeliveryOnce();
 </script>
 
 {% endblock %}
