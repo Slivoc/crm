@@ -639,6 +639,7 @@ def create_supplier_quote(list_id):
     try:
         data = request.get_json(force=True)
         supplier_id = data.get('supplier_id')
+        supplier_mov = _safe_float(data.get('supplier_mov'))
 
         if not supplier_id:
             return jsonify(success=False, message="supplier_id is required"), 400
@@ -683,6 +684,13 @@ def create_supplier_quote(list_id):
             fetch='one',
             commit=True,
         )
+
+        if 'supplier_mov' in data:
+            db_execute(
+                "UPDATE suppliers SET mov = ? WHERE id = ?",
+                (supplier_mov, supplier_id),
+                commit=True,
+            )
 
         quote_id = _safe_row_get(row, 'id')
         if quote_id is None and row:
@@ -805,6 +813,7 @@ def update_supplier_quote(list_id, quote_id):
     """
     try:
         data = request.get_json(force=True)
+        supplier_mov = _safe_float(data.get('supplier_mov')) if 'supplier_mov' in data else None
 
         # Build update query
         fields = []
@@ -847,6 +856,23 @@ def update_supplier_quote(list_id, quote_id):
 
             if cur.rowcount == 0:
                 return jsonify(success=False, message="Quote not found"), 404
+
+            if 'supplier_mov' in data:
+                target_supplier_id = data.get('supplier_id')
+                if not target_supplier_id:
+                    supplier_row = _execute_with_cursor(
+                        cur,
+                        "SELECT supplier_id FROM parts_list_supplier_quotes WHERE id = ? AND parts_list_id = ?",
+                        (quote_id, list_id),
+                    ).fetchone()
+                    target_supplier_id = supplier_row['supplier_id'] if supplier_row else None
+
+                if target_supplier_id:
+                    _execute_with_cursor(
+                        cur,
+                        "UPDATE suppliers SET mov = ? WHERE id = ?",
+                        (supplier_mov, target_supplier_id),
+                    )
 
         return jsonify(success=True)
 
@@ -1472,6 +1498,7 @@ def extract_supplier_quote():
 
         currency_warning = _detect_multiple_currencies(quote_text)
         extracted_items = extract_supplier_quote_data(quote_text, context_parts)
+        extracted_mov = _extract_supplier_mov_value(quote_text)
 
         logger.info("extract_supplier_quote: got %d items from extractor",
                     len(extracted_items))
@@ -1485,7 +1512,8 @@ def extract_supplier_quote():
         return jsonify({
             "success": True,
             "items": extracted_items,
-            "currency_warning": currency_warning
+            "currency_warning": currency_warning,
+            "mov": extracted_mov
         })
 
     except Exception as e:
@@ -1753,6 +1781,26 @@ _CURRENCY_SYMBOLS = {
     '€': {'EUR'},
     '¥': {'JPY', 'CNY'},
 }
+
+
+def _extract_supplier_mov_value(text):
+    """Best-effort MOV extraction from supplier text. Returns float or None."""
+    if not text:
+        return None
+
+    patterns = [
+        r'\b(?:mov|minimum\s+order\s+value|min\.?\s*order\s+value)\b[^0-9$£€]{0,20}([$£€]?\s*[\d,]+(?:\.\d{1,2})?)',
+        r'([$£€]?\s*[\d,]+(?:\.\d{1,2})?)\s*(?:minimum\s+order\s+value|mov)\b',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+        mov = _safe_float(match.group(1))
+        if mov is not None and mov >= 0:
+            return mov
+
+    return None
 
 
 def _detect_multiple_currencies(text):
