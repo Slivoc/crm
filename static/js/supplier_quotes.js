@@ -13,6 +13,7 @@ let supplierMetaById = {};
 function renderSupplierMovWarning(meta) {
     const warningEl = document.getElementById('supplier-mov-warning');
     if (!warningEl) return;
+    setSupplierMovInput(meta?.mov);
 
     const messages = [];
     if (meta?.warning) messages.push(`Warning: ${meta.warning}`);
@@ -28,6 +29,16 @@ function renderSupplierMovWarning(meta) {
 
     warningEl.textContent = messages.join(' | ');
     warningEl.classList.remove('d-none');
+}
+
+function setSupplierMovInput(value) {
+    const movInput = document.getElementById('supplier-mov-input');
+    if (!movInput) return;
+    if (value === null || value === undefined || value === '') {
+        movInput.value = '';
+        return;
+    }
+    movInput.value = value;
 }
 
 function getPdfPreviewElements() {
@@ -1246,6 +1257,10 @@ function extractQuoteData() {
             showToast(`${data.currency_warning.message}${markers}`, 'warning');
         }
 
+        if (data.mov !== undefined) {
+            setSupplierMovInput(data.mov);
+        }
+
         if (data.success && Array.isArray(extractedLines) && extractedLines.length > 0) {
             applyExtractedDataToTable(extractedLines);
             showToast(`Extracted ${extractedLines.length} line(s) successfully`, 'success');
@@ -1431,6 +1446,12 @@ function saveSupplierQuote() {
         quote_reference: document.getElementById('quote-reference-input').value,
         quote_date: document.getElementById('quote-date-input').value,
         currency_id: parseInt(document.getElementById('quote-currency-select').value),
+        supplier_mov: (() => {
+            const raw = document.getElementById('supplier-mov-input')?.value;
+            if (raw === undefined || raw === null || raw === '') return null;
+            const parsed = parseFloat(raw);
+            return Number.isFinite(parsed) ? parsed : null;
+        })(),
         notes: notesInput ? notesInput.value : '',
         email_message_id: window.EMAIL_MESSAGE_ID || null,
         email_conversation_id: window.EMAIL_CONVERSATION_ID || null
