@@ -95,7 +95,7 @@
                                         {% endif %}
                                     </td>
                                     <td>
-                                        <a href="/part/{{ part.part_number }}"
+                                        <a href="/parts/{{ part.part_number }}"
                                            class="btn btn-sm btn-outline-primary"
                                            target="_blank">
                                             View Part
@@ -119,6 +119,13 @@
                 </div>
                 <div class="card-body">
                     <div class="btn-group" role="group">
+                        <form method="POST"
+                              action="{{ url_for('portal_admin.create_parts_list_from_search', search_id=search.id) }}"
+                              class="me-2">
+                            <button type="submit" class="btn btn-outline-success">
+                                Create Parts List from Search
+                            </button>
+                        </form>
                         <a href="{{ url_for('portal_admin.view_customer_portal_settings', customer_id=search.customer_id) }}"
                            class="btn btn-outline-primary">
                             View Customer Portal Settings

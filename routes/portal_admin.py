@@ -2632,6 +2632,84 @@ def view_search_details(search_id):
                            parts_searched=parts_searched)
 
 
+@portal_admin_bp.route('/search-history/<int:search_id>/create-parts-list', methods=['POST'])
+def create_parts_list_from_search(search_id):
+    """Create a parts list from a portal search history entry."""
+    import json
+
+    search = db_execute("""
+        SELECT psh.*, c.salesperson_id
+        FROM portal_search_history psh
+        JOIN customers c ON c.id = psh.customer_id
+        WHERE psh.id = ?
+    """, (search_id,), fetch='one')
+
+    if not search:
+        flash('Search not found.', 'error')
+        return redirect(url_for('portal_admin.view_search_history'))
+
+    parts_searched = []
+    if search.get('parts_searched'):
+        try:
+            parts_searched = json.loads(search['parts_searched']) or []
+        except Exception:
+            parts_searched = []
+
+    normalized_parts = []
+    for idx, part in enumerate(parts_searched, start=1):
+        part_number = (part.get('part_number') or '').strip().upper()
+        if not part_number:
+            continue
+        try:
+            quantity = int(part.get('quantity') or 1)
+        except (TypeError, ValueError):
+            quantity = 1
+        if quantity <= 0:
+            quantity = 1
+        normalized_parts.append({
+            'line_number': idx,
+            'part_number': part_number,
+            'base_part_number': create_base_part_number(part_number),
+            'quantity': quantity,
+        })
+
+    if not normalized_parts:
+        flash('No valid parts were found in this search.', 'error')
+        return redirect(url_for('portal_admin.view_search_details', search_id=search_id))
+
+    salesperson_id = search.get('salesperson_id') or 1
+
+    with db_cursor(commit=True) as cur:
+        new_list = _execute_with_cursor(cur, _with_returning_clause("""
+            INSERT INTO parts_lists
+            (name, customer_id, salesperson_id, status_id, notes)
+            VALUES (?, ?, ?, 1, ?)
+        """), (
+            f"Portal Search {search_id}",
+            search['customer_id'],
+            salesperson_id,
+            f"Created from portal search history entry #{search_id}",
+        ))
+        parts_list_id = _last_inserted_id(cur, new_list)
+
+        for part in normalized_parts:
+            _execute_with_cursor(cur, """
+                INSERT INTO parts_list_lines
+                (parts_list_id, line_number, customer_part_number, base_part_number, quantity, chosen_qty)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                parts_list_id,
+                part['line_number'],
+                part['part_number'],
+                part['base_part_number'],
+                part['quantity'],
+                part['quantity'],
+            ))
+
+    flash(f'Created Parts List #{parts_list_id} from search #{search_id}.', 'success')
+    return redirect(f'/parts_list/parts-lists/{parts_list_id}')
+
+
 # ====================================================================================
 # ADD THESE ROUTES TO portal_admin.py (after the last route, before the end of file)
 # ====================================================================================
