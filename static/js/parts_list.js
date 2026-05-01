@@ -261,6 +261,66 @@ function getLookupExportRows(results) {
         }));
 }
 
+function getLookupRowsWithQpl(results, qplDetailsByPart) {
+    const primaryParts = (results || []).filter(part => !(part.is_global_alternative || part.line_type === 'alternate'));
+    const baseRows = getLookupExportRows(results);
+    const expandedRows = [];
+
+    baseRows.forEach((row, index) => {
+        const part = primaryParts[index] || {};
+        const basePartNumber = part.base_part_number || '';
+        const qplRows = qplDetailsByPart[basePartNumber] || [];
+
+        if (!qplRows.length) {
+            expandedRows.push({
+                ...row,
+                qpl_manufacturer_name: '',
+                qpl_cage_code: '',
+                qpl_location: '',
+                qpl_approval_list_type: ''
+            });
+            return;
+        }
+
+        qplRows.forEach(qplEntry => {
+            expandedRows.push({
+                ...row,
+                qpl_manufacturer_name: qplEntry.manufacturer_name || '',
+                qpl_cage_code: qplEntry.cage_code || '',
+                qpl_location: qplEntry.location || '',
+                qpl_approval_list_type: qplEntry.approval_list_type || ''
+            });
+        });
+    });
+
+    return expandedRows;
+}
+
+async function fetchQplDetailsForExport(results) {
+    const primaryParts = (results || []).filter(part => !(part.is_global_alternative || part.line_type === 'alternate'));
+    const uniqueBaseParts = [...new Set(
+        primaryParts
+            .map(part => part.base_part_number || '')
+            .filter(Boolean)
+    )];
+
+    const qplDetailsByPart = {};
+    await Promise.all(uniqueBaseParts.map(async basePartNumber => {
+        try {
+            const response = await fetch(`/parts_list/parts-lists/qpl?part=${encodeURIComponent(basePartNumber)}`);
+            const data = await response.json();
+            qplDetailsByPart[basePartNumber] = (response.ok && data.success && Array.isArray(data.results))
+                ? data.results
+                : [];
+        } catch (error) {
+            console.warn('Unable to fetch QPL details for export:', basePartNumber, error);
+            qplDetailsByPart[basePartNumber] = [];
+        }
+    }));
+
+    return qplDetailsByPart;
+}
+
 function buildBasicResultsFromLines(lines) {
     if (!Array.isArray(lines)) return [];
     return lines.map((line, index) => ({
@@ -4167,33 +4227,43 @@ if (viewAsTableBtn) {
 
 const exportLookupBtn = document.getElementById('export-lookup-btn');
 if (exportLookupBtn) {
-    exportLookupBtn.addEventListener('click', function() {
+    exportLookupBtn.addEventListener('click', async function() {
         if (!window.allResults || window.allResults.length === 0) {
             alert('No lookup results to export');
             return;
         }
 
-        const rows = getLookupExportRows(window.allResults);
-        if (!rows.length) {
-            alert('No primary lookup lines to export');
-            return;
+        exportLookupBtn.disabled = true;
+        const originalText = exportLookupBtn.innerHTML;
+        exportLookupBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Exporting...';
+
+        try {
+            const qplDetailsByPart = await fetchQplDetailsForExport(window.allResults);
+            const rows = getLookupRowsWithQpl(window.allResults, qplDetailsByPart);
+            if (!rows.length) {
+                alert('No primary lookup lines to export');
+                return;
+            }
+
+            const headers = Object.keys(rows[0]);
+            const csvLines = [
+                headers.join(','),
+                ...rows.map(row => headers.map(header => escapeCsvValue(row[header])).join(','))
+            ];
+
+            const csvBlob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+            const dateSuffix = new Date().toISOString().slice(0, 10);
+            const downloadLink = document.createElement('a');
+            downloadLink.href = URL.createObjectURL(csvBlob);
+            downloadLink.download = `parts_lookup_export_${dateSuffix}.csv`;
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+            URL.revokeObjectURL(downloadLink.href);
+        } finally {
+            exportLookupBtn.disabled = false;
+            exportLookupBtn.innerHTML = originalText;
         }
-
-        const headers = Object.keys(rows[0]);
-        const csvLines = [
-            headers.join(','),
-            ...rows.map(row => headers.map(header => escapeCsvValue(row[header])).join(','))
-        ];
-
-        const csvBlob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-        const dateSuffix = new Date().toISOString().slice(0, 10);
-        const downloadLink = document.createElement('a');
-        downloadLink.href = URL.createObjectURL(csvBlob);
-        downloadLink.download = `parts_lookup_export_${dateSuffix}.csv`;
-        document.body.appendChild(downloadLink);
-        downloadLink.click();
-        document.body.removeChild(downloadLink);
-        URL.revokeObjectURL(downloadLink.href);
     });
 }
 
