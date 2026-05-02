@@ -458,7 +458,11 @@ def log_search_result_snapshot(search_history_id, customer_id, results):
     try:
         with db_cursor(commit=True) as cursor:
             for line_number, result in enumerate(results, start=1):
-                requested_part_number = (result.get('part_number') or '').strip()
+                requested_part_number = (
+                    result.get('requested_part_number')
+                    or result.get('part_number')
+                    or ''
+                ).strip()
                 if not requested_part_number:
                     continue
 
@@ -466,6 +470,7 @@ def log_search_result_snapshot(search_history_id, customer_id, results):
                 estimated_price = _to_float(result.get('estimated_price'))
                 estimated_currency = (result.get('currency') or '').strip() or None
                 price_source = (result.get('price_source') or '').strip() or None
+                quantity = result.get('quantity_requested', result.get('quantity', 1))
 
                 _execute_with_cursor(cursor, """
                     INSERT INTO portal_search_history_lines (
@@ -487,11 +492,11 @@ def log_search_result_snapshot(search_history_id, customer_id, results):
                     line_number,
                     requested_part_number,
                     base_part_number,
-                    int(result.get('quantity') or 1),
+                    int(quantity or 1),
                     estimated_price,
                     estimated_currency,
                     price_source,
-                    1 if estimated_price is not None else 0,
+                    estimated_price is not None,
                 ))
     except Exception:
         logging.exception("Failed to persist portal search result snapshot")
@@ -1309,7 +1314,7 @@ def get_recent_searches():
                     LIMIT 1
                 ) AS current_price_source
             FROM portal_search_history psh
-            LEFT JOIN portal_search_history_lines pshl ON pshl.search_history_id = psh.id
+            JOIN portal_search_history_lines pshl ON pshl.search_history_id = psh.id
             WHERE psh.portal_user_id = ?
               AND psh.search_type = 'quote_analysis'
             ORDER BY newly_priced DESC, psh.date_searched DESC, pshl.line_number ASC
