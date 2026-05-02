@@ -1274,7 +1274,7 @@ def get_recent_searches():
                 pshl.price_source as searched_price_source,
                 pshl.has_price as had_price_when_searched,
                 CASE
-                    WHEN COALESCE(pshl.has_price, 0) = 0 AND (
+                    WHEN COALESCE(pshl.has_price, FALSE) = FALSE AND (
                         SELECT p2.estimated_price
                         FROM portal_search_history_lines p2
                         WHERE p2.customer_id = psh.customer_id
