@@ -1,9 +1,12 @@
 # this is portal_api.py - it lives in the office and serves the core CRM. It sends and receives data to/from the external portal app
 
 import calendar
+import csv
+import io
 import json
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, date
 from decimal import Decimal, InvalidOperation, ROUND_UP
@@ -280,6 +283,149 @@ def get_portal_setting(key, default=None):
         return default
 
 
+def _get_portal_bool_setting(key, default=False):
+    return _truthy(get_portal_setting(key, '1' if default else '0'), default=default)
+
+
+def _parse_portal_badge_bom_ids(raw_value):
+    if raw_value in (None, ''):
+        return []
+
+    values = raw_value
+    if isinstance(raw_value, str):
+        text = raw_value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                values = parsed
+            else:
+                values = [item.strip() for item in text.split(',')]
+        except json.JSONDecodeError:
+            values = [item.strip() for item in text.split(',')]
+    elif not isinstance(raw_value, (list, tuple, set)):
+        values = [raw_value]
+
+    parsed_ids = []
+    for value in values:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0 and parsed not in parsed_ids:
+            parsed_ids.append(parsed)
+    return parsed_ids
+
+
+def _get_portal_badge_bom_ids():
+    selected_ids = _parse_portal_badge_bom_ids(get_portal_setting('portal_badge_bom_ids', '[]'))
+    if not selected_ids:
+        return []
+
+    placeholders = ', '.join(['?'] * len(selected_ids))
+    rows = db_execute(f"""
+        SELECT id
+        FROM bom_headers
+        WHERE type = 'kit'
+          AND id IN ({placeholders})
+        ORDER BY name
+    """, selected_ids, fetch='all') or []
+    valid_ids = {int(row['id']) for row in rows}
+    return [bom_id for bom_id in selected_ids if bom_id in valid_ids]
+
+
+def _get_portal_badge_settings():
+    return {
+        'show_qpl_badges': _get_portal_bool_setting('show_qpl_badges', default=False),
+        'show_bom_badges': _get_portal_bool_setting('show_bom_badges', default=False),
+        'selected_bom_ids': _get_portal_badge_bom_ids(),
+    }
+
+
+def _get_portal_badge_map(base_part_numbers):
+    normalized_base_parts = []
+    for value in base_part_numbers or []:
+        base_part_number = create_base_part_number((value or '').strip().upper())
+        if base_part_number and base_part_number not in normalized_base_parts:
+            normalized_base_parts.append(base_part_number)
+
+    if not normalized_base_parts:
+        return {}
+
+    badge_settings = _get_portal_badge_settings()
+    if not badge_settings['show_qpl_badges'] and not badge_settings['show_bom_badges']:
+        return {}
+
+    badge_map = {
+        base_part_number: {
+            'qpl_labels': [],
+            'bom_badges': [],
+        }
+        for base_part_number in normalized_base_parts
+    }
+
+    placeholders = ', '.join(['?'] * len(normalized_base_parts))
+
+    if badge_settings['show_qpl_badges']:
+        qpl_rows = db_execute(f"""
+            SELECT DISTINCT approval_list_type, airbus_material_base, manufacturer_part_number_base
+            FROM manufacturer_approvals
+            WHERE airbus_material_base IN ({placeholders})
+               OR manufacturer_part_number_base IN ({placeholders})
+        """, normalized_base_parts + normalized_base_parts, fetch='all') or []
+
+        for row in qpl_rows:
+            row_data = dict(row)
+            approval_list_type = (row_data.get('approval_list_type') or '').strip()
+            label = (
+                'AQPL' if approval_list_type == 'airbus_fixed_wing'
+                else 'HQPL' if approval_list_type == 'airbus_rotary'
+                else 'QPL'
+            )
+            for base_part_number in (
+                row_data.get('airbus_material_base'),
+                row_data.get('manufacturer_part_number_base'),
+            ):
+                if base_part_number not in badge_map:
+                    continue
+                if label not in badge_map[base_part_number]['qpl_labels']:
+                    badge_map[base_part_number]['qpl_labels'].append(label)
+
+    selected_bom_ids = badge_settings['selected_bom_ids']
+    if badge_settings['show_bom_badges'] and selected_bom_ids:
+        bom_placeholders = ', '.join(['?'] * len(selected_bom_ids))
+        bom_rows = db_execute(f"""
+            SELECT DISTINCT
+                bl.base_part_number,
+                bh.id AS bom_id,
+                bh.name AS bom_name
+            FROM bom_lines bl
+            JOIN bom_headers bh ON bh.id = bl.bom_header_id
+            WHERE bl.base_part_number IN ({placeholders})
+              AND bh.id IN ({bom_placeholders})
+            ORDER BY bh.name
+        """, normalized_base_parts + selected_bom_ids, fetch='all') or []
+
+        for row in bom_rows:
+            row_data = dict(row)
+            base_part_number = row_data.get('base_part_number')
+            bom_id = row_data.get('bom_id')
+            bom_name = (row_data.get('bom_name') or '').strip()
+            if base_part_number not in badge_map or not bom_id or not bom_name:
+                continue
+
+            badge = {'id': int(bom_id), 'name': bom_name}
+            if badge not in badge_map[base_part_number]['bom_badges']:
+                badge_map[base_part_number]['bom_badges'].append(badge)
+
+    return {
+        base_part_number: entry
+        for base_part_number, entry in badge_map.items()
+        if entry['qpl_labels'] or entry['bom_badges']
+    }
+
+
 def _portal_api_key_valid():
     """Allow unauthenticated portal endpoints to validate the shared API key."""
     api_key = request.headers.get('X-API-Key')
@@ -436,6 +582,243 @@ def _normalize_search_parts(parts_list):
             'quantity': quantity,
         })
     return normalized_parts
+
+
+_PORTAL_PART_TOKEN_RE = re.compile(r'^[A-Z0-9][A-Z0-9./_-]{2,}$')
+_PORTAL_QTY_PATTERNS = (
+    re.compile(r'\b(?:qty|quantity)\s*[:=]?\s*(\d+)\b', re.IGNORECASE),
+    re.compile(r'\bx\s*(\d+)\b', re.IGNORECASE),
+)
+_PORTAL_HEADER_HINTS = {
+    'part', 'part number', 'pn', 'p/n', 'description', 'desc', 'qty', 'quantity',
+    'need', 'required', 'uom', 'price', 'cost', 'lead', 'lead time', 'stock',
+}
+
+
+def _portal_allowed_upload(filename):
+    extension = os.path.splitext((filename or '').lower())[1]
+    return extension in {'.pdf', '.csv', '.xlsx', '.xlsm', '.xls'}
+
+
+def _looks_like_part_number(token):
+    if not token:
+        return False
+    normalized = str(token).strip().upper()
+    if len(normalized) < 3:
+        return False
+    if normalized in {'PDF', 'CSV', 'XLS', 'XLSX'}:
+        return False
+    if normalized.isdigit() and len(normalized) < 4:
+        return False
+    return bool(_PORTAL_PART_TOKEN_RE.match(normalized))
+
+
+def _parse_quantity_from_text(line):
+    for pattern in _PORTAL_QTY_PATTERNS:
+        match = pattern.search(line)
+        if match:
+            try:
+                return max(int(match.group(1)), 1)
+            except (TypeError, ValueError):
+                continue
+
+    trailing = re.search(r'(?<![A-Z0-9])(\d+)\s*$', line, re.IGNORECASE)
+    if trailing:
+        try:
+            return max(int(trailing.group(1)), 1)
+        except (TypeError, ValueError):
+            return 1
+
+    return 1
+
+
+def _extract_part_from_columns(line):
+    columns = [col.strip() for col in re.split(r'[\t,;|]+', line) if col and col.strip()]
+    if not columns:
+        return None
+
+    headerish = {col.strip().lower() for col in columns}
+    if headerish and headerish.issubset(_PORTAL_HEADER_HINTS):
+        return None
+
+    candidate = None
+    for idx, col in enumerate(columns):
+        upper_col = col.upper()
+        if _looks_like_part_number(upper_col):
+            candidate = upper_col
+            qty = None
+            if idx + 1 < len(columns):
+                next_col = columns[idx + 1]
+                qty_match = re.search(r'\d+', next_col)
+                if qty_match:
+                    try:
+                        qty = max(int(qty_match.group(0)), 1)
+                    except (TypeError, ValueError):
+                        qty = None
+            return {
+                'part_number': candidate,
+                'quantity': qty or _parse_quantity_from_text(line),
+            }
+    return None
+
+
+def _extract_part_from_line(line):
+    cleaned = re.sub(r'\s+', ' ', (line or '').strip())
+    if not cleaned:
+        return None
+
+    column_match = _extract_part_from_columns(cleaned)
+    if column_match:
+        return column_match
+
+    tokens = [token.strip().strip(':') for token in cleaned.split(' ') if token.strip()]
+    if not tokens:
+        return None
+
+    for idx, token in enumerate(tokens):
+        upper_token = token.upper()
+        if not _looks_like_part_number(upper_token):
+            continue
+
+        if idx > 0 and tokens[idx - 1].lower() in {'qty', 'quantity'}:
+            continue
+
+        return {
+            'part_number': upper_token,
+            'quantity': _parse_quantity_from_text(cleaned),
+        }
+
+    return None
+
+
+def _extract_parts_deterministically(raw_text):
+    parts = []
+    nonempty_lines = [line for line in (raw_text or '').splitlines() if line.strip()]
+    for line in nonempty_lines:
+        parsed = _extract_part_from_line(line)
+        if parsed:
+            parts.append(parsed)
+
+    return _normalize_search_parts(parts), len(nonempty_lines)
+
+
+def _should_try_ai_for_portal_text(raw_text, parsed_parts, nonempty_line_count):
+    if not raw_text:
+        return False
+    if not parsed_parts:
+        return True
+
+    text = raw_text.strip()
+    parse_ratio = len(parsed_parts) / max(nonempty_line_count, 1)
+    suspicious_markers = any(marker in text for marker in ['\t', ',', ';', '|'])
+    prose_markers = bool(re.search(r'\b(attached|please quote|trace|lead time|condition|cert|availability)\b', text, re.IGNORECASE))
+    long_input = len(text) >= 200
+
+    return (
+        parse_ratio < 0.6
+        or (suspicious_markers and len(parsed_parts) < 3)
+        or (prose_markers and len(parsed_parts) < 3)
+        or (long_input and len(parsed_parts) < nonempty_line_count)
+    )
+
+
+def _extract_parts_with_ai_fallback(raw_text):
+    normalized_text = (raw_text or '').replace('\r\n', '\n').replace('\r', '\n').strip()
+    deterministic_parts, nonempty_line_count = _extract_parts_deterministically(normalized_text)
+    ai_attempted = False
+    ai_used = False
+    warnings = []
+    parts = deterministic_parts
+
+    if _should_try_ai_for_portal_text(normalized_text, deterministic_parts, nonempty_line_count):
+        ai_attempted = True
+        try:
+            from routes.parts_list import extract_part_numbers_and_quantities_batched
+
+            ai_parts, ai_warnings, _batched = extract_part_numbers_and_quantities_batched(normalized_text)
+            ai_parts = _normalize_search_parts(ai_parts)
+            warnings.extend(ai_warnings or [])
+
+            if ai_parts and len(ai_parts) >= len(deterministic_parts):
+                parts = ai_parts
+                ai_used = True
+        except Exception:
+            logging.exception("Portal AI fallback extraction failed")
+            warnings.append("AI fallback failed; continuing with standard parsing.")
+
+    return {
+        'parts': parts,
+        'ai_attempted': ai_attempted,
+        'ai_used': ai_used,
+        'warnings': warnings,
+        'line_count': nonempty_line_count,
+    }
+
+
+def _extract_text_from_portal_upload(file_storage):
+    filename = (file_storage.filename or '').strip()
+    extension = os.path.splitext(filename.lower())[1]
+
+    if extension == '.pdf':
+        import pdfplumber
+
+        text_parts = []
+        with pdfplumber.open(file_storage) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                if page_text:
+                    text_parts.append(page_text)
+        return "\n".join(text_parts).strip()
+
+    if extension == '.csv':
+        raw_bytes = file_storage.read()
+        file_storage.stream.seek(0)
+        decoded = None
+        for encoding in ('utf-8-sig', 'utf-8', 'cp1252', 'latin-1'):
+            try:
+                decoded = raw_bytes.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if decoded is None:
+            decoded = raw_bytes.decode('utf-8', errors='ignore')
+
+        reader = csv.reader(io.StringIO(decoded))
+        rows = []
+        for row in reader:
+            cleaned = [str(cell).strip() for cell in row if str(cell).strip()]
+            if cleaned:
+                rows.append('\t'.join(cleaned))
+        return "\n".join(rows).strip()
+
+    if extension in {'.xlsx', '.xlsm'}:
+        import openpyxl
+
+        workbook = openpyxl.load_workbook(file_storage, data_only=True)
+        rows = []
+        for sheet in workbook.worksheets:
+            for row in sheet.iter_rows(values_only=True):
+                cleaned = [str(cell).strip() for cell in row if cell not in (None, '') and str(cell).strip()]
+                if cleaned:
+                    rows.append('\t'.join(cleaned))
+        return "\n".join(rows).strip()
+
+    if extension == '.xls':
+        try:
+            import pandas as pd
+
+            sheets = pd.read_excel(file_storage, sheet_name=None, header=None, dtype=str)
+            rows = []
+            for frame in sheets.values():
+                for row in frame.fillna('').itertuples(index=False):
+                    cleaned = [str(cell).strip() for cell in row if str(cell).strip()]
+                    if cleaned:
+                        rows.append('\t'.join(cleaned))
+            return "\n".join(rows).strip()
+        except Exception as exc:
+            raise ValueError(f"Legacy .xls parsing failed for {filename}: {exc}") from exc
+
+    raise ValueError(f"Unsupported file type: {filename}")
 
 
 def _has_recent_duplicate_search(portal_user_id, customer_id, search_type, parts_json, ip_address=None, minutes=2):
@@ -962,6 +1345,7 @@ def analyze_quote():
         show_quantities = bool(int(get_portal_setting('show_stock_quantities', 1)))
         show_estimates = bool(int(get_portal_setting('show_estimated_prices', 1)))
         default_lead_days = int(get_portal_setting('default_lead_time_days', 7))
+        badge_settings = _get_portal_badge_settings()
 
         today = datetime.utcnow().date()
         so_cutoff = _months_ago(today, so_months)
@@ -1421,12 +1805,157 @@ def analyze_quote():
         return jsonify({
             'success': True,
             'results': results,
-            'settings': {'show_stock_quantities': show_quantities},
+            'settings': {
+                'show_stock_quantities': show_quantities,
+                'show_qpl_badges': badge_settings['show_qpl_badges'],
+                'show_bom_badges': badge_settings['show_bom_badges'],
+            },
             'monroe_scrape_started': bool(monroe_parts_list_id),
             'monroe_parts_list_id': monroe_parts_list_id,
             'search_history_id': manual_search_id,
         })
 
+    except Exception as e:
+        logging.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _call_analyze_quote_with_payload(parts, extra_payload=None, portal_user=None):
+    """Invoke analyze_quote within the current request context using a synthetic payload."""
+    original_get_json = request.get_json
+    had_original_portal_user = hasattr(request, 'portal_user')
+    original_portal_user = getattr(request, 'portal_user', None)
+
+    payload = {'parts': parts}
+    if extra_payload:
+        payload.update(extra_payload)
+
+    try:
+        if portal_user is not None:
+            request.portal_user = portal_user
+        request.get_json = lambda: payload
+        return analyze_quote()
+    finally:
+        request.get_json = original_get_json
+        if had_original_portal_user:
+            request.portal_user = original_portal_user
+        elif hasattr(request, 'portal_user'):
+            delattr(request, 'portal_user')
+
+
+@portal_api_bp.route('/quote/ingest', methods=['POST'])
+@require_portal_auth
+def ingest_quote_submission():
+    """Accept free-form portal input and files, extract parts, then run quote analysis."""
+    try:
+        portal_user = request.portal_user
+        parts_text = (request.form.get('parts_text') or '').strip()
+        uploaded_files = [file for file in request.files.getlist('files') if file and file.filename]
+
+        if not parts_text and not uploaded_files:
+            return jsonify({'success': False, 'error': 'Paste some text or upload at least one file.'}), 400
+
+        warnings = []
+        extracted_chunks = []
+        source_files = []
+
+        if parts_text:
+            extracted_chunks.append(parts_text)
+
+        for uploaded_file in uploaded_files:
+            if not _portal_allowed_upload(uploaded_file.filename):
+                return jsonify({
+                    'success': False,
+                    'error': f"Unsupported file type for {uploaded_file.filename}. Use PDF, CSV, or Excel."
+                }), 400
+
+            extracted_text = _extract_text_from_portal_upload(uploaded_file)
+            if not extracted_text:
+                warnings.append(f"No usable text found in {uploaded_file.filename}.")
+                continue
+
+            source_files.append(uploaded_file.filename)
+            extracted_chunks.append(extracted_text)
+
+        combined_text = "\n\n".join(chunk for chunk in extracted_chunks if chunk).strip()
+        if not combined_text:
+            return jsonify({'success': False, 'error': 'No usable text could be extracted from the submission.'}), 400
+
+        extraction = _extract_parts_with_ai_fallback(combined_text)
+        extracted_parts = extraction['parts']
+        warnings.extend(extraction['warnings'])
+
+        if not extracted_parts:
+            return jsonify({
+                'success': False,
+                'error': 'No part numbers could be extracted from the submission.',
+                'warnings': warnings,
+            }), 400
+
+        analysis_response = _call_analyze_quote_with_payload(
+            extracted_parts,
+            extra_payload={'source': 'manual_quote_search'},
+            portal_user=portal_user,
+        )
+
+        response, status_code = (
+            analysis_response
+            if isinstance(analysis_response, tuple)
+            else (analysis_response, analysis_response.status_code)
+        )
+        payload = response.get_json()
+        if isinstance(payload, dict):
+            payload['extraction'] = {
+                'parts_count': len(extracted_parts),
+                'source_files': source_files,
+                'ai_attempted': extraction['ai_attempted'],
+                'ai_used': extraction['ai_used'],
+                'warnings': warnings,
+                'combined_text': combined_text[:12000],
+            }
+
+        return jsonify(payload), status_code
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@portal_api_bp.route('/search/badges', methods=['POST'])
+@require_portal_auth
+def get_search_badges():
+    """Return lazy-loaded QPL and BOM badges for portal quote results."""
+    try:
+        data = request.get_json() or {}
+        base_part_numbers = data.get('base_part_numbers') or []
+        if not isinstance(base_part_numbers, list):
+            return jsonify({'success': False, 'error': 'base_part_numbers must be a list'}), 400
+
+        normalized_parts = []
+        for value in base_part_numbers[:500]:
+            base_part_number = create_base_part_number((value or '').strip().upper())
+            if base_part_number and base_part_number not in normalized_parts:
+                normalized_parts.append(base_part_number)
+
+        badge_settings = _get_portal_badge_settings()
+        if not normalized_parts or (not badge_settings['show_qpl_badges'] and not badge_settings['show_bom_badges']):
+            return jsonify({
+                'success': True,
+                'badges': {},
+                'settings': {
+                    'show_qpl_badges': badge_settings['show_qpl_badges'],
+                    'show_bom_badges': badge_settings['show_bom_badges'],
+                },
+            })
+
+        return jsonify({
+            'success': True,
+            'badges': _get_portal_badge_map(normalized_parts),
+            'settings': {
+                'show_qpl_badges': badge_settings['show_qpl_badges'],
+                'show_bom_badges': badge_settings['show_bom_badges'],
+            },
+        })
     except Exception as e:
         logging.exception(e)
         return jsonify({'success': False, 'error': str(e)}), 500

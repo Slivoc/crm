@@ -114,6 +114,36 @@
                             </select>
                             <small class="form-text text-muted">{{ settings.show_stock_quantities.description }}</small>
                         </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Show AQPL and HQPL Badges</label>
+                            <select class="form-control" name="show_qpl_badges">
+                                <option value="1" {% if settings.show_qpl_badges and settings.show_qpl_badges.setting_value == '1' %}selected{% endif %}>Yes - Lazy-load Airbus QPL badges</option>
+                                <option value="0" {% if not settings.show_qpl_badges or settings.show_qpl_badges.setting_value == '0' %}selected{% endif %}>No - Hide QPL badges</option>
+                            </select>
+                            <small class="form-text text-muted">Adds `AQPL` or `HQPL` badges to portal quote results when the part appears on the Airbus lists.</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Show Saved BOM Badges</label>
+                            <select class="form-control" name="show_bom_badges">
+                                <option value="1" {% if settings.show_bom_badges and settings.show_bom_badges.setting_value == '1' %}selected{% endif %}>Yes - Lazy-load saved BOM badges</option>
+                                <option value="0" {% if not settings.show_bom_badges or settings.show_bom_badges.setting_value == '0' %}selected{% endif %}>No - Hide BOM badges</option>
+                            </select>
+                            <small class="form-text text-muted">Adds saved BOM name badges to portal quote results for approved internal BOMs only.</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="portalBadgeBomIds">Saved BOMs Allowed For Portal Badges</label>
+                            <select class="form-control" id="portalBadgeBomIds" name="portal_badge_bom_ids" multiple size="8">
+                                {% for bom in selectable_boms %}
+                                <option value="{{ bom.id }}" {% if bom.id in selected_portal_badge_bom_ids %}selected{% endif %}>
+                                    {{ bom.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <small class="form-text text-muted">Only these saved BOMs will surface as badges in the external portal.</small>
+                        </div>
                     </div>
 
                     <!-- Data Recency Settings -->
@@ -351,7 +381,18 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
     e.preventDefault();
     
     const formData = new FormData(e.target);
-    const data = Object.fromEntries(formData.entries());
+    const data = {};
+    for (const [key, value] of formData.entries()) {
+        if (key === 'portal_badge_bom_ids') {
+            continue;
+        }
+        data[key] = value;
+    }
+
+    const portalBadgeBomIds = document.getElementById('portalBadgeBomIds');
+    data.portal_badge_bom_ids = portalBadgeBomIds
+        ? Array.from(portalBadgeBomIds.selectedOptions).map(option => option.value)
+        : [];
     
     try {
         const response = await fetch('{{ url_for("portal_admin.update_settings") }}', {

@@ -2,6 +2,7 @@
 
 import os
 import re
+import json
 from html import escape
 
 from flask import Blueprint, render_template, request, jsonify, flash, redirect, url_for, session
@@ -204,6 +205,35 @@ def _normalize_line_number(value):
     return text
 
 
+def _parse_int_list(values):
+    if values in (None, ''):
+        return []
+    if isinstance(values, str):
+        text = values.strip()
+        if not text:
+            return []
+        try:
+            parsed_values = json.loads(text)
+            if isinstance(parsed_values, list):
+                values = parsed_values
+            else:
+                values = [item.strip() for item in text.split(',')]
+        except json.JSONDecodeError:
+            values = [item.strip() for item in text.split(',')]
+    elif not isinstance(values, (list, tuple, set)):
+        values = [values]
+
+    parsed = []
+    for value in values:
+        try:
+            item = int(value)
+        except (TypeError, ValueError):
+            continue
+        if item > 0 and item not in parsed:
+            parsed.append(item)
+    return parsed
+
+
 def _sync_missing_portal_lines_from_parts_list(cur, request_id, parts_list_id):
     """Create portal request lines for parts list rows that do not yet exist on the portal request."""
     has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
@@ -396,6 +426,13 @@ def get_customer_pricing_agreement(customer_id, base_part_number):
 def portal_admin_home():
     """Portal administration dashboard"""
     settings = db_execute("SELECT * FROM portal_settings ORDER BY setting_key", fetch='all') or []
+    selectable_boms = db_execute("""
+        SELECT id, name, description
+        FROM bom_headers
+        WHERE type = 'kit'
+        ORDER BY name
+    """, fetch='all') or []
+    selected_portal_badge_bom_ids = _parse_int_list(get_portal_setting('portal_badge_bom_ids', ''))
     users_count = _extract_single_value(
         db_execute("SELECT COUNT(*) as count FROM portal_users WHERE is_active = TRUE", fetch='one')
     ) or 0
@@ -427,6 +464,8 @@ def portal_admin_home():
     return render_template('portal_admin.html',
                            breadcrumbs=breadcrumbs,
                            settings={s['setting_key']: dict(s) for s in settings},
+                           selectable_boms=[dict(row) for row in selectable_boms],
+                           selected_portal_badge_bom_ids=selected_portal_badge_bom_ids,
                            email_config=get_email_config(),
                            email_password_set=bool(get_portal_setting('email_password', '')),
                            users_count=users_count,
@@ -439,6 +478,19 @@ def update_settings():
     """Update portal settings"""
     try:
         data = request.get_json() or {}
+        selected_bom_ids = _parse_int_list(data.get('portal_badge_bom_ids'))
+        if selected_bom_ids:
+            placeholders = ', '.join(['?'] * len(selected_bom_ids))
+            valid_rows = db_execute(f"""
+                SELECT id
+                FROM bom_headers
+                WHERE type = 'kit'
+                  AND id IN ({placeholders})
+            """, selected_bom_ids, fetch='all') or []
+            valid_ids = {int(row['id']) for row in valid_rows}
+            selected_bom_ids = [bom_id for bom_id in selected_bom_ids if bom_id in valid_ids]
+        data['portal_badge_bom_ids'] = json.dumps(selected_bom_ids)
+
         setting_descriptions = {
             'smtp_server': 'SMTP hostname for portal/admin outbound email',
             'smtp_port': 'SMTP port for portal/admin outbound email',
@@ -447,6 +499,9 @@ def update_settings():
             'from_email': 'From email address for portal/admin outbound email',
             'from_name': 'From display name for portal/admin outbound email',
             'notification_email': 'Notification recipient for portal/admin alerts',
+            'show_qpl_badges': 'Whether portal quote results should lazy-load AQPL or HQPL badges.',
+            'show_bom_badges': 'Whether portal quote results should lazy-load saved BOM membership badges.',
+            'portal_badge_bom_ids': 'Saved BOM IDs allowed to surface as badges in portal quote results.',
         }
 
         with db_cursor(commit=True) as cur:

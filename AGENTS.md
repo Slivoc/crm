@@ -270,4 +270,3 @@ The CRM recently migrated from SQLite to PostgreSQL. Several hotspots were fixed
    - There is no migration runner; apply them manually or via a script.
 5. **When in doubt about portal behavior:**
    - Read `call_crm_api()` in `c:\customer-portal\app.py` to see what endpoint is being hit.
-   - Then read the matching function in `c:\crm\routes\portal_api.py`.
