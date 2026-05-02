@@ -502,6 +502,98 @@ def log_search_result_snapshot(search_history_id, customer_id, results):
         logging.exception("Failed to persist portal search result snapshot")
 
 
+def _create_portal_bom_from_parts(portal_user, parts, bom_name, description=None, customer_reference=None, search_history_id=None):
+    """Create a BOM and customer mapping from portal-provided part lines."""
+    normalized_parts = []
+    for idx, part in enumerate(parts or [], start=1):
+        requested_part_number = (part.get('part_number') or '').strip().upper()
+        if not requested_part_number:
+            continue
+        try:
+            quantity = int(part.get('quantity', 1))
+        except (TypeError, ValueError):
+            quantity = 1
+        quantity = max(quantity, 1)
+
+        target_price = _to_float(part.get('target_price_gbp'))
+        normalized_parts.append({
+            'position': idx,
+            'requested_part_number': requested_part_number,
+            'base_part_number': create_base_part_number(requested_part_number),
+            'quantity': quantity,
+            'target_price_gbp': target_price,
+        })
+
+    if not normalized_parts:
+        raise ValueError('No valid BOM parts provided')
+
+    bom_name = (bom_name or '').strip()
+    if not bom_name:
+        raise ValueError('BOM name is required')
+
+    description = (description or '').strip() or None
+    customer_reference = (customer_reference or '').strip() or None
+
+    with db_cursor(commit=True) as cursor:
+        bom_row = _execute_with_cursor(cursor, """
+            INSERT INTO bom_headers (name, description, type)
+            VALUES (?, ?, 'kit')
+            RETURNING id
+        """, (bom_name, description)).fetchone()
+        bom_id = bom_row['id']
+
+        for part in normalized_parts:
+            _execute_with_cursor(cursor, """
+                INSERT INTO bom_lines (
+                    bom_header_id,
+                    base_part_number,
+                    quantity,
+                    position,
+                    guide_price,
+                    notes
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                bom_id,
+                part['base_part_number'],
+                part['quantity'],
+                part['position'],
+                part['target_price_gbp'],
+                f"Saved from portal search line for {part['requested_part_number']}",
+            ))
+
+        _execute_with_cursor(cursor, """
+            INSERT INTO customer_boms (bom_header_id, customer_id, reference)
+            VALUES (?, ?, ?)
+            ON CONFLICT (customer_id, bom_header_id)
+            DO UPDATE SET reference = EXCLUDED.reference
+        """, (
+            bom_id,
+            portal_user['customer_id'],
+            customer_reference,
+        ))
+
+        if _table_has_column('portal_saved_boms', 'search_history_id'):
+            _execute_with_cursor(cursor, """
+                INSERT INTO portal_saved_boms (
+                    portal_user_id,
+                    customer_id,
+                    search_history_id,
+                    bom_header_id,
+                    bom_name
+                )
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                portal_user['id'],
+                portal_user['customer_id'],
+                search_history_id,
+                bom_id,
+                bom_name,
+            ))
+
+    return bom_id
+
+
 def _create_parts_list_for_portal_search(portal_user, parts_list, search_source='manual_quote_search'):
     """
     Create an internal parts list for a customer portal search so Monroe results
@@ -1250,6 +1342,7 @@ def analyze_quote():
             'settings': {'show_stock_quantities': show_quantities},
             'monroe_scrape_started': bool(monroe_parts_list_id),
             'monroe_parts_list_id': monroe_parts_list_id,
+            'search_history_id': manual_search_id,
         })
 
     except Exception as e:
@@ -1325,6 +1418,45 @@ def get_recent_searches():
     except Exception as e:
         logging.exception(e)
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@portal_api_bp.route('/search/save-bom', methods=['POST'])
+@require_portal_auth
+def save_search_as_bom():
+    """Create a BOM from a portal search result set."""
+    try:
+        user = request.portal_user
+        data = request.get_json() or {}
+        bom_name = (data.get('bom_name') or '').strip()
+        description = data.get('description')
+        customer_reference = data.get('customer_reference')
+        search_history_id = data.get('search_history_id')
+        parts = data.get('parts', [])
+
+        if not bom_name:
+            return jsonify({'success': False, 'error': 'BOM name is required'}), 400
+        if not parts:
+            return jsonify({'success': False, 'error': 'No parts provided'}), 400
+
+        bom_id = _create_portal_bom_from_parts(
+            user,
+            parts,
+            bom_name,
+            description=description,
+            customer_reference=customer_reference,
+            search_history_id=search_history_id,
+        )
+
+        return jsonify({
+            'success': True,
+            'bom_id': bom_id,
+            'message': 'BOM saved successfully'
+        })
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except Exception as e:
+        logging.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
 # ============================================================================
 # QUOTE REQUEST SUBMISSION
 # ============================================================================
@@ -1361,11 +1493,14 @@ def submit_quote_request():
             if quantity <= 0:
                 quantity = 1
 
+            target_price_gbp = _to_float(part.get('target_price_gbp'))
+
             normalized_parts.append({
                 'line_number': idx,
                 'part_number': part_number,
                 'quantity': quantity,
                 'base_part_number': create_base_part_number(part_number),
+                'target_price_gbp': target_price_gbp,
             })
 
         if not normalized_parts:
@@ -1397,6 +1532,7 @@ def submit_quote_request():
             has_submitted_estimated_currency = _table_has_column('portal_quote_request_lines', 'submitted_estimated_currency')
             has_submitted_estimated_lead_days = _table_has_column('portal_quote_request_lines', 'submitted_estimated_lead_days')
             has_submitted_price_source = _table_has_column('portal_quote_request_lines', 'submitted_price_source')
+            has_submitted_target_price = _table_has_column('portal_quote_request_lines', 'submitted_target_price_gbp')
             customer_row = _execute_with_cursor(cursor, """
                 SELECT salesperson_id
                 FROM customers
@@ -1482,6 +1618,33 @@ def submit_quote_request():
                 parts_list_line_id = parts_list_line_row['id'] if parts_list_line_row else None
                 if parts_list_line_id:
                     created_line_ids.append(parts_list_line_id)
+                    if part.get('target_price_gbp') is not None:
+                        existing_quote_line = _execute_with_cursor(cursor, """
+                            SELECT id
+                            FROM customer_quote_lines
+                            WHERE parts_list_line_id = ?
+                        """, (parts_list_line_id,)).fetchone()
+                        if existing_quote_line:
+                            _execute_with_cursor(cursor, """
+                                UPDATE customer_quote_lines
+                                SET target_price_gbp = ?
+                                WHERE parts_list_line_id = ?
+                            """, (
+                                part.get('target_price_gbp'),
+                                parts_list_line_id,
+                            ))
+                        else:
+                            _execute_with_cursor(cursor, """
+                                INSERT INTO customer_quote_lines (
+                                    parts_list_line_id,
+                                    target_price_gbp,
+                                    quoted_status
+                                )
+                                VALUES (?, ?, 'created')
+                            """, (
+                                parts_list_line_id,
+                                part.get('target_price_gbp'),
+                            ))
 
                 columns = [
                     "portal_quote_request_id",
@@ -1512,6 +1675,9 @@ def submit_quote_request():
                 if has_submitted_price_source:
                     columns.append("submitted_price_source")
                     values.append(submitted_estimate.get('price_source'))
+                if has_submitted_target_price:
+                    columns.append("submitted_target_price_gbp")
+                    values.append(part.get('target_price_gbp'))
 
                 placeholders = ", ".join(["?"] * len(values))
                 _execute_with_cursor(
@@ -1604,12 +1770,18 @@ def get_quote_request_details(request_id):
         has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
         has_revision = _table_has_column('portal_quote_request_lines', 'revision')
         has_certs = _table_has_column('portal_quote_request_lines', 'certs')
+        has_submitted_target_price = _table_has_column('portal_quote_request_lines', 'submitted_target_price_gbp')
         line_notes_select = "pqrl.line_notes," if has_line_notes else "NULL as line_notes,"
         parts_list_line_select = "pqrl.parts_list_line_id," if has_parts_list_line_id else "NULL as parts_list_line_id,"
         quoted_part_select = "pqrl.quoted_part_number," if has_quoted_part_number else "NULL as quoted_part_number,"
         manufacturer_select = "pqrl.manufacturer," if has_manufacturer else "NULL as manufacturer,"
         revision_select = "pqrl.revision," if has_revision else "NULL as revision,"
         certs_select = "pqrl.certs," if has_certs else "NULL as certs,"
+        submitted_target_price_select = (
+            "pqrl.submitted_target_price_gbp,"
+            if has_submitted_target_price else
+            "NULL as submitted_target_price_gbp,"
+        )
 
         lines = db_execute(f"""
             SELECT 
@@ -1620,6 +1792,7 @@ def get_quote_request_details(request_id):
                 {manufacturer_select}
                 {revision_select}
                 {certs_select}
+                {submitted_target_price_select}
                 c.currency_code,
                 c.{rate_column} as currency_rate,
                 cql.display_part_number,
@@ -1627,6 +1800,7 @@ def get_quote_request_details(request_id):
                 cql.line_notes as customer_quote_line_notes,
                 cql.manufacturer as customer_quote_manufacturer,
                 cql.standard_certs as customer_quote_certs,
+                cql.target_price_gbp,
                 pll.revision as parts_list_revision
             FROM portal_quote_request_lines pqrl
             LEFT JOIN currencies c ON c.id = pqrl.quoted_currency_id
@@ -1693,6 +1867,8 @@ def get_quote_request_details(request_id):
             line_dict.pop('customer_quote_manufacturer', None)
             line_dict.pop('customer_quote_certs', None)
             line_dict.pop('parts_list_revision', None)
+            line_dict['submitted_target_price_gbp'] = _to_float(line_dict.get('submitted_target_price_gbp'))
+            line_dict['target_price_gbp'] = _to_float(line_dict.get('target_price_gbp'))
             normalized_lines.append(line_dict)
 
         return jsonify({
