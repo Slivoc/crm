@@ -496,6 +496,23 @@
             </div>
             <div class="stat-label">Pieces/Lb</div>
         </div>
+        <div class="stat-card orange">
+            <div class="stat-icon"><i class="bi bi-globe2"></i></div>
+            <div class="stat-value editable-stat">
+                <div class="input-group input-group-sm" style="max-width: 180px; margin: 0 auto;">
+                    <span class="input-group-text">{{ base_currency.code }}</span>
+                    <input type="number"
+                           id="portal-standard-price-input"
+                           class="form-control editable-stat-input"
+                           value="{{ portal_standard_price.price if portal_standard_price else '' }}"
+                           placeholder="-"
+                           step="0.01"
+                           min="0"
+                           style="font-size: 1.1rem; font-weight: 700; text-align: center; padding: 0.25rem;">
+                </div>
+            </div>
+            <div class="stat-label">Portal Standard Price</div>
+        </div>
     </div>
 
     <div class="section-card">
@@ -1190,6 +1207,43 @@ function savePiecesPerPound(basePartNumber) {
     });
 }
 
+function savePortalStandardPrice(basePartNumber) {
+    const input = document.getElementById('portal-standard-price-input');
+    if (!input) return;
+
+    const value = input.value.trim();
+    const portalStandardPrice = value === '' ? null : parseFloat(value);
+
+    input.classList.add('is-loading');
+    input.disabled = true;
+
+    fetch(`/parts/${encodeURIComponent(basePartNumber)}/portal_standard_price`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({ portal_standard_price: portalStandardPrice })
+    })
+    .then(resp => resp.json())
+    .then(data => {
+        input.disabled = false;
+        input.classList.remove('is-loading');
+
+        if (!data.success) {
+            throw new Error(data.message || 'Unknown error');
+        }
+
+        input.classList.add('is-valid');
+        setTimeout(() => input.classList.remove('is-valid'), 1500);
+    })
+    .catch(err => {
+        input.disabled = false;
+        input.classList.remove('is-loading');
+        input.classList.add('is-invalid');
+        setTimeout(() => input.classList.remove('is-invalid'), 2000);
+        console.error('Error saving portal standard price:', err);
+        alert('Error saving: ' + err.message);
+    });
+}
+
 // Set up event listener for pieces per pound input
 document.addEventListener('DOMContentLoaded', function() {
     const pppInput = document.getElementById('pieces-per-pound-input');
@@ -1203,6 +1257,20 @@ document.addEventListener('DOMContentLoaded', function() {
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
                 savePiecesPerPound('{{ part_number.base_part_number }}');
+            }, 100);
+        });
+    }
+
+    const portalStandardPriceInput = document.getElementById('portal-standard-price-input');
+    if (portalStandardPriceInput) {
+        let debounceTimer;
+        portalStandardPriceInput.addEventListener('change', function() {
+            savePortalStandardPrice('{{ part_number.base_part_number }}');
+        });
+        portalStandardPriceInput.addEventListener('blur', function() {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                savePortalStandardPrice('{{ part_number.base_part_number }}');
             }, 100);
         });
     }

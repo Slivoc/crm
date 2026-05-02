@@ -416,6 +416,25 @@ def get_customer_pricing_agreement(customer_id, base_part_number):
                 base_currency=base_currency
             )
 
+        standard_pricing = db_execute(f"""
+            SELECT pspp.price, pspp.currency_id, c.{rate_column} as currency_rate
+            FROM portal_standard_part_pricing pspp
+            LEFT JOIN currencies c ON c.id = pspp.currency_id
+            WHERE pspp.base_part_number = ?
+              AND pspp.is_active = TRUE
+            ORDER BY pspp.date_modified DESC
+            LIMIT 1
+        """, (base_part_number,), fetch='one')
+
+        if standard_pricing:
+            base_currency = _get_base_currency()
+            return _convert_to_base_currency(
+                standard_pricing['price'],
+                currency_id=standard_pricing['currency_id'],
+                currency_rate=standard_pricing['currency_rate'],
+                base_currency=base_currency
+            )
+
         return None
     except Exception as e:
         logging.exception(e)

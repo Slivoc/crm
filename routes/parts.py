@@ -77,6 +77,22 @@ def _last_inserted_id(cur, key='id'):
     return getattr(cur, 'lastrowid', None)
 
 
+def _get_base_currency_details():
+    row = db_execute(
+        """
+        SELECT id, currency_code
+        FROM currencies
+        WHERE exchange_rate_to_base = 1
+        ORDER BY id
+        LIMIT 1
+        """,
+        fetch='one',
+    )
+    if row:
+        return {'id': row['id'], 'code': row['currency_code']}
+    return {'id': None, 'code': 'GBP'}
+
+
 def _normalize_base_part_numbers(part_numbers):
     normalized = []
     seen = set()
@@ -976,6 +992,68 @@ def update_pieces_per_pound(base_part_number):
         return jsonify(success=False, message=str(e)), 500
 
 
+@parts_bp.route('/parts/<base_part_number>/portal_standard_price', methods=['POST'])
+def update_portal_standard_price(base_part_number):
+    """Upsert or clear the default portal price for a part."""
+    data = request.json or {}
+    raw_price = data.get('portal_standard_price')
+
+    if raw_price in (None, ''):
+        try:
+            with db_cursor(commit=True) as cur:
+                _execute_with_cursor(
+                    cur,
+                    'DELETE FROM portal_standard_part_pricing WHERE base_part_number = ?',
+                    (base_part_number,),
+                )
+            return jsonify(success=True, portal_standard_price=None)
+        except Exception as e:
+            logging.error(f'Error clearing portal standard price: {e}')
+            return jsonify(success=False, message=str(e)), 500
+
+    try:
+        portal_standard_price = float(raw_price)
+        if portal_standard_price <= 0:
+            return jsonify(success=False, message='Portal standard price must be a positive number'), 400
+    except (ValueError, TypeError):
+        return jsonify(success=False, message='Invalid portal standard price value'), 400
+
+    base_currency = _get_base_currency_details()
+    if base_currency.get('id') is None:
+        return jsonify(success=False, message='Base currency is not configured'), 500
+
+    try:
+        with db_cursor(commit=True) as cur:
+            _execute_with_cursor(cur, """
+                INSERT INTO portal_standard_part_pricing (
+                    base_part_number,
+                    price,
+                    currency_id,
+                    is_active,
+                    date_modified
+                )
+                VALUES (?, ?, ?, TRUE, CURRENT_TIMESTAMP)
+                ON CONFLICT (base_part_number)
+                DO UPDATE SET
+                    price = EXCLUDED.price,
+                    currency_id = EXCLUDED.currency_id,
+                    is_active = TRUE,
+                    date_modified = CURRENT_TIMESTAMP
+            """, (
+                base_part_number,
+                portal_standard_price,
+                base_currency['id'],
+            ))
+        return jsonify(
+            success=True,
+            portal_standard_price=portal_standard_price,
+            currency_code=base_currency['code'],
+        )
+    except Exception as e:
+        logging.error(f'Error updating portal standard price: {e}')
+        return jsonify(success=False, message=str(e)), 500
+
+
 @parts_bp.route('/add_part', methods=['POST'])
 def add_part():
     part_number = request.form['part_number']
@@ -1019,6 +1097,24 @@ def view_part_number(base_part_number):
     bom_lines = get_bom_lines_by_part_number(base_part_number)
     excess_lines = get_excess_lines_by_part_number(base_part_number)
     manufacturer_approvals = get_manufacturer_approvals_by_part_number(base_part_number)
+    base_currency = _get_base_currency_details()
+
+    portal_standard_price = None
+    try:
+        portal_standard_price_row = db_execute("""
+            SELECT
+                pspp.price,
+                c.currency_code
+            FROM portal_standard_part_pricing pspp
+            LEFT JOIN currencies c ON c.id = pspp.currency_id
+            WHERE pspp.base_part_number = ?
+              AND pspp.is_active = TRUE
+            ORDER BY pspp.date_modified DESC
+            LIMIT 1
+        """, (base_part_number,), fetch='one')
+        portal_standard_price = dict(portal_standard_price_row) if portal_standard_price_row else None
+    except Exception:
+        logging.exception("Unable to load portal standard price for %s", base_part_number)
 
     industry_query = """
         SELECT it.tag, COUNT(DISTINCT c.id) AS frequency
@@ -1100,7 +1196,9 @@ def view_part_number(base_part_number):
                            supplier_quotes=supplier_quotes,
                            bom_lines=bom_lines,
                            excess_lines=excess_lines,
-                           manufacturer_approvals=manufacturer_approvals)
+                           manufacturer_approvals=manufacturer_approvals,
+                           portal_standard_price=portal_standard_price,
+                           base_currency=base_currency)
 
 @parts_bp.route('/api/part_number_search', methods=['GET'])
 def part_number_search():
