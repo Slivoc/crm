@@ -806,6 +806,7 @@ def view_portal_request(request_id):
     has_submitted_estimated_currency = _table_has_column('portal_quote_request_lines', 'submitted_estimated_currency')
     has_submitted_estimated_lead_days = _table_has_column('portal_quote_request_lines', 'submitted_estimated_lead_days')
     has_submitted_price_source = _table_has_column('portal_quote_request_lines', 'submitted_price_source')
+    has_submitted_target_price = _table_has_column('portal_quote_request_lines', 'submitted_target_price_gbp')
     portal_line_notes_select = "pqrl.line_notes as portal_line_notes," if has_portal_line_notes else "NULL as portal_line_notes,"
     portal_parts_list_line_select = "pqrl.parts_list_line_id as portal_parts_list_line_id," if has_portal_parts_list_line_id else "NULL as portal_parts_list_line_id,"
     portal_quoted_part_select = "pqrl.quoted_part_number as portal_quoted_part_number," if has_portal_quoted_part_number else "NULL as portal_quoted_part_number,"
@@ -816,6 +817,7 @@ def view_portal_request(request_id):
     submitted_estimated_currency_select = "pqrl.submitted_estimated_currency as portal_estimated_currency," if has_submitted_estimated_currency else "NULL as portal_estimated_currency,"
     submitted_estimated_lead_days_select = "pqrl.submitted_estimated_lead_days as portal_estimated_lead_days," if has_submitted_estimated_lead_days else "NULL as portal_estimated_lead_days,"
     submitted_price_source_select = "pqrl.submitted_price_source as portal_price_source," if has_submitted_price_source else "NULL as portal_price_source,"
+    submitted_target_price_select = "pqrl.submitted_target_price_gbp as portal_target_price_gbp," if has_submitted_target_price else "NULL as portal_target_price_gbp,"
 
     lines = db_execute(f"""
         SELECT 
@@ -830,6 +832,7 @@ def view_portal_request(request_id):
             {submitted_estimated_currency_select}
             {submitted_estimated_lead_days_select}
             {submitted_price_source_select}
+            {submitted_target_price_select}
             c.currency_code,
 
             -- Parts List Line info
@@ -853,6 +856,7 @@ def view_portal_request(request_id):
             cql.delivery_per_line,
             cql.margin_percent,
             cql.quote_price_gbp,
+            cql.target_price_gbp,
             cql.quoted_status,
             cql.is_no_bid as customer_quote_no_bid,
             cql.line_notes as customer_quote_notes,
@@ -928,6 +932,11 @@ def view_portal_request(request_id):
         line['effective_certs'] = (
             (line.get('portal_certs') or '').strip()
             or (line.get('customer_quote_certs') or '').strip()
+        )
+        line['effective_target_price_gbp'] = _to_float(
+            line.get('target_price_gbp')
+            if line.get('target_price_gbp') is not None else
+            line.get('portal_target_price_gbp')
         )
 
     currencies = db_execute("SELECT id, currency_code FROM currencies ORDER BY id", fetch='all') or []

@@ -160,6 +160,7 @@
                 <th style="width: 140px;">Manufacturer</th>
                 <th style="width: 90px;">Rev</th>
                 <th style="width: 90px;">Qty</th>
+                <th style="width: 110px;">Target Price</th>
                 <th style="width: 180px;">
                     Status
                     <br><small class="text-muted">What stage is this line at?</small>
@@ -206,6 +207,18 @@
                            id="qty_{{ line.id }}"
                            min="1"
                            value="{{ line.quantity }}">
+                </td>
+                <td>
+                    {% if line.effective_target_price_gbp is not none %}
+                        <strong>GBP {{ "%.2f"|format(line.effective_target_price_gbp) }}</strong>
+                        {% if line.target_price_gbp is not none and line.portal_target_price_gbp is not none and line.target_price_gbp != line.portal_target_price_gbp %}
+                        <br><small class="text-muted">Portal asked: GBP {{ "%.2f"|format(line.portal_target_price_gbp) }}</small>
+                        {% elif line.portal_target_price_gbp is not none and line.target_price_gbp is none %}
+                        <br><small class="text-muted">From portal</small>
+                        {% endif %}
+                    {% else %}
+                        <span class="text-muted">-</span>
+                    {% endif %}
                 </td>
 
                 <!-- Overall Status Column -->

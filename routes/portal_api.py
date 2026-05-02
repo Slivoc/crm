@@ -14,7 +14,7 @@ from functools import wraps
 from werkzeug.security import check_password_hash
 
 from db import db_cursor, execute as db_execute, get_currency_rate_column
-from models import create_base_part_number, get_base_currency
+from models import create_base_part_number, get_base_currency, get_global_alternatives
 
 # ----------------------------------------------------------------------------
 portal_api_bp = Blueprint('portal_api', __name__, url_prefix='/api/portal')
@@ -41,6 +41,18 @@ def _to_float(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _truthy(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
+    return bool(value)
 
 
 def _apply_margin(value, margin_pct, places=2):
@@ -841,6 +853,7 @@ def analyze_quote():
         parts = data.get('parts', [])
         search_source = (data.get('source') or '').strip()
         is_manual_quote_search = search_source == 'manual_quote_search'
+        include_global_alternatives = _truthy(data.get('include_global_alternatives'), default=True)
 
         if not parts:
             return jsonify({'success': False, 'error': 'No parts provided'}), 400
@@ -908,6 +921,7 @@ def analyze_quote():
         cq_cutoff = _months_ago(today, cq_months)
 
         results = []
+        alt_result_cache = {}
 
         rate_column = get_currency_rate_column()
         with db_cursor() as cursor:
@@ -1311,6 +1325,50 @@ def analyze_quote():
                     result['estimated_lead_days'] = estimated_lead_days
                     result['debug_info'] = debug_info
                     results.append(result)
+
+                    if include_global_alternatives:
+                        seen_alt_bases = set()
+                        for alt_base_part in get_global_alternatives(base_part_number):
+                            if not alt_base_part or alt_base_part == base_part_number or alt_base_part in seen_alt_bases:
+                                continue
+                            seen_alt_bases.add(alt_base_part)
+
+                            alt_part_number = canonical_map.get(alt_base_part) or alt_base_part
+                            cache_key = (user['customer_id'], alt_part_number, quantity)
+                            if cache_key not in alt_result_cache:
+                                alt_response = _analyze_quote_internal(
+                                    user['customer_id'],
+                                    [{'part_number': alt_part_number, 'quantity': quantity}],
+                                    extra_payload={
+                                        'include_global_alternatives': False,
+                                        'source': 'global_alt_expansion',
+                                    }
+                                )
+                                alt_payload = (
+                                    alt_response[0].get_json()
+                                    if isinstance(alt_response, tuple)
+                                    else alt_response.get_json()
+                                )
+                                alt_result_cache[cache_key] = alt_payload
+
+                            alt_payload = alt_result_cache.get(cache_key) or {}
+                            if not alt_payload.get('success'):
+                                continue
+                            alt_results = alt_payload.get('results') or []
+                            if not alt_results:
+                                continue
+
+                            alt_result = dict(alt_results[0])
+                            if alt_result.get('estimated_price') is None:
+                                continue
+
+                            alt_result['is_global_alternative'] = True
+                            alt_result['alternative_to_part_number'] = requested_part_number
+                            alt_result['alternative_to_base_part_number'] = base_part_number
+                            alt_result['requested_part_number'] = alt_result.get('requested_part_number') or alt_part_number
+                            alt_result['quantity_requested'] = quantity
+                            alt_result['source_part_number'] = requested_part_number
+                            results.append(alt_result)
 
                 except Exception as part_error:
                     logging.exception(f"ERROR processing part {part_number}: {part_error}")
@@ -2509,7 +2567,7 @@ def cancel_purchase_order(po_id):
         logging.exception(e)
         return jsonify({'success': False, 'error': str(e)}), 500
 
-def _analyze_quote_internal(customer_id, parts):
+def _analyze_quote_internal(customer_id, parts, extra_payload=None):
     """Internal version without auth decorator - for testing"""
     user = None
     if customer_id:
@@ -2526,7 +2584,10 @@ def _analyze_quote_internal(customer_id, parts):
 
     # Mock get_json for the internal call
     original_get_json = request.get_json
-    request.get_json = lambda: {'parts': parts}
+    payload = {'parts': parts}
+    if extra_payload:
+        payload.update(extra_payload)
+    request.get_json = lambda: payload
 
     # Call the actual function
     result = analyze_quote()
