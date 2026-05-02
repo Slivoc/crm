@@ -55,6 +55,55 @@ def _truthy(value, default=False):
     return bool(value)
 
 
+def _expand_global_alt_results(customer_id, requested_part_number, base_part_number, quantity, canonical_map, alt_result_cache):
+    alt_rows = []
+    seen_alt_bases = set()
+
+    for alt_base_part in get_global_alternatives(base_part_number):
+        if not alt_base_part or alt_base_part == base_part_number or alt_base_part in seen_alt_bases:
+            continue
+        seen_alt_bases.add(alt_base_part)
+
+        alt_part_number = canonical_map.get(alt_base_part) or alt_base_part
+        cache_key = (customer_id, alt_part_number, quantity)
+        if cache_key not in alt_result_cache:
+            alt_response = _analyze_quote_internal(
+                customer_id,
+                [{'part_number': alt_part_number, 'quantity': quantity}],
+                extra_payload={
+                    'include_global_alternatives': False,
+                    'source': 'global_alt_expansion',
+                }
+            )
+            alt_payload = (
+                alt_response[0].get_json()
+                if isinstance(alt_response, tuple)
+                else alt_response.get_json()
+            )
+            alt_result_cache[cache_key] = alt_payload
+
+        alt_payload = alt_result_cache.get(cache_key) or {}
+        if not alt_payload.get('success'):
+            continue
+        alt_results = alt_payload.get('results') or []
+        if not alt_results:
+            continue
+
+        alt_result = dict(alt_results[0])
+        if alt_result.get('estimated_price') is None:
+            continue
+
+        alt_result['is_global_alternative'] = True
+        alt_result['alternative_to_part_number'] = requested_part_number
+        alt_result['alternative_to_base_part_number'] = base_part_number
+        alt_result['requested_part_number'] = alt_result.get('requested_part_number') or alt_part_number
+        alt_result['quantity_requested'] = quantity
+        alt_result['source_part_number'] = requested_part_number
+        alt_rows.append(alt_result)
+
+    return alt_rows
+
+
 def _apply_margin(value, margin_pct, places=2):
     """Apply margin and round up so the resulting price meets or exceeds margin."""
     if value is None:
@@ -991,6 +1040,15 @@ def analyze_quote():
                         else:
                             result['stock_available'] = False
                         results.append(result)
+                        if include_global_alternatives:
+                            results.extend(_expand_global_alt_results(
+                                user['customer_id'],
+                                requested_part_number,
+                                base_part_number,
+                                quantity,
+                                canonical_map,
+                                alt_result_cache,
+                            ))
                         continue
 
                     stock = _execute_with_cursor(cursor, """
@@ -1327,48 +1385,14 @@ def analyze_quote():
                     results.append(result)
 
                     if include_global_alternatives:
-                        seen_alt_bases = set()
-                        for alt_base_part in get_global_alternatives(base_part_number):
-                            if not alt_base_part or alt_base_part == base_part_number or alt_base_part in seen_alt_bases:
-                                continue
-                            seen_alt_bases.add(alt_base_part)
-
-                            alt_part_number = canonical_map.get(alt_base_part) or alt_base_part
-                            cache_key = (user['customer_id'], alt_part_number, quantity)
-                            if cache_key not in alt_result_cache:
-                                alt_response = _analyze_quote_internal(
-                                    user['customer_id'],
-                                    [{'part_number': alt_part_number, 'quantity': quantity}],
-                                    extra_payload={
-                                        'include_global_alternatives': False,
-                                        'source': 'global_alt_expansion',
-                                    }
-                                )
-                                alt_payload = (
-                                    alt_response[0].get_json()
-                                    if isinstance(alt_response, tuple)
-                                    else alt_response.get_json()
-                                )
-                                alt_result_cache[cache_key] = alt_payload
-
-                            alt_payload = alt_result_cache.get(cache_key) or {}
-                            if not alt_payload.get('success'):
-                                continue
-                            alt_results = alt_payload.get('results') or []
-                            if not alt_results:
-                                continue
-
-                            alt_result = dict(alt_results[0])
-                            if alt_result.get('estimated_price') is None:
-                                continue
-
-                            alt_result['is_global_alternative'] = True
-                            alt_result['alternative_to_part_number'] = requested_part_number
-                            alt_result['alternative_to_base_part_number'] = base_part_number
-                            alt_result['requested_part_number'] = alt_result.get('requested_part_number') or alt_part_number
-                            alt_result['quantity_requested'] = quantity
-                            alt_result['source_part_number'] = requested_part_number
-                            results.append(alt_result)
+                        results.extend(_expand_global_alt_results(
+                            user['customer_id'],
+                            requested_part_number,
+                            base_part_number,
+                            quantity,
+                            canonical_map,
+                            alt_result_cache,
+                        ))
 
                 except Exception as part_error:
                     logging.exception(f"ERROR processing part {part_number}: {part_error}")
