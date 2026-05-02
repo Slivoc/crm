@@ -450,6 +450,53 @@ def log_search_history(portal_user_id, customer_id, search_type, parts_list, ip_
         return False
 
 
+def log_search_result_snapshot(search_history_id, customer_id, results):
+    """Persist per-part estimate snapshot shown to customer during search."""
+    if not search_history_id or not customer_id or not results:
+        return
+
+    try:
+        with db_cursor(commit=True) as cursor:
+            for line_number, result in enumerate(results, start=1):
+                requested_part_number = (result.get('part_number') or '').strip()
+                if not requested_part_number:
+                    continue
+
+                base_part_number = create_base_part_number(requested_part_number)
+                estimated_price = _to_float(result.get('estimated_price'))
+                estimated_currency = (result.get('currency') or '').strip() or None
+                price_source = (result.get('price_source') or '').strip() or None
+
+                _execute_with_cursor(cursor, """
+                    INSERT INTO portal_search_history_lines (
+                        search_history_id,
+                        customer_id,
+                        line_number,
+                        requested_part_number,
+                        base_part_number,
+                        quantity,
+                        estimated_price,
+                        estimated_currency,
+                        price_source,
+                        has_price
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    search_history_id,
+                    customer_id,
+                    line_number,
+                    requested_part_number,
+                    base_part_number,
+                    int(result.get('quantity') or 1),
+                    estimated_price,
+                    estimated_currency,
+                    price_source,
+                    1 if estimated_price is not None else 0,
+                ))
+    except Exception:
+        logging.exception("Failed to persist portal search result snapshot")
+
+
 def _create_parts_list_for_portal_search(portal_user, parts_list, search_source='manual_quote_search'):
     """
     Create an internal parts list for a customer portal search so Monroe results
@@ -702,6 +749,7 @@ def analyze_quote():
             return jsonify({'success': False, 'error': 'No parts provided'}), 400
 
         manual_search_logged = False
+        manual_search_id = None
         monroe_parts_list_id = None
 
         # Only treat explicit manual portal quote searches as searchable activity.
@@ -716,6 +764,15 @@ def analyze_quote():
                     ip_address=request.remote_addr,
                     user_agent=request.headers.get('User-Agent'),
                 )
+                if manual_search_logged:
+                    latest_search = db_execute("""
+                        SELECT id
+                        FROM portal_search_history
+                        WHERE portal_user_id = ?
+                        ORDER BY id DESC
+                        LIMIT 1
+                    """, (user['id'],), fetch='one')
+                    manual_search_id = latest_search['id'] if latest_search else None
                 if manual_search_logged:
                     from routes.portal_admin import notify_portal_search_to_account_manager
                     notify_portal_search_to_account_manager(
@@ -1179,6 +1236,9 @@ def analyze_quote():
             except Exception:
                 logging.exception("Failed to create internal parts list for portal Monroe search")
 
+        if manual_search_id:
+            log_search_result_snapshot(manual_search_id, user['customer_id'], results)
+
         return jsonify({
             'success': True,
             'results': results,
@@ -1187,6 +1247,76 @@ def analyze_quote():
             'monroe_parts_list_id': monroe_parts_list_id,
         })
 
+    except Exception as e:
+        logging.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@portal_api_bp.route('/search/recent', methods=['GET'])
+@require_portal_auth
+def get_recent_searches():
+    """Return recent quote searches with priority for newly priced parts."""
+    try:
+        user = request.portal_user
+        limit = min(max(request.args.get('limit', 20, type=int), 1), 100)
+
+        rows = db_execute("""
+            SELECT
+                psh.id as search_history_id,
+                psh.date_searched,
+                psh.parts_count,
+                pshl.line_number,
+                pshl.requested_part_number,
+                pshl.base_part_number,
+                pshl.quantity,
+                pshl.estimated_price as searched_estimated_price,
+                pshl.estimated_currency as searched_estimated_currency,
+                pshl.price_source as searched_price_source,
+                pshl.has_price as had_price_when_searched,
+                CASE
+                    WHEN COALESCE(pshl.has_price, 0) = 0 AND (
+                        SELECT p2.estimated_price
+                        FROM portal_search_history_lines p2
+                        WHERE p2.customer_id = psh.customer_id
+                          AND p2.base_part_number = pshl.base_part_number
+                        ORDER BY p2.created_at DESC
+                        LIMIT 1
+                    ) IS NOT NULL THEN 1
+                    ELSE 0
+                END AS newly_priced,
+                (
+                    SELECT p2.estimated_price
+                    FROM portal_search_history_lines p2
+                    WHERE p2.customer_id = psh.customer_id
+                      AND p2.base_part_number = pshl.base_part_number
+                    ORDER BY p2.created_at DESC
+                    LIMIT 1
+                ) AS current_estimated_price,
+                (
+                    SELECT p2.estimated_currency
+                    FROM portal_search_history_lines p2
+                    WHERE p2.customer_id = psh.customer_id
+                      AND p2.base_part_number = pshl.base_part_number
+                    ORDER BY p2.created_at DESC
+                    LIMIT 1
+                ) AS current_estimated_currency,
+                (
+                    SELECT p2.price_source
+                    FROM portal_search_history_lines p2
+                    WHERE p2.customer_id = psh.customer_id
+                      AND p2.base_part_number = pshl.base_part_number
+                    ORDER BY p2.created_at DESC
+                    LIMIT 1
+                ) AS current_price_source
+            FROM portal_search_history psh
+            LEFT JOIN portal_search_history_lines pshl ON pshl.search_history_id = psh.id
+            WHERE psh.portal_user_id = ?
+              AND psh.search_type = 'quote_analysis'
+            ORDER BY newly_priced DESC, psh.date_searched DESC, pshl.line_number ASC
+            LIMIT ?
+        """, (user['id'], limit), fetch='all') or []
+
+        return jsonify({'success': True, 'searches': [dict(row) for row in rows]})
     except Exception as e:
         logging.exception(e)
         return jsonify({'success': False, 'error': str(e)}), 500
