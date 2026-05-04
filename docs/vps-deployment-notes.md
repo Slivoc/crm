@@ -255,6 +255,12 @@ Connect to the app database:
 psql -h localhost -U tom -d sproutt
 ```
 
+Run an additive migration from the checked-out repo:
+
+```bash
+psql -h localhost -U tom -d sproutt -f /srv/sproutt/migrations/20260502_add_portal_standard_part_pricing.sql
+```
+
 Exit `psql`:
 
 ```sql

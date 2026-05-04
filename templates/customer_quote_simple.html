@@ -771,7 +771,7 @@
                    data-field="display_part_number"
                    spellcheck="false"
                    autocomplete="off"
-                   value="{{ line.display_part_number or line.customer_part_number }}">
+                   value="{{ line.display_part_number or line.suggested_display_pn or line.customer_part_number }}">
         </td>
 
         <td class="read-only">{{ line.quantity }}</td>

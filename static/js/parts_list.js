@@ -327,6 +327,8 @@ function buildBasicResultsFromLines(lines) {
         line_id: line.id || line.line_id || null,
         line_number: line.line_number || index + 1,
         input_part_number: line.customer_part_number || line.part_number || '',
+        original_customer_part_number: line.original_customer_part_number || '',
+        has_part_correction: !!(line.original_customer_part_number),
         revision: line.revision || '',
         base_part_number: line.base_part_number || null,
         quantity: line.quantity || 1,
@@ -569,7 +571,14 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         ? `<button type="button"
                    class="dropdown-item edit-line-part-btn"
                    data-part-index="${actualIndex}">
-              <i class="bi bi-pencil-square me-2"></i>Edit part number
+              <i class="bi bi-pencil-square me-2"></i>Correct requested part
+           </button>`
+        : '';
+    const clearLineCorrectionButton = canEditLinePart && part.has_part_correction
+        ? `<button type="button"
+                   class="dropdown-item clear-line-correction-btn"
+                   data-part-index="${actualIndex}">
+              <i class="bi bi-arrow-counterclockwise me-2"></i>Clear correction
            </button>`
         : '';
     const editLineQtyButton = canEditLinePart
@@ -583,6 +592,7 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         copyPartNumberButton,
         suggestAlternativeButton,
         editLinePartButton,
+        clearLineCorrectionButton,
         editLineQtyButton,
         duplicateButton,
         deleteLineButton
@@ -657,6 +667,10 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
         </div>
     `;
 
+    const correctedFromDisplay = part.has_part_correction && part.original_customer_part_number
+        ? `<br><small class="text-muted" style="font-size: 0.72rem;">Requested: ${escapeHtml(part.original_customer_part_number)}</small>`
+        : '';
+
     tr.innerHTML = `
         <td style="width: 60px; min-width: 60px;">${lineNumberDisplay}</td>
         <td style="width: 200px; min-width: 200px; ${isAlt ? 'padding-left: 1.2rem;' : ''}">
@@ -666,6 +680,7 @@ function createPartRow(part, displayIndex, isAlt, actualIndex) {
                     <strong style="${isAlt ? 'color: #0d6efd; font-size: 0.9rem;' : ''}">
                         ${escapeHtml(isAlt ? (part.input_part_number || part.alt_part_number || part.base_part_number) : part.input_part_number)}
                     </strong>
+                    ${!isAlt ? correctedFromDisplay : ''}
                     ${!part.found ? '<br><small class="text-danger">Not Found</small>' : ''}
                     ${isAlt && part.parent_base_part_number ? `<br><small class="text-muted" style="font-size: 0.68rem; margin-left: 0.25rem;">For: ${escapeHtml(part.parent_base_part_number)}</small>` : ''}
                 </div>
@@ -1525,7 +1540,11 @@ function updateLinePartNumber(partIndex, buttonElement) {
     }
 
     const currentPartNumber = (part.input_part_number || '').trim();
-    const nextPartNumber = prompt('Enter new part number for this line:', currentPartNumber);
+    const originalPartNumber = (part.original_customer_part_number || '').trim();
+    const promptMessage = originalPartNumber
+        ? `Enter corrected part number for this line.\nOriginal requested part: ${originalPartNumber}`
+        : 'Enter corrected part number for this line:';
+    const nextPartNumber = prompt(promptMessage, currentPartNumber);
     if (!nextPartNumber) return;
 
     const trimmedPartNumber = nextPartNumber.trim();
@@ -1537,10 +1556,10 @@ function updateLinePartNumber(partIndex, buttonElement) {
         buttonElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     }
 
-    fetch(`/parts_list/${currentListId}/lines/${part.line_id}/update`, {
+    fetch(`/parts_list/parts-lists/${currentListId}/lines/${part.line_id}/correct-part`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customer_part_number: trimmedPartNumber })
+        body: JSON.stringify({ part_number: trimmedPartNumber })
     })
     .then(response => response.json())
     .then(data => {
@@ -1571,11 +1590,76 @@ function updateLinePartNumber(partIndex, buttonElement) {
         refreshed.line_id = part.line_id;
         window.allResults[partIndex] = refreshed;
         displayResults(window.allResults);
-        showToast(`Updated line part number to ${trimmedPartNumber}`, 'success');
+        showToast(`Corrected line to ${trimmedPartNumber}`, 'success');
     })
     .catch(error => {
         console.error('Error updating line part number:', error);
         showToast(error.message || 'Unable to update part number', 'danger');
+    })
+    .finally(() => {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.innerHTML = originalHtml;
+        }
+    });
+}
+
+function clearLinePartCorrection(partIndex, buttonElement) {
+    const part = window.allResults[partIndex];
+    if (!part || !currentListId || !part.line_id || !part.has_part_correction) {
+        showToast('This line has no correction to clear', 'warning');
+        return;
+    }
+
+    if (!confirm(`Restore the original requested part number${part.original_customer_part_number ? ` (${part.original_customer_part_number})` : ''}?`)) {
+        return;
+    }
+
+    const originalHtml = buttonElement ? buttonElement.innerHTML : '';
+    if (buttonElement) {
+        buttonElement.disabled = true;
+        buttonElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
+
+    fetch(`/parts_list/parts-lists/${currentListId}/lines/${part.line_id}/clear-part-correction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            throw new Error(data.message || 'Failed to clear correction');
+        }
+
+        return fetch('/parts_list/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                parts: [{
+                    part_number: data.customer_part_number,
+                    quantity: part.quantity || 1,
+                    line_id: part.line_id,
+                    line_number: part.line_number,
+                    base_part_number: data.base_part_number || null
+                }]
+            })
+        });
+    })
+    .then(response => response.json())
+    .then(analyzeData => {
+        if (!analyzeData.success || !analyzeData.results || analyzeData.results.length === 0) {
+            throw new Error('Correction cleared but part re-analysis failed');
+        }
+
+        const refreshed = analyzeData.results[0];
+        refreshed.line_id = part.line_id;
+        window.allResults[partIndex] = refreshed;
+        displayResults(window.allResults);
+        showToast('Restored the original requested part number', 'success');
+    })
+    .catch(error => {
+        console.error('Error clearing line correction:', error);
+        showToast(error.message || 'Unable to clear correction', 'danger');
     })
     .finally(() => {
         if (buttonElement) {
@@ -3580,6 +3664,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const partIndex = parseInt(editLinePartButton.getAttribute('data-part-index'), 10);
             if (!Number.isNaN(partIndex)) {
                 updateLinePartNumber(partIndex, editLinePartButton);
+            }
+            return;
+        }
+
+        const clearLineCorrectionButton = event.target.closest('.clear-line-correction-btn');
+        if (clearLineCorrectionButton) {
+            const partIndex = parseInt(clearLineCorrectionButton.getAttribute('data-part-index'), 10);
+            if (!Number.isNaN(partIndex)) {
+                clearLinePartCorrection(partIndex, clearLineCorrectionButton);
             }
             return;
         }

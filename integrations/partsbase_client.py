@@ -96,6 +96,45 @@ class PartsBaseClient:
         return response.content, response.headers.get('Content-Type', 'application/octet-stream')
 
     @staticmethod
+    def create_inventory_upload_zip(rows: List[Dict[str, Any]]) -> bytes:
+        normalized_rows = []
+        for raw in rows or []:
+            part_number = str(raw.get('part_number') or '').strip().replace(' ', '')
+            if not part_number:
+                continue
+            normalized_rows.append([
+                str(raw.get('action_code') or 'A').strip()[:1] or 'A',
+                part_number,
+                str(raw.get('description') or '').strip(),
+                str(raw.get('alternate_part_number') or '').strip().replace(' ', ''),
+                str(raw.get('condition_code') or '').strip(),
+                str(raw.get('quantity') if raw.get('quantity') is not None else ''),
+                str(raw.get('uom') or '').strip(),
+                str(raw.get('manufacturer') or '').strip(),
+                str(raw.get('unit_price') if raw.get('unit_price') is not None else ''),
+                str(raw.get('aircraft_type') or '').strip(),
+                str(raw.get('engine_type') or '').strip(),
+                str(raw.get('serial_number') or '').strip(),
+                str(raw.get('traceability') or '').strip(),
+                str(raw.get('trace_to') or '').strip(),
+                str(raw.get('image_url') or '').strip(),
+                str(raw.get('documentation_url') or '').strip(),
+                str(raw.get('documentation_caption') or '').strip(),
+            ])
+
+        if not normalized_rows:
+            raise ValueError('At least one valid inventory row is required.')
+
+        data_payload = '\r\n'.join('\t'.join(row) for row in normalized_rows).encode('utf-8')
+        manifest_payload = PartsBaseClient._build_manifest_payload()
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zip_file:
+            zip_file.writestr('Data.dat', data_payload)
+            zip_file.writestr('Manifest.xml', manifest_payload)
+        return buffer.getvalue()
+
+    @staticmethod
     def create_test_search_zip(parts: List[str]) -> bytes:
         normalized = [part.strip() for part in parts if part and part.strip()]
         if not normalized:
@@ -127,9 +166,32 @@ class PartsBaseClient:
                 '',         # DOCUMENTATIONCAPTION
             ]
             data_rows.append('\t'.join(row))
-        data_payload = '\r\n'.join(data_rows).encode('utf-8')
+        return PartsBaseClient.create_inventory_upload_zip([
+            {
+                'action_code': 'A',
+                'part_number': part.replace(' ', ''),
+                'description': 'DESCRIPTION_1',
+                'alternate_part_number': 'Alternate_1',
+                'condition_code': 'AR',
+                'quantity': 1,
+                'uom': 'EA',
+                'manufacturer': 'Manufacturer_1',
+                'unit_price': '1.0',
+                'aircraft_type': 'TestAir1',
+                'engine_type': 'TestEN1',
+                'serial_number': f'serialN{index}',
+                'traceability': 'JAA Form 1',
+                'trace_to': 'TraceTo1',
+                'image_url': '',
+                'documentation_url': '',
+                'documentation_caption': '',
+            }
+            for index, part in enumerate(normalized, start=1)
+        ])
 
-        manifest_payload = '\n'.join(
+    @staticmethod
+    def _build_manifest_payload() -> bytes:
+        return '\n'.join(
             [
                 '<?xml version="1.0" encoding="unicode"?>',
                 '<FIELDS>',
@@ -153,12 +215,6 @@ class PartsBaseClient:
                 '</FIELDS>',
             ]
         ).encode('utf-16')
-
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zip_file:
-            zip_file.writestr('Data.dat', data_payload)
-            zip_file.writestr('Manifest.xml', manifest_payload)
-        return buffer.getvalue()
 
     @staticmethod
     def _safe_error(response: requests.Response) -> str:

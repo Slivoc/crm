@@ -1958,6 +1958,7 @@ def customer_quote_simple(list_id):
                       pll.parent_line_id,
                       pll.line_type,
                       pll.customer_part_number,
+                      pll.original_customer_part_number,
                       CASE
                           WHEN pll.chosen_source_type = 'quote'
                                AND pll.chosen_source_reference IS NOT NULL THEN (
@@ -1969,6 +1970,7 @@ def customer_quote_simple(list_id):
                           ELSE pll.revision
                       END AS revision,
                       parent.customer_part_number as parent_customer_part_number,
+                      parent.original_customer_part_number as parent_original_customer_part_number,
                       pll.base_part_number,
                       pll.quantity,
                       pll.chosen_qty,
@@ -2168,11 +2170,18 @@ def customer_quote_simple(list_id):
             for line in lines:
                 line_dict = dict(line)
                 has_parent_part = line_dict.get('parent_customer_part_number')
+                has_parent_original_part = line_dict.get('parent_original_customer_part_number')
                 is_alt_line = line_dict.get('line_type') == 'alternate' or line_dict.get('parent_line_id')
                 line_dict['requested_part_number'] = (
-                    line_dict['parent_customer_part_number']
-                    if is_alt_line and has_parent_part
-                    else line_dict.get('customer_part_number')
+                    (
+                        line_dict['parent_original_customer_part_number']
+                        or line_dict['parent_customer_part_number']
+                    )
+                    if is_alt_line and (has_parent_original_part or has_parent_part)
+                    else (
+                        line_dict.get('original_customer_part_number')
+                        or line_dict.get('customer_part_number')
+                    )
                 )
                 bom_data = _execute_with_cursor(cur, """
                     SELECT bl.guide_price, bh.name as bom_name
@@ -2209,12 +2218,17 @@ def customer_quote_simple(list_id):
                     or (line_dict.get('supplier_manufacturer') or '').strip()
                 )
 
+                corrected_customer_part = (line_dict.get('customer_part_number') or '').strip()
+                requested_part = (line_dict.get('requested_part_number') or '').strip()
+
                 if not line_dict['display_part_number']:
-                    if line_dict['supplier_quoted_part_number'] and \
-                            line_dict['supplier_quoted_part_number'] != line_dict['customer_part_number']:
+                    if corrected_customer_part and corrected_customer_part != requested_part:
+                        line_dict['suggested_display_pn'] = corrected_customer_part
+                    elif line_dict['supplier_quoted_part_number'] and \
+                            line_dict['supplier_quoted_part_number'] != requested_part:
                         line_dict['suggested_display_pn'] = line_dict['supplier_quoted_part_number']
                     else:
-                        line_dict['suggested_display_pn'] = line_dict['customer_part_number']
+                        line_dict['suggested_display_pn'] = corrected_customer_part or requested_part
                 else:
                     line_dict['suggested_display_pn'] = line_dict['display_part_number']
 

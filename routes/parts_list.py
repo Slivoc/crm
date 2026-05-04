@@ -2536,6 +2536,7 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
                 pll.line_number,
                 pll.parent_line_id,
                 pll.line_type,
+                pll.original_customer_part_number,
                 parent.customer_part_number AS parent_customer_part_number
             FROM parts_list_lines pll
             LEFT JOIN parts_list_lines parent ON parent.id = pll.parent_line_id
@@ -2545,7 +2546,12 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
             parent_line_id = line_meta['parent_line_id']
             line_type = line_meta['line_type'] or 'normal'
             parent_customer_part_number = line_meta['parent_customer_part_number']
+            original_customer_part_number = line_meta['original_customer_part_number']
             line_number = line_meta['line_number']
+        else:
+            original_customer_part_number = None
+    else:
+        original_customer_part_number = None
 
     def _get_line_specific(line_id_value):
         chosen_cost = None
@@ -3109,6 +3115,8 @@ def _lookup_single_part(cursor, base_part_number, input_part_number, quantity,
     result = {
         'input_part_number': input_part_number,
         'base_part_number': base_part_number,
+        'original_customer_part_number': original_customer_part_number,
+        'has_part_correction': bool(original_customer_part_number),
         'quantity': quantity,
         'line_id': line_id,
         'line_number': line_number,
@@ -4725,6 +4733,170 @@ def update_line(list_id, line_id):
     except Exception as e:
         logging.exception(e)
         return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/lines/<int:line_id>/correct-part', methods=['POST'])
+def correct_line_part_number(list_id, line_id):
+    """
+    Correct the working part number for a parts list line while preserving the
+    original customer-requested part on the line itself.
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        corrected_part_number = (data.get('part_number') or '').strip()
+        corrected_base_part_number = (data.get('base_part_number') or '').strip()
+
+        if not corrected_part_number:
+            return jsonify(success=False, message="part_number is required"), 400
+
+        if not corrected_base_part_number:
+            corrected_base_part_number = create_base_part_number(corrected_part_number)
+
+        if not corrected_base_part_number:
+            return jsonify(success=False, message="Unable to derive base part number"), 400
+
+        with db_cursor(commit=True) as cur:
+            line = _execute_with_cursor(cur, """
+                SELECT
+                    id,
+                    customer_part_number,
+                    base_part_number,
+                    original_customer_part_number,
+                    original_base_part_number
+                FROM parts_list_lines
+                WHERE id = ? AND parts_list_id = ?
+            """, (line_id, list_id)).fetchone()
+            if not line:
+                return jsonify(success=False, message="Line not found for this list"), 404
+
+            current_part_number = (line['customer_part_number'] or '').strip()
+            current_base_part_number = (line['base_part_number'] or '').strip()
+            original_part_number = (line['original_customer_part_number'] or '').strip()
+            original_base_part = (line['original_base_part_number'] or '').strip()
+
+            if (
+                corrected_part_number == current_part_number
+                and corrected_base_part_number == current_base_part_number
+            ):
+                return jsonify(
+                    success=True,
+                    line_id=line_id,
+                    customer_part_number=current_part_number,
+                    base_part_number=current_base_part_number,
+                    original_customer_part_number=original_part_number or None,
+                    original_base_part_number=original_base_part or None,
+                    has_part_correction=bool(original_part_number or original_base_part),
+                    changed=False,
+                )
+
+            _ensure_part_number(corrected_base_part_number, corrected_part_number)
+
+            _execute_with_cursor(cur, """
+                UPDATE parts_list_lines
+                SET customer_part_number = ?,
+                    base_part_number = ?,
+                    original_customer_part_number = COALESCE(NULLIF(original_customer_part_number, ''), customer_part_number),
+                    original_base_part_number = COALESCE(NULLIF(original_base_part_number, ''), base_part_number),
+                    date_modified = CURRENT_TIMESTAMP
+                WHERE id = ? AND parts_list_id = ?
+            """, (
+                corrected_part_number,
+                corrected_base_part_number,
+                line_id,
+                list_id,
+            ))
+
+            # Clear stale Monroe results so a new scrape uses the corrected part.
+            _execute_with_cursor(cur, """
+                DELETE FROM monroe_search_results
+                WHERE parts_list_line_id = ?
+            """, (line_id,))
+
+        return jsonify(
+            success=True,
+            line_id=line_id,
+            customer_part_number=corrected_part_number,
+            base_part_number=corrected_base_part_number,
+            original_customer_part_number=original_part_number or current_part_number or None,
+            original_base_part_number=original_base_part or current_base_part_number or None,
+            has_part_correction=True,
+            changed=True,
+        )
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/lines/<int:line_id>/clear-part-correction', methods=['POST'])
+def clear_line_part_correction(list_id, line_id):
+    """
+    Restore the original customer-requested part number for a corrected line.
+    """
+    try:
+        with db_cursor(commit=True) as cur:
+            line = _execute_with_cursor(cur, """
+                SELECT
+                    id,
+                    customer_part_number,
+                    base_part_number,
+                    original_customer_part_number,
+                    original_base_part_number
+                FROM parts_list_lines
+                WHERE id = ? AND parts_list_id = ?
+            """, (line_id, list_id)).fetchone()
+            if not line:
+                return jsonify(success=False, message="Line not found for this list"), 404
+
+            original_part_number = (line['original_customer_part_number'] or '').strip()
+            original_base_part_number = (line['original_base_part_number'] or '').strip()
+
+            if not original_part_number and not original_base_part_number:
+                return jsonify(
+                    success=True,
+                    line_id=line_id,
+                    customer_part_number=(line['customer_part_number'] or '').strip(),
+                    base_part_number=(line['base_part_number'] or '').strip(),
+                    has_part_correction=False,
+                    changed=False,
+                )
+
+            restored_part_number = original_part_number or (line['customer_part_number'] or '').strip()
+            restored_base_part_number = original_base_part_number or create_base_part_number(restored_part_number)
+
+            if restored_base_part_number:
+                _ensure_part_number(restored_base_part_number, restored_part_number)
+
+            _execute_with_cursor(cur, """
+                UPDATE parts_list_lines
+                SET customer_part_number = ?,
+                    base_part_number = ?,
+                    original_customer_part_number = NULL,
+                    original_base_part_number = NULL,
+                    date_modified = CURRENT_TIMESTAMP
+                WHERE id = ? AND parts_list_id = ?
+            """, (
+                restored_part_number,
+                restored_base_part_number,
+                line_id,
+                list_id,
+            ))
+
+            _execute_with_cursor(cur, """
+                DELETE FROM monroe_search_results
+                WHERE parts_list_line_id = ?
+            """, (line_id,))
+
+        return jsonify(
+            success=True,
+            line_id=line_id,
+            customer_part_number=restored_part_number,
+            base_part_number=restored_base_part_number,
+            has_part_correction=False,
+            changed=True,
+        )
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
 # =========================
 # Parts Lists – API Routes
 # =========================
@@ -6119,7 +6291,8 @@ def duplicate_parts_list(list_id):
             lines = _execute_with_cursor(cur, """
                 SELECT id, line_number, customer_part_number, base_part_number, revision, description, quantity,
                        chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days,
-                       customer_notes, internal_notes, parent_line_id, line_type
+                       customer_notes, internal_notes, parent_line_id, line_type,
+                       original_customer_part_number, original_base_part_number
                 FROM parts_list_lines
                 WHERE parts_list_id = ?
                 ORDER BY line_number ASC, id ASC
@@ -6133,15 +6306,18 @@ def duplicate_parts_list(list_id):
                     INSERT INTO parts_list_lines
                     (parts_list_id, line_number, customer_part_number, base_part_number, revision, description, quantity,
                      chosen_supplier_id, chosen_cost, chosen_price, chosen_currency_id, chosen_lead_days,
-                     customer_notes, internal_notes, parent_line_id, line_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                     customer_notes, internal_notes, parent_line_id, line_type,
+                     original_customer_part_number, original_base_part_number)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
                     RETURNING id
                 """, (
                     new_id, ln['line_number'], ln['customer_part_number'], ln['base_part_number'], ln.get('revision'), ln['description'],
                     ln['quantity'],
                     ln['chosen_supplier_id'], ln['chosen_cost'], ln['chosen_price'], ln['chosen_currency_id'],
                     ln['chosen_lead_days'], ln['customer_notes'], ln['internal_notes'],
-                    ln['line_type'] or 'normal'
+                    ln['line_type'] or 'normal',
+                    ln.get('original_customer_part_number'),
+                    ln.get('original_base_part_number'),
                 )).fetchone()
 
                 created_id = new_line_row['id'] if new_line_row else getattr(cur, 'lastrowid', None)
@@ -6350,8 +6526,9 @@ def duplicate_line(list_id, line_id):
             new_row = _execute_with_cursor(cur, """
                 INSERT INTO parts_list_lines
                 (parts_list_id, line_number, customer_part_number, base_part_number, revision, description, quantity,
-                 parent_line_id, line_type, customer_notes, internal_notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 parent_line_id, line_type, customer_notes, internal_notes,
+                 original_customer_part_number, original_base_part_number)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
             """, (
                 list_id,
@@ -6364,7 +6541,9 @@ def duplicate_line(list_id, line_id):
                 parent_line_id,
                 line_type,
                 line['customer_notes'],
-                line['internal_notes']
+                line['internal_notes'],
+                line.get('original_customer_part_number'),
+                line.get('original_base_part_number'),
             )).fetchone()
 
             new_id = new_row['id'] if new_row else getattr(cur, 'lastrowid', None)
