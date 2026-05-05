@@ -60,8 +60,8 @@
                             </div>
                         </div>
                     </div>
-                    <div class="contact-notes-row mt-3">
-                        <small class="text-muted d-block mb-1">Notes</small>
+                    <div class="contact-notes-row mt-3" id="contact-notes-row">
+                        <small class="text-muted d-block mb-1" id="contact-notes-label">Notes</small>
                         <div class="d-flex align-items-center gap-2">
                             <input type="text" id="contact-notes-input" class="form-control form-control-sm contact-notes-input" placeholder="Add notes..." autocomplete="off" aria-label="Contact notes">
                             <span id="contact-notes-status" class="small text-muted"></span>
@@ -218,6 +218,19 @@
 
 #contactPreviewModal .contact-notes-row #contact-notes-status {
     min-width: 4rem;
+}
+
+#contactPreviewModal .contact-notes-row.notes-present {
+    background: #fff3cd;
+    border: 1px solid #ffe69c;
+    border-left: 4px solid #ffc107;
+    border-radius: 0.375rem;
+    padding: 0.625rem;
+}
+
+#contactPreviewModal .contact-notes-row.notes-present #contact-notes-label {
+    color: #664d03 !important;
+    font-weight: 700;
 }
 
 #contactPreviewModal .communication-history-section {

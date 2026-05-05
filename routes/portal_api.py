@@ -1057,6 +1057,95 @@ def _create_portal_bom_from_parts(portal_user, parts, bom_name, description=None
     return bom_id
 
 
+def _append_parts_to_existing_portal_bom(portal_user, bom_id, parts, search_history_id=None):
+    """Append portal-provided part lines to an existing customer BOM."""
+    try:
+        bom_id = int(bom_id)
+    except (TypeError, ValueError):
+        raise ValueError('Valid existing BOM ID is required')
+
+    normalized_parts = []
+    for part in parts or []:
+        requested_part_number = (part.get('part_number') or '').strip().upper()
+        if not requested_part_number:
+            continue
+        try:
+            quantity = int(part.get('quantity', 1))
+        except (TypeError, ValueError):
+            quantity = 1
+        quantity = max(quantity, 1)
+        normalized_parts.append({
+            'requested_part_number': requested_part_number,
+            'base_part_number': create_base_part_number(requested_part_number),
+            'quantity': quantity,
+            'target_price_gbp': _to_float(part.get('target_price_gbp')),
+        })
+
+    if not normalized_parts:
+        raise ValueError('No valid BOM parts provided')
+
+    with db_cursor(commit=True) as cursor:
+        existing_bom = _execute_with_cursor(cursor, """
+            SELECT bh.id, bh.name
+            FROM customer_boms cb
+            JOIN bom_headers bh ON bh.id = cb.bom_header_id
+            WHERE cb.customer_id = ?
+              AND bh.id = ?
+              AND bh.type = 'kit'
+            LIMIT 1
+        """, (portal_user['customer_id'], bom_id)).fetchone()
+        if not existing_bom:
+            raise ValueError('Selected BOM was not found for this customer')
+
+        max_position_row = _execute_with_cursor(cursor, """
+            SELECT COALESCE(MAX(position), 0) AS max_position
+            FROM bom_lines
+            WHERE bom_header_id = ?
+        """, (bom_id,)).fetchone()
+        next_position = (max_position_row.get('max_position') if max_position_row else 0) or 0
+
+        for part in normalized_parts:
+            next_position += 1
+            _execute_with_cursor(cursor, """
+                INSERT INTO bom_lines (
+                    bom_header_id,
+                    base_part_number,
+                    quantity,
+                    position,
+                    guide_price,
+                    notes
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                bom_id,
+                part['base_part_number'],
+                part['quantity'],
+                next_position,
+                part['target_price_gbp'],
+                f"Appended from portal search line for {part['requested_part_number']}",
+            ))
+
+        if _table_has_column('portal_saved_boms', 'search_history_id'):
+            _execute_with_cursor(cursor, """
+                INSERT INTO portal_saved_boms (
+                    portal_user_id,
+                    customer_id,
+                    search_history_id,
+                    bom_header_id,
+                    bom_name
+                )
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                portal_user['id'],
+                portal_user['customer_id'],
+                search_history_id,
+                bom_id,
+                existing_bom.get('name'),
+            ))
+
+    return bom_id
+
+
 def _create_parts_list_for_portal_search(portal_user, parts_list, search_source='manual_quote_search'):
     """
     Create an internal parts list for a customer portal search so Monroe results
@@ -2053,34 +2142,46 @@ def get_recent_searches():
 @portal_api_bp.route('/search/save-bom', methods=['POST'])
 @require_portal_auth
 def save_search_as_bom():
-    """Create a BOM from a portal search result set."""
+    """Create/update a saved search from a portal search result set."""
     try:
         user = request.portal_user
         data = request.get_json() or {}
-        bom_name = (data.get('bom_name') or '').strip()
+        bom_name = (data.get('bom_name') or data.get('saved_search_name') or '').strip()
         description = data.get('description')
         customer_reference = data.get('customer_reference')
         search_history_id = data.get('search_history_id')
+        existing_bom_id = data.get('existing_bom_id', data.get('saved_search_id'))
         parts = data.get('parts', [])
 
-        if not bom_name:
-            return jsonify({'success': False, 'error': 'BOM name is required'}), 400
         if not parts:
             return jsonify({'success': False, 'error': 'No parts provided'}), 400
 
-        bom_id = _create_portal_bom_from_parts(
-            user,
-            parts,
-            bom_name,
-            description=description,
-            customer_reference=customer_reference,
-            search_history_id=search_history_id,
-        )
+        if existing_bom_id is not None:
+            bom_id = _append_parts_to_existing_portal_bom(
+                user,
+                existing_bom_id,
+                parts,
+                search_history_id=search_history_id,
+            )
+            message = 'Saved search updated successfully'
+        else:
+            if not bom_name:
+                return jsonify({'success': False, 'error': 'Saved search name is required'}), 400
+            bom_id = _create_portal_bom_from_parts(
+                user,
+                parts,
+                bom_name,
+                description=description,
+                customer_reference=customer_reference,
+                search_history_id=search_history_id,
+            )
+            message = 'Saved search created successfully'
 
         return jsonify({
             'success': True,
             'bom_id': bom_id,
-            'message': 'BOM saved successfully'
+            'saved_search_id': bom_id,
+            'message': message
         })
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
@@ -2102,6 +2203,7 @@ def submit_quote_request():
         user = request.portal_user
         data = request.get_json()
         parts = data.get('parts', [])
+        existing_request_id = data.get('existing_request_id')
         notes = data.get('notes', '')
         customer_reference = (data.get('customer_reference') or '').strip()
 
@@ -2155,6 +2257,9 @@ def submit_quote_request():
             logging.exception("Failed to capture submitted portal estimate snapshot")
 
         created_line_ids = []
+        request_id = None
+        ref_number = None
+        parts_list_id = None
 
         with db_cursor(commit=True) as cursor:
             has_parts_list_line_id = _table_has_column('portal_quote_request_lines', 'parts_list_line_id')
@@ -2173,60 +2278,89 @@ def submit_quote_request():
                 if customer_row and customer_row.get('salesperson_id') is not None
                 else 1
             )
-            parts_list_row = _execute_with_cursor(cursor, """
-                INSERT INTO parts_lists 
-                (name, customer_id, salesperson_id, status_id, notes)
-                VALUES (?, ?, ?, 1, ?)
-                RETURNING id
-            """, (
-                "Portal Request",
-                user['customer_id'],
-                salesperson_id,
-                f"Customer portal request from {user['first_name']} {user['last_name']}\\n\\n{notes}"
-            )).fetchone()
-            parts_list_id = parts_list_row['id']
-            ref_number = f"PR-{parts_list_id}"
+            if existing_request_id is not None:
+                try:
+                    existing_request_id = int(existing_request_id)
+                except (TypeError, ValueError):
+                    return jsonify({'success': False, 'error': 'existing_request_id must be numeric'}), 400
 
-            _execute_with_cursor(cursor, """
-                UPDATE parts_lists
-                SET name = ?
-                WHERE id = ?
-            """, (
-                f"Portal Request {ref_number}",
-                parts_list_id,
-            ))
+                existing_request = _execute_with_cursor(cursor, """
+                    SELECT id, reference_number, parts_list_id, status
+                    FROM portal_quote_requests
+                    WHERE id = ? AND portal_user_id = ? AND customer_id = ?
+                    LIMIT 1
+                """, (existing_request_id, user['id'], user['customer_id'])).fetchone()
+                if not existing_request:
+                    return jsonify({'success': False, 'error': 'Existing RFQ not found'}), 404
+                if (existing_request.get('status') or '').lower() in {'quoted', 'completed', 'cancelled'}:
+                    return jsonify({'success': False, 'error': 'RFQ can no longer be edited'}), 400
 
-            if _portal_quote_requests_has_customer_reference():
-                request_row = _execute_with_cursor(cursor, """
-                    INSERT INTO portal_quote_requests
-                    (portal_user_id, customer_id, parts_list_id, reference_number, customer_reference, customer_notes)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    RETURNING id
-                """, (
-                    user['id'],
-                    user['customer_id'],
-                    parts_list_id,
-                    ref_number,
-                    customer_reference,
-                    notes,
-                )).fetchone()
+                request_id = existing_request['id']
+                ref_number = existing_request.get('reference_number')
+                parts_list_id = existing_request.get('parts_list_id')
             else:
-                request_row = _execute_with_cursor(cursor, """
-                    INSERT INTO portal_quote_requests
-                    (portal_user_id, customer_id, parts_list_id, reference_number, customer_notes)
-                    VALUES (?, ?, ?, ?, ?)
+                parts_list_row = _execute_with_cursor(cursor, """
+                    INSERT INTO parts_lists 
+                    (name, customer_id, salesperson_id, status_id, notes)
+                    VALUES (?, ?, ?, 1, ?)
                     RETURNING id
                 """, (
-                    user['id'],
+                    "Portal Request",
                     user['customer_id'],
-                    parts_list_id,
-                    ref_number,
-                    notes,
+                    salesperson_id,
+                    f"Customer portal request from {user['first_name']} {user['last_name']}\\n\\n{notes}"
                 )).fetchone()
-            request_id = request_row['id']
+                parts_list_id = parts_list_row['id']
+                ref_number = f"PR-{parts_list_id}"
+
+                _execute_with_cursor(cursor, """
+                    UPDATE parts_lists
+                    SET name = ?
+                    WHERE id = ?
+                """, (
+                    f"Portal Request {ref_number}",
+                    parts_list_id,
+                ))
+
+                if _portal_quote_requests_has_customer_reference():
+                    request_row = _execute_with_cursor(cursor, """
+                        INSERT INTO portal_quote_requests
+                        (portal_user_id, customer_id, parts_list_id, reference_number, customer_reference, customer_notes)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        RETURNING id
+                    """, (
+                        user['id'],
+                        user['customer_id'],
+                        parts_list_id,
+                        ref_number,
+                        customer_reference,
+                        notes,
+                    )).fetchone()
+                else:
+                    request_row = _execute_with_cursor(cursor, """
+                        INSERT INTO portal_quote_requests
+                        (portal_user_id, customer_id, parts_list_id, reference_number, customer_notes)
+                        VALUES (?, ?, ?, ?, ?)
+                        RETURNING id
+                    """, (
+                        user['id'],
+                        user['customer_id'],
+                        parts_list_id,
+                        ref_number,
+                        notes,
+                    )).fetchone()
+                request_id = request_row['id']
+
+            max_line_row = _execute_with_cursor(cursor, """
+                SELECT COALESCE(MAX(line_number), 0) AS max_line_number
+                FROM portal_quote_request_lines
+                WHERE portal_quote_request_id = ?
+            """, (request_id,)).fetchone()
+            next_line_number = (max_line_row.get('max_line_number') if max_line_row else 0) or 0
 
             for part in normalized_parts:
-                idx = part['line_number']
+                next_line_number += 1
+                idx = next_line_number
                 part_number = part['part_number']
                 quantity = part['quantity']
                 base_part_number = part['base_part_number']
@@ -2324,14 +2458,19 @@ def submit_quote_request():
             from routes.parts_list_ai import trigger_monroe_auto_check
             trigger_monroe_auto_check(parts_list_id, created_line_ids)
 
-        from routes.portal_admin import notify_new_quote_request
-        notify_new_quote_request(request_id)
+        if existing_request_id is None:
+            from routes.portal_admin import notify_new_quote_request
+            notify_new_quote_request(request_id)
 
         return jsonify({
             'success': True,
             'request_id': request_id,
             'reference_number': ref_number,
-            'message': 'Quote request submitted successfully'
+            'message': (
+                'Quote request updated successfully'
+                if existing_request_id is not None
+                else 'Quote request submitted successfully'
+            )
         })
 
     except Exception as e:
