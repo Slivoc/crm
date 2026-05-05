@@ -3041,6 +3041,27 @@ CREATE TABLE stock_building_requisition_supplier_breaks (
     FOREIGN KEY (supplier_line_id) REFERENCES stock_building_requisition_supplier_lines(id) ON DELETE CASCADE
 );
 
+CREATE TABLE stock_building_requisition_list_suppliers (
+    id SERIAL PRIMARY KEY,
+    requisition_list_id INTEGER NOT NULL,
+    supplier_id INTEGER NOT NULL,
+    supplier_name_snapshot TEXT,
+    manufacturer_names_snapshot TEXT,
+    covered_part_count INTEGER NOT NULL DEFAULT 0,
+    covered_parts_snapshot TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (requisition_list_id) REFERENCES stock_building_requisition_lists(id) ON DELETE CASCADE,
+    FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+
+CREATE TABLE stock_building_requisition_list_supplier_breaks (
+    id SERIAL PRIMARY KEY,
+    requisition_supplier_id INTEGER NOT NULL,
+    break_quantity INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (requisition_supplier_id) REFERENCES stock_building_requisition_list_suppliers(id) ON DELETE CASCADE
+);
+
 INSERT INTO stock_building_requisition_statuses (name, display_order)
 VALUES
     ('New', 1),

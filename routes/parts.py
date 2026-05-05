@@ -186,20 +186,57 @@ def _build_stock_building_requisition_seed_rows(rows):
                     'manufacturer_name': mapping.get('manufacturer_name') or '',
                     'supplier_name': mapping.get('supplier_name') or '',
                     'supplier_id': mapping.get('supplier_id'),
-                    'latest_offer': {
-                        'unit_price': mapping.get('latest_offer', {}).get('unit_price') if mapping.get('latest_offer') else None,
-                        'currency_code': mapping.get('latest_offer', {}).get('currency_code') if mapping.get('latest_offer') else None,
-                        'supplier_quote_id': mapping.get('latest_offer', {}).get('supplier_quote_id') if mapping.get('latest_offer') else None,
-                        'parts_list_id': mapping.get('latest_offer', {}).get('parts_list_id') if mapping.get('latest_offer') else None,
-                        'quote_reference': mapping.get('latest_offer', {}).get('quote_reference') if mapping.get('latest_offer') else None,
-                        'quote_date_display': mapping.get('latest_offer', {}).get('quote_date_display') if mapping.get('latest_offer') else None,
-                    }
                 }
                 for mapping in (row.get('qpl_mappings') or [])
                 if mapping.get('supplier_id')
             ],
         })
     return seed_rows
+
+
+def _build_stock_building_requisition_seed_suppliers(seed_rows):
+    supplier_map = {}
+    for row in seed_rows or []:
+        part_number = row.get('part_number') or row.get('base_part_number')
+        for mapping in row.get('qpl_mappings') or []:
+            supplier_id = mapping.get('supplier_id')
+            try:
+                supplier_id = int(supplier_id) if supplier_id is not None else None
+            except (TypeError, ValueError):
+                supplier_id = None
+            if not supplier_id:
+                continue
+
+            supplier_entry = supplier_map.setdefault(supplier_id, {
+                'supplier_id': supplier_id,
+                'supplier_name': mapping.get('supplier_name') or '',
+                'manufacturer_names': set(),
+                'covered_parts': set(),
+                'price_breaks': ['', '', '', '', '', ''],
+            })
+            manufacturer_name = (mapping.get('manufacturer_name') or '').strip()
+            if manufacturer_name:
+                supplier_entry['manufacturer_names'].add(manufacturer_name)
+            if part_number:
+                supplier_entry['covered_parts'].add(part_number)
+
+    supplier_rows = []
+    for supplier_entry in supplier_map.values():
+        manufacturer_names = sorted(supplier_entry['manufacturer_names'], key=lambda name: name.lower())
+        covered_parts = sorted(supplier_entry['covered_parts'])
+        supplier_rows.append({
+            'supplier_id': supplier_entry['supplier_id'],
+            'supplier_name': supplier_entry['supplier_name'] or f"Supplier #{supplier_entry['supplier_id']}",
+            'manufacturer_names': manufacturer_names,
+            'manufacturer_names_display': ', '.join(manufacturer_names),
+            'covered_parts': covered_parts,
+            'covered_parts_display': ', '.join(covered_parts[:6]),
+            'covered_part_count': len(covered_parts),
+            'price_breaks': supplier_entry['price_breaks'],
+        })
+
+    supplier_rows.sort(key=lambda row: (row.get('supplier_name') or '').lower())
+    return supplier_rows
 
 
 def _parse_stock_building_requisition_seed_rows(raw_payload):
@@ -244,7 +281,7 @@ def _parse_stock_building_requisition_seed_rows(raw_payload):
         parsed_rows.append({
             'base_part_number': base_part_number,
             'part_number': raw_row.get('part_number') or base_part_number,
-            'suppliers': supplier_entries,
+            'qpl_mappings': supplier_entries,
         })
     return parsed_rows
 
@@ -273,77 +310,76 @@ def _load_stock_building_requisition(requisition_list_id):
         fetch='one',
     )
     if not header:
-        return None, []
+        return None, [], []
 
-    rows = db_execute(
+    part_rows = db_execute(
         '''
         SELECT
             rlp.id AS requisition_part_id,
             rlp.base_part_number,
             rlp.part_number_snapshot,
-            rlp.sort_order AS part_sort_order,
-            rsl.id AS supplier_line_id,
-            rsl.supplier_id,
-            rsl.manufacturer_name,
-            rsl.supplier_name_snapshot,
-            rsl.latest_offer_price,
-            rsl.latest_offer_currency_code,
-            rsl.latest_offer_quote_reference,
-            rsl.latest_offer_date,
-            rsl.latest_offer_supplier_quote_id,
-            rsl.latest_offer_parts_list_id,
-            rsl.sort_order AS supplier_sort_order,
-            rsb.break_quantity,
-            rsb.sort_order AS break_sort_order
+            rlp.sort_order AS part_sort_order
         FROM stock_building_requisition_list_parts rlp
-        LEFT JOIN stock_building_requisition_supplier_lines rsl ON rsl.requisition_list_part_id = rlp.id
-        LEFT JOIN stock_building_requisition_supplier_breaks rsb ON rsb.supplier_line_id = rsl.id
         WHERE rlp.requisition_list_id = ?
-        ORDER BY rlp.sort_order, rlp.id, rsl.sort_order, rsl.id, rsb.sort_order, rsb.id
+        ORDER BY rlp.sort_order, rlp.id
         ''',
         (requisition_list_id,),
         fetch='all',
     ) or []
 
-    parts_map = {}
-    supplier_map = {}
-    for row in rows:
-        part_id = row.get('requisition_part_id')
-        if part_id not in parts_map:
-            parts_map[part_id] = {
-                'base_part_number': (row.get('base_part_number') or '').strip().upper(),
-                'part_number': row.get('part_number_snapshot') or row.get('base_part_number'),
-                'suppliers': [],
-            }
+    parts = [
+        {
+            'base_part_number': (row.get('base_part_number') or '').strip().upper(),
+            'part_number': row.get('part_number_snapshot') or row.get('base_part_number'),
+        }
+        for row in part_rows
+    ]
 
-        supplier_line_id = row.get('supplier_line_id')
-        if supplier_line_id and supplier_line_id not in supplier_map:
+    supplier_rows = db_execute(
+        '''
+        SELECT
+            rls.id AS requisition_supplier_id,
+            rls.supplier_id,
+            rls.supplier_name_snapshot,
+            rls.manufacturer_names_snapshot,
+            rls.covered_part_count,
+            rls.covered_parts_snapshot,
+            rsb.break_quantity,
+            rsb.sort_order AS break_sort_order
+        FROM stock_building_requisition_list_suppliers rls
+        LEFT JOIN stock_building_requisition_list_supplier_breaks rsb ON rsb.requisition_supplier_id = rls.id
+        WHERE rls.requisition_list_id = ?
+        ORDER BY rls.sort_order, rls.id, rsb.sort_order, rsb.id
+        ''',
+        (requisition_list_id,),
+        fetch='all',
+    ) or []
+
+    suppliers = []
+    supplier_map = {}
+    for row in supplier_rows:
+        supplier_key = row.get('requisition_supplier_id')
+        if supplier_key not in supplier_map:
             supplier_entry = {
                 'supplier_id': row.get('supplier_id'),
                 'supplier_name': row.get('supplier_name_snapshot') or '',
-                'manufacturer_name': row.get('manufacturer_name') or '',
-                'latest_offer': {
-                    'unit_price': float(row.get('latest_offer_price')) if row.get('latest_offer_price') is not None else None,
-                    'currency_code': row.get('latest_offer_currency_code') or 'GBP',
-                    'quote_reference': row.get('latest_offer_quote_reference'),
-                    'quote_date_display': str(row.get('latest_offer_date') or '')[:10],
-                    'supplier_quote_id': row.get('latest_offer_supplier_quote_id'),
-                    'parts_list_id': row.get('latest_offer_parts_list_id'),
-                },
+                'manufacturer_names_display': row.get('manufacturer_names_snapshot') or '',
+                'covered_parts_display': row.get('covered_parts_snapshot') or '',
+                'covered_part_count': int(row.get('covered_part_count') or 0),
                 'price_breaks': ['', '', '', '', '', ''],
             }
-            supplier_map[supplier_line_id] = supplier_entry
-            parts_map[part_id]['suppliers'].append(supplier_entry)
+            supplier_map[supplier_key] = supplier_entry
+            suppliers.append(supplier_entry)
 
-        if supplier_line_id and row.get('break_quantity') is not None:
+        if row.get('break_quantity') is not None:
             try:
                 break_index = int(row.get('break_sort_order') or 0)
             except (TypeError, ValueError):
                 break_index = 0
             if 0 <= break_index < 6:
-                supplier_map[supplier_line_id]['price_breaks'][break_index] = str(int(row.get('break_quantity')))
+                supplier_map[supplier_key]['price_breaks'][break_index] = str(int(row.get('break_quantity')))
 
-    return dict(header), list(parts_map.values())
+    return dict(header), parts, suppliers
 
 
 def _collect_stock_building_requisition_form_data(form):
@@ -358,58 +394,55 @@ def _collect_stock_building_requisition_form_data(form):
         if not base_part_number:
             continue
         part_number = (form.get(f'part_{part_index}_part_number') or base_part_number).strip()
-        try:
-            supplier_count = max(int(form.get(f'part_{part_index}_supplier_count') or 0), 0)
-        except (TypeError, ValueError):
-            supplier_count = 0
-
-        supplier_rows = []
-        for supplier_index in range(supplier_count):
-            supplier_id_raw = form.get(f'part_{part_index}_supplier_{supplier_index}_supplier_id')
-            try:
-                supplier_id = int(supplier_id_raw) if supplier_id_raw else None
-            except (TypeError, ValueError):
-                supplier_id = None
-            if not supplier_id:
-                continue
-
-            price_breaks = []
-            for break_index in range(6):
-                raw_value = (form.get(f'part_{part_index}_supplier_{supplier_index}_break_{break_index}') or '').strip()
-                if not raw_value:
-                    price_breaks.append('')
-                    continue
-                try:
-                    parsed_value = int(raw_value)
-                except (TypeError, ValueError):
-                    parsed_value = None
-                if parsed_value is None or parsed_value <= 0:
-                    price_breaks.append('')
-                else:
-                    price_breaks.append(str(parsed_value))
-
-            supplier_rows.append({
-                'supplier_id': supplier_id,
-                'supplier_name': (form.get(f'part_{part_index}_supplier_{supplier_index}_supplier_name') or '').strip(),
-                'manufacturer_name': (form.get(f'part_{part_index}_supplier_{supplier_index}_manufacturer_name') or '').strip(),
-                'latest_offer': {
-                    'unit_price': (form.get(f'part_{part_index}_supplier_{supplier_index}_latest_offer_price') or '').strip() or None,
-                    'currency_code': (form.get(f'part_{part_index}_supplier_{supplier_index}_latest_offer_currency_code') or '').strip() or 'GBP',
-                    'quote_reference': (form.get(f'part_{part_index}_supplier_{supplier_index}_latest_offer_quote_reference') or '').strip() or None,
-                    'quote_date_display': (form.get(f'part_{part_index}_supplier_{supplier_index}_latest_offer_quote_date_display') or '').strip() or None,
-                    'supplier_quote_id': (form.get(f'part_{part_index}_supplier_{supplier_index}_latest_offer_supplier_quote_id') or '').strip() or None,
-                    'parts_list_id': (form.get(f'part_{part_index}_supplier_{supplier_index}_latest_offer_parts_list_id') or '').strip() or None,
-                },
-                'price_breaks': price_breaks,
-            })
-
         requisition_parts.append({
             'base_part_number': base_part_number,
             'part_number': part_number,
-            'suppliers': supplier_rows,
         })
 
     return requisition_parts
+
+
+def _collect_stock_building_requisition_supplier_data(form):
+    try:
+        supplier_count = max(int(form.get('supplier_count') or 0), 0)
+    except (TypeError, ValueError):
+        supplier_count = 0
+
+    supplier_rows = []
+    for supplier_index in range(supplier_count):
+        supplier_id_raw = form.get(f'supplier_{supplier_index}_supplier_id')
+        try:
+            supplier_id = int(supplier_id_raw) if supplier_id_raw else None
+        except (TypeError, ValueError):
+            supplier_id = None
+        if not supplier_id:
+            continue
+
+        price_breaks = []
+        for break_index in range(6):
+            raw_value = (form.get(f'supplier_{supplier_index}_break_{break_index}') or '').strip()
+            if not raw_value:
+                price_breaks.append('')
+                continue
+            try:
+                parsed_value = int(raw_value)
+            except (TypeError, ValueError):
+                parsed_value = None
+            if parsed_value is None or parsed_value <= 0:
+                price_breaks.append('')
+            else:
+                price_breaks.append(str(parsed_value))
+
+        supplier_rows.append({
+            'supplier_id': supplier_id,
+            'supplier_name': (form.get(f'supplier_{supplier_index}_supplier_name') or '').strip(),
+            'manufacturer_names_display': (form.get(f'supplier_{supplier_index}_manufacturer_names_display') or '').strip(),
+            'covered_parts_display': (form.get(f'supplier_{supplier_index}_covered_parts_display') or '').strip(),
+            'covered_part_count': max(form.get(f'supplier_{supplier_index}_covered_part_count', type=int) or 0, 0),
+            'price_breaks': price_breaks,
+        })
+
+    return supplier_rows
 
 
 def _fetch_alt_group_members(cur, group_id):
@@ -1281,6 +1314,7 @@ def stock_building_requisition_new():
         flash('No visible parts were available to seed a requisition list.', 'warning')
         return redirect(url_for('parts.stock_building'))
 
+    seed_suppliers = _build_stock_building_requisition_seed_suppliers(seed_rows)
     statuses = _get_stock_building_requisition_statuses()
     users = _get_stock_building_assignable_users()
     default_status_id = next((status.get('id') for status in statuses if (status.get('name') or '').lower() == 'new'), None)
@@ -1296,7 +1330,14 @@ def stock_building_requisition_new():
     return render_template(
         'stock_building_requisition_edit.html',
         requisition=requisition,
-        requisition_parts=seed_rows,
+        requisition_parts=[
+            {
+                'base_part_number': row.get('base_part_number'),
+                'part_number': row.get('part_number'),
+            }
+            for row in seed_rows
+        ],
+        requisition_suppliers=seed_suppliers,
         statuses=statuses,
         users=users,
         is_edit=False,
@@ -1313,6 +1354,7 @@ def stock_building_requisition_create():
     assigned_user_id = request.form.get('assigned_user_id', type=int)
     back_url = request.form.get('back_url') or url_for('parts.stock_building')
     requisition_parts = _collect_stock_building_requisition_form_data(request.form)
+    requisition_suppliers = _collect_stock_building_requisition_supplier_data(request.form)
 
     statuses = _get_stock_building_requisition_statuses()
     users = _get_stock_building_assignable_users()
@@ -1329,6 +1371,7 @@ def stock_building_requisition_create():
                 'assigned_user_id': assigned_user_id,
             },
             requisition_parts=requisition_parts,
+            requisition_suppliers=requisition_suppliers,
             statuses=statuses,
             users=users,
             is_edit=False,
@@ -1347,6 +1390,7 @@ def stock_building_requisition_create():
                 'assigned_user_id': assigned_user_id,
             },
             requisition_parts=requisition_parts,
+            requisition_suppliers=requisition_suppliers,
             statuses=statuses,
             users=users,
             is_edit=False,
@@ -1390,86 +1434,54 @@ def stock_building_requisition_create():
                     part_index,
                 ),
             )
-            requisition_part_id = _last_inserted_id(cur)
+            _last_inserted_id(cur)
 
-            for supplier_index, supplier in enumerate(part.get('suppliers') or []):
-                populated_breaks = [
-                    int(quantity)
-                    for quantity in (supplier.get('price_breaks') or [])
-                    if str(quantity).strip()
-                ]
-                if not populated_breaks:
+        for supplier_index, supplier in enumerate(requisition_suppliers):
+            _execute_with_cursor(
+                cur,
+                _with_returning_clause(
+                    '''
+                    INSERT INTO stock_building_requisition_list_suppliers
+                        (
+                            requisition_list_id,
+                            supplier_id,
+                            supplier_name_snapshot,
+                            manufacturer_names_snapshot,
+                            covered_part_count,
+                            covered_parts_snapshot,
+                            sort_order
+                        )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    '''
+                ),
+                (
+                    requisition_list_id,
+                    supplier['supplier_id'],
+                    supplier.get('supplier_name') or None,
+                    supplier.get('manufacturer_names_display') or None,
+                    supplier.get('covered_part_count') or 0,
+                    supplier.get('covered_parts_display') or None,
+                    supplier_index,
+                ),
+            )
+            requisition_supplier_id = _last_inserted_id(cur)
+
+            for break_index, break_quantity in enumerate(supplier.get('price_breaks') or []):
+                if not str(break_quantity).strip():
                     continue
-
-                latest_offer = supplier.get('latest_offer') or {}
-                latest_offer_price = latest_offer.get('unit_price')
-                try:
-                    latest_offer_price = float(latest_offer_price) if latest_offer_price is not None else None
-                except (TypeError, ValueError):
-                    latest_offer_price = None
-
-                latest_offer_supplier_quote_id = latest_offer.get('supplier_quote_id')
-                latest_offer_parts_list_id = latest_offer.get('parts_list_id')
-                try:
-                    latest_offer_supplier_quote_id = int(latest_offer_supplier_quote_id) if latest_offer_supplier_quote_id else None
-                except (TypeError, ValueError):
-                    latest_offer_supplier_quote_id = None
-                try:
-                    latest_offer_parts_list_id = int(latest_offer_parts_list_id) if latest_offer_parts_list_id else None
-                except (TypeError, ValueError):
-                    latest_offer_parts_list_id = None
-
                 _execute_with_cursor(
                     cur,
-                    _with_returning_clause(
-                        '''
-                        INSERT INTO stock_building_requisition_supplier_lines
-                            (
-                                requisition_list_part_id,
-                                supplier_id,
-                                manufacturer_name,
-                                supplier_name_snapshot,
-                                latest_offer_price,
-                                latest_offer_currency_code,
-                                latest_offer_quote_reference,
-                                latest_offer_date,
-                                latest_offer_supplier_quote_id,
-                                latest_offer_parts_list_id,
-                                sort_order
-                            )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        '''
-                    ),
+                    '''
+                    INSERT INTO stock_building_requisition_list_supplier_breaks
+                        (requisition_supplier_id, break_quantity, sort_order)
+                    VALUES (?, ?, ?)
+                    ''',
                     (
-                        requisition_part_id,
-                        supplier['supplier_id'],
-                        supplier.get('manufacturer_name') or None,
-                        supplier.get('supplier_name') or None,
-                        latest_offer_price,
-                        latest_offer.get('currency_code') or None,
-                        latest_offer.get('quote_reference') or None,
-                        latest_offer.get('quote_date_display') or None,
-                        latest_offer_supplier_quote_id,
-                        latest_offer_parts_list_id,
-                        supplier_index,
+                        requisition_supplier_id,
+                        int(break_quantity),
+                        break_index,
                     ),
                 )
-                supplier_line_id = _last_inserted_id(cur)
-
-                for break_index, break_quantity in enumerate(populated_breaks):
-                    _execute_with_cursor(
-                        cur,
-                        '''
-                        INSERT INTO stock_building_requisition_supplier_breaks
-                            (supplier_line_id, break_quantity, sort_order)
-                        VALUES (?, ?, ?)
-                        ''',
-                        (
-                            supplier_line_id,
-                            break_quantity,
-                            break_index,
-                        ),
-                    )
 
     flash('Requisition list created.', 'success')
     return redirect(url_for('parts.stock_building_requisition_detail', requisition_list_id=requisition_list_id))
@@ -1485,6 +1497,7 @@ def stock_building_requisition_detail(requisition_list_id):
         assigned_user_id = request.form.get('assigned_user_id', type=int)
         back_url = request.form.get('back_url') or url_for('parts.stock_building_requisition_detail', requisition_list_id=requisition_list_id)
         requisition_parts = _collect_stock_building_requisition_form_data(request.form)
+        requisition_suppliers = _collect_stock_building_requisition_supplier_data(request.form)
         statuses = _get_stock_building_requisition_statuses()
         users = _get_stock_building_assignable_users()
 
@@ -1500,6 +1513,7 @@ def stock_building_requisition_detail(requisition_list_id):
                     'assigned_user_id': assigned_user_id,
                 },
                 requisition_parts=requisition_parts,
+                requisition_suppliers=requisition_suppliers,
                 statuses=statuses,
                 users=users,
                 is_edit=True,
@@ -1532,6 +1546,11 @@ def stock_building_requisition_detail(requisition_list_id):
                 'DELETE FROM stock_building_requisition_list_parts WHERE requisition_list_id = ?',
                 (requisition_list_id,),
             )
+            _execute_with_cursor(
+                cur,
+                'DELETE FROM stock_building_requisition_list_suppliers WHERE requisition_list_id = ?',
+                (requisition_list_id,),
+            )
 
             for part_index, part in enumerate(requisition_parts):
                 _execute_with_cursor(
@@ -1550,91 +1569,59 @@ def stock_building_requisition_detail(requisition_list_id):
                         part_index,
                     ),
                 )
-                requisition_part_id = _last_inserted_id(cur)
+                _last_inserted_id(cur)
 
-                for supplier_index, supplier in enumerate(part.get('suppliers') or []):
-                    populated_breaks = [
-                        int(quantity)
-                        for quantity in (supplier.get('price_breaks') or [])
-                        if str(quantity).strip()
-                    ]
-                    if not populated_breaks:
+            for supplier_index, supplier in enumerate(requisition_suppliers):
+                _execute_with_cursor(
+                    cur,
+                    _with_returning_clause(
+                        '''
+                        INSERT INTO stock_building_requisition_list_suppliers
+                            (
+                                requisition_list_id,
+                                supplier_id,
+                                supplier_name_snapshot,
+                                manufacturer_names_snapshot,
+                                covered_part_count,
+                                covered_parts_snapshot,
+                                sort_order
+                            )
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        '''
+                    ),
+                    (
+                        requisition_list_id,
+                        supplier['supplier_id'],
+                        supplier.get('supplier_name') or None,
+                        supplier.get('manufacturer_names_display') or None,
+                        supplier.get('covered_part_count') or 0,
+                        supplier.get('covered_parts_display') or None,
+                        supplier_index,
+                    ),
+                )
+                requisition_supplier_id = _last_inserted_id(cur)
+
+                for break_index, break_quantity in enumerate(supplier.get('price_breaks') or []):
+                    if not str(break_quantity).strip():
                         continue
-
-                    latest_offer = supplier.get('latest_offer') or {}
-                    latest_offer_price = latest_offer.get('unit_price')
-                    try:
-                        latest_offer_price = float(latest_offer_price) if latest_offer_price is not None else None
-                    except (TypeError, ValueError):
-                        latest_offer_price = None
-
-                    latest_offer_supplier_quote_id = latest_offer.get('supplier_quote_id')
-                    latest_offer_parts_list_id = latest_offer.get('parts_list_id')
-                    try:
-                        latest_offer_supplier_quote_id = int(latest_offer_supplier_quote_id) if latest_offer_supplier_quote_id else None
-                    except (TypeError, ValueError):
-                        latest_offer_supplier_quote_id = None
-                    try:
-                        latest_offer_parts_list_id = int(latest_offer_parts_list_id) if latest_offer_parts_list_id else None
-                    except (TypeError, ValueError):
-                        latest_offer_parts_list_id = None
-
                     _execute_with_cursor(
                         cur,
-                        _with_returning_clause(
-                            '''
-                            INSERT INTO stock_building_requisition_supplier_lines
-                                (
-                                    requisition_list_part_id,
-                                    supplier_id,
-                                    manufacturer_name,
-                                    supplier_name_snapshot,
-                                    latest_offer_price,
-                                    latest_offer_currency_code,
-                                    latest_offer_quote_reference,
-                                    latest_offer_date,
-                                    latest_offer_supplier_quote_id,
-                                    latest_offer_parts_list_id,
-                                    sort_order
-                                )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            '''
-                        ),
+                        '''
+                        INSERT INTO stock_building_requisition_list_supplier_breaks
+                            (requisition_supplier_id, break_quantity, sort_order)
+                        VALUES (?, ?, ?)
+                        ''',
                         (
-                            requisition_part_id,
-                            supplier['supplier_id'],
-                            supplier.get('manufacturer_name') or None,
-                            supplier.get('supplier_name') or None,
-                            latest_offer_price,
-                            latest_offer.get('currency_code') or None,
-                            latest_offer.get('quote_reference') or None,
-                            latest_offer.get('quote_date_display') or None,
-                            latest_offer_supplier_quote_id,
-                            latest_offer_parts_list_id,
-                            supplier_index,
+                            requisition_supplier_id,
+                            int(break_quantity),
+                            break_index,
                         ),
                     )
-                    supplier_line_id = _last_inserted_id(cur)
-
-                    for break_index, break_quantity in enumerate(populated_breaks):
-                        _execute_with_cursor(
-                            cur,
-                            '''
-                            INSERT INTO stock_building_requisition_supplier_breaks
-                                (supplier_line_id, break_quantity, sort_order)
-                            VALUES (?, ?, ?)
-                            ''',
-                            (
-                                supplier_line_id,
-                                break_quantity,
-                                break_index,
-                            ),
-                        )
 
         flash('Requisition list updated.', 'success')
         return redirect(url_for('parts.stock_building_requisition_detail', requisition_list_id=requisition_list_id))
 
-    requisition, requisition_parts = _load_stock_building_requisition(requisition_list_id)
+    requisition, requisition_parts, requisition_suppliers = _load_stock_building_requisition(requisition_list_id)
     if not requisition:
         flash('Requisition list not found.', 'warning')
         return redirect(url_for('parts.stock_building'))
@@ -1643,6 +1630,7 @@ def stock_building_requisition_detail(requisition_list_id):
         'stock_building_requisition_edit.html',
         requisition=requisition,
         requisition_parts=requisition_parts,
+        requisition_suppliers=requisition_suppliers,
         statuses=_get_stock_building_requisition_statuses(),
         users=_get_stock_building_assignable_users(),
         is_edit=True,
