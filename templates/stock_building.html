@@ -19,7 +19,11 @@
     <div class="card mb-3">
         <div class="card-body">
             <form method="get" action="{{ url_for('parts.stock_building') }}" class="row g-3 align-items-end">
+                <input type="hidden" name="run_report" value="1">
                 <input type="hidden" name="page" value="1">
+                <input type="hidden" name="sort_by" value="{{ sort_by }}">
+                <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
+
                 <div class="col-lg-4">
                     <label for="customerFilter" class="form-label fw-semibold">Customers (overall filter)</label>
                     <input type="text" class="form-control mb-2 filter-search-input" data-target-select="customerFilter" placeholder="Filter customers...">
@@ -31,6 +35,7 @@
                         {% endfor %}
                     </select>
                 </div>
+
                 <div class="col-lg-4">
                     <label for="bomFilter" class="form-label fw-semibold">BOMs (overall filter)</label>
                     <input type="text" class="form-control mb-2 filter-search-input" data-target-select="bomFilter" placeholder="Filter BOMs...">
@@ -42,6 +47,7 @@
                         {% endfor %}
                     </select>
                 </div>
+
                 <div class="col-lg-4">
                     <label for="projectFilter" class="form-label fw-semibold">Projects</label>
                     <input type="text" class="form-control mb-2 filter-search-input" data-target-select="projectFilter" placeholder="Filter projects...">
@@ -53,6 +59,7 @@
                         {% endfor %}
                     </select>
                 </div>
+
                 <div class="col-lg-4">
                     <label for="qplFilter" class="form-label fw-semibold">QPL manufacturers (mapped only)</label>
                     <input type="text" class="form-control mb-2 filter-search-input" data-target-select="qplFilter" placeholder="Filter QPL manufacturers...">
@@ -64,6 +71,7 @@
                         {% endfor %}
                     </select>
                 </div>
+
                 <div class="col-12">
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" value="1" id="excludeInStockToggle" name="exclude_in_stock" {% if exclude_in_stock %}checked{% endif %}>
@@ -72,6 +80,7 @@
                         </label>
                     </div>
                 </div>
+
                 <div class="col-12">
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" value="1" id="onlyQplMappedToggle" name="only_qpl_mapped" {% if only_qpl_mapped %}checked{% endif %}>
@@ -80,24 +89,29 @@
                         </label>
                     </div>
                 </div>
+
                 <div class="col-lg-4">
                     <label for="partQuery" class="form-label fw-semibold">Part search</label>
                     <input type="text" class="form-control" id="partQuery" name="part_query" value="{{ part_query or '' }}" placeholder="Part or base part number">
                 </div>
+
                 <div class="col-lg-2">
                     <label for="minSalesFrequency" class="form-label fw-semibold">Min sales freq</label>
                     <input type="number" min="0" class="form-control" id="minSalesFrequency" name="min_sales_frequency" value="{{ min_sales_frequency }}">
                 </div>
+
                 <div class="col-lg-2">
                     <label for="minPartsListFrequency" class="form-label fw-semibold">Min parts list freq</label>
                     <input type="number" min="0" class="form-control" id="minPartsListFrequency" name="min_parts_list_frequency" value="{{ min_parts_list_frequency }}">
                 </div>
+
                 <div class="col-lg-2">
                     <label for="minBomCount" class="form-label fw-semibold">Min BOM count</label>
                     <input type="number" min="0" class="form-control" id="minBomCount" name="min_bom_count" value="{{ min_bom_count }}">
                 </div>
+
                 <div class="col-12 d-flex gap-2">
-                    <button type="submit" class="btn btn-primary">Apply filters</button>
+                    <button type="submit" class="btn btn-primary">Run report</button>
                     <a href="{{ url_for('parts.stock_building') }}" class="btn btn-outline-secondary">Reset</a>
                     <button type="button" class="btn btn-outline-primary ms-auto" id="toggleBomColumnsBtn">Toggle BOM columns</button>
                 </div>
@@ -111,20 +125,62 @@
             <span class="badge bg-secondary">{{ total_rows }} parts</span>
         </div>
         <div class="card-body border-bottom py-2 px-3 small text-muted d-flex justify-content-between flex-wrap gap-2">
+            {% if run_report %}
             <span>Showing {{ showing_start }}-{{ showing_end }} of {{ total_rows }} parts ({{ per_page }} per page)</span>
-            <span>Tip: use filters above before expanding BOM columns for easier scanning.</span>
+            <span>Tip: sorting is applied to the full result set before pagination.</span>
+            {% else %}
+            <span>Report is idle until you click Run report.</span>
+            <span>Set filters first if you want to narrow the dataset before it loads.</span>
+            {% endif %}
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
+                {% set sort_arrow = '&uarr;' if sort_dir == 'asc' else '&darr;' %}
                 <table class="table table-striped table-hover align-middle mb-0" id="stockBuildingTable">
                     <thead class="table-light">
                         <tr>
-                            <th role="button" class="sortable" data-sort-key="part_number" data-sort-type="text">Part <span class="sort-indicator text-muted">↕</span></th>
-                            <th role="button" class="text-end sortable" data-sort-key="stock_quantity" data-sort-type="number">Stock <span class="sort-indicator text-muted">↕</span></th>
-                            <th role="button" class="sortable" data-sort-key="qpl_count" data-sort-type="number">QPL manufacturers (mapped) <span class="sort-indicator text-muted">↕</span></th>
-                            <th role="button" class="text-center sortable" data-sort-key="sales_frequency" data-sort-type="number">Sales<br><small class="text-muted">Freq / Cust</small> <span class="sort-indicator text-muted">↕</span></th>
-                            <th role="button" class="text-center sortable" data-sort-key="parts_list_frequency" data-sort-type="number">Parts Lists<br><small class="text-muted">Freq / Cust</small> <span class="sort-indicator text-muted">↕</span></th>
-                            <th role="button" class="text-center sortable" data-sort-key="bom_count" data-sort-type="number">BOMs <span class="sort-indicator text-muted">↕</span></th>
+                            <th>
+                                <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1"
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='part_number', sort_dir='asc' if sort_by == 'part_number' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                    <span>Part</span>
+                                    <span class="text-muted">{{ (sort_arrow if sort_by == 'part_number' else '&harr;')|safe }}</span>
+                                </a>
+                            </th>
+                            <th class="text-end">
+                                <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1"
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='stock_quantity', sort_dir='asc' if sort_by == 'stock_quantity' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                    <span>Stock</span>
+                                    <span class="text-muted">{{ (sort_arrow if sort_by == 'stock_quantity' else '&harr;')|safe }}</span>
+                                </a>
+                            </th>
+                            <th>
+                                <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1"
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='qpl_count', sort_dir='asc' if sort_by == 'qpl_count' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                    <span>QPL manufacturers (mapped)</span>
+                                    <span class="text-muted">{{ (sort_arrow if sort_by == 'qpl_count' else '&harr;')|safe }}</span>
+                                </a>
+                            </th>
+                            <th class="text-center">
+                                <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1 justify-content-center"
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='sales_frequency', sort_dir='asc' if sort_by == 'sales_frequency' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                    <span>Sales<br><small class="text-muted">Freq / Cust</small></span>
+                                    <span class="text-muted">{{ (sort_arrow if sort_by == 'sales_frequency' else '&harr;')|safe }}</span>
+                                </a>
+                            </th>
+                            <th class="text-center">
+                                <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1 justify-content-center"
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='parts_list_frequency', sort_dir='asc' if sort_by == 'parts_list_frequency' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                    <span>Parts Lists<br><small class="text-muted">Freq / Cust</small></span>
+                                    <span class="text-muted">{{ (sort_arrow if sort_by == 'parts_list_frequency' else '&harr;')|safe }}</span>
+                                </a>
+                            </th>
+                            <th class="text-center">
+                                <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1"
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='bom_count', sort_dir='asc' if sort_by == 'bom_count' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                    <span>BOMs</span>
+                                    <span class="text-muted">{{ (sort_arrow if sort_by == 'bom_count' else '&harr;')|safe }}</span>
+                                </a>
+                            </th>
                             {% for bom_id in bom_column_ids %}
                             <th class="text-center bom-col" style="display:none;">{{ bom_name_by_id.get(bom_id, 'BOM ' ~ bom_id) }}</th>
                             {% endfor %}
@@ -132,14 +188,7 @@
                     </thead>
                     <tbody>
                         {% for row in rows %}
-                        <tr
-                            data-part_number="{{ (row.part_number or row.base_part_number)|lower }}"
-                            data-stock_quantity="{{ row.stock_quantity }}"
-                            data-qpl_count="{{ row.qpl_mappings|length }}"
-                            data-sales_frequency="{{ row.sales_frequency }}"
-                            data-parts_list_frequency="{{ row.parts_list_frequency }}"
-                            data-bom_count="{{ row.bom_count }}"
-                        >
+                        <tr>
                             <td>
                                 <div class="fw-semibold font-monospace">{{ row.part_number }}</div>
                                 <div class="small text-muted">{{ row.base_part_number }}</div>
@@ -152,7 +201,7 @@
                                     <li>
                                         <span class="fw-semibold">{{ mapping.manufacturer_name }}</span>
                                         {% if mapping.supplier_name %}
-                                        <span class="text-muted">→ {{ mapping.supplier_name }}</span>
+                                        <span class="text-muted">&rarr; {{ mapping.supplier_name }}</span>
                                         {% endif %}
                                     </li>
                                     {% endfor %}
@@ -183,7 +232,7 @@
                             {% for bom_id in bom_column_ids %}
                             <td class="text-center bom-col" style="display:none;">
                                 {% if row.bom_map.get(bom_id) %}
-                                <span class="badge bg-success">✓</span>
+                                <span class="badge bg-success">&check;</span>
                                 {% else %}
                                 <span class="text-muted">-</span>
                                 {% endif %}
@@ -191,7 +240,14 @@
                             {% endfor %}
                         </tr>
                         {% endfor %}
-                        {% if not rows %}
+
+                        {% if not run_report %}
+                        <tr>
+                            <td colspan="{{ 6 + bom_column_ids|length }}" class="text-center py-4 text-muted">
+                                Choose your filters, then click Run report.
+                            </td>
+                        </tr>
+                        {% elif not rows %}
                         <tr>
                             <td colspan="{{ 6 + bom_column_ids|length }}" class="text-center py-4 text-muted">
                                 No parts found for the selected filters.
@@ -202,17 +258,18 @@
                 </table>
             </div>
         </div>
+
         {% if total_pages > 1 %}
         <div class="card-footer bg-white d-flex justify-content-between align-items-center">
             <div class="small text-muted">Page {{ page }} of {{ total_pages }}</div>
             <div class="btn-group">
                 <a
                     class="btn btn-outline-secondary btn-sm {% if page <= 1 %}disabled{% endif %}"
-                    href="{{ url_for('parts.stock_building', page=page-1, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
+                    href="{{ url_for('parts.stock_building', run_report=1, page=page-1, sort_by=sort_by, sort_dir=sort_dir, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
                 >Previous</a>
                 <a
                     class="btn btn-outline-secondary btn-sm {% if page >= total_pages %}disabled{% endif %}"
-                    href="{{ url_for('parts.stock_building', page=page+1, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
+                    href="{{ url_for('parts.stock_building', run_report=1, page=page+1, sort_by=sort_by, sort_dir=sort_dir, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
                 >Next</a>
             </div>
         </div>
@@ -221,50 +278,6 @@
 </div>
 
 <script>
-document.querySelectorAll('#stockBuildingTable th.sortable').forEach(function (header) {
-    header.addEventListener('click', function () {
-        const table = document.getElementById('stockBuildingTable');
-        const tbody = table?.querySelector('tbody');
-        if (!tbody) return;
-
-        const key = header.dataset.sortKey;
-        const sortType = header.dataset.sortType || 'text';
-        const currentDirection = header.dataset.sortDirection === 'asc' ? 'asc' : 'desc';
-        const nextDirection = currentDirection === 'asc' ? 'desc' : 'asc';
-        header.dataset.sortDirection = nextDirection;
-
-        table.querySelectorAll('th.sortable').forEach(function (th) {
-            if (th !== header) {
-                th.dataset.sortDirection = '';
-                const indicator = th.querySelector('.sort-indicator');
-                if (indicator) indicator.textContent = '↕';
-            }
-        });
-
-        const indicator = header.querySelector('.sort-indicator');
-        if (indicator) indicator.textContent = nextDirection === 'asc' ? '↑' : '↓';
-
-        const rows = Array.from(tbody.querySelectorAll('tr')).filter(function (row) {
-            return row.dataset[key] !== undefined;
-        });
-
-        rows.sort(function (a, b) {
-            const aRaw = a.dataset[key] || '';
-            const bRaw = b.dataset[key] || '';
-            const aValue = sortType === 'number' ? Number(aRaw) || 0 : aRaw.toString();
-            const bValue = sortType === 'number' ? Number(bRaw) || 0 : bRaw.toString();
-
-            if (aValue < bValue) return nextDirection === 'asc' ? -1 : 1;
-            if (aValue > bValue) return nextDirection === 'asc' ? 1 : -1;
-            return 0;
-        });
-
-        rows.forEach(function (row) {
-            tbody.appendChild(row);
-        });
-    });
-});
-
 document.getElementById('toggleBomColumnsBtn')?.addEventListener('click', function () {
     document.querySelectorAll('.bom-col').forEach(function (cell) {
         const isHidden = cell.style.display === 'none';

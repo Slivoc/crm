@@ -352,8 +352,11 @@ def parts():
 
 @parts_bp.route('/stock-building', methods=['GET'])
 def stock_building():
+    run_report = str(request.args.get('run_report', '')).lower() in ('1', 'true', 'yes', 'on')
     page = max(request.args.get('page', 1, type=int) or 1, 1)
     per_page = 100
+    sort_by = (request.args.get('sort_by') or 'default').strip().lower()
+    sort_dir = (request.args.get('sort_dir') or 'desc').strip().lower()
     selected_customer_ids = [cid for cid in request.args.getlist('customer_ids', type=int) if cid]
     selected_bom_ids = [bid for bid in request.args.getlist('bom_ids', type=int) if bid]
     selected_project_ids = [pid for pid in request.args.getlist('project_ids', type=int) if pid]
@@ -391,6 +394,96 @@ def stock_building():
         ''',
         fetch='all',
     ) or []
+
+    allowed_sort_fields = {
+        'default',
+        'part_number',
+        'stock_quantity',
+        'qpl_count',
+        'sales_frequency',
+        'parts_list_frequency',
+        'bom_count',
+    }
+    if sort_by not in allowed_sort_fields:
+        sort_by = 'default'
+    if sort_dir not in ('asc', 'desc'):
+        sort_dir = 'desc'
+
+    qpl_manufacturer_options = []
+    total_rows = 0
+    total_pages = 1
+    start_idx = 0
+    end_idx = 0
+    paged_rows = []
+    all_bom_ids = []
+    bom_name_by_id = {}
+
+    try:
+        qpl_option_mapping_rows = db_execute(
+            '''
+            SELECT manufacturer_name_normalized
+            FROM qpl_manufacturer_supplier_mappings
+            WHERE TRIM(COALESCE(manufacturer_name_normalized, '')) <> ''
+            ''',
+            fetch='all',
+        ) or []
+        mapped_option_keys = {
+            (row.get('manufacturer_name_normalized') or '').strip()
+            for row in qpl_option_mapping_rows
+            if (row.get('manufacturer_name_normalized') or '').strip()
+        }
+        qpl_option_rows = db_execute(
+            '''
+            SELECT DISTINCT TRIM(manufacturer_name) AS manufacturer_name
+            FROM manufacturer_approvals
+            WHERE TRIM(COALESCE(manufacturer_name, '')) <> ''
+            ORDER BY TRIM(manufacturer_name)
+            ''',
+            fetch='all',
+        ) or []
+    except Exception:
+        mapped_option_keys = set()
+        qpl_option_rows = []
+
+    qpl_manufacturer_options = sorted({
+        manufacturer_name
+        for manufacturer_name in (
+            (row.get('manufacturer_name') or '').strip()
+            for row in qpl_option_rows
+        )
+        if manufacturer_name and _normalize_company_name_for_match(manufacturer_name) in mapped_option_keys
+    }, key=lambda name: name.lower())
+
+    if not run_report:
+        return render_template(
+            'stock_building.html',
+            rows=paged_rows,
+            customers=[dict(row) for row in customers],
+            boms=[dict(row) for row in boms],
+            projects=[dict(row) for row in projects],
+            bom_column_ids=all_bom_ids,
+            bom_name_by_id=bom_name_by_id,
+            qpl_manufacturer_options=qpl_manufacturer_options,
+            selected_customer_ids=selected_customer_ids,
+            selected_bom_ids=selected_bom_ids,
+            selected_project_ids=selected_project_ids,
+            selected_qpl_manufacturers=selected_qpl_manufacturers,
+            exclude_in_stock=exclude_in_stock,
+            only_qpl_mapped=only_qpl_mapped,
+            part_query=part_query,
+            min_sales_frequency=min_sales_frequency,
+            min_parts_list_frequency=min_parts_list_frequency,
+            min_bom_count=min_bom_count,
+            run_report=run_report,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            page=page,
+            per_page=per_page,
+            total_rows=total_rows,
+            total_pages=total_pages,
+            showing_start=0,
+            showing_end=0,
+        )
 
     customer_clause, customer_params = _build_in_clause(selected_customer_ids)
     bom_clause, bom_params = _build_in_clause(selected_bom_ids)
@@ -688,15 +781,41 @@ def stock_building():
             'bom_count': bom_count,
         })
 
-    consolidated_rows.sort(
-        key=lambda row: (
-            -len(row.get('qpl_manufacturers') or []),
-            -(row.get('sales_frequency') or 0),
-            -(row.get('parts_list_frequency') or 0),
-            -(row.get('bom_count') or 0),
-            row.get('part_number') or row.get('base_part_number'),
+    if sort_by == 'default':
+        consolidated_rows.sort(
+            key=lambda row: (
+                -len(row.get('qpl_manufacturers') or []),
+                -(row.get('sales_frequency') or 0),
+                -(row.get('parts_list_frequency') or 0),
+                -(row.get('bom_count') or 0),
+                row.get('part_number') or row.get('base_part_number'),
+            )
         )
-    )
+    else:
+        reverse = sort_dir == 'desc'
+
+        def _sort_value(row):
+            if sort_by == 'part_number':
+                return (row.get('part_number') or row.get('base_part_number') or '').lower()
+            if sort_by == 'stock_quantity':
+                return float(row.get('stock_quantity') or 0)
+            if sort_by == 'qpl_count':
+                return len(row.get('qpl_mappings') or [])
+            if sort_by == 'sales_frequency':
+                return int(row.get('sales_frequency') or 0)
+            if sort_by == 'parts_list_frequency':
+                return int(row.get('parts_list_frequency') or 0)
+            if sort_by == 'bom_count':
+                return int(row.get('bom_count') or 0)
+            return row.get('part_number') or row.get('base_part_number') or ''
+
+        consolidated_rows.sort(
+            key=lambda row: (
+                _sort_value(row),
+                (row.get('part_number') or row.get('base_part_number') or '').lower(),
+            ),
+            reverse=reverse,
+        )
 
     total_rows = len(consolidated_rows)
     total_pages = max((total_rows + per_page - 1) // per_page, 1)
@@ -726,6 +845,9 @@ def stock_building():
         min_sales_frequency=min_sales_frequency,
         min_parts_list_frequency=min_parts_list_frequency,
         min_bom_count=min_bom_count,
+        run_report=run_report,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
         page=page,
         per_page=per_page,
         total_rows=total_rows,
