@@ -773,14 +773,24 @@ def update_contact_notes(contact_id):
         if contact is None:
             return jsonify({'success': False, 'error': 'Contact not found'}), 404
 
-        # Update only the notes field and timestamp
-        db_execute('''
-            UPDATE contacts 
-            SET notes = ?, updated_at = CURRENT_TIMESTAMP
+        # Update only the notes field. Some environments do not have an
+        # `updated_at` column on `contacts`, so avoid touching it here.
+        updated = db_execute(
+            '''
+            UPDATE contacts
+            SET notes = ?
             WHERE id = ?
-        ''', (notes, contact_id), commit=True)
+            RETURNING id, notes
+            ''',
+            (notes, contact_id),
+            fetch='one',
+            commit=True,
+        )
 
-        return jsonify({'success': True})
+        if not updated:
+            return jsonify({'success': False, 'error': 'Failed to update contact notes'}), 500
+
+        return jsonify({'success': True, 'notes': updated.get('notes', '')})
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400

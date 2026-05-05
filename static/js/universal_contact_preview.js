@@ -285,6 +285,7 @@ suggestTimezoneForCountry: async function(countryCode) {
         });
 
         $(document).on('input', '#contact-notes-input', () => {
+            this.updateNotesVisualState($('#contact-notes-input').val() || '');
             this.queueNotesSave();
         });
 
@@ -500,7 +501,14 @@ openEditModal: async function() {
         const notesValue = notes || '';
         $('#contact-notes-input').val(notesValue);
         this.lastNotesValue = notesValue;
+        this.updateNotesVisualState(notesValue);
         this.setNotesStatus('');
+    },
+
+    updateNotesVisualState: function(notes) {
+        const hasNotes = !!(notes && notes.trim());
+        $('#contact-notes-row').toggleClass('notes-present', hasNotes);
+        $('#contact-notes-label').text(hasNotes ? '⚠ Important Notes' : 'Notes');
     },
 
     queueNotesSave: function() {
