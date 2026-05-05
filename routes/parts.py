@@ -714,6 +714,90 @@ def stock_building():
         for row in part_number_rows
     }
 
+    mapped_supplier_ids = sorted({
+        int(row.get('supplier_id'))
+        for row in mapped_qpl_rows
+        if row.get('supplier_id') is not None
+    })
+    latest_supplier_offer_map = {}
+    if base_parts and mapped_supplier_ids:
+        part_clause, part_params = _build_in_clause(base_parts)
+        supplier_clause, supplier_params = _build_in_clause(mapped_supplier_ids)
+        latest_supplier_offer_rows = db_execute(
+            f'''
+            WITH ranked_offers AS (
+                SELECT
+                    pll.base_part_number,
+                    sq.supplier_id,
+                    sql.unit_price,
+                    curr.currency_code,
+                    sq.quote_reference,
+                    sq.quote_date,
+                    COALESCE(sq.quote_date, sql.date_modified, sql.date_created, sq.date_created) AS effective_quote_date,
+                    sql.quoted_part_number,
+                    sql.manufacturer,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY pll.base_part_number, sq.supplier_id
+                        ORDER BY
+                            COALESCE(sq.quote_date, sql.date_modified, sql.date_created, sq.date_created) DESC,
+                            sql.id DESC
+                    ) AS row_num
+                FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+                LEFT JOIN currencies curr ON curr.id = sq.currency_id
+                WHERE pll.base_part_number IN ({part_clause})
+                  AND sq.supplier_id IN ({supplier_clause})
+                  AND COALESCE(sql.is_no_bid, FALSE) = FALSE
+                  AND sql.unit_price IS NOT NULL
+            )
+            SELECT
+                base_part_number,
+                supplier_id,
+                unit_price,
+                currency_code,
+                quote_reference,
+                quote_date,
+                effective_quote_date,
+                quoted_part_number,
+                manufacturer
+            FROM ranked_offers
+            WHERE row_num = 1
+            ''',
+            tuple(part_params + supplier_params),
+            fetch='all',
+        ) or []
+
+        latest_supplier_offer_map = {
+            (
+                (row.get('base_part_number') or '').strip().upper(),
+                int(row.get('supplier_id')),
+            ): {
+                'unit_price': float(row.get('unit_price')) if row.get('unit_price') is not None else None,
+                'currency_code': row.get('currency_code') or 'GBP',
+                'quote_reference': row.get('quote_reference'),
+                'quote_date': row.get('quote_date') or row.get('effective_quote_date'),
+                'quote_date_display': str((row.get('quote_date') or row.get('effective_quote_date') or ''))[:10],
+                'quoted_part_number': row.get('quoted_part_number'),
+                'manufacturer': row.get('manufacturer'),
+            }
+            for row in latest_supplier_offer_rows
+            if (row.get('base_part_number') or '').strip() and row.get('supplier_id') is not None
+        }
+
+    for part_data in part_rows.values():
+        for mapping in part_data.get('qpl_mappings') or []:
+            supplier_id = mapping.get('supplier_id')
+            if supplier_id is None:
+                mapping['latest_offer'] = None
+                continue
+            try:
+                mapping['latest_offer'] = latest_supplier_offer_map.get(
+                    (part_data['base_part_number'], int(supplier_id))
+                )
+            except (TypeError, ValueError):
+                mapping['latest_offer'] = None
+
     qpl_manufacturer_option_set = {
         (row.get('manufacturer_name') or '').strip()
         for row in mapped_qpl_rows

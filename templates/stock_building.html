@@ -203,6 +203,21 @@
                                         {% if mapping.supplier_name %}
                                         <span class="text-muted">&rarr; {{ mapping.supplier_name }}</span>
                                         {% endif %}
+                                        {% if mapping.latest_offer and mapping.latest_offer.unit_price is not none %}
+                                        <div class="small text-muted">
+                                            Latest offer:
+                                            <span class="fw-semibold">
+                                                {{ mapping.latest_offer.currency_code or 'GBP' }}
+                                                {{ "%.4f"|format(mapping.latest_offer.unit_price) }}
+                                            </span>
+                                            {% if mapping.latest_offer.quote_date_display %}
+                                            <span>on {{ mapping.latest_offer.quote_date_display }}</span>
+                                            {% endif %}
+                                            {% if mapping.latest_offer.quoted_part_number %}
+                                            <span class="d-block">Quoted PN: {{ mapping.latest_offer.quoted_part_number }}</span>
+                                            {% endif %}
+                                        </div>
+                                        {% endif %}
                                     </li>
                                     {% endfor %}
                                 </ul>
