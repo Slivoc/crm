@@ -23,6 +23,8 @@
                 <input type="hidden" name="page" value="1">
                 <input type="hidden" name="sort_by" value="{{ sort_by }}">
                 <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
+                <input type="hidden" name="seed_rows_json" value="{{ requisition_seed_rows|tojson|forceescape }}">
+                <input type="hidden" name="source_url" value="{{ request.url }}">
 
                 <div class="col-lg-4">
                     <label for="customerFilter" class="form-label fw-semibold">Customers (overall filter)</label>
@@ -110,9 +112,26 @@
                     <input type="number" min="0" class="form-control" id="minBomCount" name="min_bom_count" value="{{ min_bom_count }}">
                 </div>
 
+                <div class="col-lg-2">
+                    <label for="requisitionFilter" class="form-label fw-semibold">Requisition filter</label>
+                    <select class="form-select" id="requisitionFilter" name="requisition_filter">
+                        <option value="all" {% if requisition_filter == 'all' %}selected{% endif %}>All parts</option>
+                        <option value="on_list" {% if requisition_filter == 'on_list' %}selected{% endif %}>Already on requisition</option>
+                        <option value="not_on_list" {% if requisition_filter == 'not_on_list' %}selected{% endif %}>Not on requisition</option>
+                    </select>
+                </div>
+
                 <div class="col-12 d-flex gap-2">
                     <button type="submit" class="btn btn-primary">Run report</button>
                     <a href="{{ url_for('parts.stock_building') }}" class="btn btn-outline-secondary">Reset</a>
+                    {% if run_report and rows %}
+                    <button type="submit"
+                            class="btn btn-outline-success"
+                            formmethod="post"
+                            formaction="{{ url_for('parts.stock_building_requisition_new') }}">
+                        Create requisition list from visible parts
+                    </button>
+                    {% endif %}
                     <button type="button" class="btn btn-outline-primary ms-auto" id="toggleBomColumnsBtn">Toggle BOM columns</button>
                 </div>
             </form>
@@ -141,46 +160,47 @@
                         <tr>
                             <th>
                                 <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1"
-                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='part_number', sort_dir='asc' if sort_by == 'part_number' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='part_number', sort_dir='asc' if sort_by == 'part_number' and sort_dir == 'desc' else 'desc', requisition_filter=requisition_filter, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
                                     <span>Part</span>
                                     <span class="text-muted">{{ (sort_arrow if sort_by == 'part_number' else '&harr;')|safe }}</span>
                                 </a>
                             </th>
                             <th class="text-end">
                                 <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1"
-                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='stock_quantity', sort_dir='asc' if sort_by == 'stock_quantity' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='stock_quantity', sort_dir='asc' if sort_by == 'stock_quantity' and sort_dir == 'desc' else 'desc', requisition_filter=requisition_filter, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
                                     <span>Stock</span>
                                     <span class="text-muted">{{ (sort_arrow if sort_by == 'stock_quantity' else '&harr;')|safe }}</span>
                                 </a>
                             </th>
                             <th>
                                 <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1"
-                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='qpl_count', sort_dir='asc' if sort_by == 'qpl_count' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='qpl_count', sort_dir='asc' if sort_by == 'qpl_count' and sort_dir == 'desc' else 'desc', requisition_filter=requisition_filter, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
                                     <span>QPL manufacturers (mapped)</span>
                                     <span class="text-muted">{{ (sort_arrow if sort_by == 'qpl_count' else '&harr;')|safe }}</span>
                                 </a>
                             </th>
                             <th class="text-center">
                                 <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1 justify-content-center"
-                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='sales_frequency', sort_dir='asc' if sort_by == 'sales_frequency' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='sales_frequency', sort_dir='asc' if sort_by == 'sales_frequency' and sort_dir == 'desc' else 'desc', requisition_filter=requisition_filter, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
                                     <span>Sales<br><small class="text-muted">Freq / Cust</small></span>
                                     <span class="text-muted">{{ (sort_arrow if sort_by == 'sales_frequency' else '&harr;')|safe }}</span>
                                 </a>
                             </th>
                             <th class="text-center">
                                 <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1 justify-content-center"
-                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='parts_list_frequency', sort_dir='asc' if sort_by == 'parts_list_frequency' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='parts_list_frequency', sort_dir='asc' if sort_by == 'parts_list_frequency' and sort_dir == 'desc' else 'desc', requisition_filter=requisition_filter, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
                                     <span>Parts Lists<br><small class="text-muted">Freq / Cust</small></span>
                                     <span class="text-muted">{{ (sort_arrow if sort_by == 'parts_list_frequency' else '&harr;')|safe }}</span>
                                 </a>
                             </th>
                             <th class="text-center">
                                 <a class="link-dark text-decoration-none d-inline-flex align-items-center gap-1"
-                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='bom_count', sort_dir='asc' if sort_by == 'bom_count' and sort_dir == 'desc' else 'desc', customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
+                                   href="{{ url_for('parts.stock_building', run_report=1, page=1, sort_by='bom_count', sort_dir='asc' if sort_by == 'bom_count' and sort_dir == 'desc' else 'desc', requisition_filter=requisition_filter, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}">
                                     <span>BOMs</span>
                                     <span class="text-muted">{{ (sort_arrow if sort_by == 'bom_count' else '&harr;')|safe }}</span>
                                 </a>
                             </th>
+                            <th class="text-center">Requisition Lists</th>
                             {% for bom_id in bom_column_ids %}
                             <th class="text-center bom-col" style="display:none;">{{ bom_name_by_id.get(bom_id, 'BOM ' ~ bom_id) }}</th>
                             {% endfor %}
@@ -243,6 +263,24 @@
                                 {% endif %}
                             </td>
                             <td class="text-center">{{ row.bom_count }}</td>
+                            <td class="text-center">
+                                {% if row.requisition_lists %}
+                                <div class="d-flex flex-column gap-1 align-items-center">
+                                    {% for requisition in row.requisition_lists[:2] %}
+                                    <a class="badge bg-success text-decoration-none"
+                                       href="{{ url_for('parts.stock_building_requisition_detail', requisition_list_id=requisition.id) }}"
+                                       title="{{ requisition.status_name }}">
+                                        {{ requisition.name }}
+                                    </a>
+                                    {% endfor %}
+                                    {% if row.requisition_lists|length > 2 %}
+                                    <span class="small text-muted">+{{ row.requisition_lists|length - 2 }} more</span>
+                                    {% endif %}
+                                </div>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
                             {% for bom_id in bom_column_ids %}
                             <td class="text-center bom-col" style="display:none;">
                                 {% if row.bom_map.get(bom_id) %}
@@ -257,13 +295,13 @@
 
                         {% if not run_report %}
                         <tr>
-                            <td colspan="{{ 6 + bom_column_ids|length }}" class="text-center py-4 text-muted">
+                            <td colspan="{{ 7 + bom_column_ids|length }}" class="text-center py-4 text-muted">
                                 Choose your filters, then click Run report.
                             </td>
                         </tr>
                         {% elif not rows %}
                         <tr>
-                            <td colspan="{{ 6 + bom_column_ids|length }}" class="text-center py-4 text-muted">
+                            <td colspan="{{ 7 + bom_column_ids|length }}" class="text-center py-4 text-muted">
                                 No parts found for the selected filters.
                             </td>
                         </tr>
@@ -279,11 +317,11 @@
             <div class="btn-group">
                 <a
                     class="btn btn-outline-secondary btn-sm {% if page <= 1 %}disabled{% endif %}"
-                    href="{{ url_for('parts.stock_building', run_report=1, page=page-1, sort_by=sort_by, sort_dir=sort_dir, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
+                    href="{{ url_for('parts.stock_building', run_report=1, page=page-1, sort_by=sort_by, sort_dir=sort_dir, requisition_filter=requisition_filter, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
                 >Previous</a>
                 <a
                     class="btn btn-outline-secondary btn-sm {% if page >= total_pages %}disabled{% endif %}"
-                    href="{{ url_for('parts.stock_building', run_report=1, page=page+1, sort_by=sort_by, sort_dir=sort_dir, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
+                    href="{{ url_for('parts.stock_building', run_report=1, page=page+1, sort_by=sort_by, sort_dir=sort_dir, requisition_filter=requisition_filter, customer_ids=selected_customer_ids, bom_ids=selected_bom_ids, project_ids=selected_project_ids, qpl_manufacturers=selected_qpl_manufacturers, exclude_in_stock=1 if exclude_in_stock else None, only_qpl_mapped=1 if only_qpl_mapped else None, part_query=part_query or None, min_sales_frequency=min_sales_frequency or None, min_parts_list_frequency=min_parts_list_frequency or None, min_bom_count=min_bom_count or None) }}"
                 >Next</a>
             </div>
         </div>
