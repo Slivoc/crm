@@ -23,8 +23,6 @@
                 <input type="hidden" name="page" value="1">
                 <input type="hidden" name="sort_by" value="{{ sort_by }}">
                 <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
-                <input type="hidden" name="seed_rows_json" value="{{ requisition_seed_rows|tojson|forceescape }}">
-                <input type="hidden" name="source_url" value="{{ request.url }}">
 
                 <div class="col-lg-4">
                     <label for="customerFilter" class="form-label fw-semibold">Customers (overall filter)</label>
@@ -124,17 +122,16 @@
                 <div class="col-12 d-flex gap-2">
                     <button type="submit" class="btn btn-primary">Run report</button>
                     <a href="{{ url_for('parts.stock_building') }}" class="btn btn-outline-secondary">Reset</a>
-                    {% if run_report and rows %}
-                    <button type="submit"
-                            class="btn btn-outline-success"
-                            formmethod="post"
-                            formaction="{{ url_for('parts.stock_building_requisition_new') }}">
-                        Create requisition list from visible parts
-                    </button>
-                    {% endif %}
                     <button type="button" class="btn btn-outline-primary ms-auto" id="toggleBomColumnsBtn">Toggle BOM columns</button>
                 </div>
             </form>
+            {% if run_report and rows %}
+            <form method="post" action="{{ url_for('parts.stock_building_requisition_new') }}" class="mt-3 d-flex justify-content-end">
+                <input type="hidden" name="seed_rows_json" value="{{ requisition_seed_rows|tojson|forceescape }}">
+                <input type="hidden" name="source_url" value="{{ request.url }}">
+                <button type="submit" class="btn btn-outline-success">Create requisition list from visible parts</button>
+            </form>
+            {% endif %}
         </div>
     </div>
 
