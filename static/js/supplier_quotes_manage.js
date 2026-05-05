@@ -1,5 +1,6 @@
 let currentQuoteId = null;
 let quotesCache = [];
+let preselectedQuoteId = Number(new URLSearchParams(window.location.search).get('quote_id')) || null;
 
 function showAlert(message, type) {
     const container = document.getElementById('supplier-quotes-alerts');
@@ -29,6 +30,11 @@ function fetchQuotes() {
             }
             quotesCache = data.quotes || [];
             renderQuotesList(quotesCache);
+            if (preselectedQuoteId && quotesCache.some(quote => Number(quote.id) === preselectedQuoteId)) {
+                const quoteIdToLoad = preselectedQuoteId;
+                preselectedQuoteId = null;
+                loadQuoteDetails(quoteIdToLoad);
+            }
         })
         .catch(error => {
             console.error('Error loading quotes:', error);

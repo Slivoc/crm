@@ -204,17 +204,16 @@
                                         <span class="text-muted">&rarr; {{ mapping.supplier_name }}</span>
                                         {% endif %}
                                         {% if mapping.latest_offer and mapping.latest_offer.unit_price is not none %}
-                                        <div class="small text-muted">
-                                            Latest offer:
-                                            <span class="fw-semibold">
-                                                {{ mapping.latest_offer.currency_code or 'GBP' }}
-                                                {{ "%.4f"|format(mapping.latest_offer.unit_price) }}
-                                            </span>
+                                        <div class="small mt-1">
+                                            <a
+                                                href="{% if mapping.latest_offer.parts_list_id and mapping.latest_offer.supplier_quote_id %}{{ url_for('parts_list.manage_supplier_quotes', list_id=mapping.latest_offer.parts_list_id) }}?quote_id={{ mapping.latest_offer.supplier_quote_id }}{% else %}#{% endif %}"
+                                                class="fw-semibold text-success text-decoration-none"
+                                                title="{% if mapping.supplier_name %}{{ mapping.supplier_name }}{% else %}Mapped supplier{% endif %}{% if mapping.latest_offer.quote_reference %} | Ref: {{ mapping.latest_offer.quote_reference }}{% endif %}{% if mapping.latest_offer.quote_date_display %} | Date: {{ mapping.latest_offer.quote_date_display }}{% endif %}{% if mapping.latest_offer.parts_list_id and mapping.latest_offer.supplier_quote_id %} | Click for full offer details{% endif %}"
+                                            >
+                                                Latest offer: {{ mapping.latest_offer.currency_code or 'GBP' }} {{ "%.2f"|format(mapping.latest_offer.unit_price) }}
+                                            </a>
                                             {% if mapping.latest_offer.quote_date_display %}
-                                            <span>on {{ mapping.latest_offer.quote_date_display }}</span>
-                                            {% endif %}
-                                            {% if mapping.latest_offer.quoted_part_number %}
-                                            <span class="d-block">Quoted PN: {{ mapping.latest_offer.quoted_part_number }}</span>
+                                            <span class="text-success">on {{ mapping.latest_offer.quote_date_display }}</span>
                                             {% endif %}
                                         </div>
                                         {% endif %}

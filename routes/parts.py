@@ -728,6 +728,8 @@ def stock_building():
             WITH ranked_offers AS (
                 SELECT
                     pll.base_part_number,
+                    sq.id AS supplier_quote_id,
+                    sq.parts_list_id,
                     sq.supplier_id,
                     sql.unit_price,
                     curr.currency_code,
@@ -753,6 +755,8 @@ def stock_building():
             )
             SELECT
                 base_part_number,
+                supplier_quote_id,
+                parts_list_id,
                 supplier_id,
                 unit_price,
                 currency_code,
@@ -775,6 +779,8 @@ def stock_building():
             ): {
                 'unit_price': float(row.get('unit_price')) if row.get('unit_price') is not None else None,
                 'currency_code': row.get('currency_code') or 'GBP',
+                'supplier_quote_id': row.get('supplier_quote_id'),
+                'parts_list_id': row.get('parts_list_id'),
                 'quote_reference': row.get('quote_reference'),
                 'quote_date': row.get('quote_date') or row.get('effective_quote_date'),
                 'quote_date_display': str((row.get('quote_date') or row.get('effective_quote_date') or ''))[:10],
