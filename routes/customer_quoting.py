@@ -1407,6 +1407,44 @@ def send_customer_quote_email(list_id):
         return jsonify(success=False, message=str(e)), 500
 
 
+
+
+@customer_quoting_bp.route('/parts-lists/<int:list_id>/customer-quote/send-admin-email', methods=['POST'])
+def send_customer_quote_admin_email(list_id):
+    """Send internal-only admin summary email for CQ/VQ context."""
+    try:
+        if not current_user or not getattr(current_user, "is_authenticated", False):
+            return jsonify(success=False, message="You must be logged in to send emails"), 401
+
+        data = request.get_json(force=True) or {}
+        subject = (data.get("subject") or "").strip()
+        body_html = data.get("body_html") or ""
+        to_emails = _parse_recipient_list(data.get("to_emails"))
+
+        if not to_emails:
+            return jsonify(success=False, message="Admin recipient email is required"), 400
+        if not subject:
+            return jsonify(success=False, message="Subject is required"), 400
+        if not body_html:
+            return jsonify(success=False, message="Email body is required"), 400
+
+        result = send_graph_email(
+            subject=subject,
+            html_body=body_html,
+            to_emails=to_emails,
+            cc_emails=None,
+            user_id=current_user.id,
+        )
+
+        if not result.get("success"):
+            return jsonify(success=False, message=result.get("error", "Graph send failed")), 500
+
+        return jsonify(success=True)
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
 @customer_quoting_bp.route('/parts-lists/<int:list_id>/customer-quote/bulk-apply-margin', methods=['POST'])
 def bulk_apply_margin(list_id):
     """

@@ -1733,6 +1733,89 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+
+    function buildAdminInternalTableHtml() {
+        const rows = [];
+        document.querySelectorAll('.quote-row').forEach(row => {
+            const cached = rowCache.get(row);
+            if (!cached) return;
+            const { lineData, elements, lastIsNoBid } = cached;
+            if (lastIsNoBid) return;
+
+            const quotePrice = parseFloat(elements.quotePriceGbp.value) || 0;
+            if (quotePrice <= 0) return;
+
+            const effectiveQty = parseFloat(elements.chosenQty.value) || lineData.quantity || 0;
+            const requestedPartNumber = getRequestedPartNumber(lineData);
+            const quotedPartNumber = (elements.displayPartNumber?.value || lineData.display_part_number || requestedPartNumber || '').toString().trim();
+            const supplierDisplay = getSupplierDisplay(lineData) || '-';
+            const unitCost = parseFloat(lineData.chosen_cost || 0);
+            const lineInsight = purchasingInsightsByLineId.get(lineData.id);
+
+            rows.push({
+                lineNumber: lineData.line_number || '',
+                requestedPartNumber,
+                quotedPartNumber,
+                effectiveQty,
+                quotePrice,
+                supplierDisplay,
+                unitCost,
+                currency: lineData.chosen_currency_code || 'GBP',
+                leadDays: elements.leadDays?.value || lineData.chosen_lead_days || '',
+                suggestedQty: getSuggestedQtyLabel({ effectiveQty }, lineInsight),
+                priceVsHistory: getPriceInsightLabel(lineInsight)
+            });
+        });
+
+        const cellStyle = 'padding:6px 8px;border:1px solid #dee2e6;vertical-align:top;';
+        let html = `<div style="font-family:Arial,sans-serif;font-size:13px;color:#212529;">
+            <p style="margin:0 0 10px 0;"><strong>Internal only:</strong> CQ (sales) vs VQ (purchasing) summary. Do not forward to customer.</p>
+            <table style="border-collapse:collapse;width:100%;max-width:1200px;">
+                <thead>
+                    <tr style="background:#f8f9fa;">
+                        <th colspan="5" align="left" style="${cellStyle}background:#e7f1ff;">CQ (Sales Side)</th>
+                        <th colspan="6" align="left" style="${cellStyle}background:#fff3cd;">VQ (Purchasing Side)</th>
+                    </tr>
+                    <tr style="background:#f8f9fa;">
+                        <th align="left" style="${cellStyle}">Line</th>
+                        <th align="left" style="${cellStyle}">Requested P/N</th>
+                        <th align="left" style="${cellStyle}">Quoted P/N</th>
+                        <th align="right" style="${cellStyle}">Qty</th>
+                        <th align="right" style="${cellStyle}">CQ Unit Price (GBP)</th>
+                        <th align="left" style="${cellStyle}">Supplier</th>
+                        <th align="right" style="${cellStyle}">VQ Unit Cost</th>
+                        <th align="left" style="${cellStyle}">Currency</th>
+                        <th align="right" style="${cellStyle}">Lead Days</th>
+                        <th align="left" style="${cellStyle}">Suggested Buy Qty</th>
+                        <th align="left" style="${cellStyle}">Price vs History</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+        if (!rows.length) {
+            html += `<tr><td colspan="11" style="${cellStyle}">No quoted lines available.</td></tr>`;
+        } else {
+            rows.forEach(r => {
+                html += `<tr>
+                    <td style="${cellStyle}">${escapeHtml(String(r.lineNumber))}</td>
+                    <td style="${cellStyle}">${escapeHtml(r.requestedPartNumber || '')}</td>
+                    <td style="${cellStyle}">${escapeHtml(r.quotedPartNumber || '')}</td>
+                    <td align="right" style="${cellStyle}">${r.effectiveQty}</td>
+                    <td align="right" style="${cellStyle}">${r.quotePrice.toFixed(2)}</td>
+                    <td style="${cellStyle}">${escapeHtml(r.supplierDisplay)}</td>
+                    <td align="right" style="${cellStyle}">${r.unitCost > 0 ? r.unitCost.toFixed(2) : '-'}</td>
+                    <td style="${cellStyle}">${escapeHtml(r.currency)}</td>
+                    <td align="right" style="${cellStyle}">${escapeHtml(String(r.leadDays || ''))}</td>
+                    <td style="${cellStyle}">${escapeHtml(String(r.suggestedQty || '-'))}</td>
+                    <td style="${cellStyle}">${escapeHtml(String(r.priceVsHistory || '-'))}</td>
+                </tr>`;
+            });
+        }
+
+        html += '</tbody></table></div>';
+        return html;
+    }
+
     const sendEmailBtn = document.getElementById('sendEmailQuoteBtn');
     if (sendEmailBtn) {
         sendEmailBtn.addEventListener('click', async function() {
@@ -1742,15 +1825,12 @@ document.addEventListener('DOMContentLoaded', function() {
             const replyToMessageId = document.getElementById('emailQuoteReplySelect')?.value || '';
             const toEmails = document.getElementById('emailQuoteTo')?.value || '';
             const ccEmails = document.getElementById('emailQuoteCc')?.value || '';
-            const copyHarry = Boolean(document.getElementById('emailQuoteCcHarry')?.checked);
+            const sendAdminInternal = Boolean(document.getElementById('emailQuoteCcHarry')?.checked);
             const ccList = ccEmails
                 .split(/[;,]/)
                 .map(email => email.trim())
                 .filter(Boolean);
-            const hasHarryAlready = ccList.some(email => email.toLowerCase() === ADMIN_CC_EMAIL);
-            if (copyHarry && !hasHarryAlready) {
-                ccList.push(ADMIN_CC_EMAIL);
-            }
+            
             const finalCcEmails = ccList.join(', ');
 
             btn.disabled = true;
@@ -1783,6 +1863,23 @@ document.addEventListener('DOMContentLoaded', function() {
                 const result = await response.json();
                 if (!response.ok || !result.success) {
                     throw new Error(result.error || result.message || 'Failed to send email');
+                }
+
+                if (sendAdminInternal) {
+                    const adminBodyHtml = buildAdminInternalTableHtml();
+                    const adminResponse = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/send-admin-email`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            subject: `[INTERNAL] CQ/VQ summary for Parts List ${LIST_ID}`,
+                            body_html: adminBodyHtml,
+                            to_emails: ADMIN_CC_EMAIL
+                        })
+                    });
+                    const adminResult = await adminResponse.json();
+                    if (!adminResponse.ok || !adminResult.success) {
+                        throw new Error(adminResult.error || adminResult.message || 'Customer email sent, but admin email failed');
+                    }
                 }
                 btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Sent!';
                 btn.classList.remove('btn-success');
