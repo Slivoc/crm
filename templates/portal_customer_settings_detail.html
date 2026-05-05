@@ -151,7 +151,7 @@
                                 <small>{{ suggestion.suggested_by_username or 'Unknown' }}</small>
                             </td>
                             <td>
-                                <small>{{ suggestion.date_created[:10] }}</small>
+                                <small>{% if suggestion.date_created %}{{ suggestion.date_created.strftime('%Y-%m-%d') if suggestion.date_created.strftime is defined else suggestion.date_created[:10] }}{% else %}-{% endif %}</small>
                             </td>
                             <td>
                                 {% if suggestion.is_active %}
