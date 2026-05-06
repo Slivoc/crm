@@ -711,6 +711,34 @@ def view_bom(bom_id):
                 'child_bom_name': row_dict.get('child_bom_name')
             })
 
+        line_ids = [component['line_id'] for component in components if component.get('line_id') is not None]
+        alternates_by_line_id = {}
+        if line_ids:
+            in_clause, params = _build_in_clause(line_ids)
+            alt_rows = db_execute(f'''
+                SELECT
+                    bla.bom_line_id,
+                    bla.preference_rank,
+                    COALESCE(pn.part_number, bla.alt_base_part_number) AS alt_part_number
+                FROM bom_line_accepted_alternates bla
+                LEFT JOIN part_numbers pn ON pn.base_part_number = bla.alt_base_part_number
+                WHERE bla.bom_line_id IN ({in_clause})
+                ORDER BY bla.bom_line_id, bla.preference_rank, bla.id
+            ''', params, fetch='all') or []
+
+            for alt_row in alt_rows:
+                alt_data = dict(alt_row)
+                line_id = alt_data.get('bom_line_id')
+                alt_part_number = (alt_data.get('alt_part_number') or '').strip()
+                if not line_id or not alt_part_number:
+                    continue
+                alternates_by_line_id.setdefault(line_id, []).append(alt_part_number)
+
+        for component in components:
+            accepted_alternates = alternates_by_line_id.get(component.get('line_id'), [])
+            component['accepted_alternates'] = accepted_alternates
+            component['accepted_alternates_display'] = ', '.join(accepted_alternates)
+
         logging.debug(f"Processed {len(components)} components")
 
         customer_rows = db_execute('''
@@ -725,10 +753,26 @@ def view_bom(bom_id):
 
         logging.debug(f"Found {len(customers)} customers")
 
+        kit_bom_rows = db_execute('''
+            SELECT id, name
+            FROM bom_headers
+            WHERE type = 'kit'
+              AND id <> ?
+            ORDER BY name
+        ''', (bom_id,), fetch='all') or []
+        kit_boms = [
+            {
+                'id': int(row['id']),
+                'name': row['name'] or '',
+            }
+            for row in kit_bom_rows
+        ]
+
         return render_template('bom/view_bom.html',
                                bom=bom,
                                components=components,
-                               customers=customers)
+                               customers=customers,
+                               kit_boms=kit_boms)
 
     except Exception as e:
         logging.error(f"Error viewing BOM {bom_id}: {str(e)}", exc_info=True)

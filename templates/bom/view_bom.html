@@ -201,6 +201,108 @@
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
 let hot;
+const kitBoms = {{ kit_boms|tojson|safe }};
+const kitBomOptions = kitBoms.map(kit => ({
+    id: Number(kit.id),
+    name: kit.name || '',
+    label: `[${kit.id}] ${kit.name || ''}`
+}));
+
+function normalizeAlternates(rawValue) {
+    if (Array.isArray(rawValue)) {
+        return rawValue
+            .map(value => String(value || '').trim())
+            .filter(Boolean);
+    }
+
+    return String(rawValue || '')
+        .split(',')
+        .map(value => value.trim())
+        .filter(Boolean);
+}
+
+function getAlternateDisplayValue(rawValue) {
+    return normalizeAlternates(rawValue).join(', ');
+}
+
+function getKitLabelById(kitId) {
+    const numericId = Number(kitId);
+    if (!numericId) {
+        return '';
+    }
+
+    const match = kitBomOptions.find(option => option.id === numericId);
+    return match ? match.label : '';
+}
+
+function parseChildKitSelection(rawValue) {
+    if (rawValue === null || rawValue === undefined) {
+        return { child_bom_header_id: null, child_bom_name: '' };
+    }
+
+    const trimmed = String(rawValue).trim();
+    if (!trimmed) {
+        return { child_bom_header_id: null, child_bom_name: '' };
+    }
+
+    const bracketMatch = trimmed.match(/^\[(\d+)\]\s*(.*)$/);
+    if (bracketMatch) {
+        return {
+            child_bom_header_id: Number(bracketMatch[1]),
+            child_bom_name: bracketMatch[2] || ''
+        };
+    }
+
+    const numericId = Number(trimmed);
+    if (!Number.isNaN(numericId) && String(numericId) === trimmed) {
+        const match = kitBomOptions.find(option => option.id === numericId);
+        return {
+            child_bom_header_id: numericId,
+            child_bom_name: match ? match.name : ''
+        };
+    }
+
+    const nameMatch = kitBomOptions.find(option => option.name === trimmed || option.label === trimmed);
+    if (nameMatch) {
+        return {
+            child_bom_header_id: nameMatch.id,
+            child_bom_name: nameMatch.name
+        };
+    }
+
+    return { child_bom_header_id: null, child_bom_name: '' };
+}
+
+function buildComponentPayload(sourceData) {
+    return sourceData
+        .map(row => {
+            const basePartNumber = String(row.base_part_number || '').trim();
+            const quantity = Number(row.quantity) || 0;
+            const position = Number(row.position) || 0;
+            const guidePrice = row.guide_price === '' || row.guide_price === null || row.guide_price === undefined
+                ? null
+                : Number(row.guide_price);
+            const parsedKit = parseChildKitSelection(row.child_bom_display ?? row.child_bom_name ?? '');
+            const acceptedAlternates = normalizeAlternates(
+                row.accepted_alternates_display ?? row.accepted_alternates
+            );
+
+            if (!basePartNumber && !parsedKit.child_bom_header_id) {
+                return null;
+            }
+
+            return {
+                line_id: row.line_id || null,
+                base_part_number: basePartNumber,
+                quantity,
+                position,
+                guide_price: Number.isNaN(guidePrice) ? null : guidePrice,
+                child_bom_header_id: parsedKit.child_bom_header_id,
+                accepted_alternates: acceptedAlternates
+            };
+        })
+        .filter(Boolean);
+}
 
 // Utility Functions
 function showSpinner() {
@@ -269,13 +371,33 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize Handsontable with performance optimizations
     const container = document.getElementById('componentsGrid');
-    const componentsData = {{ components|tojson|safe }};
+    const componentsData = {{ components|tojson|safe }}.map(component => ({
+        ...component,
+        child_bom_display: getKitLabelById(component.child_bom_header_id) || '',
+        accepted_alternates_display: getAlternateDisplayValue(
+            component.accepted_alternates_display || component.accepted_alternates
+        )
+    }));
 
     hot = new Handsontable(container, {
         data: componentsData,
         columns: [
             { data: 'selected', title: '<input type="checkbox" id="selectAll">', type: 'checkbox', width: 30 },
             { data: 'base_part_number', title: 'Part Number', width: 150 },
+            {
+                data: 'child_bom_display',
+                title: 'Child Kit',
+                type: 'dropdown',
+                source: [''].concat(kitBomOptions.map(option => option.label)),
+                width: 220,
+                strict: false,
+                allowInvalid: false
+            },
+            {
+                data: 'accepted_alternates_display',
+                title: 'Accepted Alternates',
+                width: 240
+            },
             { data: 'quantity', title: 'Quantity', type: 'numeric', width: 100 },
             { data: 'position', title: 'Position', type: 'numeric', width: 100 },
             { data: 'guide_price', title: 'Guide Price', type: 'numeric', width: 100, numericFormat: { pattern: '0.00' } },
@@ -333,7 +455,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Save BOM Handler
     $('#saveBomBtn').on('click', async function() {
         showSpinner();
-        const components = hot.getSourceData();
+        const components = buildComponentPayload(hot.getSourceData());
 
         try {
             const response = await fetch('{{ url_for("bom.update_bom", bom_id=bom.id) }}', {
@@ -392,7 +514,10 @@ document.addEventListener('DOMContentLoaded', function() {
         const currentRowCount = hot.countRows();
         const newRow = {
             selected: false,
+            line_id: null,
             base_part_number: '',
+            child_bom_display: '',
+            accepted_alternates_display: '',
             quantity: 1,
             position: (currentRowCount + 1) * 10,
             guide_price: 0,
