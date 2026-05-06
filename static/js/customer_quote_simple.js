@@ -425,7 +425,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (isNoBid) return;
 
-        const referencePrice = toNumber(lineData.bom_guide_price || lineData.target_price_gbp || 0);
+        const referencePrice = toNumber(lineData.sales_history_reference_gbp || 0);
         const quotePrice = toNumber(elements.quotePriceGbp.value);
         if (referencePrice <= 0 || quotePrice <= 0) return;
 
@@ -439,7 +439,10 @@ document.addEventListener('DOMContentLoaded', function() {
         quoteCell.style.setProperty('--quote-delta-bar-width', barWidth);
         quoteCell.classList.add(deltaPct > 0 ? 'quote-delta-over' : 'quote-delta-under');
         const dir = deltaPct > 0 ? 'above' : 'below';
-        quoteCell.title = `Quote is ${Math.abs(deltaPct).toFixed(0)}% ${dir} guide price (GBP ${referencePrice.toFixed(2)})`;
+        const salesCount = Number.parseInt(lineData.sales_order_count, 10) || 0;
+        const referenceType = lineData.sales_history_reference_type === 'average' ? 'average sale price' : 'latest sale price';
+        const salesContext = salesCount > 0 ? ` across ${salesCount} sale${salesCount === 1 ? '' : 's'}` : '';
+        quoteCell.title = `Quote is ${Math.abs(deltaPct).toFixed(0)}% ${dir} ${referenceType} (GBP ${referencePrice.toFixed(2)})${salesContext}`;
     }
 
     function updateSummaryDisplay() {

@@ -2205,6 +2205,45 @@ def customer_quote_simple(list_id):
                 ORDER BY pll.line_number ASC
             """, (list_id,)).fetchall()
 
+            base_part_numbers = sorted({
+                line['base_part_number']
+                for line in lines
+                if line.get('base_part_number')
+            })
+            sales_history_by_part = {}
+            if base_part_numbers:
+                placeholders = ', '.join(['?'] * len(base_part_numbers))
+                sales_history_rows = _execute_with_cursor(cur, f"""
+                    WITH ranked_sales AS (
+                        SELECT
+                            sol.base_part_number,
+                            sol.price,
+                            so.date_entered,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY sol.base_part_number
+                                ORDER BY so.date_entered DESC NULLS LAST, sol.id DESC
+                            ) AS rn
+                        FROM sales_order_lines sol
+                        LEFT JOIN sales_orders so ON so.id = sol.sales_order_id
+                        WHERE sol.base_part_number IN ({placeholders})
+                          AND sol.price IS NOT NULL
+                          AND sol.price > 0
+                    )
+                    SELECT
+                        base_part_number,
+                        COUNT(*) AS sales_order_count,
+                        AVG(price) AS avg_sale_price,
+                        MAX(price) AS max_sale_price,
+                        MAX(CASE WHEN rn = 1 THEN price END) AS last_sale_price
+                    FROM ranked_sales
+                    GROUP BY base_part_number
+                """, tuple(base_part_numbers)).fetchall()
+                sales_history_by_part = {
+                    row['base_part_number']: dict(row)
+                    for row in sales_history_rows
+                    if row.get('base_part_number')
+                }
+
             for line in lines:
                 line_dict = dict(line)
                 has_parent_part = line_dict.get('parent_customer_part_number')
@@ -2236,6 +2275,28 @@ def customer_quote_simple(list_id):
                 else:
                     line_dict['bom_guide_price'] = None
                     line_dict['bom_name'] = None
+
+                sales_history = sales_history_by_part.get(line_dict.get('base_part_number')) or {}
+                sales_order_count = int(sales_history.get('sales_order_count') or 0)
+                avg_sale_price = _to_float(sales_history.get('avg_sale_price'))
+                max_sale_price = _to_float(sales_history.get('max_sale_price'))
+                last_sale_price = _to_float(sales_history.get('last_sale_price'))
+
+                sales_reference_gbp = None
+                sales_reference_type = None
+                if sales_order_count >= 3 and avg_sale_price:
+                    sales_reference_gbp = avg_sale_price
+                    sales_reference_type = 'average'
+                elif last_sale_price:
+                    sales_reference_gbp = last_sale_price
+                    sales_reference_type = 'latest'
+
+                line_dict['sales_order_count'] = sales_order_count
+                line_dict['avg_sale_price_gbp'] = avg_sale_price
+                line_dict['max_sale_price_gbp'] = max_sale_price
+                line_dict['last_sale_price_gbp'] = last_sale_price
+                line_dict['sales_history_reference_gbp'] = sales_reference_gbp
+                line_dict['sales_history_reference_type'] = sales_reference_type
 
                 line_dict['standard_condition'] = (
                     (line_dict.get('standard_condition') or '').strip()
