@@ -384,6 +384,101 @@ def _get_parts_list_progress(parts_list_id):
     return summary, progress_by_base
 
 
+def _get_bom_line_linked_parts_list_details(bom_id, base_part_number):
+    linked_lists = _get_linked_parts_lists_for_bom(bom_id)
+    if not linked_lists:
+        return []
+
+    details = []
+    for linked in linked_lists:
+        line = db_execute('''
+            SELECT
+                pll.id AS parts_list_line_id,
+                pll.parts_list_id,
+                pll.line_number,
+                COALESCE(NULLIF(TRIM(pll.customer_part_number), ''), pll.base_part_number) AS customer_part_number,
+                COALESCE(pll.chosen_qty, pll.quantity, 0) AS effective_quantity,
+                pll.chosen_cost,
+                pll.chosen_lead_days,
+                pll.chosen_source_type,
+                s.name AS chosen_supplier_name,
+                c.currency_code AS chosen_currency_code,
+                cql.quote_price_gbp,
+                cql.target_price_gbp,
+                cql.base_cost_gbp,
+                cql.quoted_status
+            FROM parts_list_lines pll
+            LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
+            LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
+            LEFT JOIN customer_quote_lines cql ON cql.id = (
+                SELECT cql_latest.id
+                FROM customer_quote_lines cql_latest
+                WHERE cql_latest.parts_list_line_id = pll.id
+                ORDER BY cql_latest.date_modified DESC NULLS LAST, cql_latest.id DESC
+                LIMIT 1
+            )
+            WHERE pll.parts_list_id = ?
+              AND pll.base_part_number = ?
+            ORDER BY pll.line_number ASC, pll.id ASC
+            LIMIT 1
+        ''', (linked['id'], base_part_number), fetch='one')
+        if not line:
+            continue
+        line_data = dict(line)
+        line_data['parts_list_id'] = linked['id']
+        line_data['parts_list_name'] = linked.get('name')
+        line_data['customer_name'] = linked.get('customer_name')
+        line_data['status_name'] = linked.get('status_name')
+        details.append(line_data)
+
+    return details
+
+
+def _get_supplier_quote_offers_for_base_part(base_part_number, list_ids=None, limit=15):
+    where_clauses = ['pll.base_part_number = ?']
+    params = [base_part_number]
+
+    if list_ids:
+        in_clause, list_params = _build_in_clause(list_ids)
+        where_clauses.append(f'pll.parts_list_id IN ({in_clause})')
+        params.extend(list_params)
+
+    where_sql = ' AND '.join(where_clauses)
+    return db_execute(f'''
+        SELECT
+            sql.id AS quote_line_id,
+            sql.quoted_part_number,
+            sql.manufacturer,
+            sql.quantity_quoted,
+            sql.qty_available,
+            sql.unit_price,
+            sql.lead_time_days,
+            sql.condition_code,
+            sql.certifications,
+            sql.is_no_bid,
+            sq.id AS quote_id,
+            sq.quote_reference,
+            sq.quote_date,
+            s.name AS supplier_name,
+            c.currency_code,
+            pl.id AS parts_list_id,
+            pl.name AS parts_list_name
+        FROM parts_list_supplier_quote_lines sql
+        JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+        JOIN suppliers s ON s.id = sq.supplier_id
+        LEFT JOIN currencies c ON c.id = sq.currency_id
+        JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+        JOIN parts_lists pl ON pl.id = pll.parts_list_id
+        WHERE {where_sql}
+        ORDER BY
+            sql.is_no_bid ASC,
+            CASE WHEN sql.unit_price IS NULL THEN 1 ELSE 0 END,
+            sql.unit_price ASC,
+            COALESCE(sq.quote_date, sql.date_modified, sql.date_created) DESC
+        LIMIT ?
+    ''', params + [limit], fetch='all') or []
+
+
 def _get_recent_offer_cutoff(recent_offer_days):
     if not recent_offer_days:
         return None
@@ -1157,7 +1252,7 @@ def create_parts_list_from_bom(bom_id):
         salesperson_id = _resolve_salesperson_id()
         timestamp_suffix = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
         list_name = f"{bom_row['name']} Pricing {timestamp_suffix}"
-        list_notes = f"Created from BOM {bom_row['name']} (ID {bom_id}) matrix view."
+        list_notes = f"Created from BOM {bom_row['name']} (ID {bom_id})."
 
         with db_cursor(commit=True) as cur:
             header_row = _execute_with_cursor(cur, '''
@@ -1253,6 +1348,47 @@ def line_alternative_suggestions():
     })
 
 
+@bom_bp.route('/<int:bom_id>/lines/<int:line_id>/details', methods=['GET'])
+def bom_line_details(bom_id, line_id):
+    try:
+        line = db_execute('''
+            SELECT
+                bl.id,
+                bl.bom_header_id,
+                bl.base_part_number,
+                COALESCE(NULLIF(TRIM(pn.part_number), ''), bl.base_part_number) AS part_number,
+                bl.quantity,
+                bl.position,
+                bl.guide_price,
+                bl.child_bom_header_id,
+                child_bh.name AS child_bom_name
+            FROM bom_lines bl
+            LEFT JOIN part_numbers pn ON pn.base_part_number = bl.base_part_number
+            LEFT JOIN bom_headers child_bh ON child_bh.id = bl.child_bom_header_id
+            WHERE bl.id = ?
+              AND bl.bom_header_id = ?
+        ''', (line_id, bom_id), fetch='one')
+
+        if not line:
+            return jsonify(success=False, message='BOM line not found'), 404
+
+        line_data = dict(line)
+        base_part_number = line_data.get('base_part_number')
+        linked_parts_list_lines = _get_bom_line_linked_parts_list_details(bom_id, base_part_number) if base_part_number else []
+        linked_list_ids = [item['parts_list_id'] for item in linked_parts_list_lines if item.get('parts_list_id') is not None]
+        supplier_quotes = _get_supplier_quote_offers_for_base_part(base_part_number, list_ids=linked_list_ids or None, limit=12) if base_part_number else []
+
+        return jsonify({
+            'success': True,
+            'line': line_data,
+            'linked_parts_list_lines': [dict(item) for item in linked_parts_list_lines],
+            'supplier_quotes': [dict(item) for item in supplier_quotes],
+        })
+    except Exception as exc:
+        logging.error(f"Error loading BOM line details {line_id} for BOM {bom_id}: {exc}", exc_info=True)
+        return jsonify(success=False, message=str(exc)), 500
+
+
 @bom_bp.route('/import_components/<int:bom_id>', methods=['POST'])
 def import_components(bom_id):
     """Handle file upload for importing components into existing BOM"""
@@ -1317,17 +1453,15 @@ def update_bom(bom_id):
     try:
         with db_cursor(commit=True) as cur:
             existing_lines = _execute_with_cursor(cur, '''
-                SELECT id, base_part_number, position, child_bom_header_id 
-                FROM bom_lines 
+                SELECT id
+                FROM bom_lines
                 WHERE bom_header_id = ?
             ''', (bom_id,)).fetchall()
-
-            existing_lines_dict = {
-                (line['base_part_number'], line['position'], line.get('child_bom_header_id')): line['id']
-                for line in existing_lines
-            }
+            existing_line_ids = {int(line['id']) for line in existing_lines if line.get('id') is not None}
+            submitted_line_ids = set()
 
             for component in data.get('components') or []:
+                line_id = component.get('line_id')
                 raw_part_number = (component.get('base_part_number') or '').strip()
                 base_part_number = create_base_part_number(raw_part_number) if raw_part_number else ''
                 position = component.get('position', 0)
@@ -1335,9 +1469,6 @@ def update_bom(bom_id):
                 guide_price = component.get('guide_price')
                 child_bom_header_id = component.get('child_bom_header_id')
                 accepted_alternates = component.get('accepted_alternates') or []
-
-                print(f"Processing part: {raw_part_number} -> {base_part_number}")
-                print(f"  guide_price from request: {guide_price} (type: {type(guide_price)})")
 
                 if base_part_number:
                     part = _execute_with_cursor(cur, '''
@@ -1351,9 +1482,9 @@ def update_bom(bom_id):
                             VALUES (?, ?)
                         ''', (raw_part_number, base_part_number))
 
-                line_key = (base_part_number, position, child_bom_header_id)
-                if line_key in existing_lines_dict:
-                    print(f"  Updating existing line {existing_lines_dict[line_key]}")
+                if line_id:
+                    line_id = int(line_id)
+                    submitted_line_ids.add(line_id)
                     _execute_with_cursor(cur, '''
                         UPDATE bom_lines 
                         SET quantity = ?,
@@ -1368,11 +1499,10 @@ def update_bom(bom_id):
                         base_part_number,
                         guide_price,
                         child_bom_header_id,
-                        existing_lines_dict[line_key]
+                        line_id
                     ))
                 else:
-                    print(f"  Inserting new line")
-                    _execute_with_cursor(cur, '''
+                    inserted_line = _execute_with_cursor(cur, '''
                         INSERT INTO bom_lines (
                             bom_header_id, 
                             base_part_number, 
@@ -1381,6 +1511,7 @@ def update_bom(bom_id):
                             guide_price,
                             child_bom_header_id
                         ) VALUES (?, ?, ?, ?, ?, ?)
+                        RETURNING id
                     ''', (
                         bom_id,
                         base_part_number,
@@ -1388,20 +1519,10 @@ def update_bom(bom_id):
                         position,
                         guide_price,
                         child_bom_header_id
-                    ))
-
-                line_id = existing_lines_dict.get(line_key)
-                if not line_id:
-                    line_id_row = _execute_with_cursor(cur, '''
-                        SELECT id FROM bom_lines
-                        WHERE bom_header_id = ?
-                          AND base_part_number = ?
-                          AND position = ?
-                          AND ((child_bom_header_id IS NULL AND ? IS NULL) OR child_bom_header_id = ?)
-                        ORDER BY id DESC
-                        LIMIT 1
-                    ''', (bom_id, base_part_number, position, child_bom_header_id, child_bom_header_id)).fetchone()
-                    line_id = line_id_row['id'] if line_id_row else None
+                    )).fetchone()
+                    line_id = inserted_line['id'] if inserted_line else None
+                    if line_id is not None:
+                        submitted_line_ids.add(int(line_id))
 
                 if line_id is not None:
                     _execute_with_cursor(cur, 'DELETE FROM bom_line_accepted_alternates WHERE bom_line_id = ?', (line_id,))
@@ -1423,6 +1544,18 @@ def update_bom(bom_id):
                             INSERT INTO bom_line_accepted_alternates (bom_line_id, alt_base_part_number, preference_rank)
                             VALUES (?, ?, ?)
                         ''', (line_id, alt_base, rank))
+
+            line_ids_to_delete = sorted(existing_line_ids - submitted_line_ids)
+            if line_ids_to_delete:
+                in_clause, params = _build_in_clause(line_ids_to_delete)
+                _execute_with_cursor(cur, f'''
+                    DELETE FROM bom_line_accepted_alternates
+                    WHERE bom_line_id IN ({in_clause})
+                ''', params)
+                _execute_with_cursor(cur, f'''
+                    DELETE FROM bom_lines
+                    WHERE id IN ({in_clause})
+                ''', params)
 
         return jsonify({
             'status': 'success',
