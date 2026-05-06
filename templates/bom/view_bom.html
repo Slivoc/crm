@@ -198,8 +198,6 @@
                                     <th style="min-width: 95px;">Guide</th>
                                     <th style="min-width: 95px;">Cost</th>
                                     <th style="min-width: 95px;">Quote</th>
-                                    <th style="min-width: 105px;">Cost Value</th>
-                                    <th style="min-width: 105px;">Quote Value</th>
                                     <th style="min-width: 140px;">Supplier</th>
                                     <th style="min-width: 90px;">Lead</th>
                                     <th style="width: 70px;"></th>
@@ -542,8 +540,6 @@ function createBomRow(component = {}) {
         </td>
         <td class="text-end chosen-cost-cell">${component.chosen_unit_gbp != null ? `GBP ${Number(component.chosen_unit_gbp).toFixed(2)}` : '-'}</td>
         <td class="text-end quote-price-cell">${component.quote_unit_gbp != null ? `GBP ${Number(component.quote_unit_gbp).toFixed(2)}` : '-'}</td>
-        <td class="text-end line-value-cell">${component.line_value_gbp != null ? `GBP ${Number(component.line_value_gbp).toFixed(2)}` : '-'}</td>
-        <td class="text-end quoted-line-value-cell">${component.quoted_line_value_gbp != null ? `GBP ${Number(component.quoted_line_value_gbp).toFixed(2)}` : '-'}</td>
         <td class="supplier-cell">${escapeHtml(component.supplier_name || '')}</td>
         <td class="lead-time-cell">${escapeHtml(component.lead_time || '')}</td>
         <td class="text-end actions-cell">
