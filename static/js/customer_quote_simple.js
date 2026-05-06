@@ -338,6 +338,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Update Visuals for this row
             updateRowVisuals(row, elements, fins, status, isNoBid);
+            updateQuoteDeltaIndicator(row, elements, lineData, isNoBid);
 
             // Add to Global Totals
             globalState.totalCost += fins.cost;
@@ -411,6 +412,31 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         setRowLockedState(row, status === 'quoted', elements);
+    }
+
+    function updateQuoteDeltaIndicator(row, elements, lineData, isNoBid) {
+        const quoteCell = row.querySelector('.quote-price-cell');
+        if (!quoteCell || !elements.quotePriceGbp) return;
+
+        quoteCell.classList.remove('quote-delta-over', 'quote-delta-under');
+        quoteCell.style.setProperty('--quote-delta-alpha', '0.08');
+        quoteCell.removeAttribute('title');
+
+        if (isNoBid) return;
+
+        const referencePrice = toNumber(lineData.bom_guide_price || lineData.target_price_gbp || 0);
+        const quotePrice = toNumber(elements.quotePriceGbp.value);
+        if (referencePrice <= 0 || quotePrice <= 0) return;
+
+        const deltaPct = ((quotePrice - referencePrice) / referencePrice) * 100;
+        if (!Number.isFinite(deltaPct) || Math.abs(deltaPct) < 10) return;
+
+        const intensity = Math.min(Math.abs(deltaPct) / 200, 1);
+        const alpha = (0.1 + intensity * 0.3).toFixed(3);
+        quoteCell.style.setProperty('--quote-delta-alpha', alpha);
+        quoteCell.classList.add(deltaPct > 0 ? 'quote-delta-over' : 'quote-delta-under');
+        const dir = deltaPct > 0 ? 'above' : 'below';
+        quoteCell.title = `Quote is ${Math.abs(deltaPct).toFixed(0)}% ${dir} guide price (GBP ${referencePrice.toFixed(2)})`;
     }
 
     function updateSummaryDisplay() {
@@ -506,6 +532,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // --- UPDATE VISUALS ---
         requestAnimationFrame(() => {
             updateRowVisuals(row, cached.elements, newFins, status, isNoBid);
+            updateQuoteDeltaIndicator(row, cached.elements, cached.lineData, isNoBid);
             updateSummaryDisplay();
             updateEmailQuoteWarnings();
             if (!skipUnsavedFlag) {
