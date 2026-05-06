@@ -206,6 +206,37 @@ def _flattened_parts_to_rows(flattened_parts):
     return rows
 
 
+def _get_direct_bom_rows_for_parts_list(bom_id, multiplier=1):
+    flattened = {}
+    for row in _fetch_bom_lines(bom_id):
+        line = dict(row)
+        if line.get('child_bom_header_id'):
+            continue
+
+        base_part_number = (line.get('base_part_number') or '').strip()
+        if not base_part_number:
+            continue
+
+        line_qty = _coerce_quantity(line.get('quantity'))
+        total_quantity = line_qty * multiplier
+        item = flattened.setdefault(base_part_number, {
+            'base_part_number': base_part_number,
+            'part_number': line.get('part_number') or base_part_number,
+            'total_quantity': 0,
+            'guide_price': None,
+            'sort_order': int(line.get('position') or 0),
+        })
+        item['total_quantity'] += total_quantity
+        guide_price = line.get('guide_price')
+        if guide_price not in (None, ''):
+            guide_price = float(guide_price or 0)
+            current_guide = item.get('guide_price')
+            if current_guide is None or guide_price > current_guide:
+                item['guide_price'] = guide_price
+
+    return _flattened_parts_to_rows(flattened)
+
+
 def _build_bom_matrix_data(bom_id):
     parent_lines = [dict(row) for row in _fetch_bom_lines(bom_id)]
     child_columns = []
@@ -374,9 +405,11 @@ def _get_parts_list_progress(parts_list_id):
             'customer_part_number': line.get('customer_part_number') or base_part_number,
             'effective_quantity': quantity,
             'base_cost_gbp': base_cost_gbp,
+            'chosen_unit_gbp': base_cost_gbp,
             'quote_price_gbp': quote_price_gbp,
             'target_price_gbp': target_price_gbp,
             'quoted_status': quoted_status,
+            'chosen_total_gbp': (base_cost_gbp * quantity) if base_cost_gbp is not None else None,
             'quoted_total_gbp': (quote_price_gbp * quantity) if quote_price_gbp is not None else None,
             'target_total_gbp': (target_price_gbp * quantity) if target_price_gbp is not None else None,
         }
@@ -432,6 +465,65 @@ def _get_bom_line_linked_parts_list_details(bom_id, base_part_number):
         details.append(line_data)
 
     return details
+
+
+def _build_child_kit_panel_details(parent_bom_id, child_bom_header_id, line_multiplier=1):
+    child_bom = _fetch_bom_header(child_bom_header_id)
+    child_rows = _flattened_parts_to_rows(_explode_bom_requirements(child_bom_header_id, multiplier=line_multiplier))
+    linked_parts_lists = [dict(row) for row in _get_linked_parts_lists_for_bom(parent_bom_id)]
+    active_parts_list = linked_parts_lists[0] if linked_parts_lists else None
+    progress_summary = None
+    progress_by_base = {}
+    if active_parts_list:
+        progress_summary, progress_by_base = _get_parts_list_progress(active_parts_list['id'])
+
+    chosen_total_gbp = 0.0
+    chosen_total_present = False
+    for row in child_rows:
+        progress = progress_by_base.get(row['base_part_number'])
+        row['pricing_progress'] = progress
+        if progress and progress.get('chosen_total_gbp') is not None:
+            chosen_total_present = True
+            chosen_total_gbp += progress['chosen_total_gbp']
+
+    return {
+        'child_bom': dict(child_bom) if child_bom else {'id': child_bom_header_id},
+        'rows': child_rows,
+        'active_parts_list': active_parts_list,
+        'summary': {
+            'row_count': len(child_rows),
+            'total_quantity': sum(row.get('total_quantity') or 0 for row in child_rows),
+            'chosen_total_gbp': chosen_total_gbp if chosen_total_present else None,
+        }
+    }
+
+
+def _calculate_bom_row_chosen_value(line, progress_by_base):
+    child_bom_header_id = line.get('child_bom_header_id')
+    if child_bom_header_id:
+        exploded_rows = _flattened_parts_to_rows(
+            _explode_bom_requirements(
+                int(child_bom_header_id),
+                multiplier=_coerce_quantity(line.get('quantity')),
+            )
+        )
+        total = 0.0
+        has_value = False
+        for exploded in exploded_rows:
+            progress = progress_by_base.get(exploded['base_part_number'])
+            chosen_unit = (progress or {}).get('chosen_unit_gbp')
+            if chosen_unit is None:
+                continue
+            total += float(chosen_unit) * float(exploded.get('total_quantity') or 0)
+            has_value = True
+        return total if has_value else None
+
+    base_part_number = create_base_part_number(line.get('base_part_number') or '') if line.get('base_part_number') else ''
+    progress = progress_by_base.get(base_part_number)
+    chosen_unit = (progress or {}).get('chosen_unit_gbp')
+    if chosen_unit is None:
+        return None
+    return float(chosen_unit) * float(_coerce_quantity(line.get('quantity')))
 
 
 def _get_supplier_quote_offers_for_base_part(base_part_number, list_ids=None, limit=15):
@@ -1100,11 +1192,14 @@ def view_bom(bom_id):
         ''', (bom_id,), fetch='all')
 
         components = []
+        component_lines = []
         for row in lines_rows:
             row_dict = dict(row)
+            component_lines.append(row_dict)
             components.append({
                 'line_id': row_dict.get('id'),
                 'base_part_number': row_dict.get('part_number') or row_dict.get('base_part_number') or '',
+                'raw_base_part_number': row_dict.get('base_part_number') or '',
                 'quantity': int(row_dict.get('quantity', 0) or 0),
                 'position': int(row_dict.get('position', 0) or 0),
                 'guide_price': float(row_dict.get('guide_price', 0) or 0),
@@ -1173,11 +1268,30 @@ def view_bom(bom_id):
             for row in kit_bom_rows
         ]
 
+        linked_parts_lists = [dict(row) for row in _get_linked_parts_lists_for_bom(bom_id)]
+        active_parts_list = linked_parts_lists[0] if linked_parts_lists else None
+        progress_summary = None
+        progress_by_base = {}
+        if active_parts_list:
+            progress_summary, progress_by_base = _get_parts_list_progress(active_parts_list['id'])
+
+        bom_total_value_gbp = 0.0
+        bom_total_has_value = False
+        for component, component_line in zip(components, component_lines):
+            line_value_gbp = _calculate_bom_row_chosen_value(component_line, progress_by_base) if progress_by_base else None
+            component['line_value_gbp'] = line_value_gbp
+            if line_value_gbp is not None:
+                bom_total_value_gbp += line_value_gbp
+                bom_total_has_value = True
+
         return render_template('bom/view_bom.html',
                                bom=bom,
                                components=components,
                                customers=customers,
-                               kit_boms=kit_boms)
+                               kit_boms=kit_boms,
+                               active_parts_list=active_parts_list,
+                               bom_total_value_gbp=(bom_total_value_gbp if bom_total_has_value else None),
+                               progress_summary=progress_summary)
 
     except Exception as e:
         logging.error(f"Error viewing BOM {bom_id}: {str(e)}", exc_info=True)
@@ -1210,10 +1324,7 @@ def view_bom_matrix(bom_id):
             'direct_row_count': len(matrix_data['direct_rows']),
             'child_kit_count': len(matrix_data['child_columns']),
             'total_quantity': sum(row.get('total_quantity') or 0 for row in matrix_data['matrix_rows']),
-            'total_guide_value': sum(
-                row['total_guide_value'] for row in matrix_data['matrix_rows']
-                if row.get('total_guide_value') is not None
-            ),
+            'total_chosen_value_gbp': (progress_summary or {}).get('total_base_cost_gbp', 0.0) if active_parts_list else 0.0,
         }
 
         return render_template(
@@ -1237,7 +1348,16 @@ def create_parts_list_from_bom(bom_id):
         if not bom_row:
             return "BOM not found", 404
 
-        flattened_rows = _flattened_parts_to_rows(_explode_bom_requirements(bom_id))
+        build_quantity = _coerce_quantity(request.form.get('build_quantity') or 1)
+        if not build_quantity:
+            build_quantity = 1
+        include_child_kit_parts = str(request.form.get('include_child_kit_parts') or '1').lower() in ('1', 'true', 'yes', 'on')
+
+        if include_child_kit_parts:
+            flattened_rows = _flattened_parts_to_rows(_explode_bom_requirements(bom_id, multiplier=build_quantity))
+        else:
+            flattened_rows = _get_direct_bom_rows_for_parts_list(bom_id, multiplier=build_quantity)
+
         if not flattened_rows:
             return "This BOM does not contain any explodable part lines", 400
 
@@ -1251,8 +1371,11 @@ def create_parts_list_from_bom(bom_id):
         customer_id = customer_ids[0] if len(customer_ids) == 1 else None
         salesperson_id = _resolve_salesperson_id()
         timestamp_suffix = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
-        list_name = f"{bom_row['name']} Pricing {timestamp_suffix}"
-        list_notes = f"Created from BOM {bom_row['name']} (ID {bom_id})."
+        list_name = f"{bom_row['name']} x{build_quantity} Pricing {timestamp_suffix}"
+        list_notes = (
+            f"Created from BOM {bom_row['name']} (ID {bom_id}) at build quantity {build_quantity}. "
+            f"{'Includes' if include_child_kit_parts else 'Excludes'} child kit component explosion."
+        )
 
         with db_cursor(commit=True) as cur:
             header_row = _execute_with_cursor(cur, '''
@@ -1377,12 +1500,20 @@ def bom_line_details(bom_id, line_id):
         linked_parts_list_lines = _get_bom_line_linked_parts_list_details(bom_id, base_part_number) if base_part_number else []
         linked_list_ids = [item['parts_list_id'] for item in linked_parts_list_lines if item.get('parts_list_id') is not None]
         supplier_quotes = _get_supplier_quote_offers_for_base_part(base_part_number, list_ids=linked_list_ids or None, limit=12) if base_part_number else []
+        child_kit_details = None
+        if line_data.get('child_bom_header_id'):
+            child_kit_details = _build_child_kit_panel_details(
+                bom_id,
+                int(line_data['child_bom_header_id']),
+                line_multiplier=_coerce_quantity(line_data.get('quantity')),
+            )
 
         return jsonify({
             'success': True,
             'line': line_data,
             'linked_parts_list_lines': [dict(item) for item in linked_parts_list_lines],
             'supplier_quotes': [dict(item) for item in supplier_quotes],
+            'child_kit_details': child_kit_details,
         })
     except Exception as exc:
         logging.error(f"Error loading BOM line details {line_id} for BOM {bom_id}: {exc}", exc_info=True)

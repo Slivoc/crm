@@ -114,18 +114,16 @@
         <div>
             <h2 class="mb-1">{{ bom.name }} Matrix</h2>
             <div class="text-muted">
-                Exploded child-kit view for BOM {{ bom.id }}{% if bom.description %} · {{ bom.description }}{% endif %}
+                Exploded child-kit view for BOM {{ bom.id }}{% if bom.description %} | {{ bom.description }}{% endif %}
             </div>
         </div>
         <div class="d-flex flex-wrap gap-2">
             <a href="{{ url_for('bom.view_bom', bom_id=bom.id) }}" class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left me-1"></i> Back To BOM
             </a>
-            <form method="post" action="{{ url_for('bom.create_parts_list_from_bom', bom_id=bom.id) }}">
-                <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-diagram-3 me-1"></i> Create Parts List From BOM
-                </button>
-            </form>
+            <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createPartsListModal">
+                <i class="bi bi-diagram-3 me-1"></i> Create Parts List From BOM
+            </button>
         </div>
     </div>
 
@@ -163,10 +161,10 @@
         <div class="col-md-3">
             <div class="card summary-card h-100">
                 <div class="card-body">
-                    <div class="text-muted small">Guide Value</div>
+                    <div class="text-muted small">Chosen Value</div>
                     <div class="value">
-                        {% if matrix_summary.total_guide_value %}
-                        £{{ "%.2f"|format(matrix_summary.total_guide_value) }}
+                        {% if active_parts_list and matrix_summary.total_chosen_value_gbp %}
+                        £{{ "%.2f"|format(matrix_summary.total_chosen_value_gbp) }}
                         {% else %}
                         -
                         {% endif %}
@@ -225,7 +223,7 @@
                 <div class="card-header">
                     <strong>Pricing Progress</strong>
                     {% if active_parts_list %}
-                    <span class="text-muted"> · Parts List {{ active_parts_list.id }}</span>
+                    <span class="text-muted"> | Parts List {{ active_parts_list.id }}</span>
                     {% endif %}
                 </div>
                 <div class="card-body">
@@ -290,8 +288,8 @@
                             </th>
                             {% endfor %}
                             <th class="text-end">Tot</th>
-                            <th class="text-end">Guide</th>
-                            <th class="text-end">Guide Total</th>
+                            <th class="text-end">Chosen Unit</th>
+                            <th class="text-end">Chosen Total</th>
                             {% if active_parts_list %}
                             <th class="text-end">Quote Unit</th>
                             <th class="text-end">Quote Total</th>
@@ -318,15 +316,15 @@
                             {% endfor %}
                             <td class="total-cell fw-semibold">{{ row.total_quantity }}</td>
                             <td class="money-cell text-end">
-                                {% if row.guide_price is not none %}
-                                £{{ "%.2f"|format(row.guide_price) }}
+                                {% if progress and progress.chosen_unit_gbp is not none %}
+                                £{{ "%.2f"|format(progress.chosen_unit_gbp) }}
                                 {% else %}
                                 -
                                 {% endif %}
                             </td>
                             <td class="money-cell text-end">
-                                {% if row.total_guide_value is not none %}
-                                £{{ "%.2f"|format(row.total_guide_value) }}
+                                {% if progress and progress.chosen_total_gbp is not none %}
+                                £{{ "%.2f"|format(progress.chosen_total_gbp) }}
                                 {% else %}
                                 -
                                 {% endif %}
@@ -385,8 +383,8 @@
                             <th>Item</th>
                             <th>P/N</th>
                             <th class="text-end">Qty</th>
-                            <th class="text-end">Guide</th>
-                            <th class="text-end">Guide Total</th>
+                            <th class="text-end">Chosen Unit</th>
+                            <th class="text-end">Chosen Total</th>
                             {% if active_parts_list %}
                             <th class="text-end">Quote Unit</th>
                             <th>Status</th>
@@ -404,8 +402,8 @@
                                 </a>
                             </td>
                             <td class="text-end">{{ row.total_quantity }}</td>
-                            <td class="text-end">{% if row.guide_price is not none %}£{{ "%.2f"|format(row.guide_price) }}{% else %}-{% endif %}</td>
-                            <td class="text-end">{% if row.total_guide_value is not none %}£{{ "%.2f"|format(row.total_guide_value) }}{% else %}-{% endif %}</td>
+                            <td class="text-end">{% if progress and progress.chosen_unit_gbp is not none %}£{{ "%.2f"|format(progress.chosen_unit_gbp) }}{% else %}-{% endif %}</td>
+                            <td class="text-end">{% if progress and progress.chosen_total_gbp is not none %}£{{ "%.2f"|format(progress.chosen_total_gbp) }}{% else %}-{% endif %}</td>
                             {% if active_parts_list %}
                             <td class="text-end">{% if progress and progress.quote_price_gbp is not none %}£{{ "%.2f"|format(progress.quote_price_gbp) }}{% else %}-{% endif %}</td>
                             <td>
@@ -426,5 +424,38 @@
         </div>
     </div>
     {% endif %}
+</div>
+
+<div class="modal fade" id="createPartsListModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{{ url_for('bom.create_parts_list_from_bom', bom_id=bom.id) }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">Create Parts List From BOM</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="buildQuantityInput" class="form-label">Build Quantity</label>
+                        <input type="number" min="1" step="1" class="form-control" id="buildQuantityInput" name="build_quantity" value="1" required>
+                        <div class="form-text">This is the quote-specific build quantity. The BOM itself remains a 1x structure.</div>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" value="1" id="includeChildKitPartsInput" name="include_child_kit_parts" checked>
+                        <label class="form-check-label" for="includeChildKitPartsInput">
+                            Include child kit components in the parts list
+                        </label>
+                    </div>
+                    <div class="form-text mt-1">
+                        When enabled, child kit contents are exploded into the parts list so quantities can be bundled together for sourcing.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Parts List</button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
 {% endblock %}
