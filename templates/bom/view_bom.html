@@ -2,6 +2,7 @@
 
 {% block head %}
 {{ super() }}
+<link href="https://cdn.jsdelivr.net/npm/handsontable@14.5.0/dist/handsontable.full.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" rel="stylesheet">
 <style>
@@ -60,6 +61,42 @@
     font-size: 1rem;
     font-weight: 600;
     color: #212529;
+}
+
+.icon-action-btn {
+    border: 0;
+    background: transparent;
+    color: #6c757d;
+    padding: 0.2rem 0.35rem;
+    line-height: 1;
+}
+
+.icon-action-btn:hover {
+    color: #0d6efd;
+}
+
+.icon-action-btn.text-danger:hover {
+    color: #dc3545;
+}
+
+.actions-cell {
+    white-space: nowrap;
+}
+
+.accepted-alternatives-btn {
+    border: 0;
+    background: transparent;
+    padding: 0.2rem 0;
+}
+
+.accepted-alternatives-btn:hover {
+    color: #0d6efd;
+}
+
+.import-grid-wrap {
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    overflow: hidden;
 }
 </style>
 {% endblock %}
@@ -173,31 +210,54 @@
 </div>
 
 <div class="modal fade" id="importModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-xl">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Import Components</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <form id="importForm">
-                    <div class="mb-3">
-                        <label for="importFile" class="form-label">Select File:</label>
-                        <input type="file" class="form-control" id="importFile" accept=".csv,.xlsx,.xls" required>
-                        <small class="text-muted">Supported formats: CSV, Excel</small>
+                <ul class="nav nav-tabs mb-3" id="importTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#import-file-tab-pane" type="button" role="tab">
+                            File Upload
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#import-paste-tab-pane" type="button" role="tab">
+                            Paste Grid
+                        </button>
+                    </li>
+                </ul>
+                <div class="tab-content">
+                    <div class="tab-pane fade show active" id="import-file-tab-pane" role="tabpanel">
+                        <form id="importForm">
+                            <div class="mb-3">
+                                <label for="importFile" class="form-label">Select File:</label>
+                                <input type="file" class="form-control" id="importFile" accept=".csv,.xlsx,.xls">
+                                <small class="text-muted">Supported formats: CSV, Excel</small>
+                            </div>
+                        </form>
                     </div>
-                    <div class="alert alert-info mb-0">
-                        <strong>Expected columns:</strong>
-                        <ul class="mb-0">
-                            <li>part_number (required)</li>
-                            <li>quantity (required)</li>
-                            <li>position (optional)</li>
-                            <li>guide_price (optional)</li>
-                            <li>reference_designator (optional)</li>
-                            <li>notes (optional)</li>
-                        </ul>
+                    <div class="tab-pane fade" id="import-paste-tab-pane" role="tabpanel">
+                        <div class="mb-2 small text-muted">
+                            Paste directly from Excel. Required columns are `part_number` and `quantity`.
+                        </div>
+                        <div class="import-grid-wrap">
+                            <div id="importPasteGrid"></div>
+                        </div>
                     </div>
-                </form>
+                </div>
+                <div class="alert alert-info mt-3 mb-0">
+                    <strong>Expected columns:</strong>
+                    <ul class="mb-0">
+                        <li>part_number (required)</li>
+                        <li>quantity (required)</li>
+                        <li>guide_price (optional)</li>
+                        <li>reference_designator (optional)</li>
+                        <li>notes (optional)</li>
+                    </ul>
+                </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -266,6 +326,7 @@
 {% block scripts %}
 {{ super() }}
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/handsontable@14.5.0/dist/handsontable.full.min.js"></script>
 <script>
 const componentsData = {{ components|tojson|safe }};
 const kitBoms = {{ kit_boms|tojson|safe }};
@@ -273,6 +334,7 @@ let activeRowElement = null;
 let acceptedAlternativesModal;
 let acceptedAlternativesRow = null;
 let acceptedAlternativesSuggestions = [];
+let importPasteHot = null;
 const bomLineDetailsUrlTemplate = '{{ url_for("bom.bom_line_details", bom_id=bom.id, line_id=999999999) }}';
 
 function showSpinner() {
@@ -342,7 +404,7 @@ function createBomRow(component = {}) {
             </select>
         </td>
         <td>
-            <button type="button" class="btn btn-outline-secondary btn-sm w-100 text-start accepted-alternatives-btn">
+            <button type="button" class="w-100 text-start accepted-alternatives-btn">
                 <span class="alt-summary">${escapeHtml(getAlternateDisplayValue(component.accepted_alternates || component.accepted_alternates_display))}</span>
             </button>
         </td>
@@ -359,8 +421,11 @@ function createBomRow(component = {}) {
         <td class="currency-cell">${escapeHtml(component.currency_code || '')}</td>
         <td class="supplier-cell">${escapeHtml(component.supplier_name || '')}</td>
         <td class="lead-time-cell">${escapeHtml(component.lead_time || '')}</td>
-        <td class="text-end">
-            <button type="button" class="btn btn-outline-danger btn-sm remove-row-btn">
+        <td class="text-end actions-cell">
+            <button type="button" class="icon-action-btn add-child-kit-row-btn" title="Insert child kit row below" aria-label="Insert child kit row below">
+                <i class="fas fa-cubes"></i>
+            </button>
+            <button type="button" class="icon-action-btn text-danger remove-row-btn" title="Delete row" aria-label="Delete row">
                 <i class="fas fa-trash"></i>
             </button>
         </td>
@@ -373,6 +438,25 @@ function renderBomRows() {
     const tbody = document.getElementById('bomComponentsBody');
     tbody.innerHTML = '';
     componentsData.forEach(component => tbody.appendChild(createBomRow(component)));
+}
+
+function getNextPositionValue(referenceRow) {
+    const referencePosition = Number(referenceRow?.querySelector('.bom-position')?.value || 0);
+    return referencePosition ? referencePosition + 5 : ((document.querySelectorAll('#bomComponentsBody .bom-row').length + 1) * 10);
+}
+
+function insertChildKitRowAfter(referenceRow) {
+    const newRow = createBomRow({
+        line_id: null,
+        base_part_number: '',
+        quantity: 1,
+        position: getNextPositionValue(referenceRow),
+        guide_price: 0,
+        child_bom_header_id: null,
+        accepted_alternates: []
+    });
+    referenceRow.insertAdjacentElement('afterend', newRow);
+    newRow.querySelector('.bom-child-kit').focus();
 }
 
 function getRowPartNumber(row) {
@@ -686,6 +770,46 @@ function renderDetailsPanel(data) {
     `;
 }
 
+function initializeImportPasteGrid() {
+    if (importPasteHot) {
+        importPasteHot.render();
+        return;
+    }
+
+    importPasteHot = new Handsontable(document.getElementById('importPasteGrid'), {
+        data: Array.from({ length: 12 }, () => ['', '', '', '', '']),
+        colHeaders: ['Part Number', 'Quantity', 'Guide Price', 'Reference Designator', 'Notes'],
+        columns: [
+            { type: 'text' },
+            { type: 'numeric', numericFormat: { pattern: '0' } },
+            { type: 'numeric', numericFormat: { pattern: '0.00' } },
+            { type: 'text' },
+            { type: 'text' }
+        ],
+        rowHeaders: true,
+        minSpareRows: 6,
+        stretchH: 'all',
+        height: 360,
+        licenseKey: 'non-commercial-and-evaluation'
+    });
+}
+
+function getPastedImportRows() {
+    if (!importPasteHot) {
+        return [];
+    }
+
+    return importPasteHot.getData()
+        .map(row => ({
+            part_number: String(row[0] || '').trim(),
+            quantity: row[1] === '' || row[1] == null ? 1 : Number(row[1]),
+            guide_price: row[2] === '' || row[2] == null ? null : Number(row[2]),
+            reference_designator: String(row[3] || '').trim(),
+            notes: String(row[4] || '').trim()
+        }))
+        .filter(row => row.part_number);
+}
+
 async function loadBomLineDetails(row) {
     const lineId = row.dataset.lineId;
     setActiveRow(row);
@@ -739,17 +863,21 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
+        if (event.target.closest('.add-child-kit-row-btn')) {
+            insertChildKitRowAfter(row);
+            return;
+        }
+
         loadBomLineDetails(row);
     });
 
     document.getElementById('addComponentBtn').addEventListener('click', function() {
         const tbody = document.getElementById('bomComponentsBody');
-        const rowCount = tbody.querySelectorAll('.bom-row').length;
         const newRow = createBomRow({
             line_id: null,
             base_part_number: '',
             quantity: 1,
-            position: (rowCount + 1) * 10,
+            position: getNextPositionValue(),
             guide_price: 0,
             accepted_alternates: []
         });
@@ -833,20 +961,27 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('importSubmitBtn').addEventListener('click', async function() {
         const fileInput = document.getElementById('importFile');
-        if (!fileInput.files[0]) {
-            showAlert('Please select a file', 'warning');
-            return;
-        }
+        const pastedRows = getPastedImportRows();
 
         showSpinner();
-        const formData = new FormData();
-        formData.append('file', fileInput.files[0]);
-
         try {
-            const response = await fetch('{{ url_for("bom.import_components", bom_id=bom.id) }}', {
-                method: 'POST',
-                body: formData
-            });
+            let response;
+            if (fileInput.files[0]) {
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+                response = await fetch('{{ url_for("bom.import_components", bom_id=bom.id) }}', {
+                    method: 'POST',
+                    body: formData
+                });
+            } else if (pastedRows.length) {
+                response = await fetch('{{ url_for("bom.import_components", bom_id=bom.id) }}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rows: pastedRows })
+                });
+            } else {
+                throw new Error('Select a file or paste at least one row');
+            }
             const data = await response.json();
             if (!response.ok) {
                 throw new Error(data.error || 'Import failed');
@@ -882,6 +1017,10 @@ document.addEventListener('DOMContentLoaded', function() {
         } finally {
             hideSpinner();
         }
+    });
+
+    document.getElementById('importModal').addEventListener('shown.bs.modal', function() {
+        initializeImportPasteGrid();
     });
 });
 </script>

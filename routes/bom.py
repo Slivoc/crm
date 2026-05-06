@@ -1392,18 +1392,25 @@ def bom_line_details(bom_id, line_id):
 @bom_bp.route('/import_components/<int:bom_id>', methods=['POST'])
 def import_components(bom_id):
     """Handle file upload for importing components into existing BOM"""
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file provided'}), 400
-
-    file = request.files['file']
-    if not file.filename:
-        return jsonify({'error': 'No file selected'}), 400
-
-    filename = secure_filename(file.filename)
-    logging.info(f"Starting import for BOM {bom_id} from file: {filename}")
-
     try:
-        df = _load_bom_dataframe(file, filename)
+        if request.is_json:
+            rows = (request.json or {}).get('rows') or []
+            if not rows:
+                return jsonify({'error': 'No pasted rows provided'}), 400
+            df = pd.DataFrame(rows)
+            filename = 'pasted-grid'
+            logging.info(f"Starting grid import for BOM {bom_id} with {len(df)} rows")
+        else:
+            if 'file' not in request.files:
+                return jsonify({'error': 'No file provided'}), 400
+
+            file = request.files['file']
+            if not file.filename:
+                return jsonify({'error': 'No file selected'}), 400
+
+            filename = secure_filename(file.filename)
+            logging.info(f"Starting import for BOM {bom_id} from file: {filename}")
+            df = _load_bom_dataframe(file, filename)
     except Exception as exc:
         logging.error(f"Failed to read file for BOM {bom_id}: {exc}")
         return jsonify({'error': f"Failed to read file: {exc}"}), 400
