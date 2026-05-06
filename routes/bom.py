@@ -7,6 +7,7 @@ from werkzeug.utils import secure_filename
 import os
 import csv
 import io
+import math
 from datetime import datetime, timedelta
 from flask_login import current_user
 
@@ -128,6 +129,16 @@ def _coerce_quantity(value):
     if parsed.is_integer():
         return int(parsed)
     return parsed
+
+
+def _round_up_to_multiple(quantity, multiple):
+    quantity = float(quantity or 0)
+    multiple = float(multiple or 0)
+    if quantity <= 0:
+        return 0
+    if multiple <= 0:
+        return quantity
+    return math.ceil(quantity / multiple) * multiple
 
 
 def _merge_flattened_parts(target, source):
@@ -355,7 +366,14 @@ def _get_parts_list_progress(parts_list_id):
             cql.base_cost_gbp,
             cql.quote_price_gbp,
             cql.target_price_gbp,
-            cql.quoted_status
+            cql.quoted_status,
+            cql.margin_percent,
+            cql.delivery_per_unit,
+            cql.lot_pricing_enabled,
+            cql.lot_purchase_multiple,
+            cql.lot_purchase_quantity,
+            cql.lot_source_unit_cost_gbp,
+            cql.lot_total_cost_gbp
         FROM parts_list_lines pll
         LEFT JOIN customer_quote_lines cql ON cql.id = (
             SELECT cql_latest.id
@@ -388,6 +406,8 @@ def _get_parts_list_progress(parts_list_id):
         base_cost_gbp = float(line['base_cost_gbp']) if line.get('base_cost_gbp') is not None else None
         quote_price_gbp = float(line['quote_price_gbp']) if line.get('quote_price_gbp') is not None else None
         target_price_gbp = float(line['target_price_gbp']) if line.get('target_price_gbp') is not None else None
+        margin_percent = float(line['margin_percent']) if line.get('margin_percent') is not None else 0.0
+        delivery_per_unit = float(line['delivery_per_unit']) if line.get('delivery_per_unit') is not None else 0.0
         quoted_status = line.get('quoted_status') or 'created'
 
         summary['total_lines'] += 1
@@ -413,15 +433,23 @@ def _get_parts_list_progress(parts_list_id):
                 or line.get('customer_part_number')
                 or base_part_number
             ),
+            'parts_list_line_id': line.get('id'),
             'effective_quantity': quantity,
             'base_cost_gbp': base_cost_gbp,
             'chosen_unit_gbp': base_cost_gbp,
             'quote_price_gbp': quote_price_gbp,
             'target_price_gbp': target_price_gbp,
+            'margin_percent': margin_percent,
+            'delivery_per_unit': delivery_per_unit,
             'quoted_status': quoted_status,
             'chosen_total_gbp': (base_cost_gbp * quantity) if base_cost_gbp is not None else None,
             'quoted_total_gbp': (quote_price_gbp * quantity) if quote_price_gbp is not None else None,
             'target_total_gbp': (target_price_gbp * quantity) if target_price_gbp is not None else None,
+            'lot_pricing_enabled': bool(line.get('lot_pricing_enabled')),
+            'lot_purchase_multiple': float(line['lot_purchase_multiple']) if line.get('lot_purchase_multiple') is not None else None,
+            'lot_purchase_quantity': float(line['lot_purchase_quantity']) if line.get('lot_purchase_quantity') is not None else None,
+            'lot_source_unit_cost_gbp': float(line['lot_source_unit_cost_gbp']) if line.get('lot_source_unit_cost_gbp') is not None else None,
+            'lot_total_cost_gbp': float(line['lot_total_cost_gbp']) if line.get('lot_total_cost_gbp') is not None else None,
         }
 
     return summary, progress_by_base
@@ -1672,6 +1700,122 @@ def create_child_kit():
     except Exception as exc:
         logging.error(f"Error creating child kit: {exc}", exc_info=True)
         return jsonify({'error': str(exc)}), 400
+
+
+@bom_bp.route('/matrix/<int:bom_id>/lot-pricing', methods=['POST'])
+def apply_matrix_lot_pricing(bom_id):
+    data = request.json or {}
+    parts_list_id = data.get('parts_list_id')
+    base_part_number = create_base_part_number((data.get('base_part_number') or '').strip()) if data.get('base_part_number') else ''
+    purchase_multiple = float(data.get('purchase_multiple') or 0)
+    source_unit_cost_gbp = float(data.get('source_unit_cost_gbp') or 0)
+
+    if not parts_list_id or not base_part_number:
+        return jsonify(success=False, message='parts_list_id and base_part_number are required'), 400
+    if purchase_multiple <= 0:
+        return jsonify(success=False, message='purchase_multiple must be greater than zero'), 400
+    if source_unit_cost_gbp < 0:
+        return jsonify(success=False, message='source_unit_cost_gbp cannot be negative'), 400
+
+    try:
+        with db_cursor(commit=True) as cur:
+            line = _execute_with_cursor(cur, '''
+                SELECT
+                    pll.id,
+                    COALESCE(pll.chosen_qty, pll.quantity, 0) AS effective_quantity,
+                    cql.id AS quote_line_id,
+                    cql.margin_percent,
+                    cql.delivery_per_unit,
+                    cql.display_part_number,
+                    cql.quoted_part_number
+                FROM parts_list_lines pll
+                LEFT JOIN customer_quote_lines cql ON cql.id = (
+                    SELECT cql_latest.id
+                    FROM customer_quote_lines cql_latest
+                    WHERE cql_latest.parts_list_line_id = pll.id
+                    ORDER BY cql_latest.date_modified DESC NULLS LAST, cql_latest.id DESC
+                    LIMIT 1
+                )
+                WHERE pll.parts_list_id = ?
+                  AND pll.base_part_number = ?
+                ORDER BY pll.line_number ASC, pll.id ASC
+                LIMIT 1
+            ''', (parts_list_id, base_part_number)).fetchone()
+
+            if not line:
+                return jsonify(success=False, message='Linked parts list line not found for this matrix row'), 404
+
+            demand_qty = float(_coerce_quantity(line.get('effective_quantity')))
+            if demand_qty <= 0:
+                return jsonify(success=False, message='Demand quantity must be greater than zero'), 400
+
+            purchase_quantity = _round_up_to_multiple(demand_qty, purchase_multiple)
+            lot_total_cost_gbp = purchase_quantity * source_unit_cost_gbp
+            amortized_unit_cost_gbp = lot_total_cost_gbp / demand_qty if demand_qty else source_unit_cost_gbp
+            margin_percent = float(line['margin_percent']) if line.get('margin_percent') is not None else 0.0
+            delivery_per_unit = float(line['delivery_per_unit']) if line.get('delivery_per_unit') is not None else 0.0
+            margin_factor = 1 - (margin_percent / 100.0)
+            price_before_delivery = (amortized_unit_cost_gbp / margin_factor) if margin_percent > 0 and margin_factor > 0 else amortized_unit_cost_gbp
+            quote_price_gbp = price_before_delivery + delivery_per_unit
+
+            if line.get('quote_line_id'):
+                _execute_with_cursor(cur, '''
+                    UPDATE customer_quote_lines
+                    SET base_cost_gbp = ?,
+                        quote_price_gbp = ?,
+                        lot_pricing_enabled = TRUE,
+                        lot_purchase_multiple = ?,
+                        lot_purchase_quantity = ?,
+                        lot_source_unit_cost_gbp = ?,
+                        lot_total_cost_gbp = ?
+                    WHERE id = ?
+                ''', (
+                    amortized_unit_cost_gbp,
+                    quote_price_gbp,
+                    purchase_multiple,
+                    purchase_quantity,
+                    source_unit_cost_gbp,
+                    lot_total_cost_gbp,
+                    line['quote_line_id'],
+                ))
+            else:
+                insert_query = _with_returning_clause('''
+                    INSERT INTO customer_quote_lines (
+                        parts_list_line_id,
+                        base_cost_gbp,
+                        delivery_per_unit,
+                        delivery_per_line,
+                        margin_percent,
+                        quote_price_gbp,
+                        quoted_status,
+                        display_part_number,
+                        quoted_part_number,
+                        lot_pricing_enabled,
+                        lot_purchase_multiple,
+                        lot_purchase_quantity,
+                        lot_source_unit_cost_gbp,
+                        lot_total_cost_gbp
+                    )
+                    VALUES (?, ?, ?, 0, ?, ?, 'created', ?, ?, TRUE, ?, ?, ?, ?)
+                ''')
+                _execute_with_cursor(cur, insert_query, (
+                    line['id'],
+                    amortized_unit_cost_gbp,
+                    delivery_per_unit,
+                    margin_percent,
+                    quote_price_gbp,
+                    line.get('display_part_number'),
+                    line.get('quoted_part_number'),
+                    purchase_multiple,
+                    purchase_quantity,
+                    source_unit_cost_gbp,
+                    lot_total_cost_gbp,
+                ))
+
+        return jsonify(success=True, purchase_quantity=purchase_quantity, amortized_unit_cost_gbp=amortized_unit_cost_gbp, quote_price_gbp=quote_price_gbp)
+    except Exception as exc:
+        logging.error(f"Error applying lot pricing for BOM {bom_id}: {exc}", exc_info=True)
+        return jsonify(success=False, message=str(exc)), 400
 
 
 @bom_bp.route('/api/customers/search')

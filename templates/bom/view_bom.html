@@ -170,7 +170,7 @@
     </div>
 
     <div class="row g-4">
-        <div class="col-lg-8">
+        <div class="col-xl-9 col-lg-8">
             <div class="card shadow-sm border-0">
                 <div class="card-header bg-light d-flex justify-content-between align-items-center">
                     <strong>Components ({{ components|length }} items)</strong>
@@ -188,20 +188,19 @@
                         <table class="table table-sm table-hover align-middle mb-0" id="bomComponentsTable">
                             <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
                                 <tr>
-                                    <th style="min-width: 180px;">Part Number</th>
-                                    <th style="min-width: 180px;">Quoted As</th>
-                                    <th style="min-width: 180px;">Child Kit</th>
-                                    <th style="min-width: 220px;">Accepted Alternatives</th>
+                                    <th style="min-width: 150px;">Part Number</th>
+                                    <th style="min-width: 150px;">Quoted As</th>
+                                    <th style="min-width: 160px;">Child Kit</th>
+                                    <th style="min-width: 180px;">Accepted Alternatives</th>
                                     <th style="min-width: 90px;">Qty</th>
                                     <th style="min-width: 90px;">Position</th>
-                                    <th style="min-width: 110px;">Guide Price</th>
-                                    <th style="min-width: 110px;">Chosen Cost</th>
-                                    <th style="min-width: 110px;">Quote Price</th>
-                                    <th style="min-width: 120px;">Cost Value</th>
-                                    <th style="min-width: 120px;">Quote Value</th>
-                                    <th style="min-width: 120px;">Currency</th>
-                                    <th style="min-width: 160px;">Supplier</th>
-                                    <th style="min-width: 110px;">Lead Time</th>
+                                    <th style="min-width: 95px;">Guide</th>
+                                    <th style="min-width: 95px;">Cost</th>
+                                    <th style="min-width: 95px;">Quote</th>
+                                    <th style="min-width: 105px;">Cost Value</th>
+                                    <th style="min-width: 105px;">Quote Value</th>
+                                    <th style="min-width: 140px;">Supplier</th>
+                                    <th style="min-width: 90px;">Lead</th>
                                     <th style="width: 70px;"></th>
                                 </tr>
                             </thead>
@@ -536,7 +535,6 @@ function createBomRow(component = {}) {
         <td class="text-end quote-price-cell">${component.quote_unit_gbp != null ? `GBP ${Number(component.quote_unit_gbp).toFixed(2)}` : '-'}</td>
         <td class="text-end line-value-cell">${component.line_value_gbp != null ? `GBP ${Number(component.line_value_gbp).toFixed(2)}` : '-'}</td>
         <td class="text-end quoted-line-value-cell">${component.quoted_line_value_gbp != null ? `GBP ${Number(component.quoted_line_value_gbp).toFixed(2)}` : '-'}</td>
-        <td class="currency-cell">${escapeHtml(component.currency_code || '')}</td>
         <td class="supplier-cell">${escapeHtml(component.supplier_name || '')}</td>
         <td class="lead-time-cell">${escapeHtml(component.lead_time || '')}</td>
         <td class="text-end actions-cell">
