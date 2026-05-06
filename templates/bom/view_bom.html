@@ -127,6 +127,9 @@
                         <div><small class="text-white-50">Chosen BOM value from Parts List {{ active_parts_list.id }}:
                             {% if bom_total_value_gbp is not none %}£{{ "%.2f"|format(bom_total_value_gbp) }}{% else %}-{% endif %}
                         </small></div>
+                        <div><small class="text-white-50">Quoted BOM value from Parts List {{ active_parts_list.id }}:
+                            {% if bom_total_quoted_gbp is not none %}£{{ "%.2f"|format(bom_total_quoted_gbp) }}{% else %}-{% endif %}
+                        </small></div>
                         {% endif %}
                     </div>
                     <div class="btn-group">
@@ -142,6 +145,9 @@
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li><a class="dropdown-item" href="{{ url_for('bom.view_bom_matrix', bom_id=bom.id) }}">
                                 <i class="fas fa-table"></i> Matrix View
+                            </a></li>
+                            <li><a class="dropdown-item" href="#" id="renameBomBtn">
+                                <i class="fas fa-pen"></i> Rename BOM
                             </a></li>
                             <li><a class="dropdown-item" href="#" id="manageCustomersBtn">
                                 <i class="fas fa-users"></i> Add Customer
@@ -183,13 +189,16 @@
                             <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
                                 <tr>
                                     <th style="min-width: 180px;">Part Number</th>
+                                    <th style="min-width: 180px;">Quoted As</th>
                                     <th style="min-width: 180px;">Child Kit</th>
                                     <th style="min-width: 220px;">Accepted Alternatives</th>
                                     <th style="min-width: 90px;">Qty</th>
                                     <th style="min-width: 90px;">Position</th>
                                     <th style="min-width: 110px;">Guide Price</th>
-                                    <th style="min-width: 110px;">Current Price</th>
-                                    <th style="min-width: 120px;">Line Value</th>
+                                    <th style="min-width: 110px;">Chosen Cost</th>
+                                    <th style="min-width: 110px;">Quote Price</th>
+                                    <th style="min-width: 120px;">Cost Value</th>
+                                    <th style="min-width: 120px;">Quote Value</th>
                                     <th style="min-width: 120px;">Currency</th>
                                     <th style="min-width: 160px;">Supplier</th>
                                     <th style="min-width: 110px;">Lead Time</th>
@@ -213,6 +222,31 @@
                         Select a BOM line to load parts list and customer quote details.
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="renameBomModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Rename BOM</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="renameBomName" class="form-label">Name</label>
+                    <input type="text" class="form-control" id="renameBomName" value="{{ bom.name }}">
+                </div>
+                <div>
+                    <label for="renameBomDescription" class="form-label">Description</label>
+                    <input type="text" class="form-control" id="renameBomDescription" value="{{ bom.description or '' }}">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="renameBomSubmitBtn">Save</button>
             </div>
         </div>
     </div>
@@ -414,6 +448,7 @@ let childKitPasteHot = null;
 let createChildKitModal = null;
 let childKitTargetRow = null;
 let createPartsListModal = null;
+let renameBomModal = null;
 const bomLineDetailsUrlTemplate = '{{ url_for("bom.bom_line_details", bom_id=bom.id, line_id=999999999) }}';
 
 function showSpinner() {
@@ -477,6 +512,7 @@ function createBomRow(component = {}) {
         <td>
             <input type="text" class="form-control form-control-sm bom-input bom-part-number" value="${escapeHtml(component.base_part_number || '')}">
         </td>
+        <td class="quoted-as-cell">${escapeHtml(component.effective_part_number || component.base_part_number || '')}</td>
         <td>
             <select class="form-select form-select-sm bom-child-kit">
                 ${createKitOptions(component.child_bom_header_id)}
@@ -496,8 +532,10 @@ function createBomRow(component = {}) {
         <td>
             <input type="number" class="form-control form-control-sm bom-guide-price" min="0" step="0.01" value="${component.guide_price ?? 0}">
         </td>
-        <td class="text-end current-price-cell">${component.current_price != null ? Number(component.current_price).toFixed(2) : '-'}</td>
+        <td class="text-end chosen-cost-cell">${component.chosen_unit_gbp != null ? `GBP ${Number(component.chosen_unit_gbp).toFixed(2)}` : '-'}</td>
+        <td class="text-end quote-price-cell">${component.quote_unit_gbp != null ? `GBP ${Number(component.quote_unit_gbp).toFixed(2)}` : '-'}</td>
         <td class="text-end line-value-cell">${component.line_value_gbp != null ? `GBP ${Number(component.line_value_gbp).toFixed(2)}` : '-'}</td>
+        <td class="text-end quoted-line-value-cell">${component.quoted_line_value_gbp != null ? `GBP ${Number(component.quoted_line_value_gbp).toFixed(2)}` : '-'}</td>
         <td class="currency-cell">${escapeHtml(component.currency_code || '')}</td>
         <td class="supplier-cell">${escapeHtml(component.supplier_name || '')}</td>
         <td class="lead-time-cell">${escapeHtml(component.lead_time || '')}</td>
@@ -1003,11 +1041,17 @@ document.addEventListener('DOMContentLoaded', function() {
     acceptedAlternativesModal = new bootstrap.Modal(document.getElementById('acceptedAlternativesModal'));
     createChildKitModal = new bootstrap.Modal(document.getElementById('createChildKitModal'));
     createPartsListModal = new bootstrap.Modal(document.getElementById('createPartsListModal'));
+    renameBomModal = new bootstrap.Modal(document.getElementById('renameBomModal'));
     initializeCustomerSelect();
     initializeAcceptedAlternativesSelect();
 
     document.getElementById('openCreatePartsListModalBtn').addEventListener('click', function() {
         createPartsListModal.show();
+    });
+
+    document.getElementById('renameBomBtn').addEventListener('click', function(event) {
+        event.preventDefault();
+        renameBomModal.show();
     });
 
     document.getElementById('manageCustomersBtn').addEventListener('click', function(event) {
@@ -1225,6 +1269,33 @@ document.addEventListener('DOMContentLoaded', function() {
             window.location.href = '{{ url_for("bom.boms") }}';
         } catch (error) {
             showAlert(`Error deleting BOM: ${error.message}`, 'danger');
+        } finally {
+            hideSpinner();
+        }
+    });
+
+    document.getElementById('renameBomSubmitBtn').addEventListener('click', async function() {
+        const name = document.getElementById('renameBomName').value.trim();
+        const description = document.getElementById('renameBomDescription').value.trim();
+        if (!name) {
+            showAlert('Enter a BOM name', 'warning');
+            return;
+        }
+
+        showSpinner();
+        try {
+            const response = await fetch('{{ url_for("bom.rename_bom", bom_id=bom.id) }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, description })
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to rename BOM');
+            }
+            window.location.reload();
+        } catch (error) {
+            showAlert(`Error renaming BOM: ${error.message}`, 'danger');
         } finally {
             hideSpinner();
         }

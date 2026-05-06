@@ -350,6 +350,8 @@ def _get_parts_list_progress(parts_list_id):
             pll.base_part_number,
             COALESCE(NULLIF(TRIM(pll.customer_part_number), ''), pll.base_part_number) AS customer_part_number,
             COALESCE(pll.chosen_qty, pll.quantity, 0) AS effective_quantity,
+            cql.display_part_number,
+            cql.quoted_part_number,
             cql.base_cost_gbp,
             cql.quote_price_gbp,
             cql.target_price_gbp,
@@ -403,6 +405,14 @@ def _get_parts_list_progress(parts_list_id):
         progress_by_base[base_part_number] = {
             'base_part_number': base_part_number,
             'customer_part_number': line.get('customer_part_number') or base_part_number,
+            'display_part_number': line.get('display_part_number'),
+            'quoted_part_number': line.get('quoted_part_number'),
+            'effective_part_number': (
+                line.get('quoted_part_number')
+                or line.get('display_part_number')
+                or line.get('customer_part_number')
+                or base_part_number
+            ),
             'effective_quantity': quantity,
             'base_cost_gbp': base_cost_gbp,
             'chosen_unit_gbp': base_cost_gbp,
@@ -436,6 +446,8 @@ def _get_bom_line_linked_parts_list_details(bom_id, base_part_number):
                 pll.chosen_source_type,
                 s.name AS chosen_supplier_name,
                 c.currency_code AS chosen_currency_code,
+                cql.display_part_number,
+                cql.quoted_part_number,
                 cql.quote_price_gbp,
                 cql.target_price_gbp,
                 cql.base_cost_gbp,
@@ -524,6 +536,53 @@ def _calculate_bom_row_chosen_value(line, progress_by_base):
     if chosen_unit is None:
         return None
     return float(chosen_unit) * float(_coerce_quantity(line.get('quantity')))
+
+
+def _calculate_bom_row_pricing(line, progress_by_base):
+    child_bom_header_id = line.get('child_bom_header_id')
+    line_quantity = float(_coerce_quantity(line.get('quantity')) or 0)
+    if child_bom_header_id:
+        exploded_rows = _flattened_parts_to_rows(
+            _explode_bom_requirements(
+                int(child_bom_header_id),
+                multiplier=_coerce_quantity(line.get('quantity')),
+            )
+        )
+        chosen_total = 0.0
+        quoted_total = 0.0
+        has_chosen = False
+        has_quoted = False
+        for exploded in exploded_rows:
+            progress = progress_by_base.get(exploded['base_part_number'])
+            exploded_qty = float(exploded.get('total_quantity') or 0)
+            if progress and progress.get('chosen_unit_gbp') is not None:
+                chosen_total += float(progress['chosen_unit_gbp']) * exploded_qty
+                has_chosen = True
+            if progress and progress.get('quote_price_gbp') is not None:
+                quoted_total += float(progress['quote_price_gbp']) * exploded_qty
+                has_quoted = True
+
+        chosen_total = chosen_total if has_chosen else None
+        quoted_total = quoted_total if has_quoted else None
+        return {
+            'effective_part_number': line.get('child_bom_name') or f"Child Kit {child_bom_header_id}",
+            'chosen_unit_gbp': (chosen_total / line_quantity) if (chosen_total is not None and line_quantity) else None,
+            'chosen_total_gbp': chosen_total,
+            'quote_unit_gbp': (quoted_total / line_quantity) if (quoted_total is not None and line_quantity) else None,
+            'quote_total_gbp': quoted_total,
+        }
+
+    base_part_number = create_base_part_number(line.get('base_part_number') or '') if line.get('base_part_number') else ''
+    progress = progress_by_base.get(base_part_number) or {}
+    chosen_unit = progress.get('chosen_unit_gbp')
+    quote_unit = progress.get('quote_price_gbp')
+    return {
+        'effective_part_number': progress.get('effective_part_number') or line.get('part_number') or base_part_number,
+        'chosen_unit_gbp': chosen_unit,
+        'chosen_total_gbp': (float(chosen_unit) * line_quantity) if chosen_unit is not None else None,
+        'quote_unit_gbp': quote_unit,
+        'quote_total_gbp': (float(quote_unit) * line_quantity) if quote_unit is not None else None,
+    }
 
 
 def _get_supplier_quote_offers_for_base_part(base_part_number, list_ids=None, limit=15):
@@ -1277,12 +1336,21 @@ def view_bom(bom_id):
 
         bom_total_value_gbp = 0.0
         bom_total_has_value = False
+        bom_total_quoted_gbp = 0.0
+        bom_total_has_quoted = False
         for component, component_line in zip(components, component_lines):
-            line_value_gbp = _calculate_bom_row_chosen_value(component_line, progress_by_base) if progress_by_base else None
-            component['line_value_gbp'] = line_value_gbp
-            if line_value_gbp is not None:
-                bom_total_value_gbp += line_value_gbp
+            pricing = _calculate_bom_row_pricing(component_line, progress_by_base) if progress_by_base else {}
+            component['effective_part_number'] = pricing.get('effective_part_number')
+            component['chosen_unit_gbp'] = pricing.get('chosen_unit_gbp')
+            component['line_value_gbp'] = pricing.get('chosen_total_gbp')
+            component['quote_unit_gbp'] = pricing.get('quote_unit_gbp')
+            component['quoted_line_value_gbp'] = pricing.get('quote_total_gbp')
+            if component['line_value_gbp'] is not None:
+                bom_total_value_gbp += component['line_value_gbp']
                 bom_total_has_value = True
+            if component['quoted_line_value_gbp'] is not None:
+                bom_total_quoted_gbp += component['quoted_line_value_gbp']
+                bom_total_has_quoted = True
 
         return render_template('bom/view_bom.html',
                                bom=bom,
@@ -1291,6 +1359,7 @@ def view_bom(bom_id):
                                kit_boms=kit_boms,
                                active_parts_list=active_parts_list,
                                bom_total_value_gbp=(bom_total_value_gbp if bom_total_has_value else None),
+                               bom_total_quoted_gbp=(bom_total_quoted_gbp if bom_total_has_quoted else None),
                                progress_summary=progress_summary)
 
     except Exception as e:
@@ -1763,6 +1832,45 @@ def remove_customer(bom_id):
 
     except Exception as exc:
         logging.error(f"Error removing customer from BOM {bom_id}: {exc}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(exc)
+        }), 400
+
+
+@bom_bp.route('/rename/<int:bom_id>', methods=['POST'])
+def rename_bom(bom_id):
+    data = request.json or {}
+    name = (data.get('name') or '').strip()
+    description = (data.get('description') or '').strip() or None
+
+    if not name:
+        return jsonify({
+            'status': 'error',
+            'message': 'BOM name is required'
+        }), 400
+
+    try:
+        with db_cursor(commit=True) as cur:
+            existing = _execute_with_cursor(cur, 'SELECT id FROM bom_headers WHERE id = ?', (bom_id,)).fetchone()
+            if not existing:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'BOM not found'
+                }), 404
+
+            _execute_with_cursor(cur, '''
+                UPDATE bom_headers
+                SET name = ?, description = ?
+                WHERE id = ?
+            ''', (name, description, bom_id))
+
+        return jsonify({
+            'status': 'success',
+            'message': 'BOM updated successfully'
+        })
+    except Exception as exc:
+        logging.error(f"Error renaming BOM {bom_id}: {exc}", exc_info=True)
         return jsonify({
             'status': 'error',
             'message': str(exc)
