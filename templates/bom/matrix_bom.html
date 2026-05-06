@@ -1,0 +1,430 @@
+{% extends "base.html" %}
+
+{% block title %}{{ bom.name }} Matrix{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+.matrix-table-wrap {
+    overflow: auto;
+    border: 1px solid #d6dbe1;
+    border-radius: 0.5rem;
+    background: #fff;
+}
+
+.bom-matrix-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 1100px;
+}
+
+.bom-matrix-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #d7e4f3;
+    border-bottom: 2px solid #243447;
+    border-right: 1px solid #243447;
+    color: #12202f;
+    font-size: 0.82rem;
+    padding: 0.7rem 0.5rem;
+    white-space: nowrap;
+}
+
+.bom-matrix-table tbody td {
+    border-right: 1px solid #243447;
+    border-bottom: 1px solid #243447;
+    padding: 0.45rem 0.5rem;
+    font-size: 0.88rem;
+    vertical-align: middle;
+}
+
+.bom-matrix-table thead th:first-child,
+.bom-matrix-table tbody td:first-child {
+    border-left: 1px solid #243447;
+}
+
+.bom-matrix-table tbody tr:nth-child(odd) td.part-cell,
+.bom-matrix-table tbody tr:nth-child(odd) td.item-cell {
+    background: #efd4f0;
+}
+
+.bom-matrix-table tbody tr:nth-child(even) td.part-cell,
+.bom-matrix-table tbody tr:nth-child(even) td.item-cell {
+    background: #f7e8f8;
+}
+
+.bom-matrix-table tbody td.qty-cell,
+.bom-matrix-table tbody td.total-cell {
+    background: #eef7e8;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.bom-matrix-table tbody td.progress-cell,
+.bom-matrix-table tbody td.money-cell,
+.bom-matrix-table tbody td.status-cell {
+    background: #fafbfc;
+    font-variant-numeric: tabular-nums;
+}
+
+.bom-matrix-table .sticky-left {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+}
+
+.bom-matrix-table .sticky-left-2 {
+    position: sticky;
+    left: 68px;
+    z-index: 1;
+}
+
+.bom-matrix-table thead .sticky-left,
+.bom-matrix-table thead .sticky-left-2 {
+    z-index: 3;
+}
+
+.part-link {
+    color: #1f3c88;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.part-link:hover {
+    text-decoration: underline;
+}
+
+.summary-card .value {
+    font-size: 1.35rem;
+    font-weight: 700;
+}
+
+.status-badge-inline {
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+        <div>
+            <h2 class="mb-1">{{ bom.name }} Matrix</h2>
+            <div class="text-muted">
+                Exploded child-kit view for BOM {{ bom.id }}{% if bom.description %} · {{ bom.description }}{% endif %}
+            </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{{ url_for('bom.view_bom', bom_id=bom.id) }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i> Back To BOM
+            </a>
+            <form method="post" action="{{ url_for('bom.create_parts_list_from_bom', bom_id=bom.id) }}">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-diagram-3 me-1"></i> Create Parts List From BOM
+                </button>
+            </form>
+        </div>
+    </div>
+
+    {% if not matrix_data.has_child_kits %}
+    <div class="alert alert-warning">
+        This BOM does not contain any child kits, so there is no child-kit matrix to render yet.
+    </div>
+    {% endif %}
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card summary-card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Child Kits</div>
+                    <div class="value">{{ matrix_summary.child_kit_count }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card summary-card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Matrix Rows</div>
+                    <div class="value">{{ matrix_summary.row_count }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card summary-card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Total Component Qty</div>
+                    <div class="value">{{ matrix_summary.total_quantity }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card summary-card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Guide Value</div>
+                    <div class="value">
+                        {% if matrix_summary.total_guide_value %}
+                        £{{ "%.2f"|format(matrix_summary.total_guide_value) }}
+                        {% else %}
+                        -
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-lg-7">
+            <div class="card h-100">
+                <div class="card-header">
+                    <strong>Linked Parts Lists</strong>
+                </div>
+                <div class="card-body">
+                    {% if linked_parts_lists %}
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Name</th>
+                                    <th>Customer</th>
+                                    <th>Status</th>
+                                    <th class="text-end">Lines</th>
+                                    <th class="text-end">Quoted Value</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for linked in linked_parts_lists %}
+                                <tr {% if active_parts_list and linked.id == active_parts_list.id %}class="table-primary"{% endif %}>
+                                    <td>{{ linked.id }}</td>
+                                    <td>{{ linked.name }}</td>
+                                    <td>{{ linked.customer_name or '-' }}</td>
+                                    <td>{{ linked.status_name or '-' }}</td>
+                                    <td class="text-end">{{ linked.line_count or 0 }}</td>
+                                    <td class="text-end">£{{ "%.2f"|format(linked.quoted_value_gbp or 0) }}</td>
+                                    <td class="text-end">
+                                        <a href="{{ url_for('customer_quoting.customer_quote_simple', list_id=linked.id) }}" class="btn btn-sm btn-outline-primary">Open</a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="text-muted">No parts lists have been created from this BOM yet.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card h-100">
+                <div class="card-header">
+                    <strong>Pricing Progress</strong>
+                    {% if active_parts_list %}
+                    <span class="text-muted"> · Parts List {{ active_parts_list.id }}</span>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    {% if progress_summary %}
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <div class="border rounded p-3 h-100">
+                                <div class="text-muted small">Costed Lines</div>
+                                <div class="fs-4 fw-semibold">{{ progress_summary.costed_lines }} / {{ progress_summary.total_lines }}</div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="border rounded p-3 h-100">
+                                <div class="text-muted small">Quoted Lines</div>
+                                <div class="fs-4 fw-semibold">{{ progress_summary.quoted_lines }} / {{ progress_summary.total_lines }}</div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="border rounded p-3">
+                                <div class="text-muted small">Base Cost Value</div>
+                                <div class="fs-5 fw-semibold">£{{ "%.2f"|format(progress_summary.total_base_cost_gbp or 0) }}</div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="border rounded p-3">
+                                <div class="text-muted small">Quoted Value</div>
+                                <div class="fs-5 fw-semibold">£{{ "%.2f"|format(progress_summary.total_quoted_value_gbp or 0) }}</div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="border rounded p-3">
+                                <div class="text-muted small">Target Value</div>
+                                <div class="fs-5 fw-semibold">£{{ "%.2f"|format(progress_summary.total_target_value_gbp or 0) }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="text-muted">Create a linked parts list to start tracking pricing progress here.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if matrix_data.has_child_kits %}
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Child Kit Matrix</strong>
+            <span class="text-muted small">{{ matrix_data.matrix_rows|length }} exploded parts</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="matrix-table-wrap">
+                <table class="bom-matrix-table">
+                    <thead>
+                        <tr>
+                            <th class="sticky-left" style="width:68px;">Item</th>
+                            <th class="sticky-left-2" style="min-width:320px;">P/N</th>
+                            {% for child in matrix_data.child_columns %}
+                            <th class="text-end" title="Multiplier on parent BOM: {{ child.multiplier }}">
+                                <div>{{ child.name }}</div>
+                                <div class="small text-muted">x{{ child.multiplier }}</div>
+                            </th>
+                            {% endfor %}
+                            <th class="text-end">Tot</th>
+                            <th class="text-end">Guide</th>
+                            <th class="text-end">Guide Total</th>
+                            {% if active_parts_list %}
+                            <th class="text-end">Quote Unit</th>
+                            <th class="text-end">Quote Total</th>
+                            <th class="text-end">Target Unit</th>
+                            <th>Status</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in matrix_data.matrix_rows %}
+                        {% set progress = row.pricing_progress %}
+                        <tr>
+                            <td class="item-cell sticky-left">{{ row.item_number }}</td>
+                            <td class="part-cell sticky-left-2">
+                                <a class="part-link" href="{{ url_for('parts.view_part_number', base_part_number=row.base_part_number) }}">
+                                    {{ row.part_number }}
+                                </a>
+                            </td>
+                            {% for child in matrix_data.child_columns %}
+                            <td class="qty-cell text-end">
+                                {% set qty = row.child_quantities.get(child.bom_id, 0) %}
+                                {{ qty if qty else '' }}
+                            </td>
+                            {% endfor %}
+                            <td class="total-cell fw-semibold">{{ row.total_quantity }}</td>
+                            <td class="money-cell text-end">
+                                {% if row.guide_price is not none %}
+                                £{{ "%.2f"|format(row.guide_price) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td class="money-cell text-end">
+                                {% if row.total_guide_value is not none %}
+                                £{{ "%.2f"|format(row.total_guide_value) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            {% if active_parts_list %}
+                            <td class="money-cell text-end">
+                                {% if progress and progress.quote_price_gbp is not none %}
+                                £{{ "%.2f"|format(progress.quote_price_gbp) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td class="money-cell text-end">
+                                {% if progress and progress.quoted_total_gbp is not none %}
+                                £{{ "%.2f"|format(progress.quoted_total_gbp) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td class="money-cell text-end">
+                                {% if progress and progress.target_price_gbp is not none %}
+                                £{{ "%.2f"|format(progress.target_price_gbp) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td class="status-cell">
+                                {% if progress %}
+                                <span class="badge status-badge-inline {% if progress.quoted_status == 'quoted' %}bg-success{% elif progress.quoted_status == 'in_progress' %}bg-warning text-dark{% elif progress.quoted_status == 'no_bid' %}bg-danger{% else %}bg-secondary{% endif %}">
+                                    {{ progress.quoted_status|replace('_', ' ')|title }}
+                                </span>
+                                {% else %}
+                                <span class="text-muted">Not linked</span>
+                                {% endif %}
+                            </td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if matrix_data.direct_rows %}
+    <div class="card">
+        <div class="card-header">
+            <strong>Direct Parent-BOM Parts</strong>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>P/N</th>
+                            <th class="text-end">Qty</th>
+                            <th class="text-end">Guide</th>
+                            <th class="text-end">Guide Total</th>
+                            {% if active_parts_list %}
+                            <th class="text-end">Quote Unit</th>
+                            <th>Status</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in matrix_data.direct_rows %}
+                        {% set progress = row.pricing_progress %}
+                        <tr>
+                            <td>{{ row.item_number }}</td>
+                            <td>
+                                <a class="part-link" href="{{ url_for('parts.view_part_number', base_part_number=row.base_part_number) }}">
+                                    {{ row.part_number }}
+                                </a>
+                            </td>
+                            <td class="text-end">{{ row.total_quantity }}</td>
+                            <td class="text-end">{% if row.guide_price is not none %}£{{ "%.2f"|format(row.guide_price) }}{% else %}-{% endif %}</td>
+                            <td class="text-end">{% if row.total_guide_value is not none %}£{{ "%.2f"|format(row.total_guide_value) }}{% else %}-{% endif %}</td>
+                            {% if active_parts_list %}
+                            <td class="text-end">{% if progress and progress.quote_price_gbp is not none %}£{{ "%.2f"|format(progress.quote_price_gbp) }}{% else %}-{% endif %}</td>
+                            <td>
+                                {% if progress %}
+                                <span class="badge status-badge-inline {% if progress.quoted_status == 'quoted' %}bg-success{% elif progress.quoted_status == 'in_progress' %}bg-warning text-dark{% elif progress.quoted_status == 'no_bid' %}bg-danger{% else %}bg-secondary{% endif %}">
+                                    {{ progress.quoted_status|replace('_', ' ')|title }}
+                                </span>
+                                {% else %}
+                                <span class="text-muted">Not linked</span>
+                                {% endif %}
+                            </td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

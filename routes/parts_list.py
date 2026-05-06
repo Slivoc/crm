@@ -8638,12 +8638,14 @@ def view_parts_list(list_id):
             cont.name AS contact_name,
             cont.email AS contact_email,
             s.name AS status_name,
-            p.name AS project_name
+            p.name AS project_name,
+            bh.name AS source_bom_name
         FROM parts_lists pl
         LEFT JOIN customers c ON c.id = pl.customer_id
         LEFT JOIN contacts cont ON cont.id = pl.contact_id
         LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
         LEFT JOIN projects p ON p.id = pl.project_id
+        LEFT JOIN bom_headers bh ON bh.id = pl.bom_header_id
         WHERE pl.id = ?
         """,
         (list_id,),
@@ -8689,6 +8691,8 @@ def view_parts_list(list_id):
                            customer_name=header['customer_name'],
                            project_id=header.get('project_id'),
                            project_name=header.get('project_name'),
+                           source_bom_id=header.get('bom_header_id'),
+                           source_bom_name=header.get('source_bom_name'),
                            status_id=header.get('status_id'),
                            status_name=header.get('status_name'),
                            portal_request_id=portal_request.get('id') if portal_request else None,

@@ -53,6 +53,9 @@
                             <i class="fas fa-ellipsis-v"></i>
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="{{ url_for('bom.view_bom_matrix', bom_id=bom.id) }}">
+                                <i class="fas fa-table"></i> Matrix View
+                            </a></li>
                             <li><a class="dropdown-item" href="#" id="exportBomBtn">
                                 <i class="fas fa-file-export"></i> Export to Excel
                             </a></li>

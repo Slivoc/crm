@@ -4,6 +4,16 @@
 
 {% block content %}
 <div class="parts-list-mobile">
+    {% if source_bom_id %}
+    <div class="alert alert-info py-2 px-3 mb-3">
+        <div class="fw-semibold small mb-2">Source BOM: {{ source_bom_name or ('BOM ' ~ source_bom_id) }}</div>
+        <div class="d-flex gap-2">
+            <a href="{{ url_for('bom.view_bom', bom_id=source_bom_id) }}" class="btn btn-sm btn-outline-primary">View BOM</a>
+            <a href="{{ url_for('bom.view_bom_matrix', bom_id=source_bom_id) }}" class="btn btn-sm btn-primary">Matrix</a>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Header Card -->
     <div class="card mb-3">
         <div class="card-body py-2">

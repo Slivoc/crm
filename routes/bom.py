@@ -8,6 +8,7 @@ import os
 import csv
 import io
 from datetime import datetime, timedelta
+from flask_login import current_user
 
 
 def _using_postgres() -> bool:
@@ -72,6 +73,315 @@ def _get_all_kit_boms():
         WHERE type = 'kit'
         ORDER BY name
     ''', fetch='all') or []
+
+
+def _resolve_salesperson_id():
+    salesperson_id = 1
+    if current_user.is_authenticated:
+        user_salesperson = db_execute(
+            "SELECT legacy_salesperson_id FROM salesperson_user_link WHERE user_id = ?",
+            (current_user.id,),
+            fetch='one',
+        )
+        if user_salesperson and user_salesperson.get('legacy_salesperson_id'):
+            salesperson_id = user_salesperson['legacy_salesperson_id']
+    return salesperson_id
+
+
+def _fetch_bom_header(bom_id):
+    return db_execute('''
+        SELECT bh.*,
+               COALESCE(COUNT(DISTINCT bl.id), 0) as components_count,
+               COALESCE(COUNT(DISTINCT cb.customer_id), 0) as customers_count
+        FROM bom_headers bh
+        LEFT JOIN bom_lines bl ON bh.id = bl.bom_header_id
+        LEFT JOIN customer_boms cb ON bh.id = cb.bom_header_id
+        WHERE bh.id = ?
+        GROUP BY bh.id
+    ''', (bom_id,), fetch='one')
+
+
+def _fetch_bom_lines(bom_id):
+    return db_execute('''
+        SELECT
+            bl.id,
+            bl.base_part_number,
+            COALESCE(bl.quantity, 0) AS quantity,
+            COALESCE(bl.position, 0) AS position,
+            COALESCE(bl.guide_price, 0) AS guide_price,
+            COALESCE(NULLIF(TRIM(pn.part_number), ''), bl.base_part_number) AS part_number,
+            bl.child_bom_header_id,
+            child_bh.name AS child_bom_name
+        FROM bom_lines bl
+        LEFT JOIN part_numbers pn ON bl.base_part_number = pn.base_part_number
+        LEFT JOIN bom_headers child_bh ON child_bh.id = bl.child_bom_header_id
+        WHERE bl.bom_header_id = ?
+        ORDER BY bl.position, bl.id
+    ''', (bom_id,), fetch='all') or []
+
+
+def _coerce_quantity(value):
+    try:
+        parsed = float(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    if parsed.is_integer():
+        return int(parsed)
+    return parsed
+
+
+def _merge_flattened_parts(target, source):
+    for base_part_number, source_item in source.items():
+        target_item = target.setdefault(base_part_number, {
+            'base_part_number': base_part_number,
+            'part_number': source_item.get('part_number') or base_part_number,
+            'total_quantity': 0,
+            'guide_price': source_item.get('guide_price'),
+            'sort_order': source_item.get('sort_order', 999999),
+        })
+        target_item['total_quantity'] += source_item.get('total_quantity') or 0
+        if source_item.get('guide_price') is not None:
+            current_guide = target_item.get('guide_price')
+            if current_guide is None or source_item['guide_price'] > current_guide:
+                target_item['guide_price'] = source_item['guide_price']
+        target_item['sort_order'] = min(
+            target_item.get('sort_order', 999999),
+            source_item.get('sort_order', 999999),
+        )
+    return target
+
+
+def _explode_bom_requirements(bom_id, multiplier=1, path=None):
+    path = list(path or [])
+    if bom_id in path:
+        cycle = ' -> '.join(str(part) for part in path + [bom_id])
+        raise ValueError(f"Cyclic child BOM relationship detected: {cycle}")
+
+    flattened = {}
+    for row in _fetch_bom_lines(bom_id):
+        line = dict(row)
+        line_qty = _coerce_quantity(line.get('quantity'))
+        extended_qty = line_qty * multiplier
+        child_bom_header_id = line.get('child_bom_header_id')
+
+        if child_bom_header_id:
+            child_flattened = _explode_bom_requirements(
+                child_bom_header_id,
+                multiplier=extended_qty,
+                path=path + [bom_id],
+            )
+            _merge_flattened_parts(flattened, child_flattened)
+            continue
+
+        base_part_number = (line.get('base_part_number') or '').strip()
+        if not base_part_number:
+            continue
+
+        item = flattened.setdefault(base_part_number, {
+            'base_part_number': base_part_number,
+            'part_number': line.get('part_number') or base_part_number,
+            'total_quantity': 0,
+            'guide_price': None,
+            'sort_order': int(line.get('position') or 0),
+        })
+        item['total_quantity'] += extended_qty
+        guide_price = line.get('guide_price')
+        if guide_price not in (None, ''):
+            guide_price = float(guide_price or 0)
+            current_guide = item.get('guide_price')
+            if current_guide is None or guide_price > current_guide:
+                item['guide_price'] = guide_price
+
+    return flattened
+
+
+def _flattened_parts_to_rows(flattened_parts):
+    rows = list(flattened_parts.values())
+    rows.sort(key=lambda item: (item.get('sort_order', 999999), item.get('part_number') or item.get('base_part_number') or ''))
+    for index, row in enumerate(rows, start=1):
+        total_quantity = row.get('total_quantity') or 0
+        guide_price = row.get('guide_price')
+        row['item_number'] = index
+        row['total_guide_value'] = (guide_price * total_quantity) if guide_price is not None else None
+    return rows
+
+
+def _build_bom_matrix_data(bom_id):
+    parent_lines = [dict(row) for row in _fetch_bom_lines(bom_id)]
+    child_columns = []
+    matrix_map = {}
+    direct_flattened = {}
+
+    for line in parent_lines:
+        quantity_multiplier = _coerce_quantity(line.get('quantity'))
+        child_bom_header_id = line.get('child_bom_header_id')
+        if child_bom_header_id:
+            existing_column = next((item for item in child_columns if item['bom_id'] == child_bom_header_id), None)
+            if not existing_column:
+                existing_column = {
+                    'bom_id': child_bom_header_id,
+                    'name': line.get('child_bom_name') or f'BOM {child_bom_header_id}',
+                    'multiplier': 0,
+                    'line_ids': [],
+                }
+                child_columns.append(existing_column)
+            existing_column['multiplier'] += quantity_multiplier
+            existing_column['line_ids'].append(line.get('id'))
+
+            child_flattened = _explode_bom_requirements(child_bom_header_id, multiplier=quantity_multiplier, path=[bom_id])
+            for base_part_number, child_item in child_flattened.items():
+                row = matrix_map.setdefault(base_part_number, {
+                    'base_part_number': base_part_number,
+                    'part_number': child_item.get('part_number') or base_part_number,
+                    'child_quantities': {},
+                    'total_quantity': 0,
+                    'guide_price': child_item.get('guide_price'),
+                    'sort_order': child_item.get('sort_order', 999999),
+                })
+                qty = child_item.get('total_quantity') or 0
+                row['child_quantities'][child_bom_header_id] = row['child_quantities'].get(child_bom_header_id, 0) + qty
+                row['total_quantity'] += qty
+                if child_item.get('guide_price') is not None:
+                    current_guide = row.get('guide_price')
+                    if current_guide is None or child_item['guide_price'] > current_guide:
+                        row['guide_price'] = child_item['guide_price']
+                row['sort_order'] = min(row.get('sort_order', 999999), child_item.get('sort_order', 999999))
+            continue
+
+        base_part_number = (line.get('base_part_number') or '').strip()
+        if not base_part_number:
+            continue
+        item = direct_flattened.setdefault(base_part_number, {
+            'base_part_number': base_part_number,
+            'part_number': line.get('part_number') or base_part_number,
+            'total_quantity': 0,
+            'guide_price': None,
+            'sort_order': int(line.get('position') or 0),
+        })
+        item['total_quantity'] += quantity_multiplier
+        guide_price = line.get('guide_price')
+        if guide_price not in (None, ''):
+            guide_price = float(guide_price or 0)
+            current_guide = item.get('guide_price')
+            if current_guide is None or guide_price > current_guide:
+                item['guide_price'] = guide_price
+
+    child_columns.sort(key=lambda item: (item.get('name') or '', item.get('bom_id') or 0))
+    matrix_rows = _flattened_parts_to_rows(matrix_map)
+    for row in matrix_rows:
+        row['child_quantities'] = {
+            child['bom_id']: row['child_quantities'].get(child['bom_id'], 0)
+            for child in child_columns
+        }
+    direct_rows = _flattened_parts_to_rows(direct_flattened)
+
+    return {
+        'child_columns': child_columns,
+        'matrix_rows': matrix_rows,
+        'direct_rows': direct_rows,
+        'has_child_kits': bool(child_columns),
+    }
+
+
+def _get_linked_parts_lists_for_bom(bom_id):
+    return db_execute('''
+        SELECT
+            pl.id,
+            pl.name,
+            pl.date_modified,
+            c.name AS customer_name,
+            s.name AS status_name,
+            (SELECT COUNT(*) FROM parts_list_lines pll WHERE pll.parts_list_id = pl.id) AS line_count,
+            COALESCE((
+                SELECT SUM(COALESCE(cql.quote_price_gbp, 0) * COALESCE(pll.quantity, 0))
+                FROM parts_list_lines pll
+                LEFT JOIN customer_quote_lines cql ON cql.id = (
+                    SELECT cql_latest.id
+                    FROM customer_quote_lines cql_latest
+                    WHERE cql_latest.parts_list_line_id = pll.id
+                    ORDER BY cql_latest.date_modified DESC NULLS LAST, cql_latest.id DESC
+                    LIMIT 1
+                )
+                WHERE pll.parts_list_id = pl.id
+            ), 0) AS quoted_value_gbp
+        FROM parts_lists pl
+        LEFT JOIN customers c ON c.id = pl.customer_id
+        LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+        WHERE pl.bom_header_id = ?
+        ORDER BY pl.date_modified DESC, pl.id DESC
+    ''', (bom_id,), fetch='all') or []
+
+
+def _get_parts_list_progress(parts_list_id):
+    rows = db_execute('''
+        SELECT
+            pll.id,
+            pll.base_part_number,
+            COALESCE(NULLIF(TRIM(pll.customer_part_number), ''), pll.base_part_number) AS customer_part_number,
+            COALESCE(pll.chosen_qty, pll.quantity, 0) AS effective_quantity,
+            cql.base_cost_gbp,
+            cql.quote_price_gbp,
+            cql.target_price_gbp,
+            cql.quoted_status
+        FROM parts_list_lines pll
+        LEFT JOIN customer_quote_lines cql ON cql.id = (
+            SELECT cql_latest.id
+            FROM customer_quote_lines cql_latest
+            WHERE cql_latest.parts_list_line_id = pll.id
+            ORDER BY cql_latest.date_modified DESC NULLS LAST, cql_latest.id DESC
+            LIMIT 1
+        )
+        WHERE pll.parts_list_id = ?
+        ORDER BY pll.line_number ASC, pll.id ASC
+    ''', (parts_list_id,), fetch='all') or []
+
+    progress_by_base = {}
+    summary = {
+        'total_lines': 0,
+        'costed_lines': 0,
+        'quoted_lines': 0,
+        'target_lines': 0,
+        'total_base_cost_gbp': 0.0,
+        'total_quoted_value_gbp': 0.0,
+        'total_target_value_gbp': 0.0,
+    }
+
+    for row in rows:
+        line = dict(row)
+        base_part_number = line.get('base_part_number')
+        if not base_part_number:
+            continue
+        quantity = _coerce_quantity(line.get('effective_quantity'))
+        base_cost_gbp = float(line['base_cost_gbp']) if line.get('base_cost_gbp') is not None else None
+        quote_price_gbp = float(line['quote_price_gbp']) if line.get('quote_price_gbp') is not None else None
+        target_price_gbp = float(line['target_price_gbp']) if line.get('target_price_gbp') is not None else None
+        quoted_status = line.get('quoted_status') or 'created'
+
+        summary['total_lines'] += 1
+        if base_cost_gbp is not None:
+            summary['costed_lines'] += 1
+            summary['total_base_cost_gbp'] += base_cost_gbp * quantity
+        if quote_price_gbp is not None:
+            summary['total_quoted_value_gbp'] += quote_price_gbp * quantity
+        if target_price_gbp is not None:
+            summary['target_lines'] += 1
+            summary['total_target_value_gbp'] += target_price_gbp * quantity
+        if quoted_status == 'quoted':
+            summary['quoted_lines'] += 1
+
+        progress_by_base[base_part_number] = {
+            'base_part_number': base_part_number,
+            'customer_part_number': line.get('customer_part_number') or base_part_number,
+            'effective_quantity': quantity,
+            'base_cost_gbp': base_cost_gbp,
+            'quote_price_gbp': quote_price_gbp,
+            'target_price_gbp': target_price_gbp,
+            'quoted_status': quoted_status,
+            'quoted_total_gbp': (quote_price_gbp * quantity) if quote_price_gbp is not None else None,
+            'target_total_gbp': (target_price_gbp * quantity) if target_price_gbp is not None else None,
+        }
+
+    return summary, progress_by_base
 
 
 def _get_recent_offer_cutoff(recent_offer_days):
@@ -777,6 +1087,115 @@ def view_bom(bom_id):
     except Exception as e:
         logging.error(f"Error viewing BOM {bom_id}: {str(e)}", exc_info=True)
         return f"Error loading BOM: {str(e)}", 500
+
+
+@bom_bp.route('/view/<int:bom_id>/matrix')
+def view_bom_matrix(bom_id):
+    try:
+        bom_row = _fetch_bom_header(bom_id)
+        if not bom_row:
+            return "BOM not found", 404
+
+        bom = {k: (v if v is not None else '') for k, v in dict(bom_row).items()}
+        matrix_data = _build_bom_matrix_data(bom_id)
+        linked_parts_lists = [dict(row) for row in _get_linked_parts_lists_for_bom(bom_id)]
+        active_parts_list = linked_parts_lists[0] if linked_parts_lists else None
+        progress_summary = None
+        progress_by_base = {}
+        if active_parts_list:
+            progress_summary, progress_by_base = _get_parts_list_progress(active_parts_list['id'])
+
+        for row in matrix_data['matrix_rows']:
+            row['pricing_progress'] = progress_by_base.get(row['base_part_number'])
+        for row in matrix_data['direct_rows']:
+            row['pricing_progress'] = progress_by_base.get(row['base_part_number'])
+
+        matrix_summary = {
+            'row_count': len(matrix_data['matrix_rows']),
+            'direct_row_count': len(matrix_data['direct_rows']),
+            'child_kit_count': len(matrix_data['child_columns']),
+            'total_quantity': sum(row.get('total_quantity') or 0 for row in matrix_data['matrix_rows']),
+            'total_guide_value': sum(
+                row['total_guide_value'] for row in matrix_data['matrix_rows']
+                if row.get('total_guide_value') is not None
+            ),
+        }
+
+        return render_template(
+            'bom/matrix_bom.html',
+            bom=bom,
+            matrix_data=matrix_data,
+            matrix_summary=matrix_summary,
+            linked_parts_lists=linked_parts_lists,
+            active_parts_list=active_parts_list,
+            progress_summary=progress_summary,
+        )
+    except Exception as exc:
+        logging.error(f"Error rendering BOM matrix for {bom_id}: {exc}", exc_info=True)
+        return f"Error loading BOM matrix: {exc}", 500
+
+
+@bom_bp.route('/<int:bom_id>/create-parts-list', methods=['POST'])
+def create_parts_list_from_bom(bom_id):
+    try:
+        bom_row = _fetch_bom_header(bom_id)
+        if not bom_row:
+            return "BOM not found", 404
+
+        flattened_rows = _flattened_parts_to_rows(_explode_bom_requirements(bom_id))
+        if not flattened_rows:
+            return "This BOM does not contain any explodable part lines", 400
+
+        assigned_customers = db_execute('''
+            SELECT customer_id
+            FROM customer_boms
+            WHERE bom_header_id = ?
+            ORDER BY customer_id
+        ''', (bom_id,), fetch='all') or []
+        customer_ids = [row['customer_id'] for row in assigned_customers if row.get('customer_id') is not None]
+        customer_id = customer_ids[0] if len(customer_ids) == 1 else None
+        salesperson_id = _resolve_salesperson_id()
+        timestamp_suffix = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
+        list_name = f"{bom_row['name']} Pricing {timestamp_suffix}"
+        list_notes = f"Created from BOM {bom_row['name']} (ID {bom_id}) matrix view."
+
+        with db_cursor(commit=True) as cur:
+            header_row = _execute_with_cursor(cur, '''
+                INSERT INTO parts_lists
+                    (name, customer_id, contact_id, salesperson_id, status_id, notes, bom_header_id,
+                     date_created, date_modified)
+                VALUES (?, ?, NULL, ?, 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id
+            ''', (list_name, customer_id, salesperson_id, list_notes, bom_id)).fetchone()
+
+            parts_list_id = header_row['id'] if header_row else None
+            if not parts_list_id:
+                raise RuntimeError("Failed to create parts list header")
+
+            for line_number, row in enumerate(flattened_rows, start=1):
+                quantity = _coerce_quantity(row.get('total_quantity'))
+                _execute_with_cursor(cur, '''
+                    INSERT INTO parts_list_lines (
+                        parts_list_id, line_number, customer_part_number, base_part_number,
+                        revision, description, quantity, chosen_supplier_id, chosen_cost,
+                        chosen_price, chosen_currency_id, chosen_lead_days, chosen_qty,
+                        customer_notes, internal_notes, date_created, date_modified
+                    )
+                    VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ''', (
+                    parts_list_id,
+                    line_number,
+                    row.get('part_number') or row.get('base_part_number'),
+                    row.get('base_part_number'),
+                    quantity,
+                    quantity,
+                    f"Generated from BOM {bom_row['name']} (ID {bom_id})."
+                ))
+
+        return redirect(url_for('customer_quoting.customer_quote_simple', list_id=parts_list_id))
+    except Exception as exc:
+        logging.error(f"Error creating parts list from BOM {bom_id}: {exc}", exc_info=True)
+        return f"Error creating parts list: {exc}", 500
 
 
 @bom_bp.route('/line-alternative-suggestions', methods=['GET'])

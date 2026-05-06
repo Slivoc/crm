@@ -227,12 +227,14 @@ def customer_quote(list_id):
                            s.name as status_name,
                            ct.name as contact_name,
                            ct.email as contact_email,
-                           p.name as project_name
+                           p.name as project_name,
+                           bh.name as source_bom_name
                     FROM parts_lists pl
                     LEFT JOIN customers c ON c.id = pl.customer_id
                     LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
                     LEFT JOIN contacts ct ON ct.id = pl.contact_id
                     LEFT JOIN projects p ON p.id = pl.project_id
+                    LEFT JOIN bom_headers bh ON bh.id = pl.bom_header_id
                     WHERE pl.id = ?
                 """, (list_id,)).fetchone()
 
@@ -451,6 +453,8 @@ def customer_quote(list_id):
                                nav_is_pinned=bool(header.get('is_pinned')),
                                project_id=header.get('project_id'),
                                project_name=header.get('project_name'),
+                               source_bom_id=header.get('bom_header_id'),
+                               source_bom_name=header.get('source_bom_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
                                portal_request_id=portal_request.get('id') if portal_request else None,
@@ -1977,12 +1981,14 @@ def customer_quote_simple(list_id):
                        s.name as status_name,
                        ct.name as contact_name,
                        ct.email as contact_email,
-                       p.name as project_name
+                       p.name as project_name,
+                       bh.name as source_bom_name
                 FROM parts_lists pl
                 LEFT JOIN customers c ON c.id = pl.customer_id
                 LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
                 LEFT JOIN contacts ct ON ct.id = pl.contact_id
                 LEFT JOIN projects p ON p.id = pl.project_id
+                LEFT JOIN bom_headers bh ON bh.id = pl.bom_header_id
                 WHERE pl.id = ?
             """, (list_id,)).fetchone()
 
@@ -2375,6 +2381,8 @@ def customer_quote_simple(list_id):
                                nav_is_pinned=bool(header.get('is_pinned')),
                                project_id=header.get('project_id'),
                                project_name=header.get('project_name'),
+                               source_bom_id=header.get('bom_header_id'),
+                               source_bom_name=header.get('source_bom_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
                                portal_request_id=portal_request.get('id') if portal_request else None,
