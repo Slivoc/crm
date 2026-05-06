@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, jsonify, request, redirect, url_for, Response
 from db import db_cursor, execute as db_execute
-from models import create_base_part_number
+from models import create_base_part_number, get_global_alternatives
 import logging
 import pandas as pd
 from werkzeug.utils import secure_filename
@@ -777,6 +777,41 @@ def view_bom(bom_id):
     except Exception as e:
         logging.error(f"Error viewing BOM {bom_id}: {str(e)}", exc_info=True)
         return f"Error loading BOM: {str(e)}", 500
+
+
+@bom_bp.route('/line-alternative-suggestions', methods=['GET'])
+def line_alternative_suggestions():
+    raw_part_number = (request.args.get('base_part_number') or '').strip()
+    if not raw_part_number:
+        return jsonify({'suggestions': []})
+
+    base_part_number = create_base_part_number(raw_part_number)
+    alt_bases = get_global_alternatives(base_part_number)
+    if not alt_bases:
+        return jsonify({'suggestions': []})
+
+    in_clause, params = _build_in_clause(alt_bases)
+    if not in_clause:
+        return jsonify({'suggestions': []})
+
+    alt_rows = db_execute(f'''
+        SELECT
+            pn.base_part_number,
+            COALESCE(NULLIF(TRIM(pn.part_number), ''), pn.base_part_number) AS part_number
+        FROM part_numbers pn
+        WHERE pn.base_part_number IN ({in_clause})
+        ORDER BY COALESCE(NULLIF(TRIM(pn.part_number), ''), pn.base_part_number)
+    ''', params, fetch='all') or []
+
+    return jsonify({
+        'suggestions': [
+            {
+                'base_part_number': row['base_part_number'],
+                'part_number': row['part_number'],
+            }
+            for row in alt_rows
+        ]
+    })
 
 
 @bom_bp.route('/import_components/<int:bom_id>', methods=['POST'])
