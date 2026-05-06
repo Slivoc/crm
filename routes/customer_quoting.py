@@ -101,6 +101,11 @@ def _to_decimal(value, default):
     return parsed if parsed is not None else default
 
 
+def _to_float_or_none(value):
+    parsed = _parse_decimal(value)
+    return float(parsed) if parsed is not None else None
+
+
 def _get_portal_request_for_parts_list(list_id):
     row = db_execute(
         """
@@ -2278,9 +2283,9 @@ def customer_quote_simple(list_id):
 
                 sales_history = sales_history_by_part.get(line_dict.get('base_part_number')) or {}
                 sales_order_count = int(sales_history.get('sales_order_count') or 0)
-                avg_sale_price = _to_float(sales_history.get('avg_sale_price'))
-                max_sale_price = _to_float(sales_history.get('max_sale_price'))
-                last_sale_price = _to_float(sales_history.get('last_sale_price'))
+                avg_sale_price = _to_float_or_none(sales_history.get('avg_sale_price'))
+                max_sale_price = _to_float_or_none(sales_history.get('max_sale_price'))
+                last_sale_price = _to_float_or_none(sales_history.get('last_sale_price'))
 
                 sales_reference_gbp = None
                 sales_reference_type = None
