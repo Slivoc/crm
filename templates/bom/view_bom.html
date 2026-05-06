@@ -294,6 +294,39 @@
     </div>
 </div>
 
+<div class="modal fade" id="createChildKitModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create Child Kit</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-8">
+                        <label for="childKitName" class="form-label">Kit Name</label>
+                        <input type="text" class="form-control" id="childKitName" placeholder="e.g. K00-000085">
+                    </div>
+                    <div class="col-md-4">
+                        <label for="childKitDescription" class="form-label">Description</label>
+                        <input type="text" class="form-control" id="childKitDescription" placeholder="Optional">
+                    </div>
+                </div>
+                <div class="mb-2 small text-muted">
+                    Paste directly from Excel. Columns: `part_number`, `quantity`, `guide_price`, `reference_designator`, `notes`.
+                </div>
+                <div class="import-grid-wrap">
+                    <div id="childKitPasteGrid"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="createChildKitSubmitBtn">Create Child Kit</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="acceptedAlternativesModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
@@ -335,6 +368,9 @@ let acceptedAlternativesModal;
 let acceptedAlternativesRow = null;
 let acceptedAlternativesSuggestions = [];
 let importPasteHot = null;
+let childKitPasteHot = null;
+let createChildKitModal = null;
+let childKitTargetRow = null;
 const bomLineDetailsUrlTemplate = '{{ url_for("bom.bom_line_details", bom_id=bom.id, line_id=999999999) }}';
 
 function showSpinner() {
@@ -422,7 +458,7 @@ function createBomRow(component = {}) {
         <td class="supplier-cell">${escapeHtml(component.supplier_name || '')}</td>
         <td class="lead-time-cell">${escapeHtml(component.lead_time || '')}</td>
         <td class="text-end actions-cell">
-            <button type="button" class="icon-action-btn add-child-kit-row-btn" title="Insert child kit row below" aria-label="Insert child kit row below">
+            <button type="button" class="icon-action-btn create-child-kit-btn" title="Create and assign child kit" aria-label="Create and assign child kit">
                 <i class="fas fa-cubes"></i>
             </button>
             <button type="button" class="icon-action-btn text-danger remove-row-btn" title="Delete row" aria-label="Delete row">
@@ -445,18 +481,55 @@ function getNextPositionValue(referenceRow) {
     return referencePosition ? referencePosition + 5 : ((document.querySelectorAll('#bomComponentsBody .bom-row').length + 1) * 10);
 }
 
-function insertChildKitRowAfter(referenceRow) {
-    const newRow = createBomRow({
-        line_id: null,
-        base_part_number: '',
-        quantity: 1,
-        position: getNextPositionValue(referenceRow),
-        guide_price: 0,
-        child_bom_header_id: null,
-        accepted_alternates: []
+function createPasteGrid(containerId) {
+    return new Handsontable(document.getElementById(containerId), {
+        data: Array.from({ length: 12 }, () => ['', '', '', '', '']),
+        colHeaders: ['Part Number', 'Quantity', 'Guide Price', 'Reference Designator', 'Notes'],
+        columns: [
+            { type: 'text' },
+            { type: 'numeric', numericFormat: { pattern: '0' } },
+            { type: 'numeric', numericFormat: { pattern: '0.00' } },
+            { type: 'text' },
+            { type: 'text' }
+        ],
+        rowHeaders: true,
+        minSpareRows: 6,
+        stretchH: 'all',
+        height: 360,
+        licenseKey: 'non-commercial-and-evaluation'
     });
-    referenceRow.insertAdjacentElement('afterend', newRow);
-    newRow.querySelector('.bom-child-kit').focus();
+}
+
+function resetPasteGrid(hotInstance) {
+    if (!hotInstance) {
+        return;
+    }
+    hotInstance.loadData(Array.from({ length: 12 }, () => ['', '', '', '', '']));
+}
+
+function addKitOption(kitId, kitName) {
+    const exists = kitBoms.some(kit => Number(kit.id) === Number(kitId));
+    if (!exists) {
+        kitBoms.push({ id: Number(kitId), name: kitName || '' });
+        kitBoms.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')) || (Number(a.id) - Number(b.id)));
+    }
+}
+
+function syncAllChildKitSelectOptions() {
+    document.querySelectorAll('.bom-child-kit').forEach(select => {
+        const selectedValue = select.value;
+        select.innerHTML = createKitOptions(selectedValue);
+        select.value = selectedValue;
+    });
+}
+
+function openCreateChildKitModal(row) {
+    childKitTargetRow = row;
+    document.getElementById('childKitName').value = '';
+    document.getElementById('childKitDescription').value = '';
+    resetPasteGrid(childKitPasteHot);
+    createChildKitModal.show();
+    setTimeout(() => document.getElementById('childKitName').focus(), 150);
 }
 
 function getRowPartNumber(row) {
@@ -776,30 +849,24 @@ function initializeImportPasteGrid() {
         return;
     }
 
-    importPasteHot = new Handsontable(document.getElementById('importPasteGrid'), {
-        data: Array.from({ length: 12 }, () => ['', '', '', '', '']),
-        colHeaders: ['Part Number', 'Quantity', 'Guide Price', 'Reference Designator', 'Notes'],
-        columns: [
-            { type: 'text' },
-            { type: 'numeric', numericFormat: { pattern: '0' } },
-            { type: 'numeric', numericFormat: { pattern: '0.00' } },
-            { type: 'text' },
-            { type: 'text' }
-        ],
-        rowHeaders: true,
-        minSpareRows: 6,
-        stretchH: 'all',
-        height: 360,
-        licenseKey: 'non-commercial-and-evaluation'
-    });
+    importPasteHot = createPasteGrid('importPasteGrid');
 }
 
-function getPastedImportRows() {
-    if (!importPasteHot) {
+function initializeChildKitPasteGrid() {
+    if (childKitPasteHot) {
+        childKitPasteHot.render();
+        return;
+    }
+
+    childKitPasteHot = createPasteGrid('childKitPasteGrid');
+}
+
+function getPasteGridRows(hotInstance) {
+    if (!hotInstance) {
         return [];
     }
 
-    return importPasteHot.getData()
+    return hotInstance.getData()
         .map(row => ({
             part_number: String(row[0] || '').trim(),
             quantity: row[1] === '' || row[1] == null ? 1 : Number(row[1]),
@@ -835,6 +902,7 @@ async function loadBomLineDetails(row) {
 document.addEventListener('DOMContentLoaded', function() {
     renderBomRows();
     acceptedAlternativesModal = new bootstrap.Modal(document.getElementById('acceptedAlternativesModal'));
+    createChildKitModal = new bootstrap.Modal(document.getElementById('createChildKitModal'));
     initializeCustomerSelect();
     initializeAcceptedAlternativesSelect();
 
@@ -863,8 +931,8 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        if (event.target.closest('.add-child-kit-row-btn')) {
-            insertChildKitRowAfter(row);
+        if (event.target.closest('.create-child-kit-btn')) {
+            openCreateChildKitModal(row);
             return;
         }
 
@@ -961,7 +1029,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('importSubmitBtn').addEventListener('click', async function() {
         const fileInput = document.getElementById('importFile');
-        const pastedRows = getPastedImportRows();
+        const pastedRows = getPasteGridRows(importPasteHot);
 
         showSpinner();
         try {
@@ -995,6 +1063,45 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    document.getElementById('createChildKitSubmitBtn').addEventListener('click', async function() {
+        const name = document.getElementById('childKitName').value.trim();
+        const description = document.getElementById('childKitDescription').value.trim();
+        const rows = getPasteGridRows(childKitPasteHot);
+
+        if (!childKitTargetRow) {
+            showAlert('No BOM row selected for child kit assignment', 'warning');
+            return;
+        }
+
+        if (!name) {
+            showAlert('Enter a kit name', 'warning');
+            return;
+        }
+
+        showSpinner();
+        try {
+            const response = await fetch('{{ url_for("bom.create_child_kit") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, description, rows })
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to create child kit');
+            }
+
+            addKitOption(data.bom_id, data.name);
+            syncAllChildKitSelectOptions();
+            childKitTargetRow.querySelector('.bom-child-kit').value = String(data.bom_id);
+            createChildKitModal.hide();
+            showAlert(data.message || 'Child kit created', 'success');
+        } catch (error) {
+            showAlert(`Error creating child kit: ${error.message}`, 'danger');
+        } finally {
+            hideSpinner();
+        }
+    });
+
     document.getElementById('deleteBomBtn').addEventListener('click', async function(event) {
         event.preventDefault();
         if (!confirm('Delete this BOM? This cannot be undone.')) {
@@ -1021,6 +1128,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('importModal').addEventListener('shown.bs.modal', function() {
         initializeImportPasteGrid();
+    });
+
+    document.getElementById('createChildKitModal').addEventListener('shown.bs.modal', function() {
+        initializeChildKitPasteGrid();
+    });
+
+    document.getElementById('createChildKitModal').addEventListener('hidden.bs.modal', function() {
+        childKitTargetRow = null;
     });
 });
 </script>

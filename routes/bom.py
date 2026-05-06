@@ -1437,6 +1437,43 @@ def import_components(bom_id):
     }), 200
 
 
+@bom_bp.route('/create-child-kit', methods=['POST'])
+def create_child_kit():
+    data = request.json or {}
+    name = (data.get('name') or '').strip()
+    description = (data.get('description') or '').strip() or None
+    rows = data.get('rows') or []
+
+    if not name:
+        return jsonify({'error': 'Kit name is required'}), 400
+
+    try:
+        with db_cursor(commit=True) as cur:
+            insert_query = _with_returning_clause('''
+                INSERT INTO bom_headers (name, description, type)
+                VALUES (?, ?, 'kit')
+            ''')
+            _execute_with_cursor(cur, insert_query, [name, description])
+            bom_id = _fetch_inserted_id(cur)
+
+            if not bom_id:
+                raise RuntimeError("Failed to create child kit")
+
+            if rows:
+                df = pd.DataFrame(rows)
+                _import_bom_dataframe(cur, bom_id, df)
+
+        return jsonify({
+            'status': 'success',
+            'bom_id': bom_id,
+            'name': name,
+            'message': f'Created child kit {name}'
+        }), 200
+    except Exception as exc:
+        logging.error(f"Error creating child kit: {exc}", exc_info=True)
+        return jsonify({'error': str(exc)}), 400
+
+
 @bom_bp.route('/api/customers/search')
 def search_customers():
     search = request.args.get('q', '')
