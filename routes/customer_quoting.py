@@ -2217,6 +2217,7 @@ def customer_quote_simple(list_id):
             })
             sales_history_by_part = {}
             if base_part_numbers:
+                sales_cutoff = "CURRENT_DATE - INTERVAL '9 months'" if _using_postgres() else "date('now', '-9 months')"
                 placeholders = ', '.join(['?'] * len(base_part_numbers))
                 sales_history_rows = _execute_with_cursor(cur, f"""
                     WITH ranked_sales AS (
@@ -2233,6 +2234,7 @@ def customer_quote_simple(list_id):
                         WHERE sol.base_part_number IN ({placeholders})
                           AND sol.price IS NOT NULL
                           AND sol.price > 0
+                          AND so.date_entered >= {sales_cutoff}
                     )
                     SELECT
                         base_part_number,
