@@ -290,6 +290,39 @@
     position: relative;
 }
 
+.quote-price-cell.quote-delta-over {
+    background-color: rgba(220, 53, 69, var(--quote-delta-alpha, 0.08));
+}
+
+.quote-price-cell.quote-delta-under {
+    background-color: rgba(13, 110, 253, var(--quote-delta-alpha, 0.08));
+}
+
+.quote-price-cell .quote-delta-indicator {
+    display: none;
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    pointer-events: none;
+}
+
+.quote-price-cell.quote-delta-over .quote-delta-indicator,
+.quote-price-cell.quote-delta-under .quote-delta-indicator {
+    display: inline-block;
+}
+
+.quote-price-cell.quote-delta-over .quote-delta-indicator {
+    background-color: rgba(220, 53, 69, calc(var(--quote-delta-alpha, 0.08) + 0.2));
+}
+
+.quote-price-cell.quote-delta-under .quote-delta-indicator {
+    background-color: rgba(13, 110, 253, calc(var(--quote-delta-alpha, 0.08) + 0.2));
+}
+
 .quote-price-cell input {
     font-weight: 700;
     font-size: 1rem !important;
@@ -851,6 +884,7 @@
         </td>
 
         <td class="quote-price-cell quote-price-separator sticky-right-2">
+            <span class="quote-delta-indicator" aria-hidden="true"></span>
             <div class="value-stack">
                 <input type="number" class="form-control form-control-sm editable-field"
                        data-field="quote_price_gbp"
