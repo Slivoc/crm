@@ -679,7 +679,9 @@ def view_bom(bom_id):
                 COALESCE(ol.price, 0) as current_price,
                 ol.lead_time as current_lead_time,
                 s.name as supplier_name,
-                c.currency_code
+                c.currency_code,
+                bl.child_bom_header_id,
+                child_bh.name AS child_bom_name
             FROM bom_lines bl
             LEFT JOIN part_numbers pn ON bl.base_part_number = pn.base_part_number
             LEFT JOIN bom_pricing bp ON bl.id = bp.bom_line_id
@@ -687,6 +689,7 @@ def view_bom(bom_id):
             LEFT JOIN offers o ON ol.offer_id = o.id
             LEFT JOIN suppliers s ON o.supplier_id = s.id
             LEFT JOIN currencies c ON o.currency_id = c.id
+            LEFT JOIN bom_headers child_bh ON child_bh.id = bl.child_bom_header_id
             WHERE bl.bom_header_id = ?
             ORDER BY bl.position, bl.id
         ''', (bom_id,), fetch='all')
@@ -695,6 +698,7 @@ def view_bom(bom_id):
         for row in lines_rows:
             row_dict = dict(row)
             components.append({
+                'line_id': row_dict.get('id'),
                 'base_part_number': row_dict.get('part_number') or row_dict.get('base_part_number') or '',
                 'quantity': int(row_dict.get('quantity', 0) or 0),
                 'position': int(row_dict.get('position', 0) or 0),
@@ -702,7 +706,9 @@ def view_bom(bom_id):
                 'current_price': float(row_dict.get('current_price', 0) or 0),
                 'supplier_name': row_dict.get('supplier_name', ''),
                 'currency_code': row_dict.get('currency_code', ''),
-                'lead_time': row_dict.get('current_lead_time', '')
+                'lead_time': row_dict.get('current_lead_time', ''),
+                'child_bom_header_id': row_dict.get('child_bom_header_id'),
+                'child_bom_name': row_dict.get('child_bom_name')
             })
 
         logging.debug(f"Processed {len(components)} components")
@@ -793,13 +799,13 @@ def update_bom(bom_id):
     try:
         with db_cursor(commit=True) as cur:
             existing_lines = _execute_with_cursor(cur, '''
-                SELECT id, base_part_number, position 
+                SELECT id, base_part_number, position, child_bom_header_id 
                 FROM bom_lines 
                 WHERE bom_header_id = ?
             ''', (bom_id,)).fetchall()
 
             existing_lines_dict = {
-                (line['base_part_number'], line['position']): line['id']
+                (line['base_part_number'], line['position'], line.get('child_bom_header_id')): line['id']
                 for line in existing_lines
             }
 
@@ -809,6 +815,8 @@ def update_bom(bom_id):
                 position = component.get('position', 0)
                 quantity = component.get('quantity', 0)
                 guide_price = component.get('guide_price')
+                child_bom_header_id = component.get('child_bom_header_id')
+                accepted_alternates = component.get('accepted_alternates') or []
 
                 print(f"Processing part: {raw_part_number} -> {base_part_number}")
                 print(f"  guide_price from request: {guide_price} (type: {type(guide_price)})")
@@ -825,7 +833,7 @@ def update_bom(bom_id):
                             VALUES (?, ?)
                         ''', (raw_part_number, base_part_number))
 
-                line_key = (base_part_number, position)
+                line_key = (base_part_number, position, child_bom_header_id)
                 if line_key in existing_lines_dict:
                     print(f"  Updating existing line {existing_lines_dict[line_key]}")
                     _execute_with_cursor(cur, '''
@@ -833,13 +841,15 @@ def update_bom(bom_id):
                         SET quantity = ?,
                             position = ?,
                             base_part_number = ?,
-                            guide_price = ?
+                            guide_price = ?,
+                            child_bom_header_id = ?
                         WHERE id = ?
                     ''', (
                         quantity,
                         position,
                         base_part_number,
                         guide_price,
+                        child_bom_header_id,
                         existing_lines_dict[line_key]
                     ))
                 else:
@@ -850,15 +860,51 @@ def update_bom(bom_id):
                             base_part_number, 
                             quantity, 
                             position,
-                            guide_price
-                        ) VALUES (?, ?, ?, ?, ?)
+                            guide_price,
+                            child_bom_header_id
+                        ) VALUES (?, ?, ?, ?, ?, ?)
                     ''', (
                         bom_id,
                         base_part_number,
                         quantity,
                         position,
-                        guide_price
+                        guide_price,
+                        child_bom_header_id
                     ))
+
+                line_id = existing_lines_dict.get(line_key)
+                if not line_id:
+                    line_id_row = _execute_with_cursor(cur, '''
+                        SELECT id FROM bom_lines
+                        WHERE bom_header_id = ?
+                          AND base_part_number = ?
+                          AND position = ?
+                          AND ((child_bom_header_id IS NULL AND ? IS NULL) OR child_bom_header_id = ?)
+                        ORDER BY id DESC
+                        LIMIT 1
+                    ''', (bom_id, base_part_number, position, child_bom_header_id, child_bom_header_id)).fetchone()
+                    line_id = line_id_row['id'] if line_id_row else None
+
+                if line_id is not None:
+                    _execute_with_cursor(cur, 'DELETE FROM bom_line_accepted_alternates WHERE bom_line_id = ?', (line_id,))
+                    for rank, alt in enumerate(accepted_alternates, start=1):
+                        raw_alt = (str(alt).strip() if alt is not None else '')
+                        if not raw_alt:
+                            continue
+                        alt_base = create_base_part_number(raw_alt)
+                        alt_part = _execute_with_cursor(cur,
+                            'SELECT base_part_number FROM part_numbers WHERE base_part_number = ?',
+                            (alt_base,)
+                        ).fetchone()
+                        if not alt_part:
+                            _execute_with_cursor(cur,
+                                'INSERT INTO part_numbers (part_number, base_part_number) VALUES (?, ?)',
+                                (raw_alt, alt_base)
+                            )
+                        _execute_with_cursor(cur, '''
+                            INSERT INTO bom_line_accepted_alternates (bom_line_id, alt_base_part_number, preference_rank)
+                            VALUES (?, ?, ?)
+                        ''', (line_id, alt_base, rank))
 
         return jsonify({
             'status': 'success',
@@ -964,6 +1010,8 @@ def add_component(bom_id):
             max_position = max_position_row['max_pos'] if max_position_row else 0
 
             guide_price_value = data.get('guide_price')
+            child_bom_header_id = data.get('child_bom_header_id')
+            accepted_alternates = data.get('accepted_alternates') or []
             logging.info(f"guide_price from add_component: {guide_price_value} (type: {type(guide_price_value)})")
 
             insert_line = _with_returning_clause('''
@@ -972,19 +1020,42 @@ def add_component(bom_id):
                     base_part_number,
                     quantity,
                     position,
-                    guide_price
-                ) VALUES (?, ?, ?, ?, ?)
+                    guide_price,
+                    child_bom_header_id
+                ) VALUES (?, ?, ?, ?, ?, ?)
             ''')
             _execute_with_cursor(cur, insert_line, (
                 bom_id,
                 base_part_number,
                 data.get('quantity', 1),
                 max_position + 10,
-                guide_price_value
+                guide_price_value,
+                child_bom_header_id
             ))
             new_line_id = _fetch_inserted_id(cur)
             if not new_line_id:
                 raise RuntimeError("Failed to insert BOM line")
+
+            for rank, alt in enumerate(accepted_alternates, start=1):
+                raw_alt = (str(alt).strip() if alt is not None else '')
+                if not raw_alt:
+                    continue
+                alt_base = create_base_part_number(raw_alt)
+                alt_part = _execute_with_cursor(
+                    cur,
+                    'SELECT base_part_number FROM part_numbers WHERE base_part_number = ?',
+                    (alt_base,)
+                ).fetchone()
+                if not alt_part:
+                    _execute_with_cursor(
+                        cur,
+                        'INSERT INTO part_numbers (part_number, base_part_number) VALUES (?, ?)',
+                        (raw_alt, alt_base)
+                    )
+                _execute_with_cursor(cur, '''
+                    INSERT INTO bom_line_accepted_alternates (bom_line_id, alt_base_part_number, preference_rank)
+                    VALUES (?, ?, ?)
+                ''', (new_line_id, alt_base, rank))
 
             new_component = _execute_with_cursor(cur, '''
                 SELECT bl.*,
@@ -994,7 +1065,7 @@ def add_component(bom_id):
                        ol.lead_time as current_lead_time,
                        s.name as supplier_name,
                        c.currency_code,
-                       bl.guide_price
+                       bl.guide_price, bl.child_bom_header_id, child_bh.name AS child_bom_name
                 FROM bom_lines bl
                 LEFT JOIN part_numbers pn ON bl.base_part_number = pn.base_part_number
                 LEFT JOIN bom_pricing bp ON bl.id = bp.bom_line_id
@@ -1002,6 +1073,7 @@ def add_component(bom_id):
                 LEFT JOIN offers o ON ol.offer_id = o.id
                 LEFT JOIN suppliers s ON o.supplier_id = s.id
                 LEFT JOIN currencies c ON o.currency_id = c.id
+                LEFT JOIN bom_headers child_bh ON child_bh.id = bl.child_bom_header_id
                 WHERE bl.id = ?
             ''', (new_line_id,)).fetchone()
 
@@ -1016,7 +1088,10 @@ def add_component(bom_id):
             'current_price': new_component.get('current_price') or 0.0,
             'supplier_name': new_component.get('supplier_name') or '',
             'currency_code': new_component.get('currency_code') or '',
-            'lead_time': new_component.get('current_lead_time') or ''
+            'lead_time': new_component.get('current_lead_time') or '',
+            'child_bom_header_id': new_component.get('child_bom_header_id'),
+            'child_bom_name': new_component.get('child_bom_name'),
+            'accepted_alternates': [str(a).strip() for a in accepted_alternates if str(a).strip()]
         }
 
         return jsonify({
