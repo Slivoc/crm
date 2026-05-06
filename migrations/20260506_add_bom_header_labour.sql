@@ -1,0 +1,2 @@
+ALTER TABLE bom_headers
+ADD COLUMN IF NOT EXISTS labour_gbp_per_build NUMERIC NOT NULL DEFAULT 0;

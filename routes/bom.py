@@ -325,6 +325,31 @@ def _build_bom_matrix_data(bom_id):
     }
 
 
+def _get_bom_labour_rollup(bom_id, multiplier=1, path=None):
+    path = list(path or [])
+    if bom_id in path:
+        cycle = ' -> '.join(str(part) for part in path + [bom_id])
+        raise ValueError(f"Cyclic child BOM relationship detected: {cycle}")
+
+    bom_row = _fetch_bom_header(bom_id)
+    labour_per_build = float((bom_row or {}).get('labour_gbp_per_build') or 0)
+    total_labour = labour_per_build * float(multiplier or 0)
+
+    for row in _fetch_bom_lines(bom_id):
+        line = dict(row)
+        child_bom_header_id = line.get('child_bom_header_id')
+        if not child_bom_header_id:
+            continue
+        child_multiplier = float(_coerce_quantity(line.get('quantity')) or 0) * float(multiplier or 0)
+        total_labour += _get_bom_labour_rollup(
+            child_bom_header_id,
+            multiplier=child_multiplier,
+            path=path + [bom_id],
+        )
+
+    return total_labour
+
+
 def _get_linked_parts_lists_for_bom(bom_id):
     return db_execute('''
         SELECT
@@ -1203,12 +1228,13 @@ def create_bom():
     try:
         with db_cursor(commit=True) as cur:
             insert_query = _with_returning_clause('''
-                INSERT INTO bom_headers (name, description, type)
-                VALUES (?, ?, 'kit')
+                INSERT INTO bom_headers (name, description, type, labour_gbp_per_build)
+                VALUES (?, ?, 'kit', ?)
             ''')
             _execute_with_cursor(cur, insert_query, [
                 request.form['name'],
-                request.form.get('description')
+                request.form.get('description'),
+                float(request.form.get('labour_gbp_per_build') or 0),
             ])
             bom_id = _fetch_inserted_id(cur)
 
@@ -1422,7 +1448,10 @@ def view_bom_matrix(bom_id):
             'child_kit_count': len(matrix_data['child_columns']),
             'total_quantity': sum(row.get('total_quantity') or 0 for row in matrix_data['matrix_rows']),
             'total_chosen_value_gbp': (progress_summary or {}).get('total_base_cost_gbp', 0.0) if active_parts_list else 0.0,
+            'labour_gbp_per_build': float(bom.get('labour_gbp_per_build') or 0),
+            'total_labour_gbp': _get_bom_labour_rollup(bom_id, multiplier=1),
         }
+        matrix_summary['total_combined_value_gbp'] = (matrix_summary['total_chosen_value_gbp'] or 0.0) + (matrix_summary['total_labour_gbp'] or 0.0)
 
         return render_template(
             'bom/matrix_bom.html',
@@ -1670,6 +1699,7 @@ def create_child_kit():
     data = request.json or {}
     name = (data.get('name') or '').strip()
     description = (data.get('description') or '').strip() or None
+    labour_gbp_per_build = float(data.get('labour_gbp_per_build') or 0)
     rows = data.get('rows') or []
 
     if not name:
@@ -1690,6 +1720,12 @@ def create_child_kit():
             if rows:
                 df = pd.DataFrame(rows)
                 _import_bom_dataframe(cur, bom_id, df)
+
+            _execute_with_cursor(cur, '''
+                UPDATE bom_headers
+                SET labour_gbp_per_build = ?
+                WHERE id = ?
+            ''', (labour_gbp_per_build, bom_id))
 
         return jsonify({
             'status': 'success',
@@ -1987,6 +2023,7 @@ def rename_bom(bom_id):
     data = request.json or {}
     name = (data.get('name') or '').strip()
     description = (data.get('description') or '').strip() or None
+    labour_gbp_per_build = float(data.get('labour_gbp_per_build') or 0)
 
     if not name:
         return jsonify({
@@ -2005,9 +2042,9 @@ def rename_bom(bom_id):
 
             _execute_with_cursor(cur, '''
                 UPDATE bom_headers
-                SET name = ?, description = ?
+                SET name = ?, description = ?, labour_gbp_per_build = ?
                 WHERE id = ?
-            ''', (name, description, bom_id))
+            ''', (name, description, labour_gbp_per_build, bom_id))
 
         return jsonify({
             'status': 'success',

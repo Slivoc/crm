@@ -131,6 +131,7 @@
                             {% if bom_total_quoted_gbp is not none %}£{{ "%.2f"|format(bom_total_quoted_gbp) }}{% else %}-{% endif %}
                         </small></div>
                         {% endif %}
+                        <div><small class="text-white-50">Kit labour per build: £{{ "%.2f"|format((bom.labour_gbp_per_build or 0)|float) }}</small></div>
                     </div>
                     <div class="btn-group">
                         <button type="button" class="btn btn-light btn-sm" id="saveBomBtn">
@@ -238,9 +239,13 @@
                     <label for="renameBomName" class="form-label">Name</label>
                     <input type="text" class="form-control" id="renameBomName" value="{{ bom.name }}">
                 </div>
-                <div>
+                <div class="mb-3">
                     <label for="renameBomDescription" class="form-label">Description</label>
                     <input type="text" class="form-control" id="renameBomDescription" value="{{ bom.description or '' }}">
+                </div>
+                <div>
+                    <label for="renameBomLabour" class="form-label">Labour GBP Per Build</label>
+                    <input type="number" min="0" step="0.01" class="form-control" id="renameBomLabour" value="{{ bom.labour_gbp_per_build or 0 }}">
                 </div>
             </div>
             <div class="modal-footer">
@@ -385,6 +390,10 @@
                     <div class="col-md-4">
                         <label for="childKitDescription" class="form-label">Description</label>
                         <input type="text" class="form-control" id="childKitDescription" placeholder="Optional">
+                    </div>
+                    <div class="col-md-4">
+                        <label for="childKitLabour" class="form-label">Labour GBP Per Build</label>
+                        <input type="number" min="0" step="0.01" class="form-control" id="childKitLabour" value="0">
                     </div>
                 </div>
                 <div class="mb-2 small text-muted">
@@ -607,6 +616,7 @@ function openCreateChildKitModal(row) {
     childKitTargetRow = row;
     document.getElementById('childKitName').value = '';
     document.getElementById('childKitDescription').value = '';
+    document.getElementById('childKitLabour').value = '0';
     resetPasteGrid(childKitPasteHot);
     createChildKitModal.show();
     setTimeout(() => document.getElementById('childKitName').focus(), 150);
@@ -1212,6 +1222,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('createChildKitSubmitBtn').addEventListener('click', async function() {
         const name = document.getElementById('childKitName').value.trim();
         const description = document.getElementById('childKitDescription').value.trim();
+        const labourGbpPerBuild = document.getElementById('childKitLabour').value;
         const rows = getPasteGridRows(childKitPasteHot);
 
         if (!childKitTargetRow) {
@@ -1229,7 +1240,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const response = await fetch('{{ url_for("bom.create_child_kit") }}', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, description, rows })
+                body: JSON.stringify({ name, description, labour_gbp_per_build: labourGbpPerBuild, rows })
             });
             const data = await response.json();
             if (!response.ok) {
@@ -1275,6 +1286,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('renameBomSubmitBtn').addEventListener('click', async function() {
         const name = document.getElementById('renameBomName').value.trim();
         const description = document.getElementById('renameBomDescription').value.trim();
+        const labourGbpPerBuild = document.getElementById('renameBomLabour').value;
         if (!name) {
             showAlert('Enter a BOM name', 'warning');
             return;
@@ -1285,7 +1297,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const response = await fetch('{{ url_for("bom.rename_bom", bom_id=bom.id) }}', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, description })
+                body: JSON.stringify({ name, description, labour_gbp_per_build: labourGbpPerBuild })
             });
             const data = await response.json();
             if (!response.ok) {

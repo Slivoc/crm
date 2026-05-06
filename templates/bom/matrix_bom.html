@@ -144,7 +144,7 @@
     {% endif %}
 
     <div class="row g-3 mb-4">
-        <div class="col-md-3">
+        <div class="col-md-2">
             <div class="card summary-card h-100">
                 <div class="card-body">
                     <div class="text-muted small">Child Kits</div>
@@ -152,7 +152,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
             <div class="card summary-card h-100">
                 <div class="card-body">
                     <div class="text-muted small">Matrix Rows</div>
@@ -160,7 +160,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
             <div class="card summary-card h-100">
                 <div class="card-body">
                     <div class="text-muted small">Total Component Qty</div>
@@ -168,15 +168,37 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
             <div class="card summary-card h-100">
                 <div class="card-body">
-                    <div class="text-muted small">Chosen Value</div>
+                    <div class="text-muted small">Material</div>
                     <div class="value">
                         {% if active_parts_list and matrix_summary.total_chosen_value_gbp %}
                         £{{ "%.2f"|format(matrix_summary.total_chosen_value_gbp) }}
                         {% else %}
                         -
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card summary-card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Labour</div>
+                    <div class="value">£{{ "%.2f"|format(matrix_summary.total_labour_gbp or 0) }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card summary-card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Combined</div>
+                    <div class="value">
+                        {% if active_parts_list %}
+                        £{{ "%.2f"|format(matrix_summary.total_combined_value_gbp or 0) }}
+                        {% else %}
+                        £{{ "%.2f"|format(matrix_summary.total_labour_gbp or 0) }}
                         {% endif %}
                     </div>
                 </div>
