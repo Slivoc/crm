@@ -335,7 +335,7 @@
                         {% for row in matrix_data.matrix_rows %}
                         {% set progress = row.pricing_progress %}
                         <tr data-base-part-number="{{ row.base_part_number }}"
-                            data-demand-qty="{{ row.total_quantity }}"
+                            data-demand-qty="{{ progress.effective_quantity if progress and progress.effective_quantity is not none else row.total_quantity }}"
                             data-parts-list-line-id="{{ progress.parts_list_line_id if progress else '' }}"
                             data-source-unit-cost="{{ progress.lot_source_unit_cost_gbp if progress and progress.lot_source_unit_cost_gbp is not none else (progress.chosen_unit_gbp if progress and progress.chosen_unit_gbp is not none else '') }}"
                             data-purchase-multiple="{{ progress.lot_purchase_multiple if progress and progress.lot_purchase_multiple is not none else '' }}">
@@ -417,7 +417,7 @@
                         {% for row in matrix_data.direct_rows %}
                         {% set progress = row.pricing_progress %}
                         <tr data-base-part-number="{{ row.base_part_number }}"
-                            data-demand-qty="{{ row.total_quantity }}"
+                            data-demand-qty="{{ progress.effective_quantity if progress and progress.effective_quantity is not none else row.total_quantity }}"
                             data-parts-list-line-id="{{ progress.parts_list_line_id if progress else '' }}"
                             data-source-unit-cost="{{ progress.lot_source_unit_cost_gbp if progress and progress.lot_source_unit_cost_gbp is not none else (progress.chosen_unit_gbp if progress and progress.chosen_unit_gbp is not none else '') }}"
                             data-purchase-multiple="{{ progress.lot_purchase_multiple if progress and progress.lot_purchase_multiple is not none else '' }}">
