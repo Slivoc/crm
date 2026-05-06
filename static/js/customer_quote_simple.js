@@ -420,6 +420,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         quoteCell.classList.remove('quote-delta-over', 'quote-delta-under');
         quoteCell.style.setProperty('--quote-delta-alpha', '0.08');
+        quoteCell.style.setProperty('--quote-delta-bar-width', '0%');
         quoteCell.removeAttribute('title');
 
         if (isNoBid) return;
@@ -433,7 +434,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const intensity = Math.min(Math.abs(deltaPct) / 200, 1);
         const alpha = (0.1 + intensity * 0.3).toFixed(3);
+        const barWidth = `${Math.max(14, Math.min(100, 12 + Math.abs(deltaPct) * 0.35)).toFixed(1)}%`;
         quoteCell.style.setProperty('--quote-delta-alpha', alpha);
+        quoteCell.style.setProperty('--quote-delta-bar-width', barWidth);
         quoteCell.classList.add(deltaPct > 0 ? 'quote-delta-over' : 'quote-delta-under');
         const dir = deltaPct > 0 ? 'above' : 'below';
         quoteCell.title = `Quote is ${Math.abs(deltaPct).toFixed(0)}% ${dir} guide price (GBP ${referencePrice.toFixed(2)})`;

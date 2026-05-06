@@ -288,6 +288,8 @@
 .quote-price-cell {
     background-color: #f0fff4;
     position: relative;
+    --quote-delta-alpha: 0.08;
+    --quote-delta-bar-width: 0%;
 }
 
 .quote-price-cell.quote-delta-over {
@@ -301,13 +303,14 @@
 .quote-price-cell .quote-delta-indicator {
     display: none;
     position: absolute;
-    top: 4px;
-    right: 6px;
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    border: 1px solid rgba(0, 0, 0, 0.2);
+    left: 0;
+    bottom: 0;
+    width: var(--quote-delta-bar-width, 0%);
+    max-width: 100%;
+    height: 5px;
+    border-radius: 0 999px 999px 0;
     pointer-events: none;
+    opacity: 0.95;
 }
 
 .quote-price-cell.quote-delta-over .quote-delta-indicator,
@@ -316,11 +319,11 @@
 }
 
 .quote-price-cell.quote-delta-over .quote-delta-indicator {
-    background-color: rgba(220, 53, 69, calc(var(--quote-delta-alpha, 0.08) + 0.2));
+    background: linear-gradient(90deg, rgba(220, 53, 69, 0.55) 0%, rgba(220, 53, 69, 0.95) 100%);
 }
 
 .quote-price-cell.quote-delta-under .quote-delta-indicator {
-    background-color: rgba(13, 110, 253, calc(var(--quote-delta-alpha, 0.08) + 0.2));
+    background: linear-gradient(90deg, rgba(13, 110, 253, 0.55) 0%, rgba(13, 110, 253, 0.95) 100%);
 }
 
 .quote-price-cell input {
