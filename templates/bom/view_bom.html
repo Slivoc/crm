@@ -236,14 +236,24 @@ function initializeSelect2() {
     $('#customer_id').select2({
         theme: 'bootstrap-5',
         ajax: {
-            url: '{{ url_for("bom.search_customers") }}',
+            url: '{{ url_for("customers.customer_search") }}',
             dataType: 'json',
             delay: 250,
             data: function(params) {
-                return { q: params.term };
+                return {
+                    q: params.term,
+                    limit: 20
+                };
             },
             processResults: function(data) {
-                return { results: data.results };
+                return {
+                    results: (data || []).map(function(customer) {
+                        return {
+                            id: customer.id,
+                            text: customer.name
+                        };
+                    })
+                };
             },
             cache: true
         },
