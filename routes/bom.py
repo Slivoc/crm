@@ -1174,7 +1174,7 @@ def create_parts_list_from_bom(bom_id):
 
             for line_number, row in enumerate(flattened_rows, start=1):
                 quantity = _coerce_quantity(row.get('total_quantity'))
-                _execute_with_cursor(cur, '''
+                inserted_line = _execute_with_cursor(cur, '''
                     INSERT INTO parts_list_lines (
                         parts_list_id, line_number, customer_part_number, base_part_number,
                         revision, description, quantity, chosen_supplier_id, chosen_cost,
@@ -1182,6 +1182,7 @@ def create_parts_list_from_bom(bom_id):
                         customer_notes, internal_notes, date_created, date_modified
                     )
                     VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id
                 ''', (
                     parts_list_id,
                     line_number,
@@ -1190,7 +1191,26 @@ def create_parts_list_from_bom(bom_id):
                     quantity,
                     quantity,
                     f"Generated from BOM {bom_row['name']} (ID {bom_id})."
-                ))
+                )).fetchone()
+
+                parts_list_line_id = inserted_line['id'] if inserted_line else None
+                guide_price = row.get('guide_price')
+                if parts_list_line_id and guide_price is not None:
+                    _execute_with_cursor(cur, '''
+                        INSERT INTO customer_quote_lines (
+                            parts_list_line_id,
+                            target_price_gbp,
+                            quoted_status,
+                            display_part_number,
+                            quoted_part_number
+                        )
+                        VALUES (?, ?, 'created', ?, ?)
+                    ''', (
+                        parts_list_line_id,
+                        float(guide_price),
+                        row.get('part_number') or row.get('base_part_number'),
+                        row.get('part_number') or row.get('base_part_number'),
+                    ))
 
         return redirect(url_for('customer_quoting.customer_quote_simple', list_id=parts_list_id))
     except Exception as exc:

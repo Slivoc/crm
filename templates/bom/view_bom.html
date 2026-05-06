@@ -49,6 +49,11 @@
     <button type="button" class="btn btn-light btn-sm" id="saveBomBtn">
         <i class="fas fa-save"></i> Save Changes
     </button>
+    <form method="post" action="{{ url_for('bom.create_parts_list_from_bom', bom_id=bom.id) }}" class="d-inline">
+        <button type="submit" class="btn btn-light btn-sm">
+            <i class="fas fa-list"></i> Create Parts List
+        </button>
+    </form>
                         <button type="button" class="btn btn-light btn-sm dropdown-toggle" data-bs-toggle="dropdown">
                             <i class="fas fa-ellipsis-v"></i>
                         </button>

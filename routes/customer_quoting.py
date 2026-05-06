@@ -370,17 +370,30 @@ def customer_quote(list_id):
                         else line_dict.get('customer_part_number')
                     )
 
-                    # Get highest BOM guide price for this part
-                    bom_data = _execute_with_cursor(cur, """
-                        SELECT 
-                            bl.guide_price,
-                            bh.name as bom_name
-                        FROM bom_lines bl
-                        JOIN bom_headers bh ON bl.bom_header_id = bh.id
-                        WHERE bl.base_part_number = ?
-                        ORDER BY bl.guide_price DESC
-                        LIMIT 1
-                    """, (line['base_part_number'],)).fetchone()
+                    source_bom_id = header.get('bom_header_id')
+                    if source_bom_id:
+                        bom_data = _execute_with_cursor(cur, """
+                            SELECT
+                                bl.guide_price,
+                                bh.name as bom_name
+                            FROM bom_lines bl
+                            JOIN bom_headers bh ON bl.bom_header_id = bh.id
+                            WHERE bl.base_part_number = ?
+                              AND bl.bom_header_id = ?
+                            ORDER BY bl.guide_price DESC
+                            LIMIT 1
+                        """, (line['base_part_number'], source_bom_id)).fetchone()
+                    else:
+                        bom_data = _execute_with_cursor(cur, """
+                            SELECT 
+                                bl.guide_price,
+                                bh.name as bom_name
+                            FROM bom_lines bl
+                            JOIN bom_headers bh ON bl.bom_header_id = bh.id
+                            WHERE bl.base_part_number = ?
+                            ORDER BY bl.guide_price DESC
+                            LIMIT 1
+                        """, (line['base_part_number'],)).fetchone()
 
                     # Add BOM guide price to line
                     if bom_data:
@@ -2273,14 +2286,26 @@ def customer_quote_simple(list_id):
                         or line_dict.get('customer_part_number')
                     )
                 )
-                bom_data = _execute_with_cursor(cur, """
-                    SELECT bl.guide_price, bh.name as bom_name
-                    FROM bom_lines bl
-                    JOIN bom_headers bh ON bl.bom_header_id = bh.id
-                    WHERE bl.base_part_number = ?
-                    ORDER BY bl.guide_price DESC
-                    LIMIT 1
-                """, (line['base_part_number'],)).fetchone()
+                source_bom_id = header.get('bom_header_id')
+                if source_bom_id:
+                    bom_data = _execute_with_cursor(cur, """
+                        SELECT bl.guide_price, bh.name as bom_name
+                        FROM bom_lines bl
+                        JOIN bom_headers bh ON bl.bom_header_id = bh.id
+                        WHERE bl.base_part_number = ?
+                          AND bl.bom_header_id = ?
+                        ORDER BY bl.guide_price DESC
+                        LIMIT 1
+                    """, (line['base_part_number'], source_bom_id)).fetchone()
+                else:
+                    bom_data = _execute_with_cursor(cur, """
+                        SELECT bl.guide_price, bh.name as bom_name
+                        FROM bom_lines bl
+                        JOIN bom_headers bh ON bl.bom_header_id = bh.id
+                        WHERE bl.base_part_number = ?
+                        ORDER BY bl.guide_price DESC
+                        LIMIT 1
+                    """, (line['base_part_number'],)).fetchone()
 
                 if bom_data:
                     line_dict['bom_guide_price'] = bom_data['guide_price']
