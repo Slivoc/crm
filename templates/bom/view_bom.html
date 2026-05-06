@@ -34,7 +34,7 @@
 }
 
 .alt-summary {
-    min-width: 180px;
+    min-width: 90px;
     white-space: normal;
     line-height: 1.25;
 }
@@ -189,10 +189,10 @@
                         <table class="table table-sm table-hover align-middle mb-0" id="bomComponentsTable">
                             <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
                                 <tr>
-                                    <th style="min-width: 150px;">Part Number</th>
-                                    <th style="min-width: 150px;">Quoted As</th>
-                                    <th style="min-width: 160px;">Child Kit</th>
-                                    <th style="min-width: 180px;">Accepted Alternatives</th>
+                                    <th style="min-width: 135px;">Part</th>
+                                    <th style="min-width: 135px;">Ship As</th>
+                                    <th style="min-width: 150px;">Kit</th>
+                                    <th style="min-width: 100px;">Alts</th>
                                     <th style="min-width: 90px;">Qty</th>
                                     <th style="min-width: 90px;">Position</th>
                                     <th style="min-width: 95px;">Guide</th>
@@ -210,7 +210,7 @@
             </div>
         </div>
 
-        <div class="col-lg-4">
+        <div class="col-xl-3 col-lg-4">
             <div class="card shadow-sm border-0 details-panel">
                 <div class="card-header bg-light">
                     <strong>Parts List Details</strong>
@@ -496,7 +496,7 @@ function normalizeAlternates(rawValue) {
 
 function getAlternateDisplayValue(rawValue) {
     const values = normalizeAlternates(rawValue);
-    return values.length ? values.join(', ') : 'Choose alternatives';
+    return values.length ? values.join(', ') : 'Choose';
 }
 
 function createKitOptions(selectedId) {
