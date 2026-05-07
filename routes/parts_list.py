@@ -3354,6 +3354,11 @@ def parts_list_costing(list_id):
                  WHERE cql.parts_list_line_id = pll.id
                  ORDER BY cql.date_modified DESC, cql.id DESC
                  LIMIT 1) as customer_quote_is_no_bid,
+                (SELECT cql.target_price_gbp
+                 FROM customer_quote_lines cql
+                 WHERE cql.parts_list_line_id = pll.id
+                 ORDER BY cql.date_modified DESC, cql.id DESC
+                 LIMIT 1) as customer_target_price_gbp,
                 (SELECT COALESCE(SUM(sm.available_quantity), 0)
                  FROM stock_movements sm
                  WHERE sm.base_part_number = pll.base_part_number
@@ -7426,6 +7431,11 @@ def parts_list_sourcing(list_id):
                      WHERE cql.parts_list_line_id = pll.id
                      ORDER BY cql.date_modified DESC, cql.id DESC
                      LIMIT 1) as customer_quote_is_no_bid,
+                    (SELECT cql.target_price_gbp
+                     FROM customer_quote_lines cql
+                     WHERE cql.parts_list_line_id = pll.id
+                     ORDER BY cql.date_modified DESC, cql.id DESC
+                     LIMIT 1) as customer_target_price_gbp,
                     EXISTS(
                         SELECT 1
                         FROM parts_list_lines related
