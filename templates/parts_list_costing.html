@@ -350,6 +350,13 @@
                                     <i class="bi bi-clipboard"></i>
                                 </button>
                             </div>
+                            {% if line.customer_target_price_gbp is not none %}
+                            <div class="mt-1">
+                                <span class="badge bg-light text-dark border">
+                                    Target: £{{ "%.2f"|format(line.customer_target_price_gbp) }}
+                                </span>
+                            </div>
+                            {% endif %}
                         </td>
                         <td>
                             <span class="badge bg-secondary" data-requested-qty="{{ line.quantity }}">

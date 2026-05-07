@@ -402,6 +402,13 @@
                             <td class="text-center"><strong>{{ line.line_number }}</strong></td>
 <td>
     <strong class="text-primary">{{ line.customer_part_number }}</strong>
+    {% if line.customer_target_price_gbp is not none %}
+    <div class="mt-1">
+        <span class="badge bg-light text-dark border">
+            Target: £{{ "%.2f"|format(line.customer_target_price_gbp) }}
+        </span>
+    </div>
+    {% endif %}
     {% set line_status = 'no_bid' if line.customer_quote_is_no_bid else (line.customer_quote_status or 'created') %}
     <div>
         <button class="btn btn-sm line-status-btn {{ 'status-no-bid' if line_status == 'no_bid' else 'status-created' }}"
