@@ -1,0 +1,978 @@
+{% extends "base.html" %}
+
+{% block title %}Line {{ line.line_number }} Workspace - {{ list_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.workspace-shell {
+    max-width: 1500px;
+}
+
+.workspace-header {
+    background: linear-gradient(135deg, #f7fbff 0%, #eef7f1 100%);
+    border: 1px solid #dce8df;
+}
+
+.workspace-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 1rem;
+}
+
+.workspace-card {
+    border: 1px solid #dee2e6;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+}
+
+.stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.stat-box {
+    border: 1px solid #e6eaee;
+    border-radius: 0.75rem;
+    padding: 0.8rem 0.9rem;
+    background: #fff;
+}
+
+.stat-box .label {
+    font-size: 0.78rem;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.stat-box .value {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #1f2933;
+}
+
+.mono {
+    font-family: Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.section-title {
+    font-size: 0.92rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #5c6773;
+    font-weight: 700;
+}
+
+.status-note {
+    min-height: 1.5rem;
+}
+
+.list-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid #d8dde3;
+    border-radius: 999px;
+    padding: 0.25rem 0.6rem;
+    background: #f8f9fa;
+    font-size: 0.78rem;
+}
+
+.coverage-list,
+.history-table {
+    font-size: 0.88rem;
+}
+
+.coverage-list .list-group-item {
+    padding: 0.65rem 0.8rem;
+}
+
+.mini-muted {
+    font-size: 0.78rem;
+    color: #6c757d;
+}
+
+.quote-table th,
+.quote-table td,
+.history-table th,
+.history-table td {
+    vertical-align: middle;
+}
+
+.family-line-active {
+    border-left: 4px solid #0d6efd;
+    background: #eef5ff;
+}
+
+.quote-guidance-good {
+    color: #0f5132;
+}
+
+.quote-guidance-warn {
+    color: #9a3412;
+}
+
+.workspace-sticky {
+    position: sticky;
+    top: 1rem;
+}
+
+@media (max-width: 1100px) {
+    .workspace-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .workspace-sticky {
+        position: static;
+    }
+
+    .stat-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4 workspace-shell">
+    {% set nav_active = 'quote_simple' %}
+    {% set nav_icon = 'bi bi-bezier2' %}
+    {% set show_quote_views = true %}
+    {% include 'partials/parts_list_nav.html' %}
+
+    <div class="card workspace-header mb-3">
+        <div class="card-body">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div>
+                    <div class="mini-muted mb-1">{{ list_name }}{% if customer_name %} · {{ customer_name }}{% endif %}</div>
+                    <h3 class="mb-1 mono">{{ line.requested_part_number or line.customer_part_number or line.base_part_number }}</h3>
+                    <div class="d-flex flex-wrap gap-2">
+                        <span class="list-chip">Line {{ line.line_number }}</span>
+                        {% if line.base_part_number %}
+                        <span class="list-chip mono">Base {{ line.base_part_number }}</span>
+                        {% endif %}
+                        {% if status_name %}
+                        <span class="list-chip">{{ status_name }}</span>
+                        {% endif %}
+                        {% if portal_request_reference %}
+                        <span class="list-chip">Portal {{ portal_request_reference }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                    <span class="mini-muted">Line {{ current_index + 1 }} of {{ total_lines }}</span>
+                    {% if prev_line %}
+                    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('parts_list.parts_list_line_workspace', list_id=list_id, line_id=prev_line.id) }}">
+                        <i class="bi bi-arrow-left"></i> Previous
+                    </a>
+                    {% endif %}
+                    {% if next_line %}
+                    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('parts_list.parts_list_line_workspace', list_id=list_id, line_id=next_line.id) }}">
+                        Next <i class="bi bi-arrow-right"></i>
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="stat-strip mb-3">
+        <div class="stat-box">
+            <div class="label">Requested Qty</div>
+            <div class="value">{{ line.quantity or 0 }}</div>
+        </div>
+        <div class="stat-box">
+            <div class="label">Chosen Qty</div>
+            <div class="value">{{ line.chosen_qty or line.quantity or 0 }}</div>
+        </div>
+        <div class="stat-box">
+            <div class="label">Stock</div>
+            <div class="value">{{ line.stock_quantity or 0 }}</div>
+        </div>
+        <div class="stat-box">
+            <div class="label">Current Quote</div>
+            <div class="value">{% if line.quote_price_gbp is not none %}£{{ "%.2f"|format(line.quote_price_gbp) }}{% else %}-{% endif %}</div>
+        </div>
+    </div>
+
+    <div class="workspace-grid">
+        <div>
+            <div class="card workspace-card mb-3">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div class="section-title">Line Status</div>
+                        <div class="d-flex gap-2">
+                            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('parts_list.parts_list_costing', list_id=list_id) }}">Full Costing</a>
+                            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('parts_list.parts_list_sourcing', list_id=list_id) }}">Full Sourcing</a>
+                            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('customer_quoting.customer_quote_simple', list_id=list_id) }}">Full Quote</a>
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-lg-4">
+                            <label class="form-label">Quoted Status</label>
+                            <select class="form-select" id="quotedStatus">
+                                {% set status_value = line.quoted_status or ('no_bid' if line.is_no_bid else 'created') %}
+                                <option value="created" {{ 'selected' if status_value == 'created' else '' }}>Created</option>
+                                <option value="in_progress" {{ 'selected' if status_value == 'in_progress' else '' }}>In Progress</option>
+                                <option value="quoted" {{ 'selected' if status_value == 'quoted' else '' }}>Quoted</option>
+                                <option value="no_bid" {{ 'selected' if status_value == 'no_bid' else '' }}>No Bid</option>
+                            </select>
+                        </div>
+                        <div class="col-lg-4">
+                            <label class="form-label">Target Price (GBP)</label>
+                            <input id="targetPriceGbp" type="number" class="form-control" min="0" step="0.01"
+                                   value="{{ '%.2f'|format(line.target_price_gbp) if line.target_price_gbp is not none else '' }}">
+                        </div>
+                        <div class="col-lg-4">
+                            <label class="form-label">Lead Days</label>
+                            <input id="leadDays" type="number" class="form-control" min="0" step="1"
+                                   value="{{ line.lead_days or '' }}">
+                        </div>
+
+                        <div class="col-lg-4">
+                            <label class="form-label">Chosen Supplier</label>
+                            <div class="form-control bg-light">{{ line.chosen_supplier_name or ('Stock' if line.chosen_source_type == 'stock' else '-') }}</div>
+                        </div>
+                        <div class="col-lg-4">
+                            <label class="form-label">Chosen Cost</label>
+                            <div class="form-control bg-light">
+                                {% if line.chosen_cost is not none %}
+                                {{ line.chosen_currency_code or 'GBP' }} {{ "%.2f"|format(line.chosen_cost) }}
+                                {% else %}
+                                -
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <label class="form-label">Chosen Source</label>
+                            <div class="form-control bg-light">{{ line.chosen_source_type or '-' }}</div>
+                        </div>
+
+                        <div class="col-lg-4">
+                            <label class="form-label">Chosen Qty</label>
+                            <input id="chosenQty" type="number" class="form-control" min="0" step="1"
+                                   value="{{ line.chosen_qty if line.chosen_qty is not none else line.quantity }}">
+                        </div>
+                        <div class="col-lg-4">
+                            <label class="form-label">Base Cost (GBP)</label>
+                            <div class="input-group">
+                                <input id="baseCostGbp" type="text" class="form-control bg-light" readonly
+                                       value="{{ '%.2f'|format(line.base_cost_gbp or 0) }}">
+                                <button class="btn btn-outline-secondary" type="button" id="calcBaseBtn">Recalc Base</button>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <label class="form-label">Delivery / Line (read-only)</label>
+                            <div class="form-control bg-light">
+                                {% if line.delivery_per_line is not none %}£{{ "%.2f"|format(line.delivery_per_line) }}{% else %}-{% endif %}
+                            </div>
+                        </div>
+
+                        <div class="col-lg-4">
+                            <label class="form-label">Margin %</label>
+                            <div class="input-group">
+                                <input id="marginPercent" type="number" class="form-control" min="0" max="99" step="0.1"
+                                       value="{{ '%.1f'|format(line.margin_percent or 0) }}">
+                                <button class="btn btn-outline-secondary" type="button" id="calcMarginBtn">Recalc Quote</button>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <label class="form-label">Quote Price (GBP)</label>
+                            <input id="quotePriceGbp" type="number" class="form-control" min="0" step="0.01"
+                                   value="{{ '%.2f'|format(line.quote_price_gbp or 0) }}">
+                        </div>
+                        <div class="col-lg-4">
+                            <label class="form-label">Quoted On</label>
+                            <div class="form-control bg-light">{{ line.quoted_on or '-' }}</div>
+                        </div>
+
+                        <div class="col-lg-6">
+                            <label class="form-label">Display Part Number</label>
+                            <input id="displayPartNumber" type="text" class="form-control"
+                                   value="{{ line.display_part_number or line.suggested_display_pn or '' }}">
+                        </div>
+                        <div class="col-lg-6">
+                            <label class="form-label">Manufacturer</label>
+                            <input id="manufacturer" type="text" class="form-control"
+                                   value="{{ line.manufacturer or '' }}">
+                        </div>
+
+                        <div class="col-lg-6">
+                            <label class="form-label">Condition</label>
+                            <input id="standardCondition" type="text" class="form-control"
+                                   value="{{ line.standard_condition or '' }}">
+                        </div>
+                        <div class="col-lg-6">
+                            <label class="form-label">Certifications</label>
+                            <input id="standardCerts" type="text" class="form-control"
+                                   value="{{ line.standard_certs or '' }}">
+                        </div>
+
+                        <div class="col-12">
+                            <label class="form-label">Quote Notes</label>
+                            <textarea id="lineNotes" class="form-control" rows="3">{{ line.line_notes or '' }}</textarea>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="d-flex flex-wrap gap-2">
+                                <button class="btn btn-primary" type="button" id="saveQuoteBtn">
+                                    <i class="bi bi-save me-1"></i>Save Quote Fields
+                                </button>
+                                <button class="btn btn-outline-danger" type="button" id="clearChosenCostBtn">
+                                    <i class="bi bi-x-circle me-1"></i>Clear Chosen Cost
+                                </button>
+                                <button class="btn btn-outline-secondary" type="button" id="duplicateLineBtn">
+                                    <i class="bi bi-plus-square me-1"></i>Add Price Break
+                                </button>
+                            </div>
+                            <div class="status-note mini-muted mt-2" id="workspaceStatus"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card workspace-card mb-3">
+                <div class="card-body">
+                    <div class="section-title mb-3">Pricing Guidance</div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <div class="stat-box h-100">
+                                <div class="label">Customer-Specific History</div>
+                                <div class="value">
+                                    {% if customer_sales_summary.sales_order_count %}
+                                    {{ customer_sales_summary.sales_order_count }} sale{{ '' if customer_sales_summary.sales_order_count == 1 else 's' }}
+                                    {% else %}
+                                    No customer history
+                                    {% endif %}
+                                </div>
+                                {% if customer_sales_summary.sales_order_count %}
+                                <div class="mini-muted mt-2">
+                                    Avg £{{ "%.2f"|format(customer_sales_summary.avg_sale_price or 0) }} ·
+                                    Last £{{ "%.2f"|format(customer_sales_summary.last_sale_price or 0) }}
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="stat-box h-100">
+                                <div class="label">Current Quote Vs Reference</div>
+                                <div class="value {% if quote_delta_pct is not none and quote_delta_pct > 15 %}quote-guidance-warn{% elif quote_delta_pct is not none %}quote-guidance-good{% endif %}">
+                                    {% if guidance_reference %}
+                                        {% if quote_delta_pct is not none %}
+                                        {{ "%+.1f"|format(quote_delta_pct) }}%
+                                        {% else %}
+                                        £{{ "%.2f"|format(guidance_reference) }}
+                                        {% endif %}
+                                    {% else %}
+                                    No reference
+                                    {% endif %}
+                                </div>
+                                <div class="mini-muted mt-2">
+                                    {% if guidance_reference %}
+                                    {{ guidance_reference_label }}: £{{ "%.2f"|format(guidance_reference) }}
+                                    {% else %}
+                                    No historical sell-price reference was found for this part.
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {% if line.bom_guide_price or line.target_price_gbp is not none or line.internal_notes %}
+                    <div class="row g-3 mt-1">
+                        <div class="col-md-4">
+                            <div class="mini-muted">BOM Guide</div>
+                            <div>{% if line.bom_guide_price %}£{{ "%.2f"|format(line.bom_guide_price) }}{% else %}-{% endif %}</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mini-muted">Target Price</div>
+                            <div>{% if line.target_price_gbp is not none %}£{{ "%.2f"|format(line.target_price_gbp) }}{% else %}-{% endif %}</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mini-muted">Internal Notes</div>
+                            <div>{{ line.internal_notes or '-' }}</div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card workspace-card mb-3">
+                <div class="card-body">
+                    <div class="section-title mb-3">Supplier Coverage</div>
+                    <div class="row g-3">
+                        <div class="col-lg-4">
+                            <div class="mini-muted mb-2">Contacted Suppliers</div>
+                            <div id="contactedSuppliers" class="list-group coverage-list"></div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="mini-muted mb-2">Suggested Suppliers</div>
+                            <div id="suggestedSuppliers" class="list-group coverage-list"></div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="mini-muted mb-2">Still To Contact</div>
+                            <div id="toContactSuppliers" class="list-group coverage-list"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card workspace-card mb-3">
+                <div class="card-body">
+                    <div class="section-title mb-3">Quote Sources</div>
+                    <div class="table-responsive">
+                        <table class="table table-sm quote-table align-middle mb-4">
+                            <thead>
+                                <tr>
+                                    <th>Supplier</th>
+                                    <th>Ref</th>
+                                    <th>Qty</th>
+                                    <th>Unit</th>
+                                    <th>Lead</th>
+                                    <th>Source</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="quotesTableBody">
+                                <tr><td colspan="7" class="text-muted">Loading quotes…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="mini-muted mb-2">QPL / approval cues</div>
+                    <div id="qplApprovals" class="d-flex flex-wrap gap-2"></div>
+                </div>
+            </div>
+
+            <div class="card workspace-card">
+                <div class="card-body">
+                    <div class="section-title mb-3">Line Family</div>
+                    <div class="list-group">
+                        {% for family_line in family_lines %}
+                        <a class="list-group-item list-group-item-action {% if family_line.id == line.id %}family-line-active{% endif %}"
+                           href="{{ url_for('parts_list.parts_list_line_workspace', list_id=list_id, line_id=family_line.id) }}">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>Line {{ family_line.line_number }}</strong>
+                                    <span class="mini-muted">{{ family_line.customer_part_number or line.base_part_number }}</span>
+                                    {% if family_line.line_type and family_line.line_type != 'main' %}
+                                    <span class="badge bg-light text-dark border ms-1">{{ family_line.line_type }}</span>
+                                    {% endif %}
+                                </div>
+                                <div class="text-end">
+                                    <div class="mini-muted">{{ family_line.chosen_supplier_name or '-' }}</div>
+                                    <div>
+                                        {% if family_line.chosen_cost is not none %}
+                                        £{{ "%.2f"|format(family_line.chosen_cost) }}
+                                        {% else %}
+                                        -
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div>
+            <div class="workspace-sticky">
+                <div class="card workspace-card mb-3">
+                    <div class="card-body">
+                        <div class="section-title mb-3">Customer Sales History</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm history-table">
+                                <thead>
+                                    <tr>
+                                        <th>Ref</th>
+                                        <th>Date</th>
+                                        <th>Qty</th>
+                                        <th>Price</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in customer_sales_rows %}
+                                    <tr>
+                                        <td>{{ row.sales_order_ref or '-' }}</td>
+                                        <td>{{ row.date_entered or '-' }}</td>
+                                        <td>{{ row.order_quantity or '-' }}</td>
+                                        <td>{{ row.currency_code or 'GBP' }} {{ "%.2f"|format(row.sale_price or 0) }}</td>
+                                    </tr>
+                                    {% else %}
+                                    <tr><td colspan="4" class="text-muted">No customer-specific sales history.</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card workspace-card mb-3">
+                    <div class="card-body">
+                        <div class="section-title mb-3">Overall Sales History</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm history-table">
+                                <thead>
+                                    <tr>
+                                        <th>Ref</th>
+                                        <th>Customer</th>
+                                        <th>Date</th>
+                                        <th>Price</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in sales_history_rows %}
+                                    <tr>
+                                        <td>{{ row.sales_order_ref or '-' }}</td>
+                                        <td>{{ row.customer_name or '-' }}</td>
+                                        <td>{{ row.date_entered or '-' }}</td>
+                                        <td>{{ row.currency_code or 'GBP' }} {{ "%.2f"|format(row.sale_price or 0) }}</td>
+                                    </tr>
+                                    {% else %}
+                                    <tr><td colspan="4" class="text-muted">No sales history for this part.</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card workspace-card">
+                    <div class="card-body">
+                        <div class="section-title mb-3">Purchase History</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm history-table">
+                                <thead>
+                                    <tr>
+                                        <th>PO</th>
+                                        <th>Supplier</th>
+                                        <th>Date</th>
+                                        <th>Price</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in purchase_history_rows %}
+                                    <tr>
+                                        <td>{{ row.purchase_order_ref or '-' }}</td>
+                                        <td>{{ row.supplier_name or '-' }}</td>
+                                        <td>{{ row.date_issued or '-' }}</td>
+                                        <td>{{ row.currency_code or 'GBP' }} {{ "%.2f"|format(row.price or 0) }}</td>
+                                    </tr>
+                                    {% else %}
+                                    <tr><td colspan="4" class="text-muted">No purchase history for this part.</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const LIST_ID = {{ list_id }};
+const LINE_ID = {{ line.id }};
+const LINE_DATA = {{ line | tojson }};
+const CURRENCIES = {{ currencies | tojson }};
+const PURCHASE_HISTORY_ROWS = {{ purchase_history_rows | tojson }};
+
+function setStatusMessage(message, tone = 'muted') {
+    const el = document.getElementById('workspaceStatus');
+    if (!el) return;
+    el.className = `status-note mt-2 small text-${tone}`;
+    el.textContent = message;
+}
+
+function getCurrencyCode(currencyId) {
+    const currency = (CURRENCIES || []).find(item => Number(item.id) === Number(currencyId));
+    return currency ? (currency.currency_code || 'GBP') : 'GBP';
+}
+
+function fetchJson(url, options) {
+    return fetch(url, options).then(async response => {
+        const data = await response.json();
+        if (!response.ok || data.success === false) {
+            throw new Error(data.message || data.error || 'Request failed');
+        }
+        return data;
+    });
+}
+
+function collectQuoteUpdate() {
+    const selectedStatus = document.getElementById('quotedStatus').value;
+    return {
+        parts_list_line_id: LINE_ID,
+        chosen_qty: parseFloat(document.getElementById('chosenQty').value) || null,
+        manufacturer: document.getElementById('manufacturer').value.trim(),
+        display_part_number: document.getElementById('displayPartNumber').value.trim(),
+        margin_percent: parseFloat(document.getElementById('marginPercent').value) || 0,
+        quote_price_gbp: parseFloat(document.getElementById('quotePriceGbp').value) || 0,
+        target_price_gbp: document.getElementById('targetPriceGbp').value === '' ? null : (parseFloat(document.getElementById('targetPriceGbp').value) || 0),
+        lead_days: document.getElementById('leadDays').value === '' ? null : (parseInt(document.getElementById('leadDays').value, 10) || null),
+        is_no_bid: selectedStatus === 'no_bid' ? 1 : 0,
+        quoted_status: selectedStatus,
+        line_notes: document.getElementById('lineNotes').value.trim(),
+        standard_condition: document.getElementById('standardCondition').value.trim(),
+        standard_certs: document.getElementById('standardCerts').value.trim()
+    };
+}
+
+async function saveQuoteFields() {
+    const button = document.getElementById('saveQuoteBtn');
+    const originalText = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+    setStatusMessage('Saving quote fields...');
+
+    try {
+        await fetchJson(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/bulk-update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: [collectQuoteUpdate()] })
+        });
+        setStatusMessage('Quote fields saved.', 'success');
+    } catch (error) {
+        setStatusMessage(error.message || 'Failed to save quote fields.', 'danger');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = originalText;
+    }
+}
+
+async function recalcBase() {
+    setStatusMessage('Recalculating base cost...');
+    try {
+        const result = await fetchJson(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/line/${LINE_ID}/calculate-base-cost`, {
+            method: 'POST'
+        });
+        document.getElementById('baseCostGbp').value = Number(result.base_cost_gbp || 0).toFixed(2);
+        if (typeof result.quote_price_gbp !== 'undefined' && result.update_quote_price) {
+            document.getElementById('quotePriceGbp').value = Number(result.quote_price_gbp || 0).toFixed(2);
+        }
+        setStatusMessage('Base cost recalculated.', 'success');
+    } catch (error) {
+        setStatusMessage(error.message || 'Failed to recalculate base cost.', 'danger');
+    }
+}
+
+async function recalcMargin() {
+    setStatusMessage('Recalculating quote price...');
+    try {
+        const marginPercent = parseFloat(document.getElementById('marginPercent').value) || 0;
+        const result = await fetchJson(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/line/${LINE_ID}/calculate-margin`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ margin_percent: marginPercent })
+        });
+        document.getElementById('quotePriceGbp').value = Number(result.quote_price_gbp || 0).toFixed(2);
+        document.getElementById('baseCostGbp').value = Number(result.base_cost_gbp || 0).toFixed(2);
+        setStatusMessage('Quote price recalculated from margin.', 'success');
+    } catch (error) {
+        setStatusMessage(error.message || 'Failed to recalculate margin.', 'danger');
+    }
+}
+
+async function clearChosenCost() {
+    if (!window.confirm('Clear supplier and chosen cost for this line?')) return;
+    setStatusMessage('Clearing chosen cost...');
+    try {
+        await fetchJson(`/parts_list/parts-lists/${LIST_ID}/lines/${LINE_ID}/clear-cost`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        window.location.reload();
+    } catch (error) {
+        setStatusMessage(error.message || 'Failed to clear chosen cost.', 'danger');
+    }
+}
+
+async function duplicateLine() {
+    setStatusMessage('Creating price-break line...');
+    try {
+        const result = await fetchJson(`/parts_list/parts-lists/${LIST_ID}/lines/${LINE_ID}/duplicate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ line_type: 'price_break' })
+        });
+        if (result.line_id) {
+            window.location.href = `/parts_list/parts-lists/${LIST_ID}/lines/${result.line_id}/workspace`;
+            return;
+        }
+        window.location.reload();
+    } catch (error) {
+        setStatusMessage(error.message || 'Failed to create price-break line.', 'danger');
+    }
+}
+
+async function useQuoteCost(quote) {
+    setStatusMessage(`Applying ${quote.supplier_name || 'supplier'} cost...`);
+    try {
+        await fetchJson(`/parts_list/parts-lists/${LIST_ID}/lines/${LINE_ID}/use-cost`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                supplier_id: quote.supplier_id,
+                cost: quote.unit_price,
+                price: quote.unit_price,
+                currency_id: quote.currency_id,
+                currency_code: quote.currency_code || getCurrencyCode(quote.currency_id),
+                lead_days: quote.lead_time_days,
+                chosen_qty: parseFloat(document.getElementById('chosenQty').value) || LINE_DATA.quantity || null,
+                source_type: 'quote',
+                source_reference: quote.quote_line_id
+            })
+        });
+        window.location.reload();
+    } catch (error) {
+        setStatusMessage(error.message || 'Failed to apply quote cost.', 'danger');
+    }
+}
+
+async function addSuggestedSupplier(supplierId, sourceType = 'workspace') {
+    setStatusMessage('Adding supplier to suggested list...');
+    try {
+        await fetchJson(`/parts_list/parts-lists/${LIST_ID}/lines/${LINE_ID}/suggested-suppliers/add`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ supplier_id: supplierId, source_type: sourceType })
+        });
+        await loadCoverageAndQuotes();
+        setStatusMessage('Supplier added to suggested list.', 'success');
+    } catch (error) {
+        setStatusMessage(error.message || 'Failed to add supplier.', 'danger');
+    }
+}
+
+async function removeSuggestedSupplier(suggestedId) {
+    setStatusMessage('Removing suggested supplier...');
+    try {
+        await fetchJson(`/parts_list/parts-lists/${LIST_ID}/lines/${LINE_ID}/suggested-suppliers/${suggestedId}/remove`, {
+            method: 'POST'
+        });
+        await loadCoverageAndQuotes();
+        setStatusMessage('Suggested supplier removed.', 'success');
+    } catch (error) {
+        setStatusMessage(error.message || 'Failed to remove supplier.', 'danger');
+    }
+}
+
+function renderList(containerId, items, emptyMessage, renderer) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    if (!items.length) {
+        container.innerHTML = `<div class="list-group-item text-muted">${emptyMessage}</div>`;
+        return;
+    }
+    container.innerHTML = items.map(renderer).join('');
+}
+
+function renderQuotesSection(quotesData) {
+    const tbody = document.getElementById('quotesTableBody');
+    const qplContainer = document.getElementById('qplApprovals');
+    if (!tbody || !qplContainer) return;
+
+    const localQuotes = (quotesData.quotes || []).map(item => ({ ...item, _workspace_source: 'This list' }));
+    const otherOffers = (quotesData.other_offers || []).map(item => ({ ...item, _workspace_source: 'Other list' }));
+    const combined = [...localQuotes, ...otherOffers];
+
+    if (!combined.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-muted">No quote sources found for this part.</td></tr>';
+    } else {
+        tbody.innerHTML = combined.map(quote => `
+            <tr>
+                <td>
+                    <div>${quote.supplier_name || '-'}</div>
+                    ${quote.is_no_bid ? '<div class="mini-muted text-danger">No bid</div>' : ''}
+                </td>
+                <td>${quote.quote_reference || '-'}</td>
+                <td>${quote.quantity_quoted || '-'}</td>
+                <td>${quote.unit_price != null ? `${quote.currency_code || 'GBP'} ${Number(quote.unit_price).toFixed(2)}` : '-'}</td>
+                <td>${quote.lead_time_days || '-'}</td>
+                <td>${quote._workspace_source}</td>
+                <td class="text-end">
+                    ${quote.unit_price != null && !quote.is_no_bid ? `
+                        <button type="button" class="btn btn-sm btn-outline-primary me-1 use-quote-cost-btn" data-quote-line-id="${quote.quote_line_id}">
+                            Use Cost
+                        </button>
+                    ` : ''}
+                    ${quote.supplier_id ? `
+                        <button type="button" class="btn btn-sm btn-outline-secondary add-suggested-btn" data-supplier-id="${quote.supplier_id}" data-source="quote_history">
+                            Suggest
+                        </button>
+                    ` : ''}
+                </td>
+            </tr>
+        `).join('');
+
+        tbody.querySelectorAll('.use-quote-cost-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                const quote = combined.find(item => String(item.quote_line_id) === String(button.dataset.quoteLineId));
+                if (quote) useQuoteCost(quote);
+            });
+        });
+
+        tbody.querySelectorAll('.add-suggested-btn').forEach(button => {
+            button.addEventListener('click', () => addSuggestedSupplier(Number(button.dataset.supplierId), button.dataset.source || 'quote_history'));
+        });
+    }
+
+    const qpl = quotesData.qpl_approvals || [];
+    if (!qpl.length) {
+        qplContainer.innerHTML = '<span class="mini-muted">No approval data found.</span>';
+    } else {
+        qplContainer.innerHTML = qpl.slice(0, 12).map(item => `
+            <span class="list-chip" title="${item.cage_code || ''}">
+                ${item.manufacturer_name || 'Unknown'}
+                ${item.approval_list_type ? `<span class="mini-muted">${item.approval_list_type}</span>` : ''}
+            </span>
+        `).join('');
+    }
+}
+
+function buildCoverage(quotesData, ilsData, suggestedData, emailData) {
+    const emails = emailData.emails || [];
+    const suggested = suggestedData.suppliers || [];
+    const ilsResults = ilsData.results || [];
+    const quoteSuppliers = [...(quotesData.quotes || []), ...(quotesData.other_offers || [])]
+        .filter(item => item && item.supplier_id)
+        .map(item => ({
+            supplier_id: item.supplier_id,
+            supplier_name: item.supplier_name || 'Unknown supplier',
+            source: 'quote'
+        }));
+
+    const mappedIlsSuppliers = ilsResults
+        .filter(item => item && item.supplier_id)
+        .map(item => ({
+            supplier_id: item.supplier_id,
+            supplier_name: item.supplier_name || item.ils_company_name || 'Unknown supplier',
+            source: 'ils'
+        }));
+    const purchaseSuppliers = (PURCHASE_HISTORY_ROWS || [])
+        .filter(item => item && item.supplier_id)
+        .map(item => ({
+            supplier_id: item.supplier_id,
+            supplier_name: item.supplier_name || 'Unknown supplier',
+            source: 'purchase'
+        }));
+
+    const contactedMap = new Map();
+    emails.forEach(email => {
+        if (!email.supplier_id) return;
+        const existing = contactedMap.get(email.supplier_id) || {
+            supplier_id: email.supplier_id,
+            supplier_name: email.supplier_name || 'Unknown supplier',
+            count: 0,
+            last_date: email.date_sent,
+            recipients: new Set()
+        };
+        existing.count += 1;
+        if (!existing.last_date || (email.date_sent && email.date_sent > existing.last_date)) {
+            existing.last_date = email.date_sent;
+        }
+        if (email.recipient_email) existing.recipients.add(email.recipient_email);
+        contactedMap.set(email.supplier_id, existing);
+    });
+
+    const suggestedMap = new Map((suggested || []).map(item => [item.supplier_id, item]));
+    const candidateMap = new Map();
+    [...quoteSuppliers, ...mappedIlsSuppliers, ...purchaseSuppliers].forEach(item => {
+        if (!item.supplier_id) return;
+        if (!candidateMap.has(item.supplier_id)) {
+            candidateMap.set(item.supplier_id, {
+                supplier_id: item.supplier_id,
+                supplier_name: item.supplier_name,
+                sources: new Set([item.source])
+            });
+        } else {
+            candidateMap.get(item.supplier_id).sources.add(item.source);
+        }
+    });
+
+    const contactedItems = Array.from(contactedMap.values()).sort((a, b) => (b.last_date || '').localeCompare(a.last_date || ''));
+    const suggestedItems = suggested.slice().sort((a, b) => (a.supplier_name || '').localeCompare(b.supplier_name || ''));
+    const toContactItems = Array.from(candidateMap.values())
+        .filter(item => !contactedMap.has(item.supplier_id))
+        .sort((a, b) => (a.supplier_name || '').localeCompare(b.supplier_name || ''));
+
+    renderList('contactedSuppliers', contactedItems, 'No contacted suppliers recorded for this line.', item => `
+        <div class="list-group-item">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <div>${item.supplier_name}</div>
+                    <div class="mini-muted">${item.count} email${item.count === 1 ? '' : 's'}${item.last_date ? ` · Last ${item.last_date}` : ''}</div>
+                </div>
+                <span class="badge bg-light text-dark">${item.recipients.size || 0} recipient${item.recipients.size === 1 ? '' : 's'}</span>
+            </div>
+        </div>
+    `);
+
+    renderList('suggestedSuppliers', suggestedItems, 'No suggested suppliers yet.', item => `
+        <div class="list-group-item">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                    <div>${item.supplier_name}</div>
+                    <div class="mini-muted">${item.source_type || 'manual'}</div>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-danger remove-suggested-btn" data-suggested-id="${item.id}">
+                    Remove
+                </button>
+            </div>
+        </div>
+    `);
+
+    renderList('toContactSuppliers', toContactItems, 'No obvious uncovered suppliers from current ILS/quote history.', item => `
+        <div class="list-group-item">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                    <div>${item.supplier_name}</div>
+                    <div class="mini-muted">Source: ${Array.from(item.sources).join(', ')}</div>
+                    ${suggestedMap.has(item.supplier_id) ? '<div class="mini-muted text-success">Already suggested</div>' : ''}
+                </div>
+                ${suggestedMap.has(item.supplier_id) ? '' : `
+                    <button type="button" class="btn btn-sm btn-outline-primary add-coverage-suggested-btn" data-supplier-id="${item.supplier_id}">
+                        Suggest
+                    </button>
+                `}
+            </div>
+        </div>
+    `);
+
+    document.querySelectorAll('.remove-suggested-btn').forEach(button => {
+        button.addEventListener('click', () => removeSuggestedSupplier(Number(button.dataset.suggestedId)));
+    });
+    document.querySelectorAll('.add-coverage-suggested-btn').forEach(button => {
+        button.addEventListener('click', () => addSuggestedSupplier(Number(button.dataset.supplierId), 'workspace_candidate'));
+    });
+}
+
+async function loadCoverageAndQuotes() {
+    try {
+        const [quotesData, ilsData, suggestedData, emailData] = await Promise.all([
+            fetchJson(`/parts_list/parts-lists/${LIST_ID}/lines/${LINE_ID}/quotes`),
+            fetchJson(`/parts_list/api/parts-lists/${LIST_ID}/lines/${LINE_ID}/ils-data`),
+            fetchJson(`/parts_list/parts-lists/${LIST_ID}/lines/${LINE_ID}/suggested-suppliers`),
+            fetchJson(`/parts_list/parts-lists/${LIST_ID}/lines/${LINE_ID}/supplier-emails`)
+        ]);
+        renderQuotesSection(quotesData);
+        buildCoverage(quotesData, ilsData, suggestedData, emailData);
+    } catch (error) {
+        setStatusMessage(error.message || 'Failed to load supplier coverage.', 'danger');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('saveQuoteBtn')?.addEventListener('click', saveQuoteFields);
+    document.getElementById('calcBaseBtn')?.addEventListener('click', recalcBase);
+    document.getElementById('calcMarginBtn')?.addEventListener('click', recalcMargin);
+    document.getElementById('clearChosenCostBtn')?.addEventListener('click', clearChosenCost);
+    document.getElementById('duplicateLineBtn')?.addEventListener('click', duplicateLine);
+    loadCoverageAndQuotes();
+});
+</script>
+{% endblock %}

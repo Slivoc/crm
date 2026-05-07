@@ -757,6 +757,11 @@
         <td>
             <div class="d-flex align-items-center gap-1 line-number-wrap">
                 <span class="line-number-text">{{ line.line_number }}</span>
+                <a class="btn btn-sm icon-action-btn"
+                   href="{{ url_for('parts_list.parts_list_line_workspace', list_id=list_id, line_id=line.id) }}"
+                   title="Open line workspace">
+                    <i class="bi bi-bezier2"></i>
+                </a>
                 <button class="btn btn-sm icon-action-btn duplicate-line-btn"
                         data-line-id="{{ line.id }}"
                         title="Add price break">

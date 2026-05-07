@@ -8635,6 +8635,549 @@ def search_parts_lists_by_part_number():
         logging.exception(e)
         return jsonify(success=False, message=str(e)), 500
 
+@parts_list_bp.route('/parts-lists/<int:list_id>/lines/<int:line_id>/workspace', methods=['GET'])
+def parts_list_line_workspace(list_id, line_id):
+    """
+    Unified per-line workspace view with next/previous navigation and
+    line-specific costing, quote, sourcing, and history context.
+    """
+    try:
+        with db_cursor() as cur:
+            header = _execute_with_cursor(cur, """
+                SELECT
+                    pl.*,
+                    c.name AS customer_name,
+                    c.system_code AS customer_system_code,
+                    c.currency_id AS customer_currency_id,
+                    cont.name AS contact_name,
+                    cont.email AS contact_email,
+                    s.name AS status_name,
+                    p.name AS project_name,
+                    bh.name AS source_bom_name
+                FROM parts_lists pl
+                LEFT JOIN customers c ON c.id = pl.customer_id
+                LEFT JOIN contacts cont ON cont.id = pl.contact_id
+                LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
+                LEFT JOIN projects p ON p.id = pl.project_id
+                LEFT JOIN bom_headers bh ON bh.id = pl.bom_header_id
+                WHERE pl.id = ?
+            """, (list_id,)).fetchone()
+
+            if not header:
+                return "Parts list not found", 404
+
+            nav_rows = _execute_with_cursor(cur, """
+                SELECT
+                    id,
+                    line_number,
+                    customer_part_number,
+                    base_part_number,
+                    parent_line_id,
+                    line_type
+                FROM parts_list_lines
+                WHERE parts_list_id = ?
+                ORDER BY line_number ASC, id ASC
+            """, (list_id,)).fetchall() or []
+
+            nav_lines = [dict(row) for row in nav_rows]
+            current_index = next((idx for idx, row in enumerate(nav_lines) if row['id'] == line_id), None)
+            if current_index is None:
+                return "Line not found", 404
+
+            line = _execute_with_cursor(cur, """
+                SELECT
+                    pll.id,
+                    pll.parts_list_id,
+                    pll.line_number,
+                    pll.parent_line_id,
+                    pll.line_type,
+                    pll.customer_part_number,
+                    pll.original_customer_part_number,
+                    pll.base_part_number,
+                    pll.revision,
+                    pll.description,
+                    pll.quantity,
+                    pll.chosen_qty,
+                    COALESCE(pll.chosen_qty, pll.quantity) AS effective_quantity,
+                    pll.customer_notes,
+                    pll.internal_notes,
+                    pll.chosen_supplier_id,
+                    pll.chosen_cost,
+                    pll.chosen_price,
+                    pll.chosen_currency_id,
+                    pll.chosen_lead_days,
+                    pll.chosen_source_type,
+                    pll.chosen_source_reference,
+                    parent.customer_part_number AS parent_customer_part_number,
+                    parent.original_customer_part_number AS parent_original_customer_part_number,
+                    s.name AS chosen_supplier_name,
+                    s.standard_condition AS supplier_standard_condition,
+                    s.standard_certs AS supplier_standard_certs,
+                    s.delivery_cost AS supplier_delivery_cost,
+                    c.currency_code AS chosen_currency_code,
+                    c.symbol AS chosen_currency_symbol,
+                    c.exchange_rate_to_base AS chosen_currency_rate,
+                    cql.id AS quote_line_id,
+                    cql.display_part_number,
+                    cql.quoted_part_number,
+                    cql.manufacturer,
+                    cql.base_cost_gbp,
+                    cql.delivery_per_unit,
+                    cql.delivery_per_line,
+                    cql.margin_percent,
+                    cql.quote_price_gbp,
+                    cql.target_price_gbp,
+                    cql.lead_days,
+                    cql.is_no_bid,
+                    cql.quoted_status,
+                    cql.quoted_on,
+                    cql.line_notes,
+                    cql.standard_condition,
+                    cql.standard_certs,
+                    (
+                        SELECT sql.quoted_part_number
+                        FROM parts_list_supplier_quote_lines sql
+                        JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                        WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                          AND sq.supplier_id = pll.chosen_supplier_id
+                        ORDER BY sq.quote_date DESC, sql.date_modified DESC, sql.id DESC
+                        LIMIT 1
+                    ) AS supplier_quoted_part_number,
+                    CASE
+                        WHEN pll.chosen_source_type = 'quote'
+                             AND pll.chosen_source_reference IS NOT NULL THEN (
+                            SELECT sql.condition_code
+                            FROM parts_list_supplier_quote_lines sql
+                            WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference
+                              AND sql.is_no_bid = FALSE
+                              AND sql.condition_code IS NOT NULL
+                              AND TRIM(sql.condition_code) != ''
+                            LIMIT 1
+                        )
+                        WHEN pll.chosen_supplier_id IS NOT NULL THEN (
+                            SELECT sql.condition_code
+                            FROM parts_list_supplier_quote_lines sql
+                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                            WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                              AND sq.supplier_id = pll.chosen_supplier_id
+                              AND sql.is_no_bid = FALSE
+                              AND sql.condition_code IS NOT NULL
+                              AND TRIM(sql.condition_code) != ''
+                            ORDER BY sq.quote_date DESC, sql.date_modified DESC, sql.id DESC
+                            LIMIT 1
+                        )
+                        ELSE NULL
+                    END AS chosen_quote_condition_code,
+                    CASE
+                        WHEN pll.chosen_source_type = 'quote'
+                             AND pll.chosen_source_reference IS NOT NULL THEN (
+                            SELECT sql.certifications
+                            FROM parts_list_supplier_quote_lines sql
+                            WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference
+                              AND sql.is_no_bid = FALSE
+                              AND sql.certifications IS NOT NULL
+                              AND TRIM(sql.certifications) != ''
+                            LIMIT 1
+                        )
+                        WHEN pll.chosen_supplier_id IS NOT NULL THEN (
+                            SELECT sql.certifications
+                            FROM parts_list_supplier_quote_lines sql
+                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                            WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                              AND sq.supplier_id = pll.chosen_supplier_id
+                              AND sql.is_no_bid = FALSE
+                              AND sql.certifications IS NOT NULL
+                              AND TRIM(sql.certifications) != ''
+                            ORDER BY sq.quote_date DESC, sql.date_modified DESC, sql.id DESC
+                            LIMIT 1
+                        )
+                        ELSE NULL
+                    END AS chosen_quote_certifications,
+                    CASE
+                        WHEN pll.chosen_source_type = 'quote'
+                             AND pll.chosen_source_reference IS NOT NULL THEN (
+                            SELECT sql.manufacturer
+                            FROM parts_list_supplier_quote_lines sql
+                            WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference
+                              AND sql.is_no_bid = FALSE
+                              AND sql.manufacturer IS NOT NULL
+                              AND TRIM(sql.manufacturer) != ''
+                            LIMIT 1
+                        )
+                        WHEN pll.chosen_supplier_id IS NOT NULL THEN (
+                            SELECT sql.manufacturer
+                            FROM parts_list_supplier_quote_lines sql
+                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                            WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                              AND sq.supplier_id = pll.chosen_supplier_id
+                              AND sql.is_no_bid = FALSE
+                              AND sql.manufacturer IS NOT NULL
+                              AND TRIM(sql.manufacturer) != ''
+                            ORDER BY sq.quote_date DESC, sql.date_modified DESC, sql.id DESC
+                            LIMIT 1
+                        )
+                        ELSE NULL
+                    END AS chosen_quote_manufacturer,
+                    (
+                        SELECT sql.condition_code
+                        FROM parts_list_supplier_quote_lines sql
+                        JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                        WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                          AND sql.is_no_bid = FALSE
+                          AND sql.condition_code IS NOT NULL
+                          AND TRIM(sql.condition_code) != ''
+                        ORDER BY sq.quote_date DESC, sql.date_modified DESC, sql.id DESC
+                        LIMIT 1
+                    ) AS supplier_condition_code,
+                    (
+                        SELECT sql.certifications
+                        FROM parts_list_supplier_quote_lines sql
+                        JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                        WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                          AND sql.is_no_bid = FALSE
+                          AND sql.certifications IS NOT NULL
+                          AND TRIM(sql.certifications) != ''
+                        ORDER BY sq.quote_date DESC, sql.date_modified DESC, sql.id DESC
+                        LIMIT 1
+                    ) AS supplier_certifications,
+                    (
+                        SELECT sql.manufacturer
+                        FROM parts_list_supplier_quote_lines sql
+                        JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                        WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                          AND sql.is_no_bid = FALSE
+                          AND sql.manufacturer IS NOT NULL
+                          AND TRIM(sql.manufacturer) != ''
+                        ORDER BY sq.quote_date DESC, sql.date_modified DESC, sql.id DESC
+                        LIMIT 1
+                    ) AS supplier_manufacturer,
+                    (
+                        SELECT COALESCE(SUM(sm.available_quantity), 0)
+                        FROM stock_movements sm
+                        WHERE sm.base_part_number = pll.base_part_number
+                          AND sm.movement_type = 'IN'
+                          AND sm.available_quantity > 0
+                    ) AS stock_quantity,
+                    (
+                        SELECT COUNT(*)
+                        FROM parts_list_supplier_quote_lines sql
+                        WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                    ) AS line_supplier_quote_count,
+                    (
+                        SELECT COUNT(DISTINCT se.supplier_id)
+                        FROM parts_list_line_supplier_emails se
+                        WHERE se.parts_list_line_id = pll.id
+                    ) AS line_contacted_suppliers_count
+                FROM parts_list_lines pll
+                LEFT JOIN parts_list_lines parent ON parent.id = pll.parent_line_id
+                LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
+                LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
+                LEFT JOIN customer_quote_lines cql
+                    ON cql.id = (
+                        SELECT cql_latest.id
+                        FROM customer_quote_lines cql_latest
+                        WHERE cql_latest.parts_list_line_id = pll.id
+                        ORDER BY cql_latest.date_modified DESC NULLS LAST, cql_latest.id DESC
+                        LIMIT 1
+                    )
+                WHERE pll.id = ? AND pll.parts_list_id = ?
+            """, (line_id, list_id)).fetchone()
+
+            if not line:
+                return "Line not found", 404
+
+            line_data = dict(line)
+            root_line_id = line_data.get('parent_line_id') or line_data['id']
+
+            family_rows = _execute_with_cursor(cur, """
+                SELECT
+                    pll.id,
+                    pll.line_number,
+                    pll.line_type,
+                    pll.customer_part_number,
+                    pll.quantity,
+                    pll.chosen_qty,
+                    pll.chosen_supplier_id,
+                    pll.chosen_cost,
+                    s.name AS chosen_supplier_name,
+                    cql.quoted_status,
+                    cql.target_price_gbp
+                FROM parts_list_lines pll
+                LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
+                LEFT JOIN customer_quote_lines cql
+                    ON cql.id = (
+                        SELECT cql_latest.id
+                        FROM customer_quote_lines cql_latest
+                        WHERE cql_latest.parts_list_line_id = pll.id
+                        ORDER BY cql_latest.date_modified DESC NULLS LAST, cql_latest.id DESC
+                        LIMIT 1
+                    )
+                WHERE pll.parts_list_id = ?
+                  AND COALESCE(pll.parent_line_id, pll.id) = ?
+                ORDER BY pll.line_number ASC, pll.id ASC
+            """, (list_id, root_line_id)).fetchall() or []
+
+            bom_data = None
+            if line_data.get('base_part_number'):
+                if header.get('bom_header_id'):
+                    bom_data = _execute_with_cursor(cur, """
+                        SELECT bl.guide_price, bh.name AS bom_name
+                        FROM bom_lines bl
+                        JOIN bom_headers bh ON bh.id = bl.bom_header_id
+                        WHERE bl.base_part_number = ?
+                          AND bl.bom_header_id = ?
+                        ORDER BY bl.guide_price DESC
+                        LIMIT 1
+                    """, (line_data['base_part_number'], header['bom_header_id'])).fetchone()
+                else:
+                    bom_data = _execute_with_cursor(cur, """
+                        SELECT bl.guide_price, bh.name AS bom_name
+                        FROM bom_lines bl
+                        JOIN bom_headers bh ON bh.id = bl.bom_header_id
+                        WHERE bl.base_part_number = ?
+                        ORDER BY bl.guide_price DESC
+                        LIMIT 1
+                    """, (line_data['base_part_number'],)).fetchone()
+
+            overall_sales_summary = _execute_with_cursor(cur, """
+                WITH ranked_sales AS (
+                    SELECT
+                        sol.base_part_number,
+                        sol.price,
+                        so.date_entered,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY sol.base_part_number
+                            ORDER BY so.date_entered DESC NULLS LAST, sol.id DESC
+                        ) AS rn
+                    FROM sales_order_lines sol
+                    LEFT JOIN sales_orders so ON so.id = sol.sales_order_id
+                    WHERE sol.base_part_number = ?
+                      AND sol.price IS NOT NULL
+                      AND sol.price > 0
+                )
+                SELECT
+                    COUNT(*) AS sales_order_count,
+                    AVG(price) AS avg_sale_price,
+                    MAX(price) AS max_sale_price,
+                    MAX(CASE WHEN rn = 1 THEN price END) AS last_sale_price
+                FROM ranked_sales
+            """, (line_data['base_part_number'],)).fetchone()
+
+            sales_history_rows = _execute_with_cursor(cur, """
+                SELECT
+                    so.sales_order_ref,
+                    so.date_entered,
+                    c.name AS customer_name,
+                    sol.quantity AS order_quantity,
+                    sol.price AS sale_price,
+                    curr.currency_code
+                FROM sales_order_lines sol
+                JOIN sales_orders so ON so.id = sol.sales_order_id
+                JOIN customers c ON so.customer_id = c.id
+                LEFT JOIN currencies curr ON curr.id = so.currency_id
+                WHERE sol.base_part_number = ?
+                ORDER BY so.date_entered DESC NULLS LAST, sol.id DESC
+                LIMIT 12
+            """, (line_data['base_part_number'],)).fetchall() or []
+
+            customer_sales_summary = None
+            customer_sales_rows = []
+            if header.get('customer_id'):
+                customer_sales_summary = _execute_with_cursor(cur, """
+                    WITH ranked_sales AS (
+                        SELECT
+                            sol.price,
+                            so.date_entered,
+                            ROW_NUMBER() OVER (
+                                ORDER BY so.date_entered DESC NULLS LAST, sol.id DESC
+                            ) AS rn
+                        FROM sales_order_lines sol
+                        JOIN sales_orders so ON so.id = sol.sales_order_id
+                        WHERE sol.base_part_number = ?
+                          AND so.customer_id = ?
+                          AND sol.price IS NOT NULL
+                          AND sol.price > 0
+                    )
+                    SELECT
+                        COUNT(*) AS sales_order_count,
+                        AVG(price) AS avg_sale_price,
+                        MAX(price) AS max_sale_price,
+                        MAX(CASE WHEN rn = 1 THEN price END) AS last_sale_price
+                    FROM ranked_sales
+                """, (line_data['base_part_number'], header['customer_id'])).fetchone()
+
+                customer_sales_rows = _execute_with_cursor(cur, """
+                    SELECT
+                        so.sales_order_ref,
+                        so.date_entered,
+                        sol.quantity AS order_quantity,
+                        sol.price AS sale_price,
+                        curr.currency_code
+                    FROM sales_order_lines sol
+                    JOIN sales_orders so ON so.id = sol.sales_order_id
+                    LEFT JOIN currencies curr ON curr.id = so.currency_id
+                    WHERE sol.base_part_number = ?
+                      AND so.customer_id = ?
+                    ORDER BY so.date_entered DESC NULLS LAST, sol.id DESC
+                    LIMIT 12
+                """, (line_data['base_part_number'], header['customer_id'])).fetchall() or []
+
+            purchase_history_rows = _execute_with_cursor(cur, """
+                SELECT
+                    po.purchase_order_ref,
+                    po.date_issued,
+                    s.id AS supplier_id,
+                    s.name AS supplier_name,
+                    pol.quantity,
+                    pol.price,
+                    pol.ship_date,
+                    po.currency_id,
+                    curr.currency_code,
+                    pos.name AS status_name
+                FROM purchase_order_lines pol
+                JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                LEFT JOIN suppliers s ON s.id = po.supplier_id
+                LEFT JOIN currencies curr ON curr.id = po.currency_id
+                LEFT JOIN purchase_order_statuses pos ON pos.id = po.purchase_status_id
+                WHERE pol.base_part_number = ?
+                ORDER BY po.date_issued DESC NULLS LAST, pol.id DESC
+                LIMIT 12
+            """, (line_data['base_part_number'],)).fetchall() or []
+
+            currencies = _execute_with_cursor(cur, """
+                SELECT id, currency_code, symbol, exchange_rate_to_base
+                FROM currencies
+                ORDER BY id ASC
+            """).fetchall() or []
+
+        portal_request = _get_portal_request_for_parts_list(list_id)
+
+        has_parent_part = line_data.get('parent_customer_part_number')
+        has_parent_original_part = line_data.get('parent_original_customer_part_number')
+        is_alt_line = line_data.get('line_type') == 'alternate' or line_data.get('parent_line_id')
+        line_data['requested_part_number'] = (
+            (
+                line_data.get('parent_original_customer_part_number')
+                or line_data.get('parent_customer_part_number')
+            )
+            if is_alt_line and (has_parent_original_part or has_parent_part)
+            else (
+                line_data.get('original_customer_part_number')
+                or line_data.get('customer_part_number')
+            )
+        )
+
+        line_data['bom_guide_price'] = bom_data['guide_price'] if bom_data else None
+        line_data['bom_name'] = bom_data['bom_name'] if bom_data else None
+
+        line_data['standard_condition'] = (
+            (line_data.get('standard_condition') or '').strip()
+            or (line_data.get('chosen_quote_condition_code') or '').strip()
+            or (line_data.get('supplier_condition_code') or '').strip()
+            or (line_data.get('supplier_standard_condition') or '').strip()
+        )
+        line_data['standard_certs'] = (
+            (line_data.get('standard_certs') or '').strip()
+            or (line_data.get('chosen_quote_certifications') or '').strip()
+            or (line_data.get('supplier_certifications') or '').strip()
+            or (line_data.get('supplier_standard_certs') or '').strip()
+        )
+        line_data['manufacturer'] = (
+            (line_data.get('manufacturer') or '').strip()
+            or (line_data.get('chosen_quote_manufacturer') or '').strip()
+            or (line_data.get('supplier_manufacturer') or '').strip()
+        )
+
+        corrected_customer_part = (line_data.get('customer_part_number') or '').strip()
+        requested_part = (line_data.get('requested_part_number') or '').strip()
+        if not line_data.get('display_part_number'):
+            if corrected_customer_part and corrected_customer_part != requested_part:
+                line_data['suggested_display_pn'] = corrected_customer_part
+            elif line_data.get('supplier_quoted_part_number') and line_data['supplier_quoted_part_number'] != requested_part:
+                line_data['suggested_display_pn'] = line_data['supplier_quoted_part_number']
+            else:
+                line_data['suggested_display_pn'] = corrected_customer_part or requested_part
+        else:
+            line_data['suggested_display_pn'] = line_data['display_part_number']
+
+        overall_sales_summary = dict(overall_sales_summary) if overall_sales_summary else {}
+        customer_sales_summary = dict(customer_sales_summary) if customer_sales_summary else {}
+
+        overall_sales_summary['sales_order_count'] = int(overall_sales_summary.get('sales_order_count') or 0)
+        customer_sales_summary['sales_order_count'] = int(customer_sales_summary.get('sales_order_count') or 0)
+
+        current_quote_price = _to_float(line_data.get('quote_price_gbp'))
+        customer_avg = _to_float(customer_sales_summary.get('avg_sale_price'))
+        customer_last = _to_float(customer_sales_summary.get('last_sale_price'))
+        overall_avg = _to_float(overall_sales_summary.get('avg_sale_price'))
+        overall_last = _to_float(overall_sales_summary.get('last_sale_price'))
+
+        guidance_reference = customer_avg or customer_last or overall_avg or overall_last
+        guidance_reference_label = None
+        if customer_avg:
+            guidance_reference_label = 'Customer average sell price'
+        elif customer_last:
+            guidance_reference_label = 'Customer latest sell price'
+        elif overall_avg:
+            guidance_reference_label = 'Overall average sell price'
+        elif overall_last:
+            guidance_reference_label = 'Overall latest sell price'
+
+        quote_delta_pct = None
+        if current_quote_price and guidance_reference:
+            try:
+                quote_delta_pct = ((current_quote_price - guidance_reference) / guidance_reference) * 100 if guidance_reference else None
+            except ZeroDivisionError:
+                quote_delta_pct = None
+
+        prev_line = nav_lines[current_index - 1] if current_index > 0 else None
+        next_line = nav_lines[current_index + 1] if current_index < len(nav_lines) - 1 else None
+
+        breadcrumbs = [
+            ('Home', url_for('index')),
+            ('Parts Lists', url_for('parts_list.view_parts_lists')),
+            (header['name'], url_for('parts_list.view_parts_list', list_id=list_id)),
+            (f"Line {line_data['line_number']} Workspace", None),
+        ]
+
+        return render_template(
+            'parts_list_line_workspace.html',
+            breadcrumbs=breadcrumbs,
+            list_id=list_id,
+            list_name=header['name'],
+            list_notes=header.get('notes'),
+            customer_name=header.get('customer_name'),
+            customer_system_code=header.get('customer_system_code'),
+            customer_currency_id=header.get('customer_currency_id'),
+            status_id=header.get('status_id'),
+            status_name=header.get('status_name'),
+            project_id=header.get('project_id'),
+            project_name=header.get('project_name'),
+            source_bom_id=header.get('bom_header_id'),
+            source_bom_name=header.get('source_bom_name'),
+            portal_request_id=portal_request.get('id') if portal_request else None,
+            portal_request_reference=portal_request.get('reference_number') if portal_request else None,
+            line=line_data,
+            family_lines=[dict(row) for row in family_rows],
+            nav_lines=nav_lines,
+            current_index=current_index,
+            prev_line=prev_line,
+            next_line=next_line,
+            total_lines=len(nav_lines),
+            currencies=[dict(row) for row in currencies],
+            sales_history_rows=[dict(row) for row in sales_history_rows],
+            purchase_history_rows=[dict(row) for row in purchase_history_rows],
+            customer_sales_rows=[dict(row) for row in customer_sales_rows],
+            overall_sales_summary=overall_sales_summary,
+            customer_sales_summary=customer_sales_summary,
+            guidance_reference=guidance_reference,
+            guidance_reference_label=guidance_reference_label,
+            quote_delta_pct=quote_delta_pct,
+        )
+    except Exception as e:
+        logging.exception(e)
+        return str(e), 500
+
 @parts_list_bp.route('/view/<int:list_id>')
 def view_parts_list(list_id):
     """

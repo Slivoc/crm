@@ -402,6 +402,11 @@
                             <td class="text-center"><strong>{{ line.line_number }}</strong></td>
 <td>
     <strong class="text-primary">{{ line.customer_part_number }}</strong>
+    <a class="btn btn-sm btn-link text-decoration-none p-0 ms-1"
+       href="{{ url_for('parts_list.parts_list_line_workspace', list_id=list_id, line_id=line.id) }}"
+       title="Open line workspace">
+        <i class="bi bi-bezier2"></i>
+    </a>
     {% if line.customer_target_price_gbp is not none %}
     <div class="mt-1">
         <span class="badge bg-light text-dark border">
