@@ -116,6 +116,23 @@
     top: 1rem;
 }
 
+.alt-card {
+    border: 1px solid #dfe6ee;
+    border-radius: 0.75rem;
+    padding: 0.8rem;
+    background: #fbfdff;
+}
+
+.alt-card.has-stock {
+    background: #f1fbf4;
+    border-color: #cde8d4;
+}
+
+.truncate-panel {
+    max-height: 420px;
+    overflow: hidden;
+}
+
 @media (max-width: 1100px) {
     .workspace-grid {
         grid-template-columns: 1fr;
@@ -411,9 +428,60 @@
                         </div>
                         <div class="col-lg-4">
                             <div class="mini-muted mb-2">Still To Contact</div>
-                            <div id="toContactSuppliers" class="list-group coverage-list"></div>
+                            <div id="toContactSuppliers" class="list-group coverage-list truncate-panel"></div>
+                            <button type="button" id="toggleToContactBtn" class="btn btn-sm btn-outline-secondary mt-2 d-none">
+                                Show more
+                            </button>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <div class="card workspace-card mb-3">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div class="section-title">Global Alternatives</div>
+                        <span class="badge bg-secondary">{{ global_alternatives|length }}</span>
+                    </div>
+                    {% if global_alternatives %}
+                    <div class="row g-3">
+                        {% for alt in global_alternatives %}
+                        <div class="col-md-6">
+                            <div class="alt-card {{ 'has-stock' if alt.has_stock else '' }}">
+                                <div class="d-flex justify-content-between align-items-start gap-2">
+                                    <div>
+                                        <div class="fw-semibold mono">{{ alt.part_number or alt.base_part_number }}</div>
+                                        <div class="mini-muted">Base {{ alt.base_part_number }}</div>
+                                    </div>
+                                    <a class="btn btn-sm btn-outline-secondary"
+                                       href="{{ url_for('parts.view_part_number', base_part_number=alt.base_part_number) }}">
+                                        Open
+                                    </a>
+                                </div>
+                                <div class="d-flex flex-wrap gap-2 mt-3">
+                                    <span class="list-chip {{ '' if alt.has_stock else 'text-muted' }}">
+                                        Stock {{ alt.total_available_stock or 0 }}
+                                    </span>
+                                    <span class="list-chip">Sales {{ alt.sales_order_count or 0 }}</span>
+                                    <span class="list-chip">POs {{ alt.purchase_order_count or 0 }}</span>
+                                </div>
+                                <div class="mini-muted mt-2">
+                                    {% if alt.last_sale_price_gbp %}
+                                    Last sale £{{ "%.2f"|format(alt.last_sale_price_gbp) }}
+                                    {% else %}
+                                    No recorded sell price
+                                    {% endif %}
+                                    {% if alt.avg_sale_price_gbp %}
+                                    · Avg £{{ "%.2f"|format(alt.avg_sale_price_gbp) }}
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-muted">No global alternatives defined for this part.</div>
+                    {% endif %}
                 </div>
             </div>
 
@@ -579,6 +647,7 @@ const LINE_ID = {{ line.id }};
 const LINE_DATA = {{ line | tojson }};
 const CURRENCIES = {{ currencies | tojson }};
 const PURCHASE_HISTORY_ROWS = {{ purchase_history_rows | tojson }};
+let toContactExpanded = false;
 
 function setStatusMessage(message, tone = 'muted') {
     const el = document.getElementById('workspaceStatus');
@@ -899,6 +968,7 @@ function buildCoverage(quotesData, ilsData, suggestedData, emailData) {
     const toContactItems = Array.from(candidateMap.values())
         .filter(item => !contactedMap.has(item.supplier_id))
         .sort((a, b) => (a.supplier_name || '').localeCompare(b.supplier_name || ''));
+    const visibleToContactItems = toContactExpanded ? toContactItems : toContactItems.slice(0, 8);
 
     renderList('contactedSuppliers', contactedItems, 'No contacted suppliers recorded for this line.', item => `
         <div class="list-group-item">
@@ -926,7 +996,7 @@ function buildCoverage(quotesData, ilsData, suggestedData, emailData) {
         </div>
     `);
 
-    renderList('toContactSuppliers', toContactItems, 'No obvious uncovered suppliers from current ILS/quote history.', item => `
+    renderList('toContactSuppliers', visibleToContactItems, 'No obvious uncovered suppliers from current ILS/quote history.', item => `
         <div class="list-group-item">
             <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
@@ -942,6 +1012,19 @@ function buildCoverage(quotesData, ilsData, suggestedData, emailData) {
             </div>
         </div>
     `);
+
+    const toggleBtn = document.getElementById('toggleToContactBtn');
+    const toContactPanel = document.getElementById('toContactSuppliers');
+    if (toggleBtn && toContactPanel) {
+        if (toContactItems.length > 8) {
+            toggleBtn.classList.remove('d-none');
+            toggleBtn.textContent = toContactExpanded ? 'Show less' : `Show ${toContactItems.length - visibleToContactItems.length} more`;
+            toContactPanel.classList.toggle('truncate-panel', !toContactExpanded);
+        } else {
+            toggleBtn.classList.add('d-none');
+            toContactPanel.classList.remove('truncate-panel');
+        }
+    }
 
     document.querySelectorAll('.remove-suggested-btn').forEach(button => {
         button.addEventListener('click', () => removeSuggestedSupplier(Number(button.dataset.suggestedId)));
@@ -972,6 +1055,10 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('calcMarginBtn')?.addEventListener('click', recalcMargin);
     document.getElementById('clearChosenCostBtn')?.addEventListener('click', clearChosenCost);
     document.getElementById('duplicateLineBtn')?.addEventListener('click', duplicateLine);
+    document.getElementById('toggleToContactBtn')?.addEventListener('click', function() {
+        toContactExpanded = !toContactExpanded;
+        loadCoverageAndQuotes();
+    });
     loadCoverageAndQuotes();
 });
 </script>

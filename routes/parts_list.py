@@ -9044,6 +9044,67 @@ def parts_list_line_workspace(list_id, line_id):
                 LIMIT 12
             """, (line_data['base_part_number'],)).fetchall() or []
 
+            global_alternatives = []
+            if line_data.get('base_part_number'):
+                alt_base_parts = [alt for alt in (get_global_alternatives(line_data['base_part_number']) or []) if alt and alt != line_data['base_part_number']]
+                for alt_base_part in alt_base_parts:
+                    alt_part_info = _execute_with_cursor(cur, """
+                        SELECT base_part_number, part_number, system_part_number, category_id
+                        FROM part_numbers
+                        WHERE base_part_number = ?
+                        LIMIT 1
+                    """, (alt_base_part,)).fetchone()
+
+                    alt_stock = _execute_with_cursor(cur, """
+                        SELECT COALESCE(SUM(available_quantity), 0) AS total_stock
+                        FROM stock_movements
+                        WHERE base_part_number = ?
+                          AND movement_type = 'IN'
+                          AND available_quantity > 0
+                    """, (alt_base_part,)).fetchone()
+
+                    alt_sales = _execute_with_cursor(cur, """
+                        WITH ranked_sales AS (
+                            SELECT
+                                sol.price,
+                                so.date_entered,
+                                ROW_NUMBER() OVER (
+                                    ORDER BY so.date_entered DESC NULLS LAST, sol.id DESC
+                                ) AS rn
+                            FROM sales_order_lines sol
+                            JOIN sales_orders so ON so.id = sol.sales_order_id
+                            WHERE sol.base_part_number = ?
+                              AND sol.price IS NOT NULL
+                              AND sol.price > 0
+                        )
+                        SELECT
+                            COUNT(*) AS sales_order_count,
+                            AVG(price) AS avg_sale_price,
+                            MAX(CASE WHEN rn = 1 THEN price END) AS last_sale_price
+                        FROM ranked_sales
+                    """, (alt_base_part,)).fetchone()
+
+                    alt_purchases = _execute_with_cursor(cur, """
+                        SELECT COUNT(*) AS purchase_order_count
+                        FROM purchase_order_lines pol
+                        WHERE pol.base_part_number = ?
+                    """, (alt_base_part,)).fetchone()
+
+                    total_stock = _to_float((alt_stock or {}).get('total_stock')) or 0
+                    global_alternatives.append({
+                        'base_part_number': alt_base_part,
+                        'part_number': (alt_part_info['part_number'] if alt_part_info else alt_base_part),
+                        'system_part_number': alt_part_info['system_part_number'] if alt_part_info else None,
+                        'category_id': alt_part_info['category_id'] if alt_part_info else None,
+                        'found': bool(alt_part_info),
+                        'has_stock': total_stock > 0,
+                        'total_available_stock': total_stock,
+                        'sales_order_count': int((alt_sales or {}).get('sales_order_count') or 0),
+                        'purchase_order_count': int((alt_purchases or {}).get('purchase_order_count') or 0),
+                        'avg_sale_price_gbp': _to_float((alt_sales or {}).get('avg_sale_price')),
+                        'last_sale_price_gbp': _to_float((alt_sales or {}).get('last_sale_price')),
+                    })
+
             currencies = _execute_with_cursor(cur, """
                 SELECT id, currency_code, symbol, exchange_rate_to_base
                 FROM currencies
@@ -9167,6 +9228,7 @@ def parts_list_line_workspace(list_id, line_id):
             currencies=[dict(row) for row in currencies],
             sales_history_rows=[dict(row) for row in sales_history_rows],
             purchase_history_rows=[dict(row) for row in purchase_history_rows],
+            global_alternatives=global_alternatives,
             customer_sales_rows=[dict(row) for row in customer_sales_rows],
             overall_sales_summary=overall_sales_summary,
             customer_sales_summary=customer_sales_summary,
