@@ -383,6 +383,8 @@ def _get_parts_list_progress(parts_list_id):
     rows = db_execute('''
         SELECT
             pll.id,
+            pll.parent_line_id,
+            pll.line_type,
             pll.base_part_number,
             COALESCE(NULLIF(TRIM(pll.customer_part_number), ''), pll.base_part_number) AS customer_part_number,
             COALESCE(pll.chosen_qty, pll.quantity, 0) AS effective_quantity,
@@ -424,6 +426,8 @@ def _get_parts_list_progress(parts_list_id):
 
     for row in rows:
         line = dict(row)
+        if line.get('parent_line_id') or line.get('line_type') in {'alternate', 'price_break'}:
+            continue
         base_part_number = line.get('base_part_number')
         if not base_part_number:
             continue
@@ -589,6 +593,90 @@ def _calculate_bom_row_chosen_value(line, progress_by_base):
     if chosen_unit is None:
         return None
     return float(chosen_unit) * float(_coerce_quantity(line.get('quantity')))
+
+
+def _get_parts_list_root_line(parts_list_id, base_part_number):
+    return db_execute('''
+        SELECT
+            pll.id,
+            pll.parts_list_id,
+            pll.line_number,
+            pll.parent_line_id,
+            pll.base_part_number,
+            pll.customer_part_number
+        FROM parts_list_lines pll
+        WHERE pll.parts_list_id = ?
+          AND pll.base_part_number = ?
+        ORDER BY CASE WHEN pll.parent_line_id IS NULL THEN 0 ELSE 1 END, pll.line_number ASC, pll.id ASC
+        LIMIT 1
+    ''', (parts_list_id, base_part_number), fetch='one')
+
+
+def _get_alt_selection_candidates(parts_list_id, base_part_number):
+    root_line = _get_parts_list_root_line(parts_list_id, base_part_number)
+    if not root_line:
+        return None, []
+
+    root_line_id = root_line.get('parent_line_id') or root_line['id']
+    rows = db_execute('''
+        SELECT
+            pll.id,
+            pll.line_number,
+            pll.parent_line_id,
+            pll.line_type,
+            pll.base_part_number,
+            pll.customer_part_number,
+            COALESCE(pll.chosen_qty, pll.quantity, 0) AS effective_quantity,
+            pll.chosen_supplier_id,
+            pll.chosen_cost,
+            pll.chosen_price,
+            pll.chosen_currency_id,
+            pll.chosen_lead_days,
+            pll.chosen_source_type,
+            pll.chosen_source_reference,
+            s.name AS chosen_supplier_name,
+            c.currency_code AS chosen_currency_code,
+            cql.id AS quote_line_id,
+            cql.display_part_number,
+            cql.quoted_part_number,
+            cql.base_cost_gbp,
+            cql.quote_price_gbp,
+            cql.target_price_gbp,
+            cql.margin_percent,
+            cql.delivery_per_unit,
+            cql.delivery_per_line,
+            cql.lead_days,
+            cql.quoted_status,
+            cql.standard_condition,
+            cql.standard_certs,
+            cql.manufacturer
+        FROM parts_list_lines pll
+        LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
+        LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
+        LEFT JOIN customer_quote_lines cql ON cql.id = (
+            SELECT cql_latest.id
+            FROM customer_quote_lines cql_latest
+            WHERE cql_latest.parts_list_line_id = pll.id
+            ORDER BY cql_latest.date_modified DESC NULLS LAST, cql_latest.id DESC
+            LIMIT 1
+        )
+        WHERE (pll.id = ? OR pll.parent_line_id = ?)
+        ORDER BY pll.line_number ASC, pll.id ASC
+    ''', (root_line_id, root_line_id), fetch='all') or []
+
+    candidates = []
+    for row in rows:
+        item = dict(row)
+        item['effective_part_number'] = (
+            item.get('quoted_part_number')
+            or item.get('display_part_number')
+            or item.get('customer_part_number')
+            or item.get('base_part_number')
+        )
+        item['is_parent_line'] = item.get('id') == root_line_id
+        candidates.append(item)
+
+    return dict(root_line), candidates
 
 
 def _calculate_bom_row_pricing(line, progress_by_base):
@@ -1851,6 +1939,211 @@ def apply_matrix_lot_pricing(bom_id):
         return jsonify(success=True, purchase_quantity=purchase_quantity, amortized_unit_cost_gbp=amortized_unit_cost_gbp, quote_price_gbp=quote_price_gbp)
     except Exception as exc:
         logging.error(f"Error applying lot pricing for BOM {bom_id}: {exc}", exc_info=True)
+        return jsonify(success=False, message=str(exc)), 400
+
+
+@bom_bp.route('/matrix/<int:bom_id>/alternative-options', methods=['GET'])
+def matrix_alternative_options(bom_id):
+    parts_list_id = request.args.get('parts_list_id', type=int)
+    raw_base_part_number = (request.args.get('base_part_number') or '').strip()
+    base_part_number = create_base_part_number(raw_base_part_number) if raw_base_part_number else ''
+
+    if not parts_list_id or not base_part_number:
+        return jsonify(success=False, message='parts_list_id and base_part_number are required'), 400
+
+    try:
+        root_line, candidates = _get_alt_selection_candidates(parts_list_id, base_part_number)
+        if not root_line:
+            return jsonify(success=False, message='Linked parts list line not found'), 404
+
+        return jsonify(success=True, root_line=root_line, candidates=candidates)
+    except Exception as exc:
+        logging.error(f"Error loading matrix alternative options for BOM {bom_id}: {exc}", exc_info=True)
+        return jsonify(success=False, message=str(exc)), 400
+
+
+@bom_bp.route('/matrix/<int:bom_id>/select-alternative', methods=['POST'])
+def select_matrix_alternative(bom_id):
+    data = request.json or {}
+    parts_list_id = data.get('parts_list_id')
+    source_line_id = data.get('source_line_id')
+    raw_base_part_number = (data.get('base_part_number') or '').strip()
+    base_part_number = create_base_part_number(raw_base_part_number) if raw_base_part_number else ''
+
+    if not parts_list_id or not source_line_id or not base_part_number:
+        return jsonify(success=False, message='parts_list_id, base_part_number, and source_line_id are required'), 400
+
+    try:
+        root_line = _get_parts_list_root_line(parts_list_id, base_part_number)
+        if not root_line:
+            return jsonify(success=False, message='Linked parts list root line not found'), 404
+
+        root_line_id = root_line.get('parent_line_id') or root_line['id']
+        source_line = db_execute('''
+            SELECT
+                pll.id,
+                pll.parts_list_id,
+                pll.parent_line_id,
+                pll.base_part_number,
+                pll.customer_part_number,
+                pll.chosen_supplier_id,
+                pll.chosen_cost,
+                pll.chosen_price,
+                pll.chosen_currency_id,
+                pll.chosen_lead_days,
+                pll.chosen_qty,
+                pll.chosen_source_type,
+                pll.chosen_source_reference,
+                pll.internal_notes,
+                cql.display_part_number,
+                cql.quoted_part_number,
+                cql.base_cost_gbp,
+                cql.quote_price_gbp,
+                cql.target_price_gbp,
+                cql.margin_percent,
+                cql.delivery_per_unit,
+                cql.delivery_per_line,
+                cql.lead_days,
+                cql.quoted_status,
+                cql.standard_condition,
+                cql.standard_certs,
+                cql.manufacturer,
+                cql.is_no_bid,
+                cql.line_notes
+            FROM parts_list_lines pll
+            LEFT JOIN customer_quote_lines cql ON cql.id = (
+                SELECT cql_latest.id
+                FROM customer_quote_lines cql_latest
+                WHERE cql_latest.parts_list_line_id = pll.id
+                ORDER BY cql_latest.date_modified DESC NULLS LAST, cql_latest.id DESC
+                LIMIT 1
+            )
+            WHERE pll.id = ?
+              AND pll.parts_list_id = ?
+              AND (pll.id = ? OR pll.parent_line_id = ?)
+        ''', (source_line_id, parts_list_id, root_line_id, root_line_id), fetch='one')
+
+        if not source_line:
+            return jsonify(success=False, message='Alternative line not found'), 404
+
+        root_quote_line = db_execute('''
+            SELECT id
+            FROM customer_quote_lines
+            WHERE parts_list_line_id = ?
+            ORDER BY date_modified DESC NULLS LAST, id DESC
+            LIMIT 1
+        ''', (root_line_id,), fetch='one')
+
+        with db_cursor(commit=True) as cur:
+            _execute_with_cursor(cur, '''
+                UPDATE parts_list_lines
+                SET chosen_supplier_id = ?,
+                    chosen_cost = ?,
+                    chosen_price = ?,
+                    chosen_currency_id = ?,
+                    chosen_lead_days = ?,
+                    chosen_source_type = ?,
+                    chosen_source_reference = ?,
+                    internal_notes = ?
+                WHERE id = ?
+            ''', (
+                source_line.get('chosen_supplier_id'),
+                source_line.get('chosen_cost'),
+                source_line.get('chosen_price'),
+                source_line.get('chosen_currency_id'),
+                source_line.get('chosen_lead_days'),
+                source_line.get('chosen_source_type'),
+                source_line.get('chosen_source_reference'),
+                source_line.get('internal_notes'),
+                root_line_id,
+            ))
+
+            if root_quote_line:
+                _execute_with_cursor(cur, '''
+                    UPDATE customer_quote_lines
+                    SET display_part_number = ?,
+                        quoted_part_number = ?,
+                        base_cost_gbp = ?,
+                        quote_price_gbp = ?,
+                        target_price_gbp = ?,
+                        margin_percent = ?,
+                        delivery_per_unit = ?,
+                        delivery_per_line = ?,
+                        lead_days = ?,
+                        quoted_status = ?,
+                        standard_condition = ?,
+                        standard_certs = ?,
+                        manufacturer = ?,
+                        is_no_bid = ?,
+                        line_notes = ?,
+                        lot_pricing_enabled = FALSE,
+                        lot_purchase_multiple = NULL,
+                        lot_purchase_quantity = NULL,
+                        lot_source_unit_cost_gbp = NULL,
+                        lot_total_cost_gbp = NULL
+                    WHERE id = ?
+                ''', (
+                    source_line.get('display_part_number'),
+                    source_line.get('quoted_part_number'),
+                    source_line.get('base_cost_gbp'),
+                    source_line.get('quote_price_gbp'),
+                    source_line.get('target_price_gbp'),
+                    source_line.get('margin_percent'),
+                    source_line.get('delivery_per_unit'),
+                    source_line.get('delivery_per_line'),
+                    source_line.get('lead_days'),
+                    source_line.get('quoted_status') or 'created',
+                    source_line.get('standard_condition'),
+                    source_line.get('standard_certs'),
+                    source_line.get('manufacturer'),
+                    source_line.get('is_no_bid') or False,
+                    source_line.get('line_notes'),
+                    root_quote_line['id'],
+                ))
+            else:
+                insert_query = _with_returning_clause('''
+                    INSERT INTO customer_quote_lines (
+                        parts_list_line_id,
+                        display_part_number,
+                        quoted_part_number,
+                        base_cost_gbp,
+                        quote_price_gbp,
+                        target_price_gbp,
+                        margin_percent,
+                        delivery_per_unit,
+                        delivery_per_line,
+                        lead_days,
+                        quoted_status,
+                        standard_condition,
+                        standard_certs,
+                        manufacturer,
+                        is_no_bid,
+                        line_notes
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''')
+                _execute_with_cursor(cur, insert_query, (
+                    root_line_id,
+                    source_line.get('display_part_number'),
+                    source_line.get('quoted_part_number'),
+                    source_line.get('base_cost_gbp'),
+                    source_line.get('quote_price_gbp'),
+                    source_line.get('target_price_gbp'),
+                    source_line.get('margin_percent'),
+                    source_line.get('delivery_per_unit'),
+                    source_line.get('delivery_per_line'),
+                    source_line.get('lead_days'),
+                    source_line.get('quoted_status') or 'created',
+                    source_line.get('standard_condition'),
+                    source_line.get('standard_certs'),
+                    source_line.get('manufacturer'),
+                    source_line.get('is_no_bid') or False,
+                    source_line.get('line_notes'),
+                ))
+
+        return jsonify(success=True)
+    except Exception as exc:
+        logging.error(f"Error selecting matrix alternative for BOM {bom_id}: {exc}", exc_info=True)
         return jsonify(success=False, message=str(exc)), 400
 
 

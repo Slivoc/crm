@@ -96,6 +96,13 @@
     text-decoration: underline;
 }
 
+.part-link-button {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+}
+
 .part-meta {
     font-size: 0.74rem;
     color: #6c757d;
@@ -342,9 +349,9 @@
                             <td class="item-cell sticky-left">{{ row.item_number }}</td>
                             <td class="part-cell sticky-left-2">
                                 <div>
-                                    <a class="part-link" href="{{ url_for('parts.view_part_number', base_part_number=row.base_part_number) }}">
+                                    <button type="button" class="part-link part-link-button alt-picker-link" data-base-part-number="{{ row.base_part_number }}">
                                         {{ row.part_number }}
-                                    </a>
+                                    </button>
                                 </div>
                                 {% if progress and progress.lot_pricing_enabled %}
                                 <div class="part-meta">
@@ -424,9 +431,9 @@
                             <td>{{ row.item_number }}</td>
                             <td>
                                 <div>
-                                    <a class="part-link" href="{{ url_for('parts.view_part_number', base_part_number=row.base_part_number) }}">
+                                    <button type="button" class="part-link part-link-button alt-picker-link" data-base-part-number="{{ row.base_part_number }}">
                                         {{ row.part_number }}
-                                    </a>
+                                    </button>
                                 </div>
                                 {% if progress and progress.lot_pricing_enabled %}
                                 <div class="part-meta">
@@ -513,6 +520,23 @@
     </div>
 </div>
 
+<div class="modal fade" id="altPickerModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Select Quoted Alternative</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3 small text-muted" id="altPickerContext"></div>
+                <div id="altPickerBody">
+                    <div class="text-muted">Loading alternatives...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="createPartsListModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -553,6 +577,47 @@
 const activePartsListId = {{ active_parts_list.id if active_parts_list else 'null' }};
 let lotPricingModal;
 let activeLotRow = null;
+let altPickerModal;
+let activeAltBasePartNumber = null;
+
+function renderAltCandidates(candidates) {
+    if (!candidates.length) {
+        return '<div class="text-muted">No quoted alternatives found for this line.</div>';
+    }
+
+    return `
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Line</th>
+                        <th>Effective Part</th>
+                        <th>Supplier</th>
+                        <th class="text-end">Cost</th>
+                        <th class="text-end">Quote</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${candidates.map(candidate => `
+                        <tr>
+                            <td>${candidate.line_number}${candidate.is_parent_line ? ' <span class="badge bg-secondary">Main</span>' : ''}</td>
+                            <td>${candidate.effective_part_number || candidate.customer_part_number || candidate.base_part_number || '-'}</td>
+                            <td>${candidate.chosen_supplier_name || '-'}</td>
+                            <td class="text-end">${candidate.base_cost_gbp != null ? `£${Number(candidate.base_cost_gbp).toFixed(2)}` : '-'}</td>
+                            <td class="text-end">${candidate.quote_price_gbp != null ? `£${Number(candidate.quote_price_gbp).toFixed(2)}` : '-'}</td>
+                            <td>${candidate.quoted_status || '-'}</td>
+                            <td class="text-end">
+                                <button type="button" class="btn btn-sm btn-primary alt-select-btn" data-source-line-id="${candidate.id}">Use</button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
 
 function roundUpToMultiple(quantity, multiple) {
     const demand = Number(quantity || 0);
@@ -577,6 +642,7 @@ function recalcLotPricingPreview() {
 
 document.addEventListener('DOMContentLoaded', function() {
     lotPricingModal = new bootstrap.Modal(document.getElementById('lotPricingModal'));
+    altPickerModal = new bootstrap.Modal(document.getElementById('altPickerModal'));
 
     document.querySelectorAll('.lot-pricing-btn').forEach(button => {
         button.addEventListener('click', function() {
@@ -618,6 +684,55 @@ document.addEventListener('DOMContentLoaded', function() {
         const data = await response.json();
         if (!response.ok || !data.success) {
             alert(data.message || 'Unable to apply lot pricing');
+            return;
+        }
+        window.location.reload();
+    });
+
+    document.querySelectorAll('.alt-picker-link').forEach(button => {
+        button.addEventListener('click', async function() {
+            if (!activePartsListId) {
+                return;
+            }
+
+            activeAltBasePartNumber = button.dataset.basePartNumber || '';
+            document.getElementById('altPickerContext').textContent = activeAltBasePartNumber;
+            document.getElementById('altPickerBody').innerHTML = '<div class="text-muted">Loading alternatives...</div>';
+            altPickerModal.show();
+
+            const params = new URLSearchParams({
+                parts_list_id: activePartsListId,
+                base_part_number: activeAltBasePartNumber
+            });
+            const response = await fetch(`{{ url_for("bom.matrix_alternative_options", bom_id=bom.id) }}?${params.toString()}`);
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                document.getElementById('altPickerBody').innerHTML = `<div class="text-danger">${data.message || 'Unable to load alternatives'}</div>`;
+                return;
+            }
+
+            document.getElementById('altPickerBody').innerHTML = renderAltCandidates(data.candidates || []);
+        });
+    });
+
+    document.getElementById('altPickerBody').addEventListener('click', async function(event) {
+        const button = event.target.closest('.alt-select-btn');
+        if (!button || !activePartsListId || !activeAltBasePartNumber) {
+            return;
+        }
+
+        const response = await fetch('{{ url_for("bom.select_matrix_alternative", bom_id=bom.id) }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                parts_list_id: activePartsListId,
+                base_part_number: activeAltBasePartNumber,
+                source_line_id: button.dataset.sourceLineId
+            })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            alert(data.message || 'Unable to select alternative');
             return;
         }
         window.location.reload();
