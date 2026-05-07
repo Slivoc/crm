@@ -2035,6 +2035,7 @@ def select_matrix_alternative(bom_id):
         ''', (root_line_id,), fetch='one')
 
         with db_cursor(commit=True) as cur:
+            is_no_bid_value = 1 if source_line.get('is_no_bid') else 0
             _execute_with_cursor(cur, '''
                 UPDATE parts_list_lines
                 SET chosen_supplier_id = ?,
@@ -2096,7 +2097,7 @@ def select_matrix_alternative(bom_id):
                     source_line.get('standard_condition'),
                     source_line.get('standard_certs'),
                     source_line.get('manufacturer'),
-                    source_line.get('is_no_bid') or False,
+                    is_no_bid_value,
                     source_line.get('line_notes'),
                     root_quote_line['id'],
                 ))
@@ -2137,7 +2138,7 @@ def select_matrix_alternative(bom_id):
                     source_line.get('standard_condition'),
                     source_line.get('standard_certs'),
                     source_line.get('manufacturer'),
-                    source_line.get('is_no_bid') or False,
+                    is_no_bid_value,
                     source_line.get('line_notes'),
                 ))
 
