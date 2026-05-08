@@ -35,6 +35,7 @@ from functools import wraps
 import time
 import traceback
 import uuid
+import io
 from datetime import datetime, timedelta, timezone  # Add this import
 from threading import Lock
 
@@ -58,6 +59,7 @@ from dateutil import parser
 import extract_msg  # For processing .msg email files
 import msal
 import requests
+import pandas as pd
 from openai import OpenAI
 
 # Project-specific imports (replace with your actual module structure)
@@ -5431,6 +5433,92 @@ def mailbox_save_supplier_contact():
 
 
 MAILBOX_PDF_SCAN_MAX_BYTES = 3 * 1024 * 1024
+MAILBOX_EXCEL_SCAN_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _fetch_graph_attachment(message_id, attachment_id):
+    settings = _get_graph_settings(include_secret=True)
+    cache = _load_graph_cache()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+    if not accounts:
+        raise ValueError("No Graph account connected")
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache(cache)
+    if not token or "access_token" not in token:
+        raise ValueError("Failed to refresh access token")
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    safe_message_id = quote(message_id, safe="")
+    safe_attachment_id = quote(attachment_id, safe="")
+    resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments/{safe_attachment_id}",
+        headers=headers,
+        timeout=30,
+    )
+    if resp.status_code >= 400:
+        raise ValueError("Failed to fetch attachment from Graph")
+    body = resp.json() if resp.content else None
+    content_bytes_b64 = body.get("contentBytes") if isinstance(body, dict) else None
+    if not content_bytes_b64:
+        raise ValueError("Attachment has no content")
+    return body, base64.b64decode(content_bytes_b64)
+
+
+@emails_bp.route('/emails/mailbox/excel-preview', methods=['POST'])
+def mailbox_excel_preview():
+    data = request.get_json(force=True) or {}
+    message_id = data.get("message_id")
+    attachment_id = data.get("attachment_id")
+    if not message_id or not attachment_id:
+        return jsonify(success=False, error="message_id and attachment_id are required"), 400
+    try:
+        body, file_bytes = _fetch_graph_attachment(message_id, attachment_id)
+        if len(file_bytes) > MAILBOX_EXCEL_SCAN_MAX_BYTES:
+            return jsonify(success=False, error="Excel attachment exceeds size limit"), 400
+        workbook = pd.ExcelFile(io.BytesIO(file_bytes))
+        sheet_name = workbook.sheet_names[0] if workbook.sheet_names else None
+        if not sheet_name:
+            return jsonify(success=False, error="No worksheet found"), 400
+        df = workbook.parse(sheet_name=sheet_name, dtype=str).fillna("")
+        columns = [str(col).strip() for col in df.columns]
+        sample_rows = df.head(5).to_dict(orient='records')
+        return jsonify(success=True, attachment_name=body.get("name"), sheet_name=sheet_name, columns=columns, sample_rows=sample_rows)
+    except Exception as exc:
+        return jsonify(success=False, error=str(exc)), 400
+
+
+@emails_bp.route('/emails/mailbox/excel-import-lines', methods=['POST'])
+def mailbox_excel_import_lines():
+    data = request.get_json(force=True) or {}
+    message_id = data.get("message_id")
+    attachment_id = data.get("attachment_id")
+    sheet_name = data.get("sheet_name")
+    part_column = data.get("part_column")
+    qty_column = data.get("qty_column")
+    if not message_id or not attachment_id or not part_column:
+        return jsonify(success=False, error="message_id, attachment_id, and part_column are required"), 400
+    try:
+        _, file_bytes = _fetch_graph_attachment(message_id, attachment_id)
+        workbook = pd.ExcelFile(io.BytesIO(file_bytes))
+        if sheet_name not in workbook.sheet_names:
+            sheet_name = workbook.sheet_names[0]
+        df = workbook.parse(sheet_name=sheet_name, dtype=str).fillna("")
+        lines = []
+        for _, row in df.iterrows():
+            part_number = str(row.get(part_column, "")).strip()
+            if not part_number or part_number.lower() == "nan":
+                continue
+            qty_raw = str(row.get(qty_column, "1")).strip() if qty_column else "1"
+            try:
+                quantity = max(int(float(qty_raw)), 1)
+            except (TypeError, ValueError):
+                quantity = 1
+            lines.append({"customer_part_number": part_number, "quantity": quantity})
+        return jsonify(success=True, lines=lines, count=len(lines))
+    except Exception as exc:
+        return jsonify(success=False, error=str(exc)), 400
 
 @emails_bp.route('/emails/mailbox/scan-pdf-attachment', methods=['POST'])
 def mailbox_scan_pdf_attachment():
