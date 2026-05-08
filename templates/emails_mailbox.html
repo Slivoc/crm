@@ -541,6 +541,7 @@ let mailboxModalSupplierSelection = null;
 let selectedMessageHtml = null;
 let selectedMessagePdfAttachments = [];
 let selectedMessageZipAttachments = [];
+let selectedMessageExcelAttachments = [];
 let supplierToolsExpanded = false;
 let selectedMessageText = null;
 let selectedMessageResolvedHtml = null;
@@ -1437,6 +1438,10 @@ async function fetchMessageAttachments(messageId) {
         const attachments = (data.attachments || []).filter(att => !att.is_inline);
         selectedMessagePdfAttachments = attachments.filter(att => att.is_pdf);
         selectedMessageZipAttachments = attachments.filter(att => (att.name || '').toLowerCase().endsWith('.zip'));
+        selectedMessageExcelAttachments = attachments.filter(att => {
+            const name = (att.name || '').toLowerCase();
+            return name.endsWith('.xlsx') || name.endsWith('.xls');
+        });
         renderPdfAttachmentsDropdown();
         updateCheckPoButton();
         updateStockImportButton();
@@ -2900,11 +2905,16 @@ createPartsListBtn.addEventListener('click', async () => {
         const data = await response.json();
         if (data.success) {
             if (data.parts_count === 0) {
-                showToast('No parts found. Add parts manually or open an empty list.', 'warning');
-                openManualPartsModal({
+                const modalCtx = {
                     list_id: data.list_id,
                     redirect_url: data.redirect_url || `/parts_list/view/${data.list_id}`
-                });
+                };
+                if (selectedMessageExcelAttachments?.length) {
+                    const imported = await tryImportFromExcelAttachment(modalCtx);
+                    if (imported) return;
+                }
+                showToast('No parts found. Add parts manually or open an empty list.', 'warning');
+                openManualPartsModal(modalCtx);
             } else {
                 showToast(`Created parts list #${data.list_id}`, 'success');
                 const redirectUrl = data.redirect_url || `/parts_list/view/${data.list_id}`;
@@ -2923,6 +2933,58 @@ createPartsListBtn.addEventListener('click', async () => {
         updatePrimaryMailboxActions();
     }
 });
+
+async function tryImportFromExcelAttachment(ctx) {
+    const attachment = selectedMessageExcelAttachments[0];
+    if (!attachment || !selectedMessage?.id) return false;
+    try {
+        const previewRes = await fetch('/emails/mailbox/excel-preview', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message_id: selectedMessage.id, attachment_id: attachment.id})
+        });
+        const preview = await previewRes.json();
+        if (!previewRes.ok || !preview.success || !preview.columns?.length) return false;
+
+        const partColumn = prompt(`Excel found: ${preview.attachment_name || attachment.name}\nChoose PART NUMBER column:\n${preview.columns.join(', ')}`, preview.columns[0] || '');
+        if (!partColumn) return false;
+        const qtyColumn = prompt(`Choose QUANTITY column (optional, leave blank for qty=1):\n${preview.columns.join(', ')}`, '');
+
+        const importRes = await fetch('/emails/mailbox/excel-import-lines', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                message_id: selectedMessage.id,
+                attachment_id: attachment.id,
+                sheet_name: preview.sheet_name,
+                part_column: partColumn,
+                qty_column: qtyColumn || null
+            })
+        });
+        const importData = await importRes.json();
+        if (!importRes.ok || !importData.success || !importData.lines?.length) {
+            showToast(importData.error || 'No lines imported from Excel', 'warning');
+            return false;
+        }
+
+        const saveRes = await fetch(`/parts_list/parts-lists/${ctx.list_id}/lines/add`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ lines: importData.lines })
+        });
+        const saveData = await saveRes.json();
+        if (!saveRes.ok || !saveData.success) {
+            showToast(saveData.message || 'Failed to save Excel lines', 'error');
+            return false;
+        }
+        showToast(`Imported ${importData.count} part(s) from Excel`, 'success');
+        window.location.href = ctx.redirect_url;
+        return true;
+    } catch (error) {
+        showToast(error.message || 'Excel import failed', 'warning');
+        return false;
+    }
+}
 
 createSupplierQuoteBtn.addEventListener('click', () => {
     if (!selectedMessage) return;
