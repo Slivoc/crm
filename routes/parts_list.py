@@ -11505,8 +11505,8 @@ def get_related_emails(list_id):
                     # Use filter to get all messages in this conversation
                     params = {
                         "$filter": f"conversationId eq '{conv_id}'",
-                        "$select": "id,subject,from,toRecipients,receivedDateTime,bodyPreview,webLink,conversationId,hasAttachments",
-                        "$orderby": "receivedDateTime desc",
+                        "$select": "id,subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,webLink,conversationId,hasAttachments",
+                        "$orderby": "sentDateTime desc",
                         "$top": 50
                     }
                     resp = requests.get(
@@ -11531,7 +11531,7 @@ def get_related_emails(list_id):
                         f"https://graph.microsoft.com/v1.0/me/messages/{url_quote(msg_id)}",
                         headers=headers,
                         params={
-                            "$select": "id,subject,from,toRecipients,receivedDateTime,bodyPreview,webLink,conversationId,hasAttachments"
+                            "$select": "id,subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,webLink,conversationId,hasAttachments"
                         },
                         timeout=20,
                     )
@@ -11554,7 +11554,7 @@ def get_related_emails(list_id):
 
         # Sort by date descending
         unique_emails.sort(
-            key=lambda x: x.get('receivedDateTime', ''),
+            key=lambda x: (x.get('receivedDateTime') or x.get('sentDateTime') or ''),
             reverse=True
         )
 
@@ -11574,7 +11574,7 @@ def get_related_emails(list_id):
 
         for email_msg in unique_emails:
             email_msg['receivedDateTime_display'] = _format_graph_datetime_display(
-                email_msg.get('receivedDateTime')
+                email_msg.get('receivedDateTime') or email_msg.get('sentDateTime')
             )
 
         # Find the source email
@@ -11678,8 +11678,8 @@ def get_related_emails_data(list_id):
         for conv_id in conversation_ids:
             params = {
                 "$filter": f"conversationId eq '{conv_id}'",
-                "$select": "id,subject,from,receivedDateTime,bodyPreview,conversationId",
-                "$orderby": "receivedDateTime desc",
+                "$select": "id,subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,conversationId",
+                "$orderby": "sentDateTime desc",
                 "$top": 50
             }
             resp = requests.get(
@@ -11700,7 +11700,7 @@ def get_related_emails_data(list_id):
             # Search for emails FROM this contact (customer replies)
             params = {
                 "$filter": f"from/emailAddress/address eq '{contact_email}'",
-                "$select": "id,subject,from,receivedDateTime,bodyPreview,conversationId",
+                "$select": "id,subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,conversationId",
                 "$orderby": "receivedDateTime desc",
                 "$top": 20
             }
@@ -11723,7 +11723,7 @@ def get_related_emails_data(list_id):
             resp = requests.get(
                 f"https://graph.microsoft.com/v1.0/me/messages/{url_quote(msg_id)}",
                 headers=headers,
-                params={"$select": "id,subject,from,receivedDateTime,bodyPreview,conversationId"},
+                params={"$select": "id,subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,conversationId"},
                 timeout=20,
             )
             if resp.status_code == 200:
@@ -11746,7 +11746,7 @@ def get_related_emails_data(list_id):
         unique_emails = list(seen_ids.values())
 
         unique_emails.sort(
-            key=lambda x: x.get('receivedDateTime', ''),
+            key=lambda x: (x.get('receivedDateTime') or x.get('sentDateTime') or ''),
             reverse=True
         )
 
@@ -11772,8 +11772,8 @@ def get_related_emails_data(list_id):
                 "subject": email_msg.get("subject"),
                 "from_address": from_addr.get("address"),
                 "from_name": from_addr.get("name"),
-                "receivedDateTime": email_msg.get("receivedDateTime"),
-                "receivedDateTime_display": _format_graph_datetime_display(email_msg.get("receivedDateTime")),
+                "receivedDateTime": email_msg.get("receivedDateTime") or email_msg.get("sentDateTime"),
+                "receivedDateTime_display": _format_graph_datetime_display(email_msg.get("receivedDateTime") or email_msg.get("sentDateTime")),
                 "is_source": bool(email_msg.get("_is_source")),
             })
 

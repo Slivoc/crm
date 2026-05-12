@@ -235,7 +235,7 @@ def _extract_graph_emails(value):
     return []
 
 
-def _get_latest_graph_emails_for_customers(customer_groups, graph_user_id, limit=200):
+def _get_latest_graph_emails_for_customers(customer_groups, graph_user_id, limit=1000):
     """Return the latest Graph email per main customer based on contact emails."""
     if not graph_user_id or not customer_groups:
         return {}
@@ -277,10 +277,10 @@ def _get_latest_graph_emails_for_customers(customer_groups, graph_user_id, limit
     rows = db_execute(
         """
         SELECT message_id, subject, body_preview, sender_name, sender_email,
-               received_datetime, sent_datetime, to_recipients, cc_recipients, raw_message
+               received_datetime, sent_datetime, to_recipients, cc_recipients, bcc_recipients, raw_message
         FROM graph_email_cache
         WHERE user_id = ?
-        ORDER BY COALESCE(received_datetime, sent_datetime) DESC
+        ORDER BY COALESCE(sent_datetime, received_datetime) DESC
         LIMIT ?
         """,
         (graph_user_id, limit),
@@ -293,6 +293,7 @@ def _get_latest_graph_emails_for_customers(customer_groups, graph_user_id, limit
         recipient_emails = []
         recipient_emails.extend(_extract_graph_emails(row.get('to_recipients')))
         recipient_emails.extend(_extract_graph_emails(row.get('cc_recipients')))
+        recipient_emails.extend(_extract_graph_emails(row.get('bcc_recipients')))
         recipient_emails = [e.strip().lower() for e in recipient_emails if e]
 
         possible_emails = []
@@ -306,7 +307,7 @@ def _get_latest_graph_emails_for_customers(customer_groups, graph_user_id, limit
             if match_main:
                 break
 
-        if not match_main or match_main in latest_by_main:
+        if not match_main:
             continue
 
         raw_message = row.get('raw_message')
@@ -327,8 +328,15 @@ def _get_latest_graph_emails_for_customers(customer_groups, graph_user_id, limit
 
         preview = body_content or row.get('body_preview') or ''
         subject = row.get('subject') or ''
-        sent_at = row.get('received_datetime') or row.get('sent_datetime')
+        sent_at = row.get('sent_datetime') or row.get('received_datetime')
         sent_dt = _parse_datetime_value(sent_at)
+
+        existing = latest_by_main.get(match_main)
+        existing_dt = _parse_datetime_value(existing.get('date')) if existing else None
+        if existing_dt and sent_dt and sent_dt <= existing_dt:
+            continue
+        if existing and existing_dt and not sent_dt:
+            continue
 
         latest_by_main[match_main] = {
             'message_id': row.get('message_id'),
