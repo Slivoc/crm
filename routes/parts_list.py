@@ -11,6 +11,7 @@ import json
 import re
 import copy
 import csv
+import pandas as pd
 from flask_login import current_user
 import tempfile
 import extract_msg
@@ -20,6 +21,7 @@ from email import policy
 from email.message import EmailMessage
 import os
 import html
+import io
 from io import StringIO
 from routes.emails import send_graph_email, build_graph_inline_attachments
 from routes.email_signatures import get_user_default_signature
@@ -10723,12 +10725,50 @@ def parse_email():
 
         logging.info(f"Processing email file: {file.filename}")
 
+        attachment_previews = []
+
+        def _build_preview_from_bytes(raw_bytes, filename):
+            lower = (filename or '').lower()
+            if not lower.endswith(('.xlsx', '.xls', '.csv')):
+                return None
+            try:
+                if lower.endswith('.csv'):
+                    df_local = pd.read_csv(StringIO(raw_bytes.decode(errors='ignore')), header=None, dtype=str, keep_default_na=False)
+                else:
+                    df_local = pd.read_excel(io.BytesIO(raw_bytes), header=None, dtype=str, keep_default_na=False)
+                df_local = df_local.dropna(how='all').dropna(axis=1, how='all').fillna('')
+                if df_local.empty:
+                    return None
+                trimmed = df_local.iloc[:200, :20]
+                rows = trimmed.astype(str).values.tolist()
+                cols = []
+                for idx in range(trimmed.shape[1]):
+                    sample = ''
+                    for row in rows[:15]:
+                        val = (row[idx] or '').strip()
+                        if val:
+                            sample = val[:30]
+                            break
+                    cols.append({'index': idx, 'label': f"Column {idx + 1}", 'sample': sample})
+                return {'filename': filename, 'rows_count': len(rows), 'columns': cols, 'rows': rows}
+            except Exception:
+                logging.exception(f"Failed parsing spreadsheet attachment: {filename}")
+                return None
+
         # Parse based on extension
         if file.filename.endswith('.msg'):
             msg = extract_msg.Message(tmp_path)
             subject = msg.subject or 'Untitled Email'
             sender_raw = msg.sender or ''
             body = msg.body or ''
+            for att in (msg.attachments or []):
+                name = getattr(att, 'longFilename', None) or getattr(att, 'shortFilename', None) or 'attachment'
+                data = getattr(att, 'data', None)
+                if not data:
+                    continue
+                preview = _build_preview_from_bytes(data, name)
+                if preview:
+                    attachment_previews.append(preview)
             msg.close()
             logging.info(f"MSG parsed - Subject: {subject}, Sender: {sender_raw}")
 
@@ -10748,6 +10788,14 @@ def parse_email():
             body = ''
             if msg.is_multipart():
                 for part in msg.walk():
+                    disp = (part.get('Content-Disposition') or '').lower()
+                    file_name = part.get_filename()
+                    if file_name and 'attachment' in disp:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            preview = _build_preview_from_bytes(payload, file_name)
+                            if preview:
+                                attachment_previews.append(preview)
                     if part.get_content_type() == 'text/plain':
                         body = part.get_payload(decode=True).decode(errors='ignore')
                         break
@@ -10821,7 +10869,8 @@ def parse_email():
             'customer_name': customer_name,
             'contact_id': contact_id,
             'contact_name': contact_name,
-            'parts': lines  # Will be empty list if no parts found
+            'parts': lines,
+            'attachment_previews': attachment_previews
         }
 
         logging.info(f"Returning response with {len(lines)} parts, customer: {customer_name or 'None'}, contact: {contact_name or 'None'}")
