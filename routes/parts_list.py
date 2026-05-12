@@ -11490,7 +11490,7 @@ def get_related_emails(list_id):
         token = None
         if accounts:
             token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
-            _save_graph_cache(cache)
+            _save_graph_cache_for_request(user_id, cache)
 
         if not token or "access_token" not in token:
             graph_connected = False
