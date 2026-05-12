@@ -3751,6 +3751,15 @@ document.addEventListener('DOMContentLoaded', function() {
     const emailDropzone = document.getElementById('email-dropzone');
     const emailFileInput = document.getElementById('email-file-input');
     const emailContainer = document.getElementById('email-upload-container');
+    const emailNoPartsAttachmentSelect = document.getElementById('email-no-parts-attachment-select');
+    const emailNoPartsPartCol = document.getElementById('email-no-parts-part-col');
+    const emailNoPartsQtyCol = document.getElementById('email-no-parts-qty-col');
+    const emailNoPartsPreviewHead = document.getElementById('email-no-parts-preview-head');
+    const emailNoPartsPreviewBody = document.getElementById('email-no-parts-preview-body');
+    const emailNoPartsApplyBtn = document.getElementById('email-no-parts-apply-btn');
+    const emailNoPartsHasHeader = document.getElementById('email-no-parts-has-header');
+    let emailNoPartsPreviewRows = [];
+    let emailNoPartsAttachments = [];
 
     console.log('Email dropzone element:', emailDropzone);
 
@@ -3880,6 +3889,14 @@ document.addEventListener('DOMContentLoaded', function() {
                         behavior: 'smooth',
                         block: 'center'
                     });
+                } else {
+                    showToast('No parts detected in email body. You can import from Excel/CSV.', 'warning');
+                    const modalEl = document.getElementById('emailNoPartsExcelModal');
+                    if (modalEl) {
+                        emailNoPartsAttachments = Array.isArray(data.attachment_previews) ? data.attachment_previews : [];
+                        renderEmailNoPartsAttachmentOptions();
+                        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                    }
                 }
             } else {
                 console.error('Parse failed:', data.message);
@@ -3890,6 +3907,114 @@ document.addEventListener('DOMContentLoaded', function() {
             loadingSpinner.style.display = 'none';
             console.error('Upload error:', error);
             alert('Upload failed: ' + error);
+        });
+    }
+
+    function renderEmailNoPartsAttachmentOptions() {
+        if (!emailNoPartsAttachmentSelect) return;
+        emailNoPartsAttachmentSelect.innerHTML = '';
+        if (!emailNoPartsAttachments.length) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = 'No spreadsheet attachments found';
+            emailNoPartsAttachmentSelect.appendChild(opt);
+            renderEmailNoPartsPreview([], []);
+            return;
+        }
+        emailNoPartsAttachments.forEach((att, idx) => {
+            const opt = document.createElement('option');
+            opt.value = String(idx);
+            opt.textContent = `${att.filename || `Attachment ${idx + 1}`} (${att.rows_count || 0} rows)`;
+            emailNoPartsAttachmentSelect.appendChild(opt);
+        });
+        applySelectedEmailNoPartsAttachment();
+    }
+
+    function applySelectedEmailNoPartsAttachment() {
+        if (!emailNoPartsAttachments.length) return;
+        const idx = Number(emailNoPartsAttachmentSelect?.value || 0);
+        const selected = emailNoPartsAttachments[idx] || emailNoPartsAttachments[0];
+        emailNoPartsPreviewRows = Array.isArray(selected.rows) ? selected.rows : [];
+        renderEmailNoPartsPreview(selected.columns || [], emailNoPartsPreviewRows);
+    }
+
+    function renderEmailNoPartsPreview(columns, rows) {
+        emailNoPartsPartCol.innerHTML = '';
+        emailNoPartsQtyCol.innerHTML = '';
+        emailNoPartsPreviewHead.innerHTML = '';
+        emailNoPartsPreviewBody.innerHTML = '';
+
+        if (!columns.length) return;
+        const headerRow = document.createElement('tr');
+        columns.forEach(col => {
+            const opt1 = document.createElement('option');
+            opt1.value = String(col.index);
+            opt1.textContent = `${col.label}${col.sample ? ` (${col.sample})` : ''}`;
+            emailNoPartsPartCol.appendChild(opt1);
+
+            const opt2 = document.createElement('option');
+            opt2.value = String(col.index);
+            opt2.textContent = `${col.label}${col.sample ? ` (${col.sample})` : ''}`;
+            emailNoPartsQtyCol.appendChild(opt2);
+
+            const th = document.createElement('th');
+            th.textContent = col.label;
+            headerRow.appendChild(th);
+        });
+        emailNoPartsPreviewHead.appendChild(headerRow);
+
+        if (columns.length > 1) {
+            emailNoPartsQtyCol.value = String(columns[1].index);
+        }
+
+        rows.slice(0, 25).forEach(row => {
+            const tr = document.createElement('tr');
+            columns.forEach(col => {
+                const td = document.createElement('td');
+                td.textContent = row[col.index] ?? '';
+                tr.appendChild(td);
+            });
+            emailNoPartsPreviewBody.appendChild(tr);
+        });
+    }
+
+    if (emailNoPartsAttachmentSelect) {
+        emailNoPartsAttachmentSelect.addEventListener('change', applySelectedEmailNoPartsAttachment);
+    }
+
+    if (emailNoPartsApplyBtn) {
+        emailNoPartsApplyBtn.addEventListener('click', () => {
+            const partIdx = Number(emailNoPartsPartCol.value);
+            const qtyIdx = Number(emailNoPartsQtyCol.value);
+            const skipFirst = Boolean(emailNoPartsHasHeader?.checked);
+            if (Number.isNaN(partIdx) || Number.isNaN(qtyIdx)) {
+                alert('Choose both part number and quantity columns.');
+                return;
+            }
+            const start = skipFirst ? 1 : 0;
+            const lines = [];
+            for (let i = start; i < emailNoPartsPreviewRows.length; i++) {
+                const row = emailNoPartsPreviewRows[i] || [];
+                const part = (row[partIdx] || '').toString().trim();
+                if (!part) continue;
+                const qtyRaw = (row[qtyIdx] || '').toString().trim();
+                const qtyMatch = qtyRaw.match(/\d+/);
+                const qty = qtyMatch ? Number(qtyMatch[0]) : 1;
+                lines.push(qty && qty !== 1 ? `${part}, ${qty}` : part);
+            }
+            if (!lines.length) {
+                alert('No usable rows found from selected columns.');
+                return;
+            }
+            partsInput.value = lines.join('\n');
+            partsCount.textContent = `(${lines.length} part${lines.length !== 1 ? 's' : ''})`;
+            const modalEl = document.getElementById('emailNoPartsExcelModal');
+            if (modalEl) {
+                const modal = bootstrap.Modal.getInstance(modalEl);
+                if (modal) modal.hide();
+            }
+            showToast(`Loaded ${lines.length} parts from file`, 'success');
+            document.getElementById('parts-input').scrollIntoView({ behavior: 'smooth', block: 'center' });
         });
     }
 
