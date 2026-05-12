@@ -119,6 +119,13 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    const copyPartQtyBtn = document.getElementById('copy-part-qty-list-btn');
+    if (copyPartQtyBtn) {
+        copyPartQtyBtn.addEventListener('click', function () {
+            copyAllPartNumbersAndQuantities();
+        });
+    }
+
     // Initialise Select2 for supplier dropdowns
     if (window.jQuery && $('.supplier-select').length) {
         $('.supplier-select').select2({
@@ -1073,6 +1080,53 @@ function copyPartNumberToClipboard(text) {
     } catch (error) {
         console.error('Copy failed:', error);
         showToast('Unable to copy part number', 'danger');
+    } finally {
+        document.body.removeChild(textarea);
+    }
+}
+
+function copyAllPartNumbersAndQuantities() {
+    const rows = Array.from(document.querySelectorAll('#costing-table-body tr[data-line-id]'));
+    if (rows.length === 0) {
+        showToast('No parts available to copy', 'warning');
+        return;
+    }
+
+    const lines = rows
+        .map(row => {
+            const partNumber = (row.dataset.partNumber || '').trim();
+            const quantity = (row.dataset.requestedQty || '').trim();
+            if (!partNumber || !quantity) return null;
+            return `${partNumber}, ${quantity}`;
+        })
+        .filter(Boolean);
+
+    if (lines.length === 0) {
+        showToast('No part numbers and quantities found to copy', 'warning');
+        return;
+    }
+
+    const textToCopy = lines.join('\n');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(textToCopy)
+            .then(() => showToast(`Copied ${lines.length} part lines`, 'success'))
+            .catch(() => showToast('Unable to copy part list', 'danger'));
+        return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = textToCopy;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'absolute';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand('copy');
+        showToast(`Copied ${lines.length} part lines`, 'success');
+    } catch (error) {
+        console.error('Copy failed:', error);
+        showToast('Unable to copy part list', 'danger');
     } finally {
         document.body.removeChild(textarea);
     }
