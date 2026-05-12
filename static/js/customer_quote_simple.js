@@ -1900,11 +1900,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 if (sendAdminInternal) {
                     const adminBodyHtml = buildAdminInternalTableHtml();
+                    const adminSubjectCustomer = (typeof CUSTOMER_NAME === 'string' ? CUSTOMER_NAME.trim() : '') || 'Unknown Customer';
                     const adminResponse = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/send-admin-email`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            subject: `[INTERNAL] CQ/VQ summary for Parts List ${LIST_ID}`,
+                            subject: `[INTERNAL] CQ/VQ summary for Parts List ${LIST_ID} - ${adminSubjectCustomer}`,
                             body_html: adminBodyHtml,
                             to_emails: ADMIN_CC_EMAIL
                         })
