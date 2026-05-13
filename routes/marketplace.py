@@ -702,6 +702,38 @@ def _detect_csv_delimiter(csv_text):
     return ','
 
 
+def _convert_offers_csv_prices_to_eur(csv_bytes):
+    csv_text = _decode_csv_bytes(csv_bytes)
+    if not csv_text.strip():
+        return csv_bytes
+
+    delimiter = _detect_csv_delimiter(csv_text)
+    reader = csv.DictReader(io.StringIO(csv_text), delimiter=delimiter)
+    fieldnames = reader.fieldnames or []
+    if not fieldnames:
+        return csv_bytes
+
+    price_column = None
+    for name in fieldnames:
+        if _normalize_import_header(name) == 'price':
+            price_column = name
+            break
+    if not price_column:
+        return csv_bytes
+
+    converted_rows = []
+    for row in reader:
+        updated = dict(row)
+        updated[price_column] = _convert_marketplace_price_to_eur(row.get(price_column))
+        converted_rows.append(updated)
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, delimiter=delimiter, lineterminator='\n')
+    writer.writeheader()
+    writer.writerows(converted_rows)
+    return output.getvalue().encode('utf-8')
+
+
 def _read_import_rows(uploaded_file, filename):
     extension = os.path.splitext(filename.lower())[1]
 
@@ -4061,6 +4093,7 @@ def mirakl_import_offers_file():
     if not csv_bytes:
         return jsonify({'success': False, 'error': 'CSV file is empty'}), 400
     csv_bytes = _dedupe_csv_headers(csv_bytes)
+    csv_bytes = _convert_offers_csv_prices_to_eur(csv_bytes)
 
     try:
         result = client.import_offers(csv_bytes, import_mode=import_mode)

@@ -459,6 +459,10 @@
                         <option value="products">Airbus template (products + offers)</option>
                         <option value="offers">Mirakl offers CSV</option>
                     </select>
+                    <select class="form-select form-select-sm mb-2" id="miraklCsvOffersImportMode">
+                        <option value="NORMAL" selected>Offers import mode: NORMAL</option>
+                        <option value="REPLACE">Offers import mode: REPLACE (delete offers not in file)</option>
+                    </select>
                     <button class="btn btn-sm btn-outline-primary" id="pushCsvToMarketplaceBtn">
                         <i class="bi bi-upload"></i> Push CSV to Marketplace
                     </button>
@@ -541,6 +545,10 @@
                         <select class="form-select form-select-sm" id="miraklPushMode">
                             <option value="products">Push full Airbus template</option>
                             <option value="offers">Push offer update only</option>
+                        </select>
+                        <select class="form-select form-select-sm" id="miraklOfferImportMode">
+                            <option value="NORMAL" selected>Offer import mode: NORMAL</option>
+                            <option value="REPLACE">Offer import mode: REPLACE (delete offers not in push)</option>
                         </select>
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="skipInvalidMandatoryFields" checked>
@@ -2520,6 +2528,7 @@ function pushOffersToMarketplace() {
 
     const pushMode = $('#miraklPushMode').val() || 'products';
     const isOfferUpdate = pushMode === 'offers';
+    const offerImportMode = ($('#miraklOfferImportMode').val() || 'NORMAL').trim().toUpperCase();
     const defaults = getMarketplaceDefaults();
     const resolved = resolveExportParts(
         categorizedParts,
@@ -2536,7 +2545,7 @@ function pushOffersToMarketplace() {
     const skippedExisting = resolved.skippedExisting || [];
 
     const confirmText = isOfferUpdate
-        ? `Push offer update for ${partsToPush.length} parts to Airbus Marketplace now?`
+        ? `Push offer update for ${partsToPush.length} parts to Airbus Marketplace now using ${offerImportMode} mode?`
         : `Push ${partsToPush.length} products to Airbus Marketplace now?${skippedExisting.length ? ` (${skippedExisting.length} part(s) with an existing marketplace product ID will be skipped)` : ''}`;
 
     if (!confirm(confirmText)) {
@@ -2555,7 +2564,7 @@ function pushOffersToMarketplace() {
         ? '/marketplace/mirakl/offers/import'
         : '/marketplace/mirakl/products/import';
     const payload = isOfferUpdate
-        ? { offers: offers, import_mode: 'NORMAL', skip_invalid_mandatory: skipInvalidMandatory }
+        ? { offers: offers, import_mode: offerImportMode, skip_invalid_mandatory: skipInvalidMandatory }
         : { parts: parts, import_mode: 'NORMAL', skip_invalid_mandatory: skipInvalidMandatory };
 
     $.ajax({
@@ -2602,11 +2611,15 @@ function pushCsvToMarketplace() {
     }
 
     const csvType = $('#miraklCsvType').val() || 'products';
+    const csvOffersImportMode = ($('#miraklCsvOffersImportMode').val() || 'NORMAL').trim().toUpperCase();
     const endpoint = csvType === 'offers'
         ? '/marketplace/mirakl/offers/import-file'
         : '/marketplace/mirakl/products/import-file';
 
-    if (!confirm(`Push ${file.name} to Mirakl now?`)) {
+    const confirmText = csvType === 'offers'
+        ? `Push ${file.name} to Mirakl now using ${csvOffersImportMode} mode?`
+        : `Push ${file.name} to Mirakl now?`;
+    if (!confirm(confirmText)) {
         return;
     }
 
@@ -2615,6 +2628,9 @@ function pushCsvToMarketplace() {
 
     const formData = new FormData();
     formData.append('file', file);
+    if (csvType === 'offers') {
+        formData.append('import_mode', csvOffersImportMode);
+    }
 
     $.ajax({
         url: endpoint,
