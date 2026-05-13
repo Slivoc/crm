@@ -3433,6 +3433,10 @@ def export_to_marketplace():
         if source_mode not in ('filters', 'baseline'):
             source_mode = 'filters'
         baseline_rows = export_data.get('baseline_rows') or {}
+        schedule_recurring = _coerce_bool(export_data.get('schedule_recurring'), default=True)
+        schedule_time = _coerce_text(export_data.get('schedule_time'), default='00:00')
+        if not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', schedule_time or ''):
+            schedule_time = '00:00'
 
         if not base_part_numbers:
             return jsonify({'error': 'No parts selected for export'}), 400
@@ -3720,6 +3724,23 @@ def export_to_marketplace():
 
             csv_file = export_parts_to_airbus_marketplace_csv(parts_data)
             filename_prefix = "AH_Marketplace_Upload"
+
+        scheduled_export_payload = {
+            'base_part_numbers': base_part_numbers,
+            'default_quantity': default_quantity,
+            'skip_invalid_mandatory': skip_invalid_mandatory,
+            'include_non_hqpl_alts': include_non_hqpl_alts,
+            'include_alt_stock_rollup': include_alt_stock_rollup,
+            'export_mode': export_mode,
+            'debug_offer_export': debug_offer_export,
+            'defaults': export_defaults,
+            'source_mode': source_mode,
+            'baseline_rows': baseline_rows,
+        }
+        _upsert_portal_setting(cursor, 'marketplace_export_job_payload', json.dumps(scheduled_export_payload))
+        _upsert_portal_setting(cursor, 'marketplace_export_job_enabled', '1' if schedule_recurring else '0')
+        _upsert_portal_setting(cursor, 'marketplace_export_job_time', schedule_time or '00:00')
+        db.commit()
 
         # Generate filename with timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

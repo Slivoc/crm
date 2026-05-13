@@ -2449,6 +2449,8 @@ async function exportToCsv(mode) {
         debug_offer_export: isDebugOfferExport,
         skip_invalid_mandatory: skipInvalidMandatory,
         defaults: defaults,
+        schedule_recurring: true,
+        schedule_time: '00:00',
         baseline_rows: exportParts.reduce((acc, part) => {
             const baselineRow = getImportedAirbusBaselineRow(part);
             if (baselineRow) {
