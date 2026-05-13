@@ -1932,32 +1932,71 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    let quotePageBusy = false;
+    const actionToolbarSelectors = [
+        '#calculate-base-costs-btn',
+        '#calculate-delivery-btn',
+        '#bulk-apply-margin-btn',
+        '#calculate-all-btn',
+        '#save-all-btn',
+        '#toggle-target-price-btn',
+        '#purchasing-instructions-btn',
+        '#minimum-line-value-btn',
+        '#email-quote-btn'
+    ];
+
+    function setQuotePageBusyState(isBusy) {
+        quotePageBusy = isBusy;
+        actionToolbarSelectors.forEach(selector => {
+            const el = document.querySelector(selector);
+            if (el) el.disabled = isBusy;
+        });
+    }
+
+    async function runBaseCostCalculation() {
+        const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/calculate-base-costs`, { method: 'POST' });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.message || 'Failed to recalculate base costs');
+    }
+
+    async function runDeliveryCalculation() {
+        const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/calculate-delivery-costs`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.message || 'Failed to calculate delivery');
+    }
+
     // Recalculate Base Costs
     document.getElementById('calculate-base-costs-btn').addEventListener('click', async function() {
+        if (quotePageBusy) return;
         const btn = this;
-        btn.disabled = true;
+        const originalHtml = btn.innerHTML;
+        setQuotePageBusyState(true);
         btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Recalculating...';
         try {
-            const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/calculate-base-costs`, { method: 'POST' });
-            const result = await response.json();
-            if (result.success) window.location.reload();
-            else alert('Error: ' + result.message);
-        } catch (error) { alert('Failed'); }
-        finally { btn.disabled = false; if(!btn.innerHTML.includes('check')) btn.innerHTML = '<i class="bi bi-calculator me-1"></i>Recalculate Base Costs'; }
+            await runBaseCostCalculation();
+            window.location.reload();
+        } catch (error) {
+            alert(error.message || 'Failed');
+            setQuotePageBusyState(false);
+            btn.innerHTML = originalHtml;
+        }
     });
 
     // Calculate Delivery
     document.getElementById('calculate-delivery-btn').addEventListener('click', async function() {
+        if (quotePageBusy) return;
         const btn = this;
-        btn.disabled = true;
+        const originalHtml = btn.innerHTML;
+        setQuotePageBusyState(true);
         btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Calculating...';
         try {
-            const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/calculate-delivery-costs`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-            const result = await response.json();
-            if (result.success) window.location.reload();
-            else alert('Error: ' + result.message);
-        } catch (error) { alert('Failed'); }
-        finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-truck me-1"></i>Calculate Delivery'; }
+            await runDeliveryCalculation();
+            window.location.reload();
+        } catch (error) {
+            alert(error.message || 'Failed');
+            setQuotePageBusyState(false);
+            btn.innerHTML = originalHtml;
+        }
     });
 
       // Bulk Apply Margin
@@ -1965,6 +2004,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const bulkMarginModalInstance = bulkMarginModalElement ? bootstrap.Modal.getOrCreateInstance(bulkMarginModalElement) : null;
 
       document.getElementById('bulk-apply-margin-btn').addEventListener('click', function() {
+          if (quotePageBusy) return;
           if (!bulkMarginModalInstance) return;
           document.getElementById('margin-input-step').style.display = 'block';
           document.getElementById('margin-applying-step').style.display = 'none';
@@ -1973,6 +2013,7 @@ document.addEventListener('DOMContentLoaded', function() {
       });
 
       document.getElementById('apply-margin-btn').addEventListener('click', async function() {
+          if (quotePageBusy) return;
           const margin = parseFloat(document.getElementById('bulk-margin-input').value);
           const scope = document.querySelector('input[name="bulk-margin-scope"]:checked').value;
           if (isNaN(margin) || margin < 0 || margin >= 100) return alert('Invalid margin');
@@ -1980,6 +2021,7 @@ document.addEventListener('DOMContentLoaded', function() {
           document.getElementById('margin-input-step').style.display = 'none';
           document.getElementById('margin-modal-footer').style.display = 'none';
           document.getElementById('margin-applying-step').style.display = 'block';
+          setQuotePageBusyState(true);
 
           try {
               const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/bulk-margin-apply`, {
@@ -1993,8 +2035,44 @@ document.addEventListener('DOMContentLoaded', function() {
                   document.getElementById('margin-modal-footer').style.display = 'flex';
                   bulkMarginModalInstance?.hide();
                   window.location.reload();
-              } else { alert('Error: ' + result.message); window.location.reload(); }
-          } catch (e) { alert('Failed'); window.location.reload(); }
+              } else {
+                  throw new Error(result.message || 'Failed to apply margin');
+              }
+          } catch (e) {
+              setQuotePageBusyState(false);
+              alert(e.message || 'Failed');
+              document.getElementById('margin-applying-step').style.display = 'none';
+              document.getElementById('margin-input-step').style.display = 'block';
+              document.getElementById('margin-modal-footer').style.display = 'flex';
+          }
+      });
+
+      document.getElementById('calculate-all-btn')?.addEventListener('click', async function() {
+          if (quotePageBusy) return;
+          const btn = this;
+          const originalHtml = btn.innerHTML;
+          setQuotePageBusyState(true);
+          btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running all...';
+          try {
+              await runBaseCostCalculation();
+              await runDeliveryCalculation();
+              const defaultMarginInput = document.getElementById('bulk-margin-input');
+              const margin = parseFloat(defaultMarginInput?.value || '35');
+              const scopeInput = document.querySelector('input[name="bulk-margin-scope"]:checked');
+              const scope = scopeInput ? scopeInput.value : 'all';
+              const marginResponse = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/bulk-margin-apply`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ margin_percent: margin, scope: scope })
+              });
+              const marginResult = await marginResponse.json();
+              if (!marginResponse.ok || !marginResult.success) throw new Error(marginResult.message || 'Failed to bulk apply margin');
+              window.location.reload();
+          } catch (error) {
+              setQuotePageBusyState(false);
+              btn.innerHTML = originalHtml;
+              alert(error.message || 'Failed to run all actions');
+          }
       });
 
       function setupDuplicateLineButtons() {
