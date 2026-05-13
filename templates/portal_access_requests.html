@@ -199,6 +199,40 @@ function setMatchedCustomer(customerId, customerName) {
     document.getElementById('access-request-selected-customer').textContent = customerId ? `Selected customer: ${customerName}` : '';
 }
 
+function normalizeMatchText(value) {
+    return (value || '').toString().trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+async function tryAutoMatchCustomer(requestData) {
+    if (!requestData || !requestData.companyName) return false;
+
+    const query = requestData.companyName.trim();
+    if (!query) return false;
+
+    try {
+        const response = await fetch(`{{ url_for('customers.customer_search') }}?q=${encodeURIComponent(query)}&limit=8`);
+        const customers = await response.json();
+        if (!Array.isArray(customers) || !customers.length) return false;
+
+        const normalizedCompany = normalizeMatchText(requestData.companyName);
+        const normalizedEmail = normalizeMatchText(requestData.email);
+
+        const exactNameMatch = customers.find((customer) => normalizeMatchText(customer.name) === normalizedCompany);
+        const emailMatch = normalizedEmail
+            ? customers.find((customer) => normalizeMatchText(customer.primary_contact_email || '') === normalizedEmail)
+            : null;
+        const bestMatch = exactNameMatch || emailMatch || customers[0];
+
+        if (!bestMatch || !bestMatch.id) return false;
+
+        document.getElementById('access-request-customer-search').value = bestMatch.name || query;
+        setMatchedCustomer(bestMatch.id, bestMatch.name || query);
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
 async function findMatches(requestId) {
     const requestData = getRequestData(requestId);
     const container = document.getElementById(`request-matches-${requestId}`);
@@ -231,8 +265,18 @@ async function findMatches(requestId) {
             if (!contactMap.has(contact.id)) contactMap.set(contact.id, contact);
         });
 
-        const customers = Array.from(customerMap.values());
+        let customers = Array.from(customerMap.values());
         const contacts = Array.from(contactMap.values());
+
+        if (!customers.length) {
+            const contactBackedCustomers = contacts
+                .filter((contact) => contact.customer_id)
+                .map((contact) => ({ id: contact.customer_id, name: contact.customer_name || 'Unknown customer', primary_contact_email: contact.email || '' }));
+            contactBackedCustomers.forEach((customer) => {
+                if (!customerMap.has(customer.id)) customerMap.set(customer.id, customer);
+            });
+            customers = Array.from(customerMap.values());
+        }
 
         if (!customers.length && !contacts.length) {
             container.innerHTML = '<span class="text-muted">No obvious customer/contact match found.</span>';
@@ -286,6 +330,7 @@ function openCreateUserModal(requestId) {
     setMatchedCustomer('', '');
     generateAccessRequestPassword();
     createAccessRequestUserModal.show();
+    tryAutoMatchCustomer(requestData);
 }
 
 let customerSearchTimeout = null;
