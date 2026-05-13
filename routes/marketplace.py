@@ -3429,6 +3429,7 @@ def get_parts_for_export():
                 'description': '',
                 'manufacturer': _coerce_text(row['manufacturer_name'], default=''),
                 'estimated_price': estimate.get('estimated_price') if estimate else None,
+                'estimated_price_eur': _convert_marketplace_price_to_eur(estimate.get('estimated_price')) if estimate else None,
                 'price_source': estimate.get('price_source') if estimate else None,
                 'estimated_lead_days': estimate.get('estimated_lead_days') if estimate else None,
                 'currency': estimate.get('currency') if estimate else None,

@@ -288,13 +288,13 @@
             <div class="col-md-6 mb-3">
                 <label class="form-label fw-bold">Marketplace Category Status</label>
                 <div class="form-check">
-                    <input class="form-check-input" type="radio" name="categoryFilter" id="catAll" value="all" checked>
+                    <input class="form-check-input" type="radio" name="categoryFilter" id="catAll" value="all">
                     <label class="form-check-label" for="catAll">
                         All parts (with or without categories)
                     </label>
                 </div>
                 <div class="form-check">
-                    <input class="form-check-input" type="radio" name="categoryFilter" id="catOnly" value="categorized_only">
+                    <input class="form-check-input" type="radio" name="categoryFilter" id="catOnly" value="categorized_only" checked>
                     <label class="form-check-label" for="catOnly">
                         Only parts with categories assigned
                     </label>
@@ -563,13 +563,13 @@
                             </label>
                         </div>
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="includeNonHqplAlts">
+                            <input class="form-check-input" type="checkbox" id="includeNonHqplAlts" checked>
                             <label class="form-check-label small text-muted" for="includeNonHqplAlts">
                                 Alt field: include all global alts, not just rotary HQPL-approved alts
                             </label>
                         </div>
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="includeAltStockRollup">
+                            <input class="form-check-input" type="checkbox" id="includeAltStockRollup" checked>
                             <label class="form-check-label small text-muted" for="includeAltStockRollup">
                                 Quantity/pricing: include stock held under selected alternate part numbers and use the highest in-stock estimate
                             </label>
@@ -861,7 +861,7 @@ $(document).ready(function() {
     // Reset filters
     $('#resetFiltersBtn').click(function() {
         $('input[name="stockFilter"][value="all"]').prop('checked', true);
-        $('input[name="categoryFilter"][value="all"]').prop('checked', true);
+        $('input[name="categoryFilter"][value="categorized_only"]').prop('checked', true);
         $('#pricingOnly').prop('checked', false);
         $('#partNumberSearch').val('');
         $('#defaultQuantity').val(1);
@@ -2047,7 +2047,8 @@ function buildProductPayload(part, defaultQuantity, defaults) {
     const leadTime = Math.max(Number.parseInt(rawLeadTime, 10) || 1, 1);
     let description = resolveDefaultDescription(part, defaults);
     const baselineRow = getImportedAirbusBaselineRow(part);
-    const rawPrice = effectiveState.price ?? '';
+    const eurPrice = coerceNumber(part && part.estimated_price_eur);
+    const rawPrice = eurPrice !== null ? eurPrice : (effectiveState.price ?? '');
     const price = coerceNumber(rawPrice) === null ? '0.00' : rawPrice;
     const isOnDemandWithoutPrice = coerceNumber(rawPrice) === null;
     if (effectiveState.note) {
@@ -2103,7 +2104,8 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
     const rawLeadTime = quantity > 0 ? 1 : (part.estimated_lead_days ?? 7);
     const leadTime = sanitizeLeadTimeToShipDays(rawLeadTime, 7);
     const baselineRow = getImportedAirbusBaselineRow(part);
-    const rawPrice = effectiveState.price ?? '';
+    const eurPrice = coerceNumber(part && part.estimated_price_eur);
+    const rawPrice = eurPrice !== null ? eurPrice : (effectiveState.price ?? '');
     const price = coerceNumber(rawPrice) === null ? '0.00' : rawPrice;
     const isOnDemandWithoutPrice = coerceNumber(rawPrice) === null;
     const productId = resolveOfferProductId(part, baselineRow);
