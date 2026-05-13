@@ -734,6 +734,30 @@ def _convert_offers_csv_prices_to_eur(csv_bytes):
     return output.getvalue().encode('utf-8')
 
 
+def _remove_csv_column(csv_bytes, target_column):
+    csv_text = _decode_csv_bytes(csv_bytes)
+    if not csv_text.strip():
+        return csv_bytes
+
+    delimiter = _detect_csv_delimiter(csv_text)
+    reader = csv.DictReader(io.StringIO(csv_text), delimiter=delimiter)
+    fieldnames = reader.fieldnames or []
+    if not fieldnames:
+        return csv_bytes
+
+    normalized_target = _normalize_import_header(target_column)
+    kept_fields = [name for name in fieldnames if _normalize_import_header(name) != normalized_target]
+    if len(kept_fields) == len(fieldnames):
+        return csv_bytes
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=kept_fields, delimiter=delimiter, lineterminator='\n')
+    writer.writeheader()
+    for row in reader:
+        writer.writerow({name: row.get(name, '') for name in kept_fields})
+    return output.getvalue().encode('utf-8')
+
+
 def _read_import_rows(uploaded_file, filename):
     extension = os.path.splitext(filename.lower())[1]
 
@@ -3974,6 +3998,8 @@ def mirakl_import_offers():
 
     try:
         csv_bytes = build_offers_csv(offers)
+        if str(import_mode).strip().upper() == 'REPLACE':
+            csv_bytes = _remove_csv_column(csv_bytes, 'update-delete')
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
 
@@ -4094,6 +4120,8 @@ def mirakl_import_offers_file():
         return jsonify({'success': False, 'error': 'CSV file is empty'}), 400
     csv_bytes = _dedupe_csv_headers(csv_bytes)
     csv_bytes = _convert_offers_csv_prices_to_eur(csv_bytes)
+    if str(import_mode).strip().upper() == 'REPLACE':
+        csv_bytes = _remove_csv_column(csv_bytes, 'update-delete')
 
     try:
         result = client.import_offers(csv_bytes, import_mode=import_mode)
