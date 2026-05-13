@@ -69,6 +69,16 @@
                     <div class="form-text">Paste the part numbers you want to test against dev.</div>
                 </div>
             </div>
+            <div class="row g-3 mt-1 align-items-end">
+                <div class="col-lg-4">
+                    <label class="form-label fw-bold" for="p31ImportMode">Offer Import Mode</label>
+                    <select class="form-select" id="p31ImportMode">
+                        <option value="NORMAL" selected>NORMAL (update rows in file)</option>
+                        <option value="REPLACE">REPLACE (delete offers not in file)</option>
+                    </select>
+                    <div class="form-text">Use REPLACE carefully: Mirakl may remove existing offers that are not included in this upload.</div>
+                </div>
+            </div>
             <div class="d-flex gap-2 mt-3">
                 <button class="btn btn-primary" id="p31LookupBtn">Lookup Products</button>
                 <button class="btn btn-success" id="p31PushBtn" disabled>Push Offer Updates</button>
@@ -235,6 +245,7 @@
 
         $('#p31PushBtn').on('click', function () {
             const rows = collectEditedRows();
+            const importMode = ($('#p31ImportMode').val() || 'NORMAL').trim().toUpperCase();
             const offers = rows
                 .filter(row => row.crm_part && row.resolved_product_id && row.resolved_product_id_type)
                 .map(row => {
@@ -280,7 +291,7 @@
                 alert('No rows are ready to push.');
                 return;
             }
-            if (!confirm(`Push ${offers.length} offer update(s) to the configured Mirakl environment?`)) {
+            if (!confirm(`Push ${offers.length} offer update(s) using ${importMode} mode to the configured Mirakl environment?`)) {
                 return;
             }
 
@@ -292,7 +303,7 @@
                 contentType: 'application/json',
                 data: JSON.stringify({
                     offers: offers,
-                    import_mode: 'NORMAL',
+                    import_mode: importMode,
                     skip_invalid_mandatory: true
                 })
             }).done(function (response) {
